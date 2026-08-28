@@ -118,7 +118,7 @@ is NOT monotonic, which is why a single threshold does not capture it:
 
 | rows per key | 25,000 | 2,000 | 1,000 | 6 | 4 | 2 |
 | --- | --- | --- | --- | --- | --- | --- |
-| point read | 1.05x | 2.98x | 3.43x | 1.13x | 1.63x | 2.28x |
+| key lookup | 1.05x | 2.98x | 3.43x | 1.13x | 1.63x | 2.28x |
 
 The band around 1,000-2,000 rows per key is **not explained**. Ruled out:
 row-group planning (`TARGET_ROW_GROUP_ROWS` gives every fixture 100k-row groups,
@@ -131,6 +131,19 @@ the key count.
 
 Closing either end means reducing per-cursor bind cost, which is QuestDB's shared
 cursor layer rather than anything inside this format.
+
+**Workaround for a query that lands on the wrong side of this.** The `no_index`
+hint forces the frame backward scan, which is the faster plan for LATEST ON on a
+parquet partition:
+
+```sql
+SELECT /*+ no_index(t sym) */ ts, sym, price
+FROM t WHERE sym IN (...) LATEST ON ts PARTITION BY sym;
+```
+
+That is a per-query escape hatch, not a default. It was verified by running both
+plans over one fixture and asserting identical row sets before comparing times --
+the hint changes only which plan runs.
 
 ### Where the parquet form LOSES: indexed LATEST ON
 
@@ -221,7 +234,7 @@ hung command rather than a mistake:
 
 ```
 mvn -Plocal-client -Pbuild-rust-library -Pqdbr-release -pl benchmarks -am package -DskipTests
-java -Dquestdb.suite.bench=indexPointRead \
+java -Dquestdb.suite.bench=indexKeyLookup \
     -Dquestdb.suite.bench.scenario=P400K,S1 \
     -Dquestdb.suite.bench.format=POSTING,POSTING_PARQUET \
     -cp benchmarks/target/benchmarks.jar org.questdb.PostingIndexBenchmarkSuite

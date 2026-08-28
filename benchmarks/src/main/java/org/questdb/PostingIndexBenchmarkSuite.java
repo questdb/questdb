@@ -158,7 +158,7 @@ public class PostingIndexBenchmarkSuite {
         String suiteName = PostingIndexBenchmarkSuite.class.getSimpleName();
         String includePattern = switch (filter) {
             case "all" -> suiteName + "\\.";
-            case "core" -> suiteName + "\\.(commitProfile|decode|indexPointRead|indexScanRead|"
+            case "core" -> suiteName + "\\.(commitProfile|decode|indexKeyLookup|indexScanRead|"
                     + "indexRangeRead|sidecarRead|sqlQuery|writeInsert)$";
             case "wal" -> suiteName + "\\.(walFastLag|walLargePartition).*";
             case "wal_o3" -> suiteName + "\\.walLargePartitionO3.*";
@@ -283,7 +283,18 @@ public class PostingIndexBenchmarkSuite {
     // ==================================================================================
 
     @Benchmark
-    public void indexPointRead(IndexState s) {
+    /**
+     * Looks up {@code min(5_000, keyCount)} DISTINCT keys and walks each key's
+     * whole run.
+     * <p>
+     * Not a point read at low cardinality, which is why it is not called one: a
+     * scenario with 5,000 keys or fewer has every one of its keys looked up, so
+     * this becomes a full traversal of the index in random key order and tracks
+     * {@link #indexScanRead} almost exactly (at S4: 3.42x vs 3.30x against the
+     * native chain; at P400K parity vs 1.05x). Only above 5,000 keys does it
+     * sample, and only then is it measuring random access.
+     */
+    public void indexKeyLookup(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
             IndexReader reader = openReader(s, path);
             try {
@@ -1253,7 +1264,7 @@ public class PostingIndexBenchmarkSuite {
         out.println("   ops/s, higher=better.  F=parquet faster  S=parquet SLOWER\n   ~=parity   N.NS?=apparent gap but too noisy to confirm; re-run that cell with\n   -Dquestdb.suite.bench.iterations=10");
         final String[] rungs = {"P400K", "S4", "S6", "S7"};
         final String[] keyLabels = {"16", "2,000", "200,000", "1,000,000"};
-        for (String bench : new String[]{"indexPointRead", "indexScanRead", "indexRangeRead"}) {
+        for (String bench : new String[]{"indexKeyLookup", "indexScanRead", "indexRangeRead"}) {
             for (String dir : new String[]{"FORWARD", "BACKWARD"}) {
                 out.printf("%n  %s (%s):%n", bench, dir);
                 out.printf("  %-12s %12s %12s %8s%n", "keys", "native", "parquet", "verdict");
