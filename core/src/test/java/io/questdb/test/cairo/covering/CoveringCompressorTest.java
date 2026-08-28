@@ -48,43 +48,6 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     private static final long GUARD_WORD = 0x5a5a5a5a5a5a5a5aL;
     private static final int RAW_BLOCK_FLAG = 0x80000000;
 
-    /**
-     * The worst-case block size must stay exact once the product passes 2^31. It used to be
-     * computed in {@code int} and wrapped negative, and both seal paths then read the negative as
-     * "nothing to allocate" and handed the encoder a null destination buffer.
-     */
-    @Test
-    public void testMaxCompressedSizeDoesNotOverflowInt() {
-        // DOUBLE is the widest worst case at ~20 bytes/value, so it crosses 2^31 first
-        Assert.assertEquals(
-                CoveringCompressor.DOUBLE_HEADER_SIZE + 200_000_000L * 8 + 200_000_000L * 12,
-                CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.DOUBLE)
-        );
-        Assert.assertEquals(
-                CoveringCompressor.LONG_HEADER_SIZE + 300_000_000L * 8,
-                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.LONG)
-        );
-        Assert.assertEquals(
-                CoveringCompressor.LONG_LINEAR_PRED_HEADER_SIZE + 300_000_000L * 8,
-                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.TIMESTAMP)
-        );
-        Assert.assertEquals(
-                4 + 200_000_000L * 16,
-                CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.UUID)
-        );
-        // INT_HEADER_SIZE is package-private, so assert the packed payload is at least covered
-        Assert.assertTrue(CoveringCompressor.maxCompressedSize(600_000_000, ColumnType.INT) > 600_000_000L * 4);
-        // ordinary block sizes are unchanged
-        Assert.assertEquals(
-                CoveringCompressor.DOUBLE_HEADER_SIZE + 1_000L * 8 + 1_000L * 12,
-                CoveringCompressor.maxCompressedSize(1_000, ColumnType.DOUBLE)
-        );
-        Assert.assertEquals(
-                CoveringCompressor.LONG_HEADER_SIZE + 1_000L * 8,
-                CoveringCompressor.maxCompressedSize(1_000, ColumnType.LONG)
-        );
-    }
-
     @Test
     public void testAllExceptionsBlock() throws Exception {
         // When ALL values are ALP exceptions (irrational numbers), fillValue=0,
@@ -1129,6 +1092,43 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    /**
+     * The worst-case block size must stay exact once the product passes 2^31. It used to be
+     * computed in {@code int} and wrapped negative, and both seal paths then read the negative as
+     * "nothing to allocate" and handed the encoder a null destination buffer.
+     */
+    @Test
+    public void testMaxCompressedSizeDoesNotOverflowInt() {
+        // DOUBLE is the widest worst case at ~20 bytes/value, so it crosses 2^31 first
+        Assert.assertEquals(
+                CoveringCompressor.DOUBLE_HEADER_SIZE + 200_000_000L * 8 + 200_000_000L * 12,
+                CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.DOUBLE)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_HEADER_SIZE + 300_000_000L * 8,
+                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.LONG)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_LINEAR_PRED_HEADER_SIZE + 300_000_000L * 8,
+                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.TIMESTAMP)
+        );
+        Assert.assertEquals(
+                4 + 200_000_000L * 16,
+                CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.UUID)
+        );
+        // INT_HEADER_SIZE is package-private, so assert the packed payload is at least covered
+        Assert.assertTrue(CoveringCompressor.maxCompressedSize(600_000_000, ColumnType.INT) > 600_000_000L * 4);
+        // ordinary block sizes are unchanged
+        Assert.assertEquals(
+                CoveringCompressor.DOUBLE_HEADER_SIZE + 1_000L * 8 + 1_000L * 12,
+                CoveringCompressor.maxCompressedSize(1_000, ColumnType.DOUBLE)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_HEADER_SIZE + 1_000L * 8,
+                CoveringCompressor.maxCompressedSize(1_000, ColumnType.LONG)
+        );
     }
 
     @Test

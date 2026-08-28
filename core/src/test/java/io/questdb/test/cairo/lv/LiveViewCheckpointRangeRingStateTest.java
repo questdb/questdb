@@ -399,6 +399,22 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLongValueRingRoundTripsAnAllMaxValueStride() throws Exception {
+        assertMemoryLeak(() -> {
+            // Every row of the frame holds the same LONG payload, and that payload
+            // is the largest a LONG column can hold. The stride's minimum then
+            // equals the value the plain-FoR encoder seeds its scan with, which is
+            // the one input that used to make the block store a base of 0 and
+            // decode the whole page back as 0. The page still has to select the
+            // covering block - a 13-byte header against 8 bytes per raw row - and
+            // every row still has to read back as Long.MAX_VALUE.
+            final long[] payload = new long[64];
+            Arrays.fill(payload, Long.MAX_VALUE);
+            assertLongValueRingRoundTrips(payload, 11, LiveViewCheckpointStateCodec.COVERING_LONG);
+        });
+    }
+
+    @Test
     public void testLongValueRingRoundTripsRawBits() throws Exception {
         assertMemoryLeak(() -> {
             // A raw 64-bit value column must round-trip any bit pattern verbatim,
@@ -415,22 +431,6 @@ public class LiveViewCheckpointRangeRingStateTest extends AbstractCairoTest {
                     42L,
             };
             assertLongValueRingRoundTrips(payload, 7, LiveViewCheckpointStateCodec.RAW_64);
-        });
-    }
-
-    @Test
-    public void testLongValueRingRoundTripsAnAllMaxValueStride() throws Exception {
-        assertMemoryLeak(() -> {
-            // Every row of the frame holds the same LONG payload, and that payload
-            // is the largest a LONG column can hold. The stride's minimum then
-            // equals the value the plain-FoR encoder seeds its scan with, which is
-            // the one input that used to make the block store a base of 0 and
-            // decode the whole page back as 0. The page still has to select the
-            // covering block - a 13-byte header against 8 bytes per raw row - and
-            // every row still has to read back as Long.MAX_VALUE.
-            final long[] payload = new long[64];
-            Arrays.fill(payload, Long.MAX_VALUE);
-            assertLongValueRingRoundTrips(payload, 11, LiveViewCheckpointStateCodec.COVERING_LONG);
         });
     }
 

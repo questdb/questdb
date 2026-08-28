@@ -24,12 +24,19 @@
 
 package io.questdb.test.griffin.fuzz;
 
+import io.questdb.griffin.SqlException;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.griffin.fuzz.clauses.GroupByClause;
+import io.questdb.test.griffin.fuzz.clauses.SampleByClause;
+import io.questdb.test.griffin.fuzz.expr.ColumnRefExpr;
+import io.questdb.test.griffin.fuzz.expr.ExpressionGenerator;
+import io.questdb.test.griffin.fuzz.expr.FuzzExpr;
 import io.questdb.test.griffin.fuzz.types.BooleanType;
 import io.questdb.test.griffin.fuzz.types.CharType;
+import io.questdb.test.griffin.fuzz.types.ColumnKind;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnType;
 import io.questdb.test.griffin.fuzz.types.FuzzColumnTypes;
 import io.questdb.test.griffin.fuzz.types.IPv4Type;
@@ -67,15 +74,50 @@ import java.util.regex.Pattern;
  *     NOT / AND / OR above leaf comparisons, so it reached neither operand
  *     order and CI stayed green through the defect.</li>
  * </ul>
+ * Four more pins stand beside those and cover what the fuzzer DRAWS rather
+ * than what it spells: {@link #testDeckDealsEveryRegisteredType} on the type
+ * deck, {@link #testFactoryDealsSameTypeColumnPairs} on the schemas the factory
+ * deals off it, {@link #testIdentifierKeySlotDrawFollowsTheTable} on the kind
+ * the GROUP BY / SAMPLE BY key-slot pickers draw when they want an identifier,
+ * and {@link #testIdentifierKeySlotLandsOnARealColumn} on what the expression
+ * generator then fills that slot with. A predicate shape the corpus can spell
+ * is worth nothing if no generated table or key slot ever reaches it.
+ * <p>
  * The generator is random, so each assertion runs over a large corpus rather
  * than a single draw; the seed is fixed so a failure is reproducible.
  */
 public class FilterShapeCoverageTest {
     private static final int CORPUS_SIZE = 20_000;
+    // Simulated fuzz runs testFactoryDealsSameTypeColumnPairs drives through
+    // FuzzTableFactory. One sweep counts every pinned type at once, so 2_000
+    // runs -- about 5_000 tables -- take a single pass measured at ~50ms of the
+    // class's ~0.6s, and yield roughly 100 tables of each pinned shape. That
+    // yield is what buys the real lower bound below; 400 runs yielded about 20,
+    // too few to bound with a margin that does not flake.
+    private static final int FACTORY_SWEEP_RUNS = 2_000;
+    // Identifier key slots testIdentifierKeySlotLandsOnARealColumn draws per
+    // table. Four over the sweep's ~5_000 tables give ~20_000 draws, enough
+    // that the fill rate moves by well under a point between seeds.
+    private static final int IDENTIFIER_KEY_SLOT_DRAWS_PER_TABLE = 4;
+    // Draws testIdentifierKeySlotDrawFollowsTheTable takes from each key-kind
+    // picker. One option in seven is the GROUP BY list's identifier slot and
+    // one in six is SAMPLE BY's, so 2_000 draws leave a few hundred identifier
+    // draws per picker -- far more than the handful a blind draw needs to
+    // answer with a kind the fixture carries no column of. The sweep is
+    // integer arithmetic over a fixed column list: no engine, no SQL, no
+    // native memory.
+    private static final int IDENTIFIER_KEY_SLOT_PICKER_DRAWS = 2_000;
     // A bare quoted IPv4 address, in the spelling the filter compiler reads as
     // an i32 immediate. 'x.x.x.x'::IPv4 is a function node it declines, so the
     // negative lookahead keeps the cast form out.
     private static final String IPV4_LITERAL = "'\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}'(?!::)";
+    // Floor testIdentifierKeySlotLandsOnARealColumn holds the share of
+    // identifier key-slot draws that reach a real column to. That test states
+    // the seed sweep the margin comes from.
+    private static final int MIN_IDENTIFIER_KEY_SLOT_FILL_PCT = 40;
+    // Floor testFactoryDealsSameTypeColumnPairs holds each same-type pair count
+    // to. That test states the seed sweep the margin comes from.
+    private static final int MIN_SAME_TYPE_PAIR_TABLES = 40;
     // One comparison in parentheses -- the operand shape PredicateGenerator's
     // nested production emits. Both operands must carry no parentheses of their
     // own, which leaves out an operand that is itself a cast or a function call;
@@ -191,6 +233,195 @@ public class FilterShapeCoverageTest {
     }
 
     @Test
+    public void testFactoryDealsSameTypeColumnPairs() throws SqlException {
+        // The fixture in columns() is hand-built, so the two-column ordering
+        // pins over it stand for PredicateGenerator's ability to spell the
+        // shapes. This pin covers the other half of the claim -- that
+        // QueryFuzzTest's corpus can actually hold such a schema -- by driving
+        // FuzzTableFactory itself.
+        //
+        // The pair arrives late in a run. The factory deals off ONE shuffled
+        // 18-card deck per run (16 singletons plus a DECIMAL and a DOUBLE[]
+        // instance), without replacement, and refills it only when it is empty,
+        // which never happens once it is filled; only after the deck runs out
+        // does dealType fall back to a with-replacement draw. A run builds 2-3
+        // tables of 5..12 dealt columns each -- 21.3 columns on average against
+        // an 18-card deck, so 65% of runs spend it. A table dealt wholly off a
+        // fresh deck repeats no DEALT type, which is why the FIRST table of a
+        // run never carries an IPv4 or a UUID pair. That holds for the DEALT
+        // columns only: buildColumnList adds `sym` and `ts` outside the deal
+        // and both SymbolType and TimestampType also sit in the deck, so a
+        // first table pairs those two types constantly -- of 200_000 first
+        // tables, 94_291 carried two SYMBOL columns and 94_462 two TIMESTAMP
+        // columns. Over the 500_020 tables those same runs built, 10_009
+        // (2.00%) carried two IPv4 columns and 9_985 (2.00%) two UUID columns,
+        // and not one of those was a first table.
+        //
+        // What this pin protects is the RUN-LONG deck. Reshuffling per table
+        // instead -- clearing the deck at the top of buildColumnList -- caps a
+        // table at 12 dealt cards off 18, so no dealt type can repeat and both
+        // counts drop to exactly 0 (measured: 0 over 500 seeds x 2_000 runs).
+        // Do NOT read the pin as guarding the pickRandom fallback: dealing
+        // strictly without replacement, reshuffling a fresh deck whenever the
+        // run-long one runs out, leaves the deck boundary inside a table and
+        // still yields 64 IPv4-pair and 65 UUID-pair tables at the pinned seed,
+        // which clears the bound below.
+        //
+        // The bound is a floor with room under it, not the observed yield: the
+        // pinned seed gives 112 and 104. Two 10_000-seed families -- one of
+        // Rnd(0x5eed + i, 0xdec4 + i) for i in [0, 10_000), one of 10_000 seed
+        // pairs drawn from Rnd(1, 2) -- put the leanest sweep at 61 IPv4-pair
+        // and 65 UUID-pair tables, and no sweep in either family landed at or
+        // below 40. Twenty thousand samples evidence a floor rather than prove
+        // one, so the bound sits at 40: it fails a change that cuts this
+        // shape's frequency by more than about 2.5x, and leaves about 1.5x of
+        // headroom under the leanest sweep observed.
+        //
+        // The sweep is deterministic -- one seeded Rnd, no-op SQL executor and
+        // WAL drain, no engine and no native memory, column lists only.
+        ObjList<FuzzColumnType> pinnedTypes = new ObjList<>();
+        pinnedTypes.add(IPv4Type.INSTANCE);
+        pinnedTypes.add(UuidType.INSTANCE);
+        int[] pairs = countSameTypePairTables(new Rnd(0x5eed, 0xdec4), pinnedTypes);
+        Assert.assertTrue(
+                "the factory dealt " + pairs[0] + " tables carrying two IPv4 columns over "
+                        + FACTORY_SWEEP_RUNS + " runs, want at least " + MIN_SAME_TYPE_PAIR_TABLES,
+                pairs[0] >= MIN_SAME_TYPE_PAIR_TABLES
+        );
+        Assert.assertTrue(
+                "the factory dealt " + pairs[1] + " tables carrying two UUID columns over "
+                        + FACTORY_SWEEP_RUNS + " runs, want at least " + MIN_SAME_TYPE_PAIR_TABLES,
+                pairs[1] >= MIN_SAME_TYPE_PAIR_TABLES
+        );
+    }
+
+    @Test
+    public void testIdentifierKeySlotDrawFollowsTheTable() {
+        // GroupByClause and SampleByClause each hold one identifier slot in
+        // their key-kind option list, and both fill it from
+        // ExpressionGenerator.pickIdentifierKind rather than drawing one of
+        // UUID, IPv4 and LONG256 blind. This pin drives THOSE TWO PICKERS,
+        // which is the wiring testIdentifierKeySlotLandsOnARealColumn cannot
+        // see: that pin calls pickIdentifierKind itself, so dropping
+        // ColumnKind.randomIdentifier back into either option list orphans the
+        // table-aware picker -- restoring the whole defect -- and leaves it
+        // green. Both pickers are public so this one can reach them.
+        //
+        // The fixture carries exactly ONE identifier type: an IPv4 column, no
+        // UUID and no LONG256. That makes the assertion exact and spares it a
+        // rate and a threshold -- a picker that follows the table can only ever
+        // answer IPV4, while a blind draw answers UUID or LONG256 two times in
+        // three and so fails within the first handful of identifier draws.
+        // The shared columns() fixture cannot serve here: it carries all three
+        // identifier types, so every kind a blind draw can produce is one it
+        // really has a column of.
+        ObjList<FuzzColumn> columns = oneIdentifierTypeColumns();
+        Rnd rnd = new Rnd(0x5eed, 0xdec4);
+        ExpressionGenerator gen = new ExpressionGenerator(rnd, columns, null, 2);
+        int groupByDraws = 0;
+        int groupByOffTable = 0;
+        int sampleByDraws = 0;
+        int sampleByOffTable = 0;
+        for (int i = 0; i < IDENTIFIER_KEY_SLOT_PICKER_DRAWS; i++) {
+            ColumnKind groupByKind = GroupByClause.pickGroupableKind(rnd, gen);
+            if (groupByKind.isIdentifier()) {
+                groupByDraws++;
+                if (groupByKind != ColumnKind.IPV4) {
+                    groupByOffTable++;
+                }
+            }
+            ColumnKind sampleByKind = SampleByClause.pickGroupableKind(rnd, gen);
+            if (sampleByKind.isIdentifier()) {
+                sampleByDraws++;
+                if (sampleByKind != ColumnKind.IPV4) {
+                    sampleByOffTable++;
+                }
+            }
+        }
+        // An option list that stopped offering an identifier kind at all would
+        // satisfy the two assertions below for free, so demand the sample
+        // actually held identifier draws first.
+        Assert.assertTrue(
+                "the GROUP BY key-kind picker drew no identifier kind at all over "
+                        + IDENTIFIER_KEY_SLOT_PICKER_DRAWS + " draws",
+                groupByDraws > 0
+        );
+        Assert.assertTrue(
+                "the SAMPLE BY key-kind picker drew no identifier kind at all over "
+                        + IDENTIFIER_KEY_SLOT_PICKER_DRAWS + " draws",
+                sampleByDraws > 0
+        );
+        Assert.assertEquals(
+                "the GROUP BY key-kind picker drew an identifier kind the table carries no column of "
+                        + groupByOffTable + " times out of " + groupByDraws + " identifier draws",
+                0, groupByOffTable
+        );
+        Assert.assertEquals(
+                "the SAMPLE BY key-kind picker drew an identifier kind the table carries no column of "
+                        + sampleByOffTable + " times out of " + sampleByDraws + " identifier draws",
+                0, sampleByOffTable
+        );
+    }
+
+    @Test
+    public void testIdentifierKeySlotLandsOnARealColumn() throws SqlException {
+        // A GROUP BY or SAMPLE BY key slot that asks for "an identifier" has to
+        // reach a real UUID, IPv4 or LONG256 COLUMN. A literal in that slot
+        // buckets the whole table into one row and exercises nothing.
+        //
+        // This pin calls pickIdentifierKind itself and measures the FILL RATE
+        // the whole generateOfKind path reaches over the tables the factory
+        // really deals; testIdentifierKeySlotDrawFollowsTheTable covers the
+        // other half, that the two clause pickers still route their identifier
+        // slot through it. Neither implies the other: a leaf that stopped
+        // preferring a real column would sink the rate below with the wiring
+        // pin green, and an option list that went back to a blind draw would
+        // fail the wiring pin while this sweep, driving the picker directly,
+        // never notices.
+        //
+        // Giving UUID, IPv4 and LONG256 a kind each is what made the ordering
+        // defects above findable and it stands, but a concrete kind matches
+        // only its own columns: of the tables FuzzTableFactory deals, 41% carry
+        // exactly one of the three types and 18% carry none, so a picker
+        // drawing one of the three blind sent the slot to a kind the table had
+        // no column of most of the time, and generateLeafOfKind answered with a
+        // constant. ExpressionGenerator.pickIdentifierKind draws among the
+        // kinds the table carries instead.
+        //
+        // Both rates over this sweep: the blind uniform draw fills 26.60% of
+        // the slots at the pinned seed (25.30%..27.11% over 400 sweeps of two
+        // seed families -- Rnd(0x5eed + i, 0xdec4 + i) and seed pairs drawn
+        // from Rnd(1, 2)), the table-aware draw 49.22% (47.62%..50.33% over
+        // 1_000 sweeps of the same families). The floor sits at 40: it leaves
+        // 1.19x of headroom under the leanest table-aware sweep and still fails
+        // a return to the blind draw by 1.47x.
+        //
+        // The kind assertion guards the other half of the fix. Restoring the
+        // fill rate DOWNSTREAM instead -- letting generateLeafOfKind hand back a
+        // column of whichever identifier kind the table happens to carry --
+        // reaches the same 49%, but then 22.6% of the draws come back as a
+        // column of a kind other than the one asked for. That breaks the promise
+        // generateOfKind makes to its caller, and
+        // PredicateGenerator.appendComparison rests on it: it draws both
+        // operands of a comparison from one kind, and the three identifier types
+        // are mutually incomparable. Today every comparison kind is anchored on
+        // a real column, so that variant emits no cross-type comparison as the
+        // generators stand; hand it a kind drawn blind, as this slot's picker
+        // does, and 23_770 of 107_628 comparisons come out cross-type --
+        // c_uuid < '128.0.0.0', the exact noise the split removed.
+        int[] counts = countIdentifierKeySlotFills(new Rnd(0x5eed, 0xdec4));
+        Assert.assertEquals(
+                "the key slot produced " + counts[2] + " expressions of an identifier kind other than the one drawn",
+                0, counts[2]
+        );
+        Assert.assertTrue(
+                "identifier key slots landed on a real column " + counts[1] + " times out of " + counts[0]
+                        + ", want at least " + MIN_IDENTIFIER_KEY_SLOT_FILL_PCT + "%",
+                100L * counts[1] >= (long) MIN_IDENTIFIER_KEY_SLOT_FILL_PCT * counts[0]
+        );
+    }
+
+    @Test
     public void testIPv4ComparesWithOrderingOperator() {
         // ipv4Col < ipv4Col2 is the shape issue 7547 reported, and the two
         // operands have to be DISTINCT columns for the corpus to hold it --
@@ -283,6 +514,11 @@ public class FilterShapeCoverageTest {
         // keeps a wide margin at the new distribution; the thinnest is "nested
         // comparison under NOT" at 176 matches over the 20_000-predicate
         // corpus.
+        //
+        // Hand-building the fixture pins what PredicateGenerator can spell, not
+        // what QueryFuzzTest's corpus contains.
+        // testFactoryDealsSameTypeColumnPairs pins the second half: that
+        // FuzzTableFactory really deals a table carrying a same-type pair.
         columns.add(new FuzzColumn("c_ip", IPv4Type.INSTANCE));
         columns.add(new FuzzColumn("c_ip2", IPv4Type.INSTANCE));
         columns.add(new FuzzColumn("c_uuid", UuidType.INSTANCE));
@@ -291,6 +527,86 @@ public class FilterShapeCoverageTest {
         columns.add(new FuzzColumn("c_int", IntType.INSTANCE));
         columns.add(new FuzzColumn("ts", TimestampType.INSTANCE));
         return columns;
+    }
+
+    /**
+     * Drives {@link #IDENTIFIER_KEY_SLOT_DRAWS_PER_TABLE} identifier key-slot
+     * draws over every table of a {@link #FACTORY_SWEEP_RUNS} sweep, the way
+     * {@code GroupByClause} and {@code SampleByClause} fill their key slots:
+     * {@link ExpressionGenerator#pickIdentifierKind} settles the kind, then
+     * {@link ExpressionGenerator#generateOfKind} builds the expression.
+     * <p>
+     * Returns {@code {draws, draws that produced a column ref, draws whose
+     * expression kind differs from the kind drawn}}. The third counter is the
+     * type-coherence check: {@code generateOfKind(kind)} owes its caller an
+     * expression OF that kind, whether the table carries a column of it or not.
+     */
+    private static int[] countIdentifierKeySlotFills(Rnd rnd) throws SqlException {
+        int[] counts = new int[3];
+        for (int run = 0; run < FACTORY_SWEEP_RUNS; run++) {
+            FuzzConfig config = new FuzzConfig(rnd);
+            FuzzTableFactory factory = new FuzzTableFactory(config);
+            for (int t = 0; t < config.getNumTables(); t++) {
+                ObjList<FuzzColumn> dealt = factory.create(rnd, "fuzz_t" + t, sql -> {
+                }, () -> {
+                }).getColumns();
+                ExpressionGenerator gen = new ExpressionGenerator(rnd, dealt, null, 2);
+                for (int i = 0; i < IDENTIFIER_KEY_SLOT_DRAWS_PER_TABLE; i++) {
+                    ColumnKind kind = gen.pickIdentifierKind();
+                    FuzzExpr key = gen.generateOfKind(kind);
+                    counts[0]++;
+                    if (key instanceof ColumnRefExpr) {
+                        counts[1]++;
+                    }
+                    if (key.getKind() != kind) {
+                        counts[2]++;
+                    }
+                }
+            }
+        }
+        return counts;
+    }
+
+    /**
+     * Runs {@link #FACTORY_SWEEP_RUNS} simulated fuzz runs through
+     * {@link FuzzTableFactory} and returns, per entry of {@code types}, how
+     * many of the tables they built carry two or more columns of that type.
+     * <p>
+     * One sweep answers for every type at once. The counts come off the same
+     * corpus, so a second type costs the caller no extra runs -- asking twice
+     * with the same seed would rebuild the identical corpus for nothing.
+     * <p>
+     * Each iteration mirrors {@code QueryFuzzTest.runFuzz}: one
+     * {@link FuzzConfig} and one factory per run -- the factory holds the run's
+     * type deck, so sharing it across the run's tables is what lets a later
+     * table see a spent deck -- and {@code config.getNumTables()} tables dealt
+     * off it. The SQL executor and the WAL drain are no-ops, so the sweep
+     * builds column lists and DDL strings and touches no storage.
+     */
+    private static int[] countSameTypePairTables(Rnd rnd, ObjList<FuzzColumnType> types) throws SqlException {
+        int[] pairs = new int[types.size()];
+        for (int run = 0; run < FACTORY_SWEEP_RUNS; run++) {
+            FuzzConfig config = new FuzzConfig(rnd);
+            FuzzTableFactory factory = new FuzzTableFactory(config);
+            for (int t = 0; t < config.getNumTables(); t++) {
+                ObjList<FuzzColumn> dealt = factory.create(rnd, "fuzz_t" + t, sql -> {
+                }, () -> {
+                }).getColumns();
+                for (int k = 0, m = types.size(); k < m; k++) {
+                    FuzzColumnType type = types.getQuick(k);
+                    int matches = 0;
+                    for (int i = 0, n = dealt.size(); i < n; i++) {
+                        if (dealt.getQuick(i).getType() == type) {
+                            matches++;
+                        }
+                    }
+                    if (matches > 1) {
+                        pairs[k]++;
+                    }
+                }
+            }
+        }
+        return pairs;
     }
 
     private static String generateCorpus() {
@@ -314,6 +630,27 @@ public class FilterShapeCoverageTest {
                 + "|[^()\\n]+ (?:<=|>=|<|>) " + column
                 + ")\\)(?!::)";
         return Pattern.compile(inner + " (?:=|!=) |(?:=|!=) " + inner);
+    }
+
+    /**
+     * A column list carrying exactly ONE identifier type -- an IPv4 column, and
+     * no UUID or LONG256 column. {@link #testIdentifierKeySlotDrawFollowsTheTable}
+     * needs exactly one so that "the identifier kind this table carries" is a
+     * single value and the pin can assert an equality rather than a rate.
+     * <p>
+     * The rest of the list only has to give the non-identifier options of the
+     * two key-kind pickers something to land on; nothing about it is load
+     * bearing beyond carrying no second identifier type.
+     */
+    private static ObjList<FuzzColumn> oneIdentifierTypeColumns() {
+        ObjList<FuzzColumn> columns = new ObjList<>();
+        columns.add(new FuzzColumn("sym", SymbolType.INSTANCE));
+        columns.add(new FuzzColumn("c_char", CharType.INSTANCE));
+        columns.add(new FuzzColumn("c_bool", BooleanType.INSTANCE));
+        columns.add(new FuzzColumn("c_ip", IPv4Type.INSTANCE));
+        columns.add(new FuzzColumn("c_int", IntType.INSTANCE));
+        columns.add(new FuzzColumn("ts", TimestampType.INSTANCE));
+        return columns;
     }
 
     /**

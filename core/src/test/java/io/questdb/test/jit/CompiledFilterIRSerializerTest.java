@@ -2506,18 +2506,67 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testIPv4Ordering() throws Exception {
         // https://github.com/questdb/questdb/issues/7547
+        final String[] literals = {
+                "'127.255.255.255'",
+                "'128.0.0.0'",
+                "'255.255.255.255'",
+                "'0.0.0.0'",
+                "'null'"
+        };
+
+        // serializeIPv4Ordering() emits AND, OR, EQ, NE and LT only - never a short-circuit
+        // opcode - so assertIRStackBalanced() reads every spelling below. A stream that pops more
+        // than it pushed reaches the user as a SIGSEGV inside questdb::avx2::emit_bin_op rather
+        // than as a JIT decline, so each shape has to be judged here.
         for (String operator : new String[]{"<", "<=", ">", ">="}) {
             serialize("anipv4 " + operator + " anipv4");
-            for (String literal : new String[]{
-                    "'127.255.255.255'",
-                    "'128.0.0.0'",
-                    "'255.255.255.255'",
-                    "'0.0.0.0'",
-                    "'null'"
-            }) {
+            assertIRStackBalanced();
+            for (String literal : literals) {
                 serialize("anipv4 " + operator + " " + literal);
+                assertIRStackBalanced();
                 serialize(literal + " " + operator + " anipv4");
+                assertIRStackBalanced();
             }
+        }
+
+        // Pin the exact stream for one strict and one non-strict shape, the way testCharOrdering
+        // pins its own: the balance walk above still passes on a wrong-but-well-formed expansion.
+        serialize("anipv4 < '127.255.255.255'");
+        assertIR(
+                "(i32 0L)(i32 anipv4)(<>)(i32 0L)(i32 2147483647L)(<>)(&&)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 -2147483648L)(i32 2147483647L)(<>)(&&)" +
+                        "(i32 2147483647L)(i32 anipv4)(<)(||)" +
+                        "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)" +
+                        "(i32 0L)(i32 2147483647L)(<)(i32 -2147483648L)(i32 2147483647L)(=)(||)" +
+                        "(<>)(<>)(&&)(ret)"
+        );
+
+        // Non-strict ordering appends the equality arm, and nothing else differs.
+        serialize("anipv4 <= '127.255.255.255'");
+        assertIR(
+                "(i32 0L)(i32 anipv4)(<>)(i32 0L)(i32 2147483647L)(<>)(&&)" +
+                        "(i32 -2147483648L)(i32 anipv4)(=)(i32 -2147483648L)(i32 2147483647L)(<>)(&&)" +
+                        "(i32 2147483647L)(i32 anipv4)(<)(||)" +
+                        "(i32 0L)(i32 anipv4)(<)(i32 -2147483648L)(i32 anipv4)(=)(||)" +
+                        "(i32 0L)(i32 2147483647L)(<)(i32 -2147483648L)(i32 2147483647L)(=)(||)" +
+                        "(<>)(<>)(&&)" +
+                        "(i32 2147483647L)(i32 anipv4)(=)(||)(ret)"
+        );
+
+        // serializeIPv4Ordering() swaps its operands for GT and GE and then expands them exactly as
+        // it expands LT and LE, so each greater-than spelling has to produce the stream its
+        // mirrored less-than spelling produces. A dropped swap stays well-formed and balanced, so
+        // the walk above cannot see it.
+        for (String literal : literals) {
+            serialize(literal + " < anipv4");
+            final String lt = irWithoutRet();
+            serialize("anipv4 > " + literal);
+            assertIR("anipv4 > " + literal, lt + "(ret)");
+
+            serialize(literal + " <= anipv4");
+            final String le = irWithoutRet();
+            serialize("anipv4 >= " + literal);
+            assertIR("anipv4 >= " + literal, le + "(ret)");
         }
     }
 

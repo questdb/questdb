@@ -76,7 +76,7 @@ public final class SampleByClause {
         sql.put(source.getPrefixSql());
         sql.put("SELECT ");
         if (rnd.nextBoolean()) {
-            FuzzExpr key = exprGen.generateOfKind(pickGroupableKind(rnd));
+            FuzzExpr key = exprGen.generateOfKind(pickGroupableKind(rnd, exprGen));
             key.appendSql(sql, ctx);
             if (useColAliases) {
                 sql.put(" AS k_a");
@@ -154,10 +154,23 @@ public final class SampleByClause {
         return new GeneratedQuery(sql.toString(), true);
     }
 
-    private static ColumnKind pickGroupableKind(Rnd rnd) {
+    /**
+     * Draws the kind of the SAMPLE BY key slot. The identifier slot asks
+     * {@code exprGen} which of UUID, IPv4 and LONG256 the table carries rather
+     * than drawing one of the three blind -- see
+     * {@link ExpressionGenerator#pickIdentifierKind} for what a blind draw
+     * costs and why the choice cannot move downstream into the leaf.
+     * <p>
+     * Public for the same reason as {@link GroupByClause#pickGroupableKind}:
+     * {@code FilterShapeCoverageTest#testIdentifierKeySlotDrawFollowsTheTable}
+     * drives this picker itself, so putting
+     * {@link ColumnKind#randomIdentifier} back into the option list below
+     * fails that pin instead of quietly orphaning the table-aware draw.
+     */
+    public static ColumnKind pickGroupableKind(Rnd rnd, ExpressionGenerator exprGen) {
         ColumnKind[] options = {
                 ColumnKind.STRING_LIKE, ColumnKind.NUMERIC, ColumnKind.BOOLEAN,
-                ColumnKind.CHAR, ColumnKind.randomIdentifier(rnd), ColumnKind.DECIMAL
+                ColumnKind.CHAR, exprGen.pickIdentifierKind(), ColumnKind.DECIMAL
         };
         return options[rnd.nextInt(options.length)];
     }

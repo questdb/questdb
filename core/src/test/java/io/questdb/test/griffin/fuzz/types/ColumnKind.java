@@ -59,10 +59,24 @@ public enum ColumnKind {
     private static final ColumnKind[] IDENTIFIER_KINDS = {UUID, IPV4, LONG256};
 
     /**
-     * Draws one of the three identifier kinds uniformly. Kind pickers call it
-     * so "an identifier" stays a single slot in their option list, keeping the
-     * odds of an identifier group-by or sample-by key what they were while the
-     * three shared one kind.
+     * Draws one of the three identifier kinds uniformly, for a column list that
+     * carries none of them.
+     * <p>
+     * {@code ExpressionGenerator.pickIdentifierKind} is the only caller, and it
+     * reaches this uniform draw only when no column of the list is a UUID, an
+     * IPv4 or a LONG256. Every kind is worth the same there: no column matches
+     * whichever one comes up, so {@code generateLeafOfKind} answers with a
+     * literal constant either way. On a list carrying at least one of the
+     * three, that picker draws among the kinds present instead.
+     * <p>
+     * A kind picker must not call this directly. The three kinds are separate
+     * so that both operands of a comparison come from one of them, which means
+     * a blind draw is free to land on a kind the table has no column of, and
+     * 41% of the tables {@code FuzzTableFactory} deals carry exactly one of the
+     * three. Drawing blind from a GROUP BY or SAMPLE BY key slot cost that slot
+     * most of its real columns: measured over 249_818 tables, 26.2% of
+     * identifier key-slot draws landed on a column ref, against 48.9% for the
+     * table-aware draw.
      */
     public static ColumnKind randomIdentifier(Rnd rnd) {
         return IDENTIFIER_KINDS[rnd.nextInt(IDENTIFIER_KINDS.length)];
