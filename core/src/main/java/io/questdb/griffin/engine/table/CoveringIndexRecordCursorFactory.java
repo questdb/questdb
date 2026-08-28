@@ -509,7 +509,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // equality ("sym = 'x'") is produced metadata-only at frame production and decoded in
         // parallel on the reduce workers, whereas an IN-list ("sym IN (...)") is decoded eagerly via
         // the multi-key merge. The parallelism itself surfaces on the parent async operator's plan.
-        if (keyValueFuncs != null) {
+        if (patternKeys != null) {
+            sink.attr("filter").putColumnName(keyQueryPosition).val(" matches pattern");
+        } else if (keyValueFuncs != null) {
             sink.attr("filter").putColumnName(keyQueryPosition).val(" IN ").val(keyValueFuncs);
         } else {
             sink.attr("filter").putColumnName(keyQueryPosition).val('=').val(symbolFunction);

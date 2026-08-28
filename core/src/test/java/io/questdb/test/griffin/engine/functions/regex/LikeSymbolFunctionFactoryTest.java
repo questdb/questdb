@@ -77,6 +77,125 @@ public class LikeSymbolFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBindVariableRetainedFactoryScansOnlyWhenStateChanges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('beta')");
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym LIKE $1")) {
+                AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    bindVariableService.setStr(0, "al%");
+                    assertBoundLike(factory, "sym\nalpha\n");
+                    Assert.assertEquals(1, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    assertBoundLike(factory, "sym\nalpha\n");
+                    Assert.assertEquals(
+                            "an unchanged bind and dictionary must reuse the matched keys",
+                            1,
+                            AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    bindVariableService.setStr(0, "b%");
+                    assertBoundLike(factory, "sym\nbeta\n");
+                    Assert.assertEquals(2, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    execute("INSERT INTO x VALUES ('alto'), ('bravo')");
+                    assertBoundLike(factory, "sym\nbeta\nbravo\n");
+                    Assert.assertEquals(3, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    assertBoundLike(factory, "sym\nbeta\nbravo\n");
+                    Assert.assertEquals(3, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    bindVariableService.setStr(0, null);
+                    assertBoundLike(factory, "sym\n");
+                    Assert.assertEquals(3, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    bindVariableService.setStr(0, "");
+                    assertBoundLike(factory, "sym\n");
+                    Assert.assertEquals(3, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    bindVariableService.setStr(0, "al%");
+                    assertBoundLike(factory, "sym\nalpha\nalto\n");
+                    Assert.assertEquals(4, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableRetainedAsyncFactoryRebuildsAfterSameCountTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('alto'), ('beta'), ('bravo')");
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym LIKE $1")) {
+                AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    bindVariableService.setStr(0, "al%");
+                    assertBoundLike(factory, "sym\nalpha\nalto\n");
+                    planSink.clear();
+                    factory.toPlan(planSink);
+                    TestUtils.assertContains(planSink.getSink(), "Async Filter workers: 1");
+                    TestUtils.assertContains(planSink.getSink(), "[state-shared]");
+
+                    execute("TRUNCATE TABLE x");
+                    execute("INSERT INTO x VALUES ('amber'), ('delta'), ('alder'), ('foxtrot')");
+                    assertBoundLike(factory, "sym\nalder\n");
+                    Assert.assertEquals(
+                            "replacing a same-size dictionary behind an async symbol-table view must rebuild the retained keys",
+                            2,
+                            AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    assertBoundLike(factory, "sym\nalder\n");
+                    Assert.assertEquals(2, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableRetainedFactoryRebuildsAfterSameCountTruncate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('alto'), ('beta'), ('bravo')");
+
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym LIKE $1")) {
+                AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    bindVariableService.setStr(0, "al%");
+                    assertBoundLike(factory, "sym\nalpha\nalto\n");
+
+                    execute("TRUNCATE TABLE x");
+                    execute("INSERT INTO x VALUES ('amber'), ('delta'), ('alder'), ('foxtrot')");
+                    assertBoundLike(factory, "sym\nalder\n");
+                    Assert.assertEquals(
+                            "replacing a same-size dictionary must rebuild the retained keys",
+                            2,
+                            AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    assertBoundLike(factory, "sym\nalder\n");
+                    Assert.assertEquals(2, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
     public void testBindVariableRebindRebuildsSymbolKeys() throws Exception {
         // A compiled statement outlives the values bound to it. The per-worker clones of the LIKE
         // predicate inherit the owner's matched symbol keys instead of re-deriving them, so a clone

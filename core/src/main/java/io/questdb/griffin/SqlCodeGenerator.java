@@ -2157,6 +2157,54 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return new WorkerFunctionLists(perWorkerGroupByFunctions, perWorkerKeyFunctions);
     }
 
+    private @Nullable ObjList<Function> compilePreparedSymbolPatternWorkerFilters(
+            SqlExecutionContext executionContext,
+            AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter,
+            int sharedQueryWorkerCount,
+            RecordMetadata metadata
+    ) throws SqlException {
+        if (filter.isThreadSafe() || sharedQueryWorkerCount == 0) {
+            return null;
+        }
+
+        final ExpressionNode providerExpression = filter.getProviderExpression();
+        final ExpressionNode residualExpression = filter.getResidualExpression();
+        assert providerExpression != null;
+        final ObjList<Function> workerFilters = new ObjList<>();
+        Function workerProvider = null;
+        Function workerResidual = null;
+        try {
+            for (int i = 0; i < sharedQueryWorkerCount; i++) {
+                restoreWhereClause(providerExpression);
+                workerProvider = functionParser.parseFunction(providerExpression, metadata, executionContext);
+                assert workerProvider instanceof SymbolKeySetProvider;
+                if (residualExpression != null) {
+                    restoreWhereClause(residualExpression);
+                    workerResidual = compileBooleanFilter(residualExpression, metadata, executionContext);
+                }
+                workerFilters.extendAndSet(
+                        i,
+                        new AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter(
+                                workerProvider,
+                                workerResidual,
+                                filter.isNegated(),
+                                filter.getSymbolColumnIndex(),
+                                providerExpression,
+                                residualExpression
+                        )
+                );
+                workerProvider = null;
+                workerResidual = null;
+            }
+        } catch (Throwable th) {
+            Misc.free(workerProvider, th);
+            Misc.free(workerResidual, th);
+            Misc.freeObjList(workerFilters, th);
+            throw th;
+        }
+        return workerFilters;
+    }
+
     /**
      * Re-compiles the filter expression once per worker, for a filter that is not thread safe.
      * <p>
@@ -2171,27 +2219,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             @Nullable ExpressionNode filterExpr,
             RecordMetadata metadata
     ) throws SqlException {
-        // Filter-stealing parents may receive the prepared symbol-pattern owner while filterExpr
-        // still describes the original full predicate. Recompiling that expression intentionally
-        // produces a different class; all other callers retain the same-class assertion.
-        return compileWorkerFiltersConditionally(
-                executionContext,
-                filter,
-                sharedQueryWorkerCount,
-                filterExpr,
-                metadata,
-                !(filter instanceof AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter)
-        );
-    }
-
-    private @Nullable ObjList<Function> compileWorkerFiltersConditionally(
-            SqlExecutionContext executionContext,
-            @Nullable Function filter,
-            int sharedQueryWorkerCount,
-            @Nullable ExpressionNode filterExpr,
-            RecordMetadata metadata,
-            boolean isSameClassExpected
-    ) throws SqlException {
+        if (filter instanceof AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter preparedFilter) {
+            return compilePreparedSymbolPatternWorkerFilters(
+                    executionContext,
+                    preparedFilter,
+                    sharedQueryWorkerCount,
+                    metadata
+            );
+        }
         if (filter != null && !filter.isThreadSafe() && sharedQueryWorkerCount > 0) {
             assert filterExpr != null;
             ObjList<Function> workerFilters = new ObjList<>();
@@ -2200,7 +2235,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     restoreWhereClause(filterExpr); // restore original filters in node query models
                     Function workerFilter = compileBooleanFilter(filterExpr, metadata, executionContext);
                     workerFilters.extendAndSet(i, workerFilter);
-                    assert !isSameClassExpected || filter.getClass() == workerFilter.getClass();
+                    assert filter.getClass() == workerFilter.getClass();
                 }
             } catch (Throwable th) {
                 Misc.freeObjList(workerFilters);
@@ -13017,10 +13052,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // The ORIGINAL conjunct at patternIdx is excluded when building the residual (step 5 below skips i==patternIdx);
         // the POSITIVE node is compiled as the provider. For both polarities positiveNode.lhs is the symbol-column literal.
         final int keyColumnIndex = queryMeta.getColumnIndexQuiet(positiveNode.lhs.token);
+        final ExpressionNode providerExpression = deepClone(expressionNodePool, positiveNode);
 
         AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter patternFilter = null;
         Function providerFunction = null;
         Function residualFilter = null;
+        ExpressionNode residualExpression = null;
         RecordCursorFactory coveringDelegate = null;
         RecordCursorFactory indexDelegate = null;
         RecordCursorFactory scanDelegate = null;
@@ -13036,6 +13073,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             } finally {
                 Misc.free(limitLoFunction);
+            }
+
+            // Case B synthesizes a positive '~' provider whose signature accepts runtime patterns. Compile
+            // the original '!~' first so its stricter constant-pattern contract remains authoritative.
+            if (isNegated && Chars.equals(conjuncts.getQuick(patternIdx).token, "!~")) {
+                Function ordinaryNegatedFunction = null;
+                try {
+                    ordinaryNegatedFunction = functionParser.parseFunction(
+                            conjuncts.getQuick(patternIdx), queryMeta, executionContext
+                    );
+                } finally {
+                    Misc.free(ordinaryNegatedFunction);
+                }
             }
 
             // 4) compile the POSITIVE pattern predicate; bail out (freeing it) unless it is a key-set provider
@@ -13065,6 +13115,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
             if (residualRoot != null) {
+                residualExpression = deepClone(expressionNodePool, residualRoot);
                 residualFilter = compileBooleanFilter(residualRoot, queryMeta, executionContext);
             }
 
@@ -13077,7 +13128,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     providerFunction,
                     residualFilter,
                     isNegated,
-                    keyColumnIndex
+                    keyColumnIndex,
+                    providerExpression,
+                    residualExpression
             );
             providerFunction = null;
             residualFilter = null;
@@ -13629,15 +13682,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
                 final ExpressionNode filterExprCopy = deepClone(expressionNodePool, filterExpr);
-                // Worker clones compile the original full predicate, not the prepared filter wrapper,
-                // so their concrete class intentionally differs even though their result is equivalent.
+                // Compile worker filters into the same selected-provider/residual shape as the prepared
+                // owner. Their corresponding function children can then transfer state directly.
                 final ObjList<Function> perWorkerFilters = compileWorkerFiltersConditionally(
                         executionContext,
                         filter,
                         executionContext.getSharedQueryWorkerCount(),
                         filterExpr,
-                        queryMeta,
-                        false
+                        queryMeta
                 );
                 return new AsyncFilteredRecordCursorFactory(
                         executionContext.getCairoEngine(),

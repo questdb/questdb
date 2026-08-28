@@ -156,6 +156,16 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof MatchStaticSymbolTableConstPatternFunction target) {
+                target.symbolKeys.clear();
+                target.symbolKeys.addAll(symbolKeys);
+                target.initialized = initialized;
+            }
+            UnaryFunction.super.offerStateTo(that);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(symbolFun).val(" ~ ").val(matcher.pattern().toString());
         }
@@ -223,6 +233,16 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         @Override
         public boolean isRuntimeConstant() {
             return false;
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof MatchStaticSymbolTableRuntimeConstPatternFunction target) {
+                target.symbolKeys.clear();
+                target.symbolKeys.addAll(symbolKeys);
+                target.initialized = initialized;
+            }
+            UnaryFunction.super.offerStateTo(that);
         }
 
         @Override

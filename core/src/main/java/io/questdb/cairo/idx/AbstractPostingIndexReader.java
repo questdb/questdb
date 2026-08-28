@@ -62,6 +62,9 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Arrays;
 
 public abstract class AbstractPostingIndexReader implements IndexReader {
+    /** Metadata explicitly requires conservative adaptive rejection without cursor traversal. */
+    public static final long ESTIMATE_REJECT = -1;
+    private static final long ORDINALS_UNRANKED = Long.MIN_VALUE;
     // Number of consecutive values decoded per FSST decompressBlock0 call.
     // The block as a whole is symbol-table-trained once (imported on first
     // access), then chunks are decoded on demand as the cursor walks the
@@ -261,10 +264,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * max bound {@code size()} uses), summing the per-gen counts of fully-covered gens
      * and skipping ALL_DIRTY gens.
      * <p>
-     * Returns {@link Numbers#LONG_NULL} (so the caller falls back to the traverse) on a
-     * GENUINELY clipped (MIXED) gen — exactly the cases {@link #selectKthMatch} also
-     * sentinels — so that {@code countMatchesClamped} and {@code selectKthMatch} agree on
-     * which layouts are metadata-resolvable and compose with no sentinel surprise.
+     * FLAT, DELTA, and newly ranked EF blobs share one exact clipped-ordinal calculation.
+     * A genuinely clipped legacy unranked EF blob returns {@link Numbers#LONG_NULL}; reading
+     * remains correct through the ordinary cursor, but bounded exact rank cannot be recovered
+     * from that legacy prefix without a cardinality-scaled high-vector scan.
      * <p>
      * Unlike {@code coveringCursor.size()}, this does NOT false-bail when the encoding's
      * slack max upper bound straddles {@code maxValueClamped} while the true max is within
@@ -281,7 +284,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * @return the exact clamped match count, or {@link Numbers#LONG_NULL} to signal "fall back to traverse"
      */
     public long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped) {
-        if (key < 0 || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
+        if (key < 0) {
             return Numbers.LONG_NULL;
         }
 
@@ -298,65 +301,70 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             total += Math.max(0L, nullCount - minValue);
         }
 
-        if (key >= keyCount) {
+        if (key >= keyCount || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
             // Only the null prefix is addressable for a key past keyCount; if the key
             // had real postings the cursor would visit gens, so a key past keyCount with
             // no null prefix contributes nothing — total is exact (possibly 0).
             return total;
         }
 
-        // Forward gen walk (cursor order), applying selectKthMatch's EXACT coverage check.
+        // Every execution primitive uses the same per-generation clipped ordinal pair. FLAT
+        // and DELTA resolve it by bounded random access; ranked EF uses its fixed-stride trailer.
+        // Legacy unranked EF deliberately returns the sentinel for a genuine clip.
         for (int g = 0; g < genCount; g++) {
-            int gkc = genLookup.getGenKeyCount(g);
-            long count;
-            if (gkc >= 0) {
-                if (key >= gkc) {
-                    continue;
-                }
-                count = selectDenseKeyCount(key, g, gkc);
-            } else {
-                if (genLookup.notContainKey(valueMem, g, key)) {
-                    continue;
-                }
-                count = selectSparseKeyCount(key, g, -gkc);
-            }
-            if (count <= 0) {
-                continue; // key absent / empty in this gen
-            }
-            // The per-gen ordinal is int-indexed throughout the index format (the cursor
-            // itself walks int ordinals), so a single (key, gen) never holds > 2^31
-            // postings. Assert it so the (int) casts below fail loud rather than silently
-            // truncating if that cap is ever raised.
-            assert count <= Integer.MAX_VALUE : "per-gen match count exceeds int range: " + count;
-            long exactMin = gkc >= 0
-                    ? selectDenseKthValue(key, g, gkc, 0)
-                    : selectSparseKthValue(key, g, -gkc, 0);
-            long exactMax = gkc >= 0
-                    ? selectDenseKthValue(key, g, gkc, (int) (count - 1))
-                    : selectSparseKthValue(key, g, -gkc, (int) (count - 1));
-            if (exactMin == Numbers.LONG_NULL || exactMax == Numbers.LONG_NULL) {
-                return Numbers.LONG_NULL;
-            }
-            // Fully past the clamp: the cursor skips the whole gen (ALL_DIRTY).
-            if (exactMin > maxValueClamped) {
+            final int genKeyCount = genLookup.getGenKeyCount(g);
+            if (genKeyCount < 0 && genLookup.notContainKey(valueMem, g, key)) {
                 continue;
             }
-            // Fully below the low bound: every posting in this gen is < minValue, so the
-            // cursor filters them all out and the gen contributes 0 — skip it (the symmetric
-            // counterpart of the fully-above-clamp case above). Without this, such a gen would
-            // trip the exactMin < minValue MIXED check below and force the whole (key,
-            // partition) onto the O(rows) traverse, even though it is cleanly empty here.
-            if (exactMax < minValue) {
-                continue;
-            }
-            // Partially clipped (genuine MIXED — straddles minValue or the clamp): bail to the
-            // traverse fallback. exactMax >= minValue here, so exactMin < minValue means a true
-            // straddle (some postings below minValue, some at/above), which the full count would
-            // over-count.
-            if (exactMax > maxValueClamped || exactMin < minValue) {
+            final long ordinals = clippedOrdinals(key, g, genKeyCount, minValue, maxValueClamped);
+            if (ordinals == ORDINALS_UNRANKED) {
                 return Numbers.LONG_NULL;
             }
-            total += count;
+            total += ordinalHi(ordinals) - ordinalLo(ordinals);
+        }
+        return total;
+    }
+
+    /**
+     * Returns an exact metadata-only estimate of {@code key}'s postings in the requested range.
+     * Dense and sparse FLAT/DELTA use bounded random access, while ranked Elias-Fano uses persisted
+     * fixed-stride checkpoints. A genuinely clipped legacy unranked EF blob returns
+     * {@link #ESTIMATE_REJECT}, requiring conservative adaptive rejection without cursor traversal.
+     * The generation count has the format-level {@link PostingIndexUtils#MAX_GEN_COUNT} bound.
+     *
+     * @param key             column key (>= 0)
+     * @param minValue        inclusive lower bound
+     * @param nullMaxValue    unclamped inclusive caller max for the implicit-null prefix
+     * @param maxValueClamped inclusive posting upper bound, clamped to {@link #getEntryMaxValue()}
+     * @return an exact count or conservative upper bound; {@link Numbers#LONG_NULL} for an invalid key
+     */
+    public long estimateMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped) {
+        if (key < 0) {
+            return Numbers.LONG_NULL;
+        }
+
+        long total = 0;
+        if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            long nullCount = Math.min(columnTop, nullMaxValue == Long.MAX_VALUE ? Long.MAX_VALUE : nullMaxValue + 1);
+            total = Math.max(0L, nullCount - minValue);
+        }
+        if (key >= keyCount || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
+            return total;
+        }
+
+        for (int g = 0; g < genCount; g++) {
+            final int genKeyCount = genLookup.getGenKeyCount(g);
+            if (genKeyCount < 0 && genLookup.notContainKey(valueMem, g, key)) {
+                continue;
+            }
+            final long ordinals = clippedOrdinals(key, g, genKeyCount, minValue, maxValueClamped);
+            if (ordinals == ORDINALS_UNRANKED) {
+                // Legacy EF contains no bounded rank metadata. A genuine clip rejects adaptive
+                // admission directly: returning LONG_NULL here would invoke the generic capped
+                // row cursor and make the legacy exception look like an ordinary unknown path.
+                return ESTIMATE_REJECT;
+            }
+            total += ordinalHi(ordinals) - ordinalLo(ordinals);
         }
         return total;
     }
@@ -368,25 +376,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * the cursor applies ({@code min(callerHi - 1, entryMaxValue)}); callers pass it pre-computed.
      * <p>
      * Equivalence contract: the returned row id is IDENTICAL to the one the forward cursor's
-     * {@code next()} yields at iteration position {@code k} over the same clamped range, PROVIDED
-     * the range covers every visited gen's postings for the key fully. The method walks gens in
-     * forward (cursor) order using the SAME O(1) per-gen count reads {@link AbstractCoveringCursor#size}
-     * uses; the holding gen is the first where {@code acc + c_g > k}, with within-gen index
-     * {@code j = k - acc}. The within-gen value is then read by random access: FLAT stride via a
-     * single {@code unpackValue}; per-key Elias-Fano via the high-bits select + low-bits read;
-     * per-key delta-FoR by locating the owning block from the {@code valueCounts} prefix and
-     * accumulating that block's deltas up to the in-block index (O(j / BLOCK_CAPACITY + j % BLOCK_CAPACITY)).
+     * {@code next()} yields at iteration position {@code k} over the same clamped range. Estimation,
+     * counting, and selection share the same lower/upper per-generation ordinals. FLAT uses packed
+     * random access, DELTA decodes at most one fixed-capacity boundary block, and ranked EF seeks
+     * from a fixed-stride checkpoint.
      * <p>
-     * Coverage is verified EXACTLY (not via the slack max bound {@code size()} uses): the gen's true
-     * first and last postings for the key are read directly. Returns the sentinel
-     * {@link Numbers#LONG_NULL} (so the caller falls back to the traverse) when exact equivalence
-     * cannot be guaranteed by metadata alone:
-     * <ul>
-     *   <li>a visited gen is partially clipped by {@code minValue} or {@code maxValueClamped}
-     *       (genuine MIXED — e.g. dirty rows past the chain entry's MAX_VALUE, or a narrow caller
-     *       range mid-gen) — the cursor would trim it but the O(1) full-gen count would over-count;</li>
-     *   <li>{@code k} is out of range for the clamped match set.</li>
-     * </ul>
+     * Returns {@link Numbers#LONG_NULL} for a genuinely clipped legacy unranked EF blob or when
+     * {@code k} is out of range for the clamped match set. It never returns a wrong row id.
      * Never returns a wrong row id. Asserts {@code minValue <= result <= maxValueClamped} on success.
      *
      * @param key             column key (>= 0); null-prefix handled when {@code key == 0 && columnTop > 0}
@@ -400,7 +396,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * @return the absolute row id, or {@link Numbers#LONG_NULL} to signal "fall back to traverse"
      */
     public long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k) {
-        if (key < 0 || k < 0 || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
+        if (key < 0 || k < 0) {
             return Numbers.LONG_NULL;
         }
 
@@ -426,70 +422,27 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             acc = nullMatches;
         }
 
-        if (key >= keyCount) {
-            // Only the null prefix is addressable for a key past keyCount.
+        if (key >= keyCount || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
+            // Only the independently bounded null prefix can contribute without a posting walk.
             return Numbers.LONG_NULL;
         }
 
-        // Forward gen walk (cursor order). Gen g's rows precede gen g+1's and are
-        // concatenated in gen order, so the k-th match lives in the first gen whose
-        // running count crosses k. Per-gen counts use the same O(1) reads size() uses.
+        // Forward gen walk (cursor order). The identical clipped ordinal pair used by count and
+        // estimation determines both this gen's contribution and the original per-gen ordinal.
         for (int g = 0; g < genCount; g++) {
-            int gkc = genLookup.getGenKeyCount(g);
-            long count;
-            if (gkc >= 0) {
-                if (key >= gkc) {
-                    continue;
-                }
-                count = selectDenseKeyCount(key, g, gkc);
-            } else {
-                if (genLookup.notContainKey(valueMem, g, key)) {
-                    continue;
-                }
-                count = selectSparseKeyCount(key, g, -gkc);
-            }
-            if (count <= 0) {
-                continue; // key absent / empty in this gen
-            }
-            // Per-gen ordinals are int-indexed (see countMatchesClamped); assert so the
-            // (int) casts of count-1 / k-acc below fail loud rather than silently truncate.
-            assert count <= Integer.MAX_VALUE : "per-gen match count exceeds int range: " + count;
-            // Exact (not slack) coverage check: read the gen's first and last posting
-            // for the key directly. If the whole list sits inside [minValue, clamp] the
-            // O(1) full count equals the cursor's range-filtered count, so the walk is
-            // exact. Otherwise the gen is partially clipped — by a narrow caller range or
-            // by dirty rows past the chain entry's MAX_VALUE — and the metadata-only count
-            // would diverge from the cursor; return the sentinel so the caller traverses.
-            long exactMin = gkc >= 0
-                    ? selectDenseKthValue(key, g, gkc, 0)
-                    : selectSparseKthValue(key, g, -gkc, 0);
-            long exactMax = gkc >= 0
-                    ? selectDenseKthValue(key, g, gkc, (int) (count - 1))
-                    : selectSparseKthValue(key, g, -gkc, (int) (count - 1));
-            if (exactMin == Numbers.LONG_NULL || exactMax == Numbers.LONG_NULL) {
-                return Numbers.LONG_NULL;
-            }
-            // Fully past the clamp: the cursor skips the whole gen (ALL_DIRTY).
-            if (exactMin > maxValueClamped) {
+            final int genKeyCount = genLookup.getGenKeyCount(g);
+            if (genKeyCount < 0 && genLookup.notContainKey(valueMem, g, key)) {
                 continue;
             }
-            // Fully below the low bound: every posting is < minValue, so the cursor skips the
-            // whole gen and it contributes 0 matches — skip it without disturbing the running
-            // acc (the symmetric counterpart of the fully-above-clamp case). Must mirror
-            // countMatchesClamped exactly, or the k-th-match index would desync from the count.
-            if (exactMax < minValue) {
-                continue;
-            }
-            // Partially clipped (genuine MIXED — straddles minValue or the clamp): bail to the
-            // traverse fallback.
-            if (exactMax > maxValueClamped || exactMin < minValue) {
+            final long ordinals = clippedOrdinals(key, g, genKeyCount, minValue, maxValueClamped);
+            if (ordinals == ORDINALS_UNRANKED) {
                 return Numbers.LONG_NULL;
             }
+            final int ordinalLo = ordinalLo(ordinals);
+            final int count = ordinalHi(ordinals) - ordinalLo;
             if (acc + count > k) {
-                int j = (int) (k - acc);
-                long result = gkc >= 0
-                        ? selectDenseKthValue(key, g, gkc, j)
-                        : selectSparseKthValue(key, g, -gkc, j);
+                final int ordinal = ordinalLo + (int) (k - acc);
+                final long result = selectGenerationOrdinal(key, g, genKeyCount, ordinal);
                 assert result == Numbers.LONG_NULL || (result >= minValue && result <= maxValueClamped)
                         : "selectKthMatch out of range: result=" + result + " min=" + minValue + " clamp=" + maxValueClamped;
                 return result;
@@ -1603,6 +1556,249 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     // loadDenseGenerationCached / loadSparseGenByPrefixSum / readDeltaBlockMetadata / decode*Block
     // methods use, so a random-access read at index j yields exactly the cursor's j-th value.
 
+    private long clippedOrdinals(int key, int gen, int genKeyCount, long minValue, long maxValue) {
+        if (genKeyCount >= 0) {
+            if (key >= genKeyCount) {
+                return packOrdinals(0, 0);
+            }
+            final int stride = key / PostingIndexUtils.DENSE_STRIDE;
+            final int localKey = key % PostingIndexUtils.DENSE_STRIDE;
+            final long genFileOffset = genLookup.getGenFileOffset(gen);
+            final long genAddr = valueMem.addressOf(genFileOffset);
+            final long strideOffset = Unsafe.getLong(genAddr + (long) stride * Long.BYTES);
+            final long nextStrideOffset = Unsafe.getLong(genAddr + (long) (stride + 1) * Long.BYTES);
+            if (strideOffset == nextStrideOffset) {
+                return packOrdinals(0, 0);
+            }
+            final int strideIndexSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+            final long strideAddr = genAddr + strideIndexSize + strideOffset;
+            final int keysInStride = PostingIndexUtils.keysInStride(genKeyCount, stride);
+            final byte mode = Unsafe.getByte(strideAddr);
+            if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                final int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+                final long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                final long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                final int start = Unsafe.getInt(prefixAddr + (long) localKey * Integer.BYTES);
+                final int end = Unsafe.getInt(prefixAddr + (long) (localKey + 1) * Integer.BYTES);
+                final long dataAddr = strideAddr + PostingIndexUtils.strideFlatHeaderSize(keysInStride);
+                final int lo = (int) estimateFlatLowerBound(dataAddr, start, end, bitWidth, baseValue, minValue);
+                final int hi = maxValue == Long.MAX_VALUE
+                        ? end - start
+                        : (int) estimateFlatLowerBound(dataAddr, start, end, bitWidth, baseValue, maxValue + 1);
+                return packOrdinals(lo, hi);
+            }
+            if (mode != PostingIndexUtils.STRIDE_MODE_DELTA) {
+                throw CairoException.critical(0).put(INDEX_CORRUPT).put(" [bad stride mode=").put(mode).put(']');
+            }
+            final long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+            final int count = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
+            if (count == 0) {
+                return packOrdinals(0, 0);
+            }
+            final long offsetsAddr = countsAddr + (long) keysInStride * Integer.BYTES;
+            final long dataOffset = Unsafe.getLong(offsetsAddr + (long) localKey * Long.BYTES);
+            final long dataEndOffset = Unsafe.getLong(offsetsAddr + (long) (localKey + 1) * Long.BYTES);
+            final long encodedOffset = genFileOffset + strideIndexSize + strideOffset
+                    + PostingIndexUtils.strideDeltaHeaderSize(keysInStride) + dataOffset;
+            return keyBlobOrdinals(encodedOffset, (int) (dataEndOffset - dataOffset), count, minValue, maxValue);
+        }
+
+        final int activeKeyCount = -genKeyCount;
+        final int minKey = genLookup.getGenMinKey(gen);
+        final int maxKey = genLookup.getGenMaxKey(gen);
+        if (key < minKey || key > maxKey) {
+            return packOrdinals(0, 0);
+        }
+        final long genFileOffset = genLookup.getGenFileOffset(gen);
+        final long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+        final int keyOffset = key - minKey;
+        final int start = Unsafe.getInt(prefixSumAddr + (long) keyOffset * Integer.BYTES);
+        final int end = Unsafe.getInt(prefixSumAddr + (long) (keyOffset + 1) * Integer.BYTES);
+        if (start >= end) {
+            return packOrdinals(0, 0);
+        }
+        final long genAddr = valueMem.addressOf(genFileOffset);
+        final long countsAddr = genAddr + (long) activeKeyCount * Integer.BYTES;
+        final long offsetsAddr = countsAddr + (long) activeKeyCount * Integer.BYTES;
+        final int count = Unsafe.getInt(countsAddr + (long) start * Integer.BYTES);
+        final long dataOffset = Unsafe.getLong(offsetsAddr + (long) start * Long.BYTES);
+        final int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+        final long dataEndOffset = start + 1 < activeKeyCount
+                ? Unsafe.getLong(offsetsAddr + (long) (start + 1) * Long.BYTES)
+                : genLookup.getGenPrefixSumOffset(gen, valueMem) - genFileOffset - headerSize;
+        return keyBlobOrdinals(
+                genFileOffset + headerSize + dataOffset,
+                (int) (dataEndOffset - dataOffset),
+                count,
+                minValue,
+                maxValue
+        );
+    }
+
+    private long keyBlobOrdinals(long encodedOffset, int encodedSize, int count, long minValue, long maxValue) {
+        final long baseAddr = valueMem.addressOf(0);
+        final int firstWord = Unsafe.getInt(baseAddr + encodedOffset);
+        if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+            final long blobAddr = baseAddr + encodedOffset;
+            final int encodedCount = Unsafe.getInt(blobAddr + Integer.BYTES);
+            final long universe = Unsafe.getLong(blobAddr + 2L * Integer.BYTES + Byte.BYTES);
+            if (encodedCount != count || universe <= 0) {
+                return ORDINALS_UNRANKED;
+            }
+            if (minValue <= 0 && maxValue >= universe - 1) {
+                return packOrdinals(0, count);
+            }
+            if (minValue >= universe) {
+                return packOrdinals(count, count);
+            }
+            if (!PostingIndexUtils.hasEfRankTrailer(blobAddr, encodedSize)) {
+                // Legacy EF remains fully decodable, but its prefix has no cardinality-independent
+                // rank operation. Never scan or allocate rank state for a genuinely clipped range.
+                return ORDINALS_UNRANKED;
+            }
+            final int lo = PostingIndexUtils.efLowerBound(blobAddr, encodedSize, minValue);
+            final int hi = maxValue == Long.MAX_VALUE
+                    ? count
+                    : PostingIndexUtils.efLowerBound(blobAddr, encodedSize, maxValue + 1);
+            return lo < 0 || hi < lo ? ORDINALS_UNRANKED : packOrdinals(lo, hi);
+        }
+        if (firstWord <= 0) {
+            return packOrdinals(0, 0);
+        }
+        final int lo = (int) estimateDeltaLowerBound(encodedOffset, firstWord, count, minValue);
+        final int hi = maxValue == Long.MAX_VALUE
+                ? count
+                : (int) estimateDeltaLowerBound(encodedOffset, firstWord, count, maxValue + 1);
+        return packOrdinals(lo, hi);
+    }
+
+    private static int ordinalHi(long ordinals) {
+        return (int) ordinals;
+    }
+
+    private static int ordinalLo(long ordinals) {
+        return (int) (ordinals >>> 32);
+    }
+
+    private static long packOrdinals(int lo, int hi) {
+        return (long) lo << 32 | (hi & 0xFFFFFFFFL);
+    }
+
+    private long selectGenerationOrdinal(int key, int gen, int genKeyCount, int ordinal) {
+        if (genKeyCount >= 0) {
+            final int stride = key / PostingIndexUtils.DENSE_STRIDE;
+            final int localKey = key % PostingIndexUtils.DENSE_STRIDE;
+            final long genFileOffset = genLookup.getGenFileOffset(gen);
+            final long genAddr = valueMem.addressOf(genFileOffset);
+            final long strideOffset = Unsafe.getLong(genAddr + (long) stride * Long.BYTES);
+            final int strideIndexSize = PostingIndexUtils.strideIndexSize(genKeyCount);
+            final long strideAddr = genAddr + strideIndexSize + strideOffset;
+            final int keysInStride = PostingIndexUtils.keysInStride(genKeyCount, stride);
+            if (Unsafe.getByte(strideAddr) == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                final int bitWidth = Unsafe.getByte(strideAddr + 1) & 0xFF;
+                final long baseValue = Unsafe.getLong(strideAddr + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
+                final long prefixAddr = strideAddr + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                final int start = Unsafe.getInt(prefixAddr + (long) localKey * Integer.BYTES);
+                return bitWidth == 0
+                        ? baseValue
+                        : BitpackUtils.unpackValue(
+                                strideAddr + PostingIndexUtils.strideFlatHeaderSize(keysInStride),
+                                start + ordinal,
+                                bitWidth,
+                                baseValue
+                        );
+            }
+            final long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
+            final long offsetsAddr = countsAddr + (long) keysInStride * Integer.BYTES;
+            final long dataOffset = Unsafe.getLong(offsetsAddr + (long) localKey * Long.BYTES);
+            final long dataEndOffset = Unsafe.getLong(offsetsAddr + (long) (localKey + 1) * Long.BYTES);
+            final long encodedOffset = genFileOffset + strideIndexSize + strideOffset
+                    + PostingIndexUtils.strideDeltaHeaderSize(keysInStride) + dataOffset;
+            return selectKeyBlobOrdinal(encodedOffset, (int) (dataEndOffset - dataOffset), ordinal);
+        }
+
+        final int activeKeyCount = -genKeyCount;
+        final long genFileOffset = genLookup.getGenFileOffset(gen);
+        final int minKey = genLookup.getGenMinKey(gen);
+        final long prefixSumAddr = valueMem.addressOf(genLookup.getGenPrefixSumOffset(gen, valueMem));
+        final int start = Unsafe.getInt(prefixSumAddr + (long) (key - minKey) * Integer.BYTES);
+        final long genAddr = valueMem.addressOf(genFileOffset);
+        final long offsetsAddr = genAddr + (long) activeKeyCount * 2 * Integer.BYTES;
+        final long dataOffset = Unsafe.getLong(offsetsAddr + (long) start * Long.BYTES);
+        final int headerSize = PostingIndexUtils.genHeaderSizeSparse(activeKeyCount);
+        final long dataEndOffset = start + 1 < activeKeyCount
+                ? Unsafe.getLong(offsetsAddr + (long) (start + 1) * Long.BYTES)
+                : genLookup.getGenPrefixSumOffset(gen, valueMem) - genFileOffset - headerSize;
+        return selectKeyBlobOrdinal(
+                genFileOffset + headerSize + dataOffset,
+                (int) (dataEndOffset - dataOffset),
+                ordinal
+        );
+    }
+
+    private long selectKeyBlobOrdinal(long encodedOffset, int encodedSize, int ordinal) {
+        final long baseAddr = valueMem.addressOf(0);
+        final int firstWord = Unsafe.getInt(baseAddr + encodedOffset);
+        if (firstWord == PostingIndexUtils.EF_FORMAT_SENTINEL) {
+            final long ranked = PostingIndexUtils.efSelectRanked(baseAddr + encodedOffset, encodedSize, ordinal);
+            return ranked != Numbers.LONG_NULL ? ranked : selectFromEFBlob(baseAddr, encodedOffset, ordinal);
+        }
+        return firstWord > 0
+                ? selectFromDeltaBlob(encodedOffset, baseAddr, firstWord, ordinal)
+                : Numbers.LONG_NULL;
+    }
+
+    private long estimateDeltaLowerBound(long encodedOffset, int blockCount, int count, long target) {
+        final long baseAddr = valueMem.addressOf(0);
+        final long valueCountsOffset = encodedOffset + Integer.BYTES;
+        final long firstValuesOffset = valueCountsOffset + blockCount;
+        if (target <= Unsafe.getLong(baseAddr + firstValuesOffset)) {
+            return 0;
+        }
+
+        int lo = 0;
+        int hi = blockCount - 1;
+        while (lo < hi) {
+            final int mid = (lo + hi + 1) >>> 1;
+            if (Unsafe.getLong(baseAddr + firstValuesOffset + (long) mid * Long.BYTES) < target) {
+                lo = mid;
+            } else {
+                hi = mid - 1;
+            }
+        }
+        final int block = lo;
+        final int blockStart = block * PostingIndexUtils.BLOCK_CAPACITY;
+        final int blockValueCount = Unsafe.getByte(baseAddr + valueCountsOffset + block) & 0xFF;
+        int within = 0;
+        while (within < blockValueCount
+                && selectFromDeltaBlock(encodedOffset, baseAddr, blockCount, block, within) < target) {
+            within++;
+        }
+        return Math.min(count, blockStart + within);
+    }
+
+    private long estimateFlatLowerBound(
+            long dataAddr,
+            int start,
+            int end,
+            int bitWidth,
+            long baseValue,
+            long target
+    ) {
+        int lo = start;
+        int hi = end;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            final long value = bitWidth == 0 ? baseValue : BitpackUtils.unpackValue(dataAddr, mid, bitWidth, baseValue);
+            if (value < target) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo - start;
+    }
+
     /**
      * Count of {@code key}'s postings in dense gen {@code gen}. Mirrors the cursor's
      * {@code getDenseGenKeyCount}: FLAT stride -> prefix {@code end - start}; DELTA stride ->
@@ -1674,14 +1870,52 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return selectFromKeyBlob(encodedOffset, j);
     }
 
+    private long selectFromDeltaBlock(
+            long encodedOffset,
+            long baseAddr,
+            int blockCount,
+            int block,
+            int indexInBlock
+    ) {
+        final long valueCountsOffset = encodedOffset + Integer.BYTES;
+        final long firstValuesOffset = valueCountsOffset + blockCount;
+        final long minDeltasOffset = firstValuesOffset + (long) blockCount * Long.BYTES;
+        final long bitWidthsOffset = minDeltasOffset + (long) blockCount * Long.BYTES;
+        final long packedOffsetsOffset = bitWidthsOffset + blockCount;
+        final long packedDataStartOffset = blockCount > 1
+                ? packedOffsetsOffset + (long) blockCount * Long.BYTES
+                : bitWidthsOffset + blockCount;
+        final long firstValue = Unsafe.getLong(baseAddr + firstValuesOffset + (long) block * Long.BYTES);
+        if (indexInBlock == 0) {
+            return firstValue;
+        }
+        final long minDelta = Unsafe.getLong(baseAddr + minDeltasOffset + (long) block * Long.BYTES);
+        final int bitWidth = Unsafe.getByte(baseAddr + bitWidthsOffset + block) & 0xFF;
+        if (bitWidth == 0) {
+            return firstValue + (long) indexInBlock * minDelta;
+        }
+        final long packedOffset = block > 0
+                ? Unsafe.getLong(baseAddr + packedOffsetsOffset + (long) block * Long.BYTES)
+                : 0;
+        final long packedDataAddr = baseAddr + packedDataStartOffset + packedOffset;
+        long value = firstValue;
+        for (int i = 0; i < indexInBlock; i++) {
+            value += BitpackUtils.unpackValue(packedDataAddr, i, bitWidth, minDelta);
+        }
+        return value;
+    }
+
     /**
      * Absolute row id of the 0-based {@code j}-th value in a per-key delta-FoR blob at
-     * {@code encodedOffset}. Locates the owning block by walking the {@code valueCounts} prefix,
-     * positions on its packed data via {@code packedOffsets} (implicitly 0 for a single-block key),
-     * then accumulates the block's deltas up to the in-block index — exactly the cumulative the
-     * cursor's {@code decodeBlock} performs. O(j / BLOCK_CAPACITY + j % BLOCK_CAPACITY).
+     * {@code encodedOffset}. Every block except the final block has exactly
+     * {@link PostingIndexUtils#BLOCK_CAPACITY} values, so fixed geometry locates the owning block
+     * without reading preceding block counts. The method validates the variable-size final block,
+     * then accumulates at most one block's deltas, in O(BLOCK_CAPACITY) time.
      */
     private long selectFromDeltaBlob(long encodedOffset, long baseAddr, int blockCount, int j) {
+        if (blockCount <= 0 || blockCount > PostingIndexUtils.MAX_BLOCK_COUNT || j < 0) {
+            return Numbers.LONG_NULL;
+        }
         long valueCountsOff = encodedOffset + 4;
         long firstValuesOff = valueCountsOff + blockCount;
         long minDeltasOff = firstValuesOff + (long) blockCount * Long.BYTES;
@@ -1691,21 +1925,15 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 ? packedOffsetsOff + (long) blockCount * Long.BYTES
                 : bitWidthsOff + blockCount;
 
-        // Locate the block that owns global index j by accumulating per-block counts.
-        int b = 0;
-        int blockStartIdx = 0;
-        while (b < blockCount) {
-            int c = Unsafe.getByte(baseAddr + valueCountsOff + b) & 0xFF;
-            if (blockStartIdx + c > j) {
-                break;
-            }
-            blockStartIdx += c;
-            b++;
+        final int finalBlockCount = Unsafe.getByte(baseAddr + valueCountsOff + blockCount - 1) & 0xFF;
+        if (finalBlockCount <= 0 || finalBlockCount > PostingIndexUtils.BLOCK_CAPACITY) {
+            return Numbers.LONG_NULL;
         }
-        if (b >= blockCount) {
-            return Numbers.LONG_NULL; // j past the blob — guarded against by the caller's count check
+        final int b = j / PostingIndexUtils.BLOCK_CAPACITY;
+        final int r = j % PostingIndexUtils.BLOCK_CAPACITY;
+        if (b >= blockCount || (b == blockCount - 1 && r >= finalBlockCount)) {
+            return Numbers.LONG_NULL;
         }
-        int r = j - blockStartIdx; // in-block index, 0-based
         long firstValue = Unsafe.getLong(baseAddr + firstValuesOff + (long) b * Long.BYTES);
         if (r == 0) {
             return firstValue;

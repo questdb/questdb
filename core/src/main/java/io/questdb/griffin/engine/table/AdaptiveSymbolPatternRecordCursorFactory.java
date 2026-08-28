@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -103,16 +104,19 @@ import java.util.concurrent.atomic.AtomicLong;
  * route ({@code MAX_INDEX_ROUTE_ROW_SHARE_DIVISOR}). See the two constants for the measurements
  * behind each number.
  * <p>
- * The estimate counts, not traverses, wherever the index reader can answer from metadata: a POSTING
- * reader answers with {@code countMatchesClamped} and a bitmap reader - the shape a plain
- * {@code SYMBOL INDEX} builds, and therefore the default - with
+ * The estimate counts, not traverses, wherever the index reader can answer from metadata. A POSTING
+ * reader provides exact dense/sparse FLAT and DELTA range counts and fixed-stride ranked-EF counts.
+ * Existing unranked EF stays readable, but a range that cannot be proven un-clipped from its legacy
+ * prefix rejects adaptive admission directly rather than traversing its high vector. A bitmap reader -
+ * the shape a plain {@code SYMBOL INDEX} builds, and therefore the default - uses
  * {@link BitmapIndexFwdReader#countMatchesInRange}, which reads the key entry and seeks two blocks.
- * Two reader shapes cannot answer: a POSTING reader on a mixed/unsealed generation, and the
- * {@code IndexFwdNullReader} a partition that predates the column supplies. There the estimate falls
- * back to walking row cursors, charged against the same row budget so it still stops early. A
- * cursor that cannot state its row count up front (every interval-filtered query) supplies the
- * denominator frame by frame instead of being rejected outright. Probe budget exhaustion on either
- * axis selects the scan delegate.
+ * {@code IndexFwdNullReader} computes its contiguous implicit-NULL range directly. Any future reader
+ * shape that cannot answer still falls back to walking row cursors, but a single traversal-probe
+ * budget spans the whole estimate and selects the scan delegate before another entry could exceed
+ * it. A cursor that cannot state its row count up front (every interval-filtered query) supplies the
+ * denominator frame by frame instead of being rejected outright. Unknown-reader probe exhaustion
+ * selects the scan delegate; a safe metadata upper bound may admit the index only when that upper
+ * bound itself fits the selectivity limit.
  * <p>
  * Every route reads the SAME table-reader transaction the estimate ran on. The estimate opens one
  * partition-frame cursor, builds {@code effectiveKeys} and the prepared filter's key set from that
@@ -125,12 +129,13 @@ import java.util.concurrent.atomic.AtomicLong;
  * list the estimate built. The hand-off also removes one reader acquisition per open.
  * <p>
  * The configured threshold {@code max(1, configuredThreshold)} caps planning work on the
- * two INDEPENDENT axes the estimate spends it on: at most that many partition frames, and
- * at most that many key probes within each frame. A single counter spent across both makes
- * the two multiply, and then partition count alone exhausts the budget - on a 50-partition
- * table the default 100 was gone the moment a pattern matched a third symbol, which
- * measured as a 40x regression (0.51 ms on the index route against 20.2 ms on the parallel
- * scan, 20M rows, four shared workers).
+ * two INDEPENDENT metadata axes the estimate spends it on: at most that many partition frames,
+ * and at most that many key probes within each frame. It separately caps the TOTAL index entries
+ * that traversal fallbacks may read across all keys and frames in one estimate. A single counter
+ * spent across the metadata axes makes the two multiply, and then partition count alone exhausts
+ * the budget - on a 50-partition table the default 100 was gone the moment a pattern matched a
+ * third symbol, which measured as a 40x regression (0.51 ms on the index route against 20.2 ms
+ * on the parallel scan, 20M rows, four shared workers).
  * <p>
  * Splitting one counter into two makes the estimate's total work the PRODUCT of the two caps,
  * not their sum: at most {@code threshold} frames times {@code threshold} key probes, so the
@@ -154,12 +159,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * say it is the slower plan, and it raises planning cost with it (about 0.02 ms per frame for
  * the first hundred frames and about 0.07 ms per frame beyond, on the same table).
  * <p>
- * What the two caps buy is a planning cost independent of the TOTAL ROW COUNT - not a
- * data-independent one. The per-frame figures above are for a single matched key on a native
- * partition; the real per-open bound is {@code frameCap x (frame open + keyCap x key probe)},
- * and opening an interval frame runs up to two O(log rowsInPartition) timestamp binary searches
- * (a row-group metadata read for a PARQUET partition), so the constant grows sub-linearly with
- * partition width. The property the caps guarantee is that it does not grow with the table.
+ * The caps keep index-entry traversal independent of the TOTAL ROW COUNT, but they do not make
+ * planning data-independent. The per-frame figures above are for a single matched key on a native
+ * partition; the real per-open bound is
+ * {@code frameCap x (frame open + keyCap x metadata probe) + traversalCap}, and opening an interval
+ * frame runs up to two O(log rowsInPartition) timestamp binary searches (a row-group metadata read
+ * for a PARQUET partition), so that part grows sub-linearly with partition width.
  */
 public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCursorFactory {
     // @TestOnly observability for the selectivity estimator's traversal fallback. The estimate runs
@@ -560,6 +565,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         if (effectiveKeys.size() == 0) {
             return true;
         }
+        // Apply the per-frame key cap even when an interval selects no frames. Otherwise the empty
+        // loop admits the index delegate, which builds and retains one child factory per key.
+        if (effectiveKeys.size() > maxEstimateProbes) {
+            return false;
+        }
 
         // A cursor confined to designated-timestamp intervals answers size() with -1 rather than
         // counting rows it has not walked yet (AbstractIntervalPartitionFrameCursor.size()), and
@@ -594,6 +604,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         long matchedRows = 0;
         long selectedRows = 0;
         int frames = 0;
+        int traversedIndexEntries = 0;
         PartitionFrame frame;
         while ((frame = frameCursor.next()) != null) {
             if (isEstimatorCounterEnabled) {
@@ -625,30 +636,52 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 final int indexKey = TableUtils.toIndexKey(effectiveKeys.getQuick(i));
                 long count = Numbers.LONG_NULL;
                 if (reader instanceof AbstractPostingIndexReader posting) {
+                    // SymbolPatternIndexRecordCursorFactory is a bitmap-row-cursor delegate. POSTING
+                    // readers are executable only through the covering delegate; admitting one in
+                    // self-filtering mode would hand absolute posting row ids to bitmap frame logic.
+                    if (coveringDelegate == null) {
+                        return false;
+                    }
                     final long entryMax = posting.getEntryMaxValue();
                     final long clampedMax = entryMax >= 0
                             ? Math.min(callerHiInclusive, entryMax)
                             : callerHiInclusive;
-                    count = posting.countMatchesClamped(indexKey, rowLo, callerHiInclusive, clampedMax);
+                    count = posting.estimateMatchesClamped(indexKey, rowLo, callerHiInclusive, clampedMax);
                 } else if (reader instanceof BitmapIndexFwdReader bitmap) {
                     // SYMBOL INDEX without an explicit type builds a bitmap index, so this is the
                     // default shape. countMatchesInRange() answers the same question from the key
                     // entry and two block seeks; without it every open of a broad pattern walked
                     // index entries up to the whole maxIndexRows budget before rejecting the route.
                     count = bitmap.countMatchesInRange(indexKey, rowLo, callerHiInclusive);
+                } else if (reader instanceof IndexFwdNullReader nullReader) {
+                    count = nullReader.estimateMatches(indexKey, rowLo, callerHiInclusive);
+                }
+                if (count == AbstractPostingIndexReader.ESTIMATE_REJECT) {
+                    // A genuinely clipped legacy EF blob has no bounded rank metadata. Reject it
+                    // without disguising the compatibility exception as a generic unknown that
+                    // would spend the fallback cursor budget.
+                    return false;
                 }
                 if (count == Numbers.LONG_NULL) {
-                    // A mixed/unsealed generation cannot supply an exact metadata count. Traverse only
-                    // until the remaining budget is exceeded; this preserves a bounded estimate.
+                    // A mixed/unsealed generation cannot supply an exact metadata count. One traversal
+                    // budget spans the whole estimate, so neither row share nor table size can make the
+                    // fallback read more than maxEstimateProbes index entries before selecting the scan.
                     count = 0;
                     try (RowCursor rowCursor = reader.getCursor(indexKey, rowLo, callerHiInclusive)) {
-                        while (rowCursor.hasNext() && matchedRows + count <= maxIndexRows) {
+                        while (rowCursor.hasNext()) {
+                            if (traversedIndexEntries >= maxEstimateProbes) {
+                                return false;
+                            }
                             rowCursor.next();
                             count++;
+                            traversedIndexEntries++;
+                            if (isEstimatorCounterEnabled) {
+                                testEstimatorIndexEntryReads.incrementAndGet();
+                            }
+                            if (matchedRows + count > maxIndexRows) {
+                                return false;
+                            }
                         }
-                    }
-                    if (isEstimatorCounterEnabled) {
-                        testEstimatorIndexEntryReads.addAndGet(count);
                     }
                 }
                 matchedRows += count;
@@ -850,7 +883,9 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         private final boolean isNegated;
         private final SymbolKeySetProvider provider;
         private final Function providerFunction;
+        private final ExpressionNode providerExpression;
         private final Function residualFilter;
+        private final ExpressionNode residualExpression;
         private final int symbolColumnIndex;
         // Set by prepare(). getBool() asserts it, because isThreadSafe() rests on it - see that override.
         private boolean hasPreparedKeySet;
@@ -861,9 +896,22 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 boolean isNegated,
                 int symbolColumnIndex
         ) {
+            this(providerFunction, residualFilter, isNegated, symbolColumnIndex, null, null);
+        }
+
+        public PreparedSymbolPatternFilter(
+                @NotNull Function providerFunction,
+                @Nullable Function residualFilter,
+                boolean isNegated,
+                int symbolColumnIndex,
+                @Nullable ExpressionNode providerExpression,
+                @Nullable ExpressionNode residualExpression
+        ) {
             this.providerFunction = providerFunction;
             this.provider = (SymbolKeySetProvider) providerFunction;
+            this.providerExpression = providerExpression;
             this.residualFilter = residualFilter;
+            this.residualExpression = residualExpression;
             this.isNegated = isNegated;
             this.symbolColumnIndex = symbolColumnIndex;
         }
@@ -896,8 +944,20 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             return provider.getMatchedSymbolKeys();
         }
 
+        public ExpressionNode getProviderExpression() {
+            return providerExpression;
+        }
+
+        public ExpressionNode getResidualExpression() {
+            return residualExpression;
+        }
+
         public int getSymbolColumnIndex() {
             return symbolColumnIndex;
+        }
+
+        public boolean isNegated() {
+            return isNegated;
         }
 
         @Override
@@ -919,6 +979,17 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             // and getBool() asserts hasPreparedKeySet, so a future caller that skips prepare() fails loudly
             // instead of racing.
             return residualFilter == null || residualFilter.isThreadSafe();
+        }
+
+        @Override
+        public void offerStateTo(Function that) {
+            if (that instanceof PreparedSymbolPatternFilter target) {
+                providerFunction.offerStateTo(target.providerFunction);
+                if (residualFilter != null && target.residualFilter != null) {
+                    residualFilter.offerStateTo(target.residualFilter);
+                }
+                target.hasPreparedKeySet = hasPreparedKeySet;
+            }
         }
 
         public void prepare(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
@@ -949,6 +1020,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 residualFilter.toTop();
             }
         }
+
     }
 
     private static final class SymbolTableSourceMapper implements SymbolTableSource {

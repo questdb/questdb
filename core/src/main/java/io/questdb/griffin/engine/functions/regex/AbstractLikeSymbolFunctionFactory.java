@@ -173,6 +173,9 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
         private String lastPattern = null;
+        private int lastSymbolCount = -1;
+        private StaticSymbolTable lastSymbolTable;
+        private long lastSymbolTableGeneration = StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION;
         private Matcher matcher;
         private boolean stateInherited = false;
         private boolean stateShared = false;
@@ -213,11 +216,10 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 // what re-arms the shortcut - every open of every donating atom offers state to each
                 // clone immediately before initializing it - so a re-bound variable cannot leave a
                 // clone holding the previous pattern's keys.
+                stateInherited = false;
                 return;
             }
             this.stateShared = false;
-            // This is a bind variable, so cache regex compilation while rebuilding the key set against
-            // the current symbol table on every cursor open. An unchanged bind can still see new symbols.
             final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
                 String p = escapeSpecialChars(patternValue, lastPattern);
@@ -230,9 +232,26 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                     matcher = Pattern.compile(p, flags).matcher("");
                     lastPattern = p;
                 }
-                extractSymbolKeys(value, symbolKeys, matcher);
+
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                final int symbolCount = symbolTable.getSymbolCount();
+                final long symbolTableGeneration = symbolTable.getSymbolTableGeneration();
+                if (p != null
+                        || symbolTableGeneration == StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION
+                        || symbolTable != lastSymbolTable
+                        || symbolCount != lastSymbolCount
+                        || symbolTableGeneration != lastSymbolTableGeneration) {
+                    extractSymbolKeys(value, symbolKeys, matcher);
+                    lastSymbolCount = symbolCount;
+                    lastSymbolTable = symbolTable;
+                    lastSymbolTableGeneration = symbolTableGeneration;
+                }
             } else {
                 lastPattern = null;
+                lastSymbolCount = -1;
+                lastSymbolTable = null;
+                lastSymbolTableGeneration = StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION;
                 matcher = null;
                 symbolKeys.clear();
             }
