@@ -62,7 +62,9 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Arrays;
 
 public abstract class AbstractPostingIndexReader implements IndexReader {
-    /** Metadata explicitly requires conservative adaptive rejection without cursor traversal. */
+    /**
+     * Metadata explicitly requires conservative adaptive rejection without cursor traversal.
+     */
     public static final long ESTIMATE_REJECT = -1;
     private static final long ORDINALS_UNRANKED = Long.MIN_VALUE;
     // Number of consecutive values decoded per FSST decompressBlock0 call.
@@ -1702,11 +1704,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return bitWidth == 0
                         ? baseValue
                         : BitpackUtils.unpackValue(
-                                strideAddr + PostingIndexUtils.strideFlatHeaderSize(keysInStride),
-                                start + ordinal,
-                                bitWidth,
-                                baseValue
-                        );
+                        strideAddr + PostingIndexUtils.strideFlatHeaderSize(keysInStride),
+                        start + ordinal,
+                        bitWidth,
+                        baseValue
+                );
             }
             final long countsAddr = strideAddr + PostingIndexUtils.STRIDE_MODE_PREFIX_SIZE;
             final long offsetsAddr = countsAddr + (long) keysInStride * Integer.BYTES;

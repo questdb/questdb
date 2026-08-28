@@ -523,10 +523,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 }
                 int rankBefore = isEFRanked
                         ? PostingIndexUtils.efRankBeforeHighWord(
-                                baseAddr + efBlobOffset,
-                                efBlobSize,
-                                efHighWordIdx
-                        )
+                        baseAddr + efBlobOffset,
+                        efBlobSize,
+                        efHighWordIdx
+                )
                         : Unsafe.getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
                 if (rankBefore < 0) {
                     throw CairoException.critical(0).put("corrupt ranked EF trailer");
