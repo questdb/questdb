@@ -267,7 +267,10 @@ already hits L3 buys close to nothing while the widen is pure added work, so a
 packed payload can only lose there whatever the truth about width.
 
 `S10` exists for this: 16,000,000 postings, **128 MB plain (4x L3) against 64 MB
-packed (2x L3)**, same ROUND_ROBIN shape as S4 so size is the only difference.
+packed**, same ROUND_ROBIN shape as S4 so size is the only difference. (Those
+packed figures are the byte-aligned width the arm used at the time; at the
+natural 21 bits it is 42 MB. The conclusion below is unaffected -- both are well
+clear of L3, and the aligned form is the LARGER of the two.)
 
 | benchmark | native | per-posting | packed |
 | --- | --- | --- | --- |
@@ -322,6 +325,44 @@ and 3,100 in three, on identical code), because the machine had a competing
 survives is the first-row figure, which is a 4x effect measured twice with
 matching controls, and the structural argument that doubling cannot be much worse
 than either endpoint on either workload.
+
+**Natural width, not byte-aligned.** Rounding the packed width up to 8/16/32/64
+lets the AVX2 unpack use its dedicated widen paths; every other width falls to a
+per-value shift. Measured both ways, controls stable:
+
+| | aligned (32 bits) | natural (21 bits) |
+| --- | --- | --- |
+| S4 index, 2,000,000 postings | 7,829 KB | **5,143 KB** |
+| S7 scan | 34.4 ops/s | 26.4 (-23%) |
+| S7 point read | 908 ops/s | 908 (unchanged) |
+
+Alignment bought high-cardinality SCANS and nothing else, at a third of the file.
+Storage wins that trade, so the seal packs at the natural width and
+`questdb.idx.packed.align=true` restores the other. 21 bits is also what the
+native chain stores, so the two forms now sit at the same density.
+
+**Why 21 bits, and why that is the fixtures rather than the format.** The width
+is `bitsNeeded(groupMax - groupMin)`, and a row group holds a contiguous run of
+whole KEYS -- 66 of them at S4, where the planner closes a group at 16 keys once
+it has 65,536 rows. Under ROUND_ROBIN key *k* owns rows *k, k+2000, k+4000, ...*,
+so inside one group `row_id` sawtooths from 0 to ~2,000,000 sixty-six times and
+the group's extent is the whole partition. The frame-of-reference base subtracts
+nothing.
+
+Per-KEY frame of reference would not help either, on these fixtures: each key
+individually also spans 0..1,998,000. But that is a property of the DISTRIBUTION,
+not of the design. The same 66 keys on clustered data -- a symbol arriving in
+bursts, which is what real market and telemetry data looks like -- each occupy a
+narrow band:
+
+| | group FoR | per-key FoR | bytes/posting |
+| --- | --- | --- | --- |
+| ROUND_ROBIN / SHUFFLED (every rung in the ladder) | 21 bits | 20-21 bits | 2.62 |
+| clustered, 1,000-row bands | 17 bits | **10 bits** | **1.25** |
+
+So per-key FoR is worth ~2.6x on realistic data and nothing on any fixture the
+suite has, which is why it looks worthless and has not been built. The
+`KEY_ROW_OFFSET` directory already carries the per-key boundaries it needs.
 
 Two design decisions worth carrying forward:
 
