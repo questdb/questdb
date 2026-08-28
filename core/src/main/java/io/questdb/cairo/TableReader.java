@@ -400,6 +400,31 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
+        if (txFile.getPartitionHasDelta(partitionIndex)) {
+            openPartition(partitionIndex);
+            final long state = getOrOpenPartitionFrameState(partitionIndex);
+            if (state == 0 || partitionFrameStateFactory == null) {
+                throw CairoException.critical(0)
+                        .put("cold delta partition state is unavailable [partitionIndex=")
+                        .put(partitionIndex)
+                        .put(']');
+            }
+            final IndexReader deltaReader = partitionFrameStateFactory.getIndexReader(
+                    this,
+                    state,
+                    partitionIndex,
+                    columnIndex,
+                    direction
+            );
+            if (deltaReader == null) {
+                throw CairoException.critical(0)
+                        .put("cold delta index reader is unavailable [partitionIndex=")
+                        .put(partitionIndex)
+                        .put(", columnIndex=").put(columnIndex)
+                        .put(']');
+            }
+            return deltaReader;
+        }
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);

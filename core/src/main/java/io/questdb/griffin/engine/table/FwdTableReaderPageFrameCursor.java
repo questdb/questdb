@@ -771,15 +771,6 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         @Override
         public IndexReader getIndexReader(int columnIndex, int direction) {
-            if (partitionFrameState != 0
-                    && rowGroupIndex >= 0
-                    && PartitionFrameState.requiresMaterialization(partitionFrameState, rowGroupIndex)) {
-                throw CairoException.nonCritical()
-                        .put("direct index access is unavailable for a cold delta frame [partitionIndex=")
-                        .put(partitionIndex)
-                        .put(", window=").put(rowGroupIndex)
-                        .put(']');
-            }
             return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
 

@@ -25,7 +25,9 @@
 package io.questdb.cairo.sql;
 
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.std.QuietCloseable;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Opens and owns opaque native partition-frame states. The returned handle is
@@ -33,6 +35,17 @@ import io.questdb.std.QuietCloseable;
  * instances borrow it while materializing page frames.
  */
 public interface PartitionFrameStateFactory extends QuietCloseable {
+    /** Returns the index reader for a partition state, or {@code null} when unavailable. */
+    default @Nullable IndexReader getIndexReader(
+            TableReader reader,
+            long state,
+            int partitionIndex,
+            int columnIndex,
+            int direction
+    ) {
+        return null;
+    }
+
     /**
      * Opens one immutable state and returns its sole owning opaque handle.
      */
