@@ -3194,6 +3194,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPartitionNameTxnByPartitionTimestamp(long partitionTimestamp) {
+        // A getter that throws, deliberately. This wrapper has NO caller in this repository -- every
+        // OSS call site goes through getTxFile()/txWriter to the TxReader method instead -- and exists
+        // only for the enterprise storage-policy job, which compares what it returns against its own
+        // expectations to decide whether its staged work is stale. On a composite day there is no
+        // single name-txn to return (each cell carries its own), so answering for cellKey 0 would hand
+        // that staleness check a plausible wrong answer. See refuseCompositeStoragePolicy.
+        refuseCompositeStoragePolicy("name-txn");
         return txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
     }
 
@@ -3208,6 +3215,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPartitionRowCountByPartitionTimestamp(long partitionTimestamp) {
+        // Enterprise-only, like the name-txn wrapper above: on a composite day this would return ONE
+        // cell's row count as though it were the day's.
+        refuseCompositeStoragePolicy("row-count");
         return txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
     }
 
@@ -3219,6 +3229,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public int getPartitionSquashCountByPartitionTimestamp(long partitionTimestamp) {
+        // Enterprise-only. getPartitionIndex is the cellKey-0 lookup, so on a composite day this
+        // reports one arbitrary cell's squash count.
+        refuseCompositeStoragePolicy("squash-count");
         final int index = txWriter.getPartitionIndex(partitionTimestamp);
         return index >= 0 ? txWriter.getPartitionSquashCount(index) : -1;
     }
@@ -3613,6 +3626,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
+        refuseCompositeStoragePolicy("mark-ready");
+
         if (inTransaction()) {
             assert !tableToken.isWal();
             LOG.info()
@@ -3746,6 +3761,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long preparePartitionForParquetConversion(long partitionTimestamp) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
+
+        // BEFORE the commit below: committing is itself a mutation, and this step goes on to
+        // force-squash a cellKey-0-resolved index. See refuseCompositeStoragePolicy.
+        refuseCompositeStoragePolicy("prepare");
 
         if (inTransaction()) {
             assert !tableToken.isWal();
@@ -4885,6 +4904,43 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    /**
+     * Refuses a STORAGE POLICY step on a routed composite table.
+     * <p>
+     * Storage policy's OSS-facing surface is four TableWriter entry points --
+     * {@link #preparePartitionForParquetConversion}, the caller's own parquet generation,
+     * {@link #markPartitionParquetReady} and {@link #switchNativePartitionWithParquet} -- driven in
+     * that order by the enterprise {@code StoragePolicyWriterCommand}. EVERY one of them is keyed by
+     * PARTITION TIMESTAMP alone: there is no cellKey anywhere in that API. On a composite table a
+     * timestamp does not identify a partition (a day is N cells), so each resolves through the
+     * cellKey-0 {@code getPartitionIndex(partitionTimestamp)} and builds paths with the cell-less
+     * {@code setPathForNativePartition}.
+     * <p>
+     * MEASURED 2026-08-28 (CompositeStoragePolicyTest, before this gate existed): only the LAST of the
+     * four refused. The first two ran to completion on a composite table -- the squash step
+     * force-squashed a cellKey-0-resolved index, deleted a cell-less parquet path and RETURNED THE
+     * TIMESTAMP, i.e. told the policy job "this day is ready, generate parquet for it". The sequence
+     * therefore half-applied and only failed at the end. Refusing at every entry point, before any
+     * commit or squash, is what makes the refusal safe rather than merely present.
+     * <p>
+     * "does not YET support": this is a deferral, not a ban like UPDATE or cross-table ATTACH. The
+     * capability already exists on this branch -- {@code convertCompositePartitionNativeToParquet}
+     * converts a composite day to parquet per cell. What is missing is on the ENTERPRISE side: the
+     * policy job would have to enumerate a day's cells and generate one parquet file per cell, and its
+     * per-partition API (one name-txn, one row count, one squash tracker, one file size) would have to
+     * become per-cell with it. That cannot be built or tested from this repository.
+     *
+     * @param step the entry point being refused, so a policy job's error names which one it hit
+     */
+    private void refuseCompositeStoragePolicy(CharSequence step) {
+        if (isRoutedComposite()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support STORAGE POLICY [table=")
+                    .put(tableToken.getTableName())
+                    .put(", step=").put(step).put(']');
+        }
+    }
+
     // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
     // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
     public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
@@ -4894,14 +4950,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Composite gate (merge audit 2026-08-10): this method resolves the partition by timestamp
         // alone and builds its paths with the cell-less setPathForNativePartition, then deletes the
         // old dir via the cellKey-0 safeDeletePartitionDir -- all cell-blind. It has no production
-        // caller in OSS today (tests only), and its siblings convertPartitionNativeToParquet /
-        // convertPartitionParquetToNative are both gated the same way; gate it too so a future
-        // caller cannot reach it for a routed composite table by accident.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support switching a native partition to parquet [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // caller in OSS today (tests only); its production caller is the enterprise storage-policy
+        // job.
+        //
+        // Folded into refuseCompositeStoragePolicy 2026-08-28. This was the ONLY one of storage
+        // policy's four entry points that refused, so the sequence half-applied before reaching it.
+        refuseCompositeStoragePolicy("switch");
 
         if (inTransaction()) {
             assert !tableToken.isWal();
