@@ -40,27 +40,14 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
     @Test
     public void testRedirectRefsUsesOneExactWidthLookupPerPartition() throws Exception {
         assertMemoryLeak(() -> {
-            final Class<?> type = Class.forName(
-                    "io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter$RootBuilders"
-            );
             final Method acquireShells = LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod(
                     "acquirePublicationShells",
                     MemoryTracker.class
             );
             final Method releaseShells =
                     LiveViewCheckpointTimelineStoreWriter.class.getDeclaredMethod("releasePublicationShells");
-            final Field rootsField = Class.forName(
-                    "io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter$PublicationScratch"
-            ).getDeclaredField("roots");
-            final Field builderField = type.getDeclaredField("functionRootBuilder");
-            final Method lookupCount = type.getDeclaredMethod("getRedirectRefWidthLookupCountForTest");
-            final Method redirectRefs = type.getDeclaredMethod("redirectRefs", int.class);
             acquireShells.setAccessible(true);
             releaseShells.setAccessible(true);
-            rootsField.setAccessible(true);
-            builderField.setAccessible(true);
-            lookupCount.setAccessible(true);
-            redirectRefs.setAccessible(true);
 
             try (
                     LiveViewCheckpointTimelineStoreWriter writer =
@@ -68,8 +55,15 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                     Path dir = new Path()
             ) {
                 final Object shells = acquireShells.invoke(writer, new Object[]{null});
-                final Object roots = rootsField.get(shells);
                 try {
+                    final Field rootsField = shells.getClass().getDeclaredField("roots");
+                    rootsField.setAccessible(true);
+                    final Object roots = rootsField.get(shells);
+                    final Field builderField = roots.getClass().getDeclaredField("functionRootBuilder");
+                    final Method redirectRefs = roots.getClass().getDeclaredMethod("redirectRefs", int.class);
+                    builderField.setAccessible(true);
+                    redirectRefs.setAccessible(true);
+
                     final LiveViewCheckpointFunctionRootBuilder builder =
                             (LiveViewCheckpointFunctionRootBuilder) builderField.get(roots);
                     builder.of(
@@ -100,7 +94,7 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                     Assert.assertEquals(
                             "each first use must perform one direct exact-width lookup",
                             widthCount,
-                            ((Number) lookupCount.invoke(roots)).intValue()
+                            writer.getRedirectRefWidthLookupCountForTest()
                     );
 
                     for (int partition = widthCount - 1; partition >= 0; partition--) {
@@ -114,7 +108,7 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                     Assert.assertEquals(
                             "warmed widths must still perform one direct lookup",
                             2 * widthCount,
-                            ((Number) lookupCount.invoke(roots)).intValue()
+                            writer.getRedirectRefWidthLookupCountForTest()
                     );
 
                     final LiveViewCheckpointStatePageRef[] empty =
@@ -124,7 +118,7 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                     Assert.assertEquals(
                             "zero-width reuse must use the same direct index",
                             2 * widthCount + 2,
-                            ((Number) lookupCount.invoke(roots)).intValue()
+                            writer.getRedirectRefWidthLookupCountForTest()
                     );
                 } finally {
                     releaseShells.invoke(writer);

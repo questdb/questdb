@@ -35,15 +35,10 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointWindowRoot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.std.str.Path;
+import io.questdb.test.cairo.mig.EngineMigrationTest;
 import org.junit.Assert;
 
-import java.io.File;
-import java.io.FileOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
 
 /**
  * Shared harness for the cases that read a checkpoint tree some <i>other</i> build wrote:
@@ -62,8 +57,17 @@ import java.util.zip.ZipInputStream;
 public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveViewTest {
 
     /**
-     * Unpacks a database root over the test's own and points the engine at it, the way
-     * {@code EngineMigrationTest} does for its migration fixtures.
+     * Unpacks a database root over the test's own and points the engine at it. The unpack
+     * and the name-registry reload are {@link EngineMigrationTest#replaceDbContent} - the
+     * same routine the migration fixtures use - so a fix there reaches this caller too.
+     * Only the live-view-specific steps stay here, on either side of that call.
+     * <p>
+     * The resource check goes first because the shared routine asserts non-null without a
+     * message: a fixture that failed to build, or one a rename left behind, otherwise fails
+     * as a bare {@code assertNotNull} naming neither the {@code /lv} zip nor these tests.
+     * <p>
+     * The registry has to drop its instances next, because they hold the roots the
+     * unpack is about to overwrite.
      * <p>
      * The catalogue has to be rebuilt as well as the name registry. A process that opens
      * this root for real hydrates {@link io.questdb.cairo.MetadataCache} from it at
@@ -75,35 +79,14 @@ public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveV
      * the fixture.
      */
     protected static void replaceDbContent(String resourcePath) throws IOException {
+        Assert.assertNotNull(
+                "missing live-view checkpoint fixture resource " + resourcePath,
+                AbstractLiveViewCheckpointCompatTest.class.getResource(resourcePath)
+        );
         engine.getLiveViewRegistry().clear();
-        engine.releaseAllReaders();
-        engine.releaseAllWriters();
-        engine.releaseInactive();
-        engine.closeNameRegistry();
 
-        final byte[] buffer = new byte[1024 * 1024];
-        try (InputStream is = AbstractLiveViewCheckpointCompatTest.class.getResourceAsStream(resourcePath)) {
-            Assert.assertNotNull("missing fixture resource " + resourcePath, is);
-            try (ZipInputStream zip = new ZipInputStream(is)) {
-                ZipEntry entry;
-                while ((entry = zip.getNextEntry()) != null) {
-                    if (!entry.isDirectory()) {
-                        final File dest = new File(root, entry.getName());
-                        final File parent = dest.getParentFile();
-                        Assert.assertTrue("cannot create " + parent, parent.isDirectory() || parent.mkdirs());
-                        try (OutputStream os = new FileOutputStream(dest)) {
-                            int read;
-                            while ((read = zip.read(buffer)) > 0) {
-                                os.write(buffer, 0, read);
-                            }
-                        }
-                    }
-                    zip.closeEntry();
-                }
-            }
-        }
+        EngineMigrationTest.replaceDbContent(resourcePath);
 
-        engine.reloadTableNames();
         try (MetadataCacheWriter cacheRW = engine.getMetadataCache().writeLock()) {
             cacheRW.clearCache();
         }
@@ -167,19 +150,34 @@ public abstract class AbstractLiveViewCheckpointCompatTest extends AbstractLiveV
         }
     }
 
+    /**
+     * The constructor already holds native memory - the store's own {@link Path} and one per
+     * reader it owns - before {@code of()} maps anything, and the caller's try-with-resources
+     * only takes ownership of a store this method returns. So a failed open closes the store
+     * here, or a corrupt fixture leaks every one of those allocations on its way out.
+     */
     protected LiveViewCheckpointMetaStore openStore(LiveViewInstance instance) {
         final LiveViewCheckpointMetaStore store = new LiveViewCheckpointMetaStore(engine.getConfiguration());
         try (Path dir = checkpointsDir(instance)) {
             store.of(dir);
+        } catch (Throwable th) {
+            store.close();
+            throw th;
         }
         return store;
     }
 
+    /**
+     * Closes a reader whose open failed, for the reason {@link #openStore} states.
+     */
     protected LiveViewCheckpointTimelineReader openTimelineReader(LiveViewInstance instance) {
         final LiveViewCheckpointTimelineReader reader =
                 new LiveViewCheckpointTimelineReader(engine.getConfiguration());
         try (Path dir = checkpointsDir(instance)) {
             reader.of(dir);
+        } catch (Throwable th) {
+            reader.close();
+            throw th;
         }
         return reader;
     }

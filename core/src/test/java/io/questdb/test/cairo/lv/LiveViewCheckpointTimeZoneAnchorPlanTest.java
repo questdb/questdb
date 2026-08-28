@@ -127,6 +127,38 @@ public class LiveViewCheckpointTimeZoneAnchorPlanTest extends AbstractLiveViewTe
     }
 
     @Test
+    public void testATransitionDayRefusesOneBoundAndReportsTheOther() throws Exception {
+        // Both bounds off ONE probe, which is the part the cases above split. Each bound
+        // carries a self-check of its own, over its own instants, so a probe on a transition
+        // day gets one finite bound and one refusal rather than two refusals - and each
+        // refusal widens the repair on its own side.
+        assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = plan("02:30", ZONE);
+
+            // The day the gap ends a segment: a start the runtime agrees with, and no end.
+            final long belowGap = ts("2024-03-30T10:00:00.000000Z");
+            final long belowGapStart = ts("2024-03-30T01:30:00.000000Z");
+            Assert.assertEquals(belowGapStart, plan.getSegmentStart(belowGap));
+            Assert.assertEquals(belowGapStart, runtimeAnchor("02:30", ZONE, belowGap));
+            Assert.assertEquals(Numbers.LONG_NULL, plan.getSegmentEndExclusive(belowGap));
+
+            // The day the gap starts one: no start, and an end the runtime agrees with.
+            final long inGap = ts("2024-03-31T10:00:00.000000Z");
+            final long inGapEnd = ts("2024-04-01T00:30:00.000000Z");
+            Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(inGap));
+            Assert.assertEquals(inGapEnd, plan.getSegmentEndExclusive(inGap));
+            Assert.assertEquals(inGapEnd, runtimeAnchor("02:30", ZONE, inGapEnd));
+            Assert.assertNotEquals(inGapEnd, runtimeAnchor("02:30", ZONE, inGapEnd - 1));
+
+            // Fall back splits the pair the same way, one bound at a time.
+            final long atFallBack = ts("2024-10-27T00:30:00.000000Z");
+            Assert.assertEquals(atFallBack, plan.getSegmentStart(atFallBack));
+            Assert.assertEquals(atFallBack, runtimeAnchor("02:30", ZONE, atFallBack));
+            Assert.assertEquals(Numbers.LONG_NULL, plan.getSegmentEndExclusive(atFallBack));
+        });
+    }
+
+    @Test
     public void testAnUnresolvableZoneDeclines() {
         Assert.assertNull(LiveViewCheckpointAnchorPlan.ofTimeZone(
                 'd', 1, 0, ColumnType.TIMESTAMP_MICRO, "Nowhere/Atlantis"));

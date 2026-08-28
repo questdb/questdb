@@ -241,12 +241,13 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
     private static class LiveViewsCursorFactory implements RecordCursorFactory {
         private static final int COLUMN_APPLIED_WATERMARK = 17;
-        private static final int COLUMN_SEGMENT_REPAIR_GATE = 53;
-        private static final int COLUMN_KEYED_SCAN_GATE = 54;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
+        private static final int COLUMN_CHECKPOINT_CORRECTION_DEPTH_SAMPLE_COUNT = 60;
         private static final int COLUMN_CHECKPOINT_DATA_SEGMENT_COUNT = 33;
+        private static final int COLUMN_CHECKPOINT_EFFECTIVE_DURATION_MICROS = 58;
         private static final int COLUMN_CHECKPOINT_GC_LAG_GENERATIONS = 36;
+        private static final int COLUMN_CHECKPOINT_LAST_CORRECTION_DEPTH_MICROS = 59;
         private static final int COLUMN_CHECKPOINT_LAST_LOOKUP_DEPTH = 40;
         private static final int COLUMN_CHECKPOINT_LAST_RESTORE_MICROS = 38;
         private static final int COLUMN_CHECKPOINT_LAST_WRITE_MICROS = 37;
@@ -281,20 +282,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 9;
         private static final int COLUMN_IN_MEM_BYTES = 10;
         private static final int COLUMN_IN_MEM_ROWS = 11;
+        private static final int COLUMN_KEYED_SCAN_GATE = 54;
         private static final int COLUMN_LAG_MICROS = 15;
         private static final int COLUMN_LAG_SEQTXN = 14;
         private static final int COLUMN_LAST_PROCESSED_SEQTXN = 16;
         private static final int COLUMN_LV_CONSUMED_SEQTXN = 18;
         private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 23;
+        private static final int COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT = 57;
+        private static final int COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT = 56;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
         private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 24;
-        private static final int COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT = 56;
-        private static final int COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT = 57;
-        private static final int COLUMN_CHECKPOINT_EFFECTIVE_DURATION_MICROS = 58;
-        private static final int COLUMN_CHECKPOINT_LAST_CORRECTION_DEPTH_MICROS = 59;
-        private static final int COLUMN_CHECKPOINT_CORRECTION_DEPTH_SAMPLE_COUNT = 60;
         private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 22;
         private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
+        private static final int COLUMN_SEGMENT_REPAIR_GATE = 53;
         private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_VIEW_SQL = 3;

@@ -25,8 +25,11 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentChangeSet;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Micros;
 import org.junit.Assert;
@@ -59,6 +62,117 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         changeSet.of(DAY_8 + Micros.HOUR_MICROS * 6);
         Assert.assertFalse(changeSet.addRow(DAY_8 + Micros.HOUR_MICROS, null, plan));
         Assert.assertTrue(changeSet.isOverflowed());
+    }
+
+    @Test
+    public void testASegmentOpenBelowDeclinesRatherThanFlooringOneAtMinValue() {
+        // Every row under a non-zero alignment origin shares one segment that is open below
+        // and ends where the first aligned bucket starts, so the plan answers Long.MIN_VALUE
+        // for its start and a finite end for the same probe. Long.MIN_VALUE is a refusal, not
+        // a floor: installed as one it would swallow every row below that end, however far
+        // back, and nest the segments those rows belong to inside it.
+        final long origin = 9 * Micros.HOUR_MICROS + 30 * Micros.MINUTE_MICROS;
+        final LiveViewCheckpointAnchorPlan plan =
+                LiveViewCheckpointAnchorPlan.of('d', 1, origin, ColumnType.TIMESTAMP_MICRO);
+        Assert.assertNotNull("a daily anchor aligned to 09:30 must carry a fixed segment", plan);
+        final long belowOrigin = 2 * Micros.HOUR_MICROS;
+        Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(belowOrigin));
+        Assert.assertEquals(origin, plan.getSegmentEndExclusive(belowOrigin));
+
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        // Well above the segment's end, so nothing but the open-below start can decline it.
+        changeSet.of(DAY_8 + origin);
+        Assert.assertFalse(changeSet.addRow(belowOrigin, null, plan));
+        Assert.assertTrue(changeSet.isOverflowed());
+        Assert.assertEquals(0, changeSet.getClosedSegmentCount());
+    }
+
+    @Test
+    public void testAZonedOpenBelowStartDeclinesRatherThanFlooringASegmentAtMinValue() {
+        // The production shape of the same refusal. ANCHOR DAILY '02:30' 'Europe/Berlin'
+        // straddles the hour the spring-forward skips, so on 2024-03-31 the plan refuses the
+        // start and still reports a finite end - one probe, one bound each way, on two days a
+        // year. The end sits well below the active segment's start, so the change set has
+        // nothing to decline on but the start.
+        final LiveViewCheckpointAnchorPlan plan = berlinPlan();
+        final long inGapDay = ts("2024-03-31T10:00:00.000000Z");
+        Assert.assertEquals(Long.MIN_VALUE, plan.getSegmentStart(inGapDay));
+        Assert.assertEquals(ts("2024-04-01T00:30:00.000000Z"), plan.getSegmentEndExclusive(inGapDay));
+
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        changeSet.of(ts("2024-06-01T00:30:00.000000Z"));
+        Assert.assertFalse(changeSet.addRow(inGapDay, null, plan));
+        Assert.assertTrue(changeSet.isOverflowed());
+        // And so a row three months lower never joins a segment floored at Long.MIN_VALUE,
+        // which is what the containment cache would have handed it.
+        Assert.assertFalse(changeSet.addRow(ts("2024-01-05T08:00:00.000000Z"), null, plan));
+        Assert.assertEquals(0, changeSet.getClosedSegmentCount());
+    }
+
+    @Test
+    public void testAFallBackSegmentsRepairRangeCoversEveryRowTheEntryHolds() throws SqlException {
+        // A zone floor is not monotone through a fall-back, so two probes inside what the
+        // decomposition treats as one segment disagree about its end: the row before the
+        // transition reports a 24-hour segment and the row after it a 25-hour one, both off
+        // the same start. indexOf keys an entry on the start alone, so the entry keeps the
+        // end the first row installed while its maxTs widens past it.
+        //
+        // Nothing bounds a repair with that stored end. LiveViewCheckpointRepairPlan derives
+        // the replacement's own H from the entry's maxTs - getSegmentEndExclusive answers
+        // either a bound strictly above the timestamp it was asked about or LONG_NULL, which
+        // declines the segment outright - so the range the repair replaces covers every row
+        // the entry holds however stale the stored end is. That is the property to hold on
+        // to: a repair may read wider than the entry claims, and may never read narrower.
+        final LiveViewCheckpointAnchorPlan plan = berlinPlan();
+        final long segmentStart = ts("2024-10-26T00:30:00.000000Z");
+        final long lowRow = ts("2024-10-26T23:00:00.000000Z");
+        final long highRow = ts("2024-10-27T01:00:00.000000Z");
+        Assert.assertEquals(segmentStart, plan.getSegmentStart(lowRow));
+        Assert.assertEquals(segmentStart, plan.getSegmentStart(highRow));
+        Assert.assertEquals(ts("2024-10-27T00:30:00.000000Z"), plan.getSegmentEndExclusive(lowRow));
+        Assert.assertEquals(ts("2024-10-27T01:30:00.000000Z"), plan.getSegmentEndExclusive(highRow));
+
+        // The frontier sits a week above the transition, so both rows are below the runtime's
+        // own segment and the decomposition may place them.
+        final long frontierTs = ts("2024-11-05T12:00:00.000000Z");
+        final long activeSegmentStart = plan.getSegmentStart(frontierTs);
+        final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
+        changeSet.of(activeSegmentStart);
+        Assert.assertTrue(changeSet.addRow(lowRow, null, plan));
+        Assert.assertTrue(changeSet.addRow(highRow, null, plan));
+        Assert.assertEquals(1, changeSet.getClosedSegmentCount());
+        Assert.assertEquals(segmentStart, changeSet.getSegmentStart(0));
+        Assert.assertEquals(lowRow, changeSet.getSegmentMinTs(0));
+        Assert.assertEquals(highRow, changeSet.getSegmentMaxTs(0));
+
+        final LiveViewCheckpointRepairPlan repairPlan = new LiveViewCheckpointRepairPlan();
+        Assert.assertTrue(
+                "a closed segment below a quiesced frontier must localize",
+                repairPlan.ofSegment(
+                        changeSet.getSegmentMinTs(0),
+                        changeSet.getSegmentMaxTs(0),
+                        ts("2024-10-20T00:30:00.000000Z"),
+                        9,
+                        9,
+                        plan,
+                        frontierTs,
+                        frontierTs
+                )
+        );
+        // The replay reads from the segment's own start, and the replacement runs past the
+        // highest row the entry holds - past the stored end with it. The pinned bound is the
+        // 25-hour end highRow itself reports, so it already sits above that highest row; only
+        // the stored end and the entry's own minimum need a comparison of their own.
+        Assert.assertEquals(segmentStart, repairPlan.getReplayLowTs());
+        Assert.assertEquals(ts("2024-10-27T01:30:00.000000Z"), repairPlan.getHighTsExclusive());
+        Assert.assertTrue(
+                "the replacement must not stop below the entry's stored end",
+                repairPlan.getHighTsExclusive() >= changeSet.getSegmentEndExclusive(0)
+        );
+        Assert.assertTrue(
+                "every row the entry holds must sit inside the replaced range",
+                repairPlan.getOutputLowTs() <= changeSet.getSegmentMinTs(0)
+        );
     }
 
     @Test
@@ -258,10 +372,26 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         Assert.assertTrue(changeSet.addRow(extraDay + 1, null, plan));
     }
 
+    private static LiveViewCheckpointAnchorPlan berlinPlan() {
+        final LiveViewCheckpointAnchorPlan plan = LiveViewCheckpointAnchorPlan.ofTimeZone(
+                'd',
+                1,
+                ts("1970-01-01T02:30:00.000000Z"),
+                ColumnType.TIMESTAMP_MICRO,
+                "Europe/Berlin"
+        );
+        Assert.assertNotNull("ANCHOR DAILY '02:30' 'Europe/Berlin' must carry a segment", plan);
+        return plan;
+    }
+
     private static LiveViewCheckpointAnchorPlan dailyPlan() {
         final LiveViewCheckpointAnchorPlan plan =
                 LiveViewCheckpointAnchorPlan.of('d', 1, 0, ColumnType.TIMESTAMP_MICRO);
         Assert.assertNotNull("an epoch-aligned daily anchor must carry a fixed segment", plan);
         return plan;
+    }
+
+    private static long ts(String timestamp) {
+        return MicrosTimestampDriver.floor(timestamp);
     }
 }

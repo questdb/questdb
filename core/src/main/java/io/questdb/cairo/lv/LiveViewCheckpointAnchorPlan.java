@@ -78,12 +78,21 @@ import org.jetbrains.annotations.Nullable;
  * rebuild, so an anchor whose period this cannot reproduce costs the view only the
  * localized path.
  * <p>
- * The time-zone variant runs the same self-check and needs it more. A zone floor is not
- * monotone through a transition: an anchor whose local wall time falls in the hour a
- * spring-forward skips, or in the hour a fall-back repeats, reports boundaries that
- * overlap or reverse for the rows around it. Both checks fail exactly there, and the
- * plan answers EOF for the end and an open-below start - the same conservative pair an
- * unrecognized period gets, on the two days a year it applies.
+ * The time-zone variant runs a self-check of its own on each bound and needs both more. A
+ * zone floor is not monotone through a transition: an anchor whose local wall time falls in
+ * the hour a spring-forward skips, or in the hour a fall-back repeats, reports boundaries
+ * that overlap or reverse for the rows around it. The end check catches that from above and
+ * answers EOF; the start check catches it from below and answers an open-below start.
+ * <p>
+ * <b>The two checks are independent, and refuse independently.</b> They are separate
+ * expressions over separate instants, so a probe on one of the two days a year this applies
+ * usually gets one finite bound and one refusal rather than two refusals: a start the
+ * runtime agrees with under an EOF end on the day the gap ends a segment, and an open-below
+ * start under a finite end on the day the gap starts one. Each refusal widens the repair on
+ * its own side and each surviving bound stands on its own proof, so a caller that reads one
+ * bound may take it. A caller that needs a <b>closed</b> segment must test both:
+ * {@link LiveViewCheckpointSegmentChangeSet#addRow} does, because an open-below start is a
+ * refusal rather than a floor a segment can be repaired from.
  * <p>
  * Anchors outside the recognized shape - an anchor over a non-designated column, an
  * arbitrary expression, a zone name this cannot resolve - produce no plan at all.
@@ -241,8 +250,10 @@ public final class LiveViewCheckpointAnchorPlan {
      * {@link Long#MIN_VALUE} when the segment is open below - which happens for a
      * timestamp under a non-zero alignment origin, since every such row carries the
      * origin as its anchor value, and for a zone floor a transition makes non-monotone.
-     * A caller clamps the floor to {@code S} either way, so the open-below case needs no
-     * separate branch.
+     * A caller that clamps the floor to {@code S} needs no separate branch for it. A caller
+     * that instead needs a closed segment to repair on its own must reject it: it is not a
+     * floor, and {@link #getSegmentEndExclusive(long)} reports a finite end beside it often
+     * enough that reading the end alone proves nothing about the start.
      */
     public long getSegmentStart(long timestamp) {
         if (tzRules != null) {

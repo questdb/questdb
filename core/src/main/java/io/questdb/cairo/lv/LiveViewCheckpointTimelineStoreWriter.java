@@ -539,6 +539,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     @TestOnly
+    public int getRedirectRefWidthLookupCountForTest() {
+        return publicationShells.roots.getRedirectRefWidthLookupCountForTest();
+    }
+
+    @TestOnly
     public int getRootBuilderVisitorShellIdentityForTest(int index) {
         switch (index) {
             case 0:

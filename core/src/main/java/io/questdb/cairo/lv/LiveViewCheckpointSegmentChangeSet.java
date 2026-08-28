@@ -130,9 +130,12 @@ public final class LiveViewCheckpointSegmentChangeSet {
      *            when the caller asked for no keys, and read only for a row that lands in a
      *            closed segment - a residual row is repaired by the ordinary resume, which
      *            follows no key
-     * @return false once the change set has opened more than {@link #MAX_CLOSED_SEGMENTS}
-     * closed segments, after which the decomposition is abandoned and the caller
-     * falls back to the union range
+     * @return false once the change set gives up, after which the decomposition is
+     * abandoned and the caller falls back to the union range. It gives up when the row
+     * would open more than {@link #MAX_CLOSED_SEGMENTS} closed segments, and when the plan
+     * refuses the row's own segment - no representable start, no representable end, or an
+     * end above {@code activeSegmentStart}. Every later row is refused too, since
+     * {@link #isOverflowed()} latches
      */
     public boolean addRow(long ts, @Nullable CharSequence key, @NotNull LiveViewCheckpointAnchorPlan anchorPlan) {
         if (ts >= activeSegmentStart) {
@@ -150,12 +153,17 @@ public final class LiveViewCheckpointSegmentChangeSet {
         if (ts < cachedSegmentStart || ts >= cachedSegmentEndExclusive) {
             final long start = anchorPlan.getSegmentStart(ts);
             final long end = anchorPlan.getSegmentEndExclusive(ts);
-            if (end == Numbers.LONG_NULL || end > activeSegmentStart) {
-                // No representable segment end is H = EOF, which no localized repair can
-                // stand on; an end above the active segment's start means the arithmetic
-                // does not agree with the runtime's own segmentation. Either way this row
-                // has no closed segment of its own, so the decomposition cannot describe
-                // it.
+            if (start == Long.MIN_VALUE || end == Numbers.LONG_NULL || end > activeSegmentStart) {
+                // An open-below start is a refusal rather than a floor - the plan reports it
+                // for a row under a non-zero alignment origin and for a zone floor a
+                // transition makes non-monotone, and it comes with a finite end often
+                // enough that reading the end alone is not enough. Installed as a floor it
+                // would swallow every row below that end, however far back, and nest the
+                // segments those rows belong to inside it. No representable segment end is
+                // H = EOF, which no localized repair can stand on; an end above the active
+                // segment's start means the arithmetic does not agree with the runtime's own
+                // segmentation. In every case this row has no closed segment of its own, so
+                // the decomposition cannot describe it.
                 overflowed = true;
                 return false;
             }
@@ -339,9 +347,10 @@ public final class LiveViewCheckpointSegmentChangeSet {
     }
 
     /**
-     * @return true once the decomposition gave up - too many distinct closed segments, or
-     * a row whose segment has no representable end. The caller must then repair the whole
-     * change set as one union range.
+     * @return true once the decomposition gave up - too many distinct closed segments, or a
+     * row whose segment has no representable start, has no representable end, or ends above
+     * the active segment's start. The caller must then repair the whole change set as one
+     * union range.
      */
     public boolean isOverflowed() {
         return overflowed;

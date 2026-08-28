@@ -99,10 +99,41 @@ public class LiveViewNoGcSourceHygieneTest {
                     + "\\b(?:Callable|Consumer|Function|Runnable|Supplier)\\b",
             Pattern.DOTALL
     );
+    // The tokens a specialized commit fence must show. Each names an API the fence cannot drop
+    // without losing the property it exists for. Two of them pin a name instead of an API, and
+    // deliberately: the fence clears two distinct dirty flags, and nothing but the object each
+    // one lives on tells them apart. JOB_WINDOW_STATE_CLEAR pins windowStateDirty, the job's own
+    // field, and INSTANCE_PARAMETER pins the LiveViewInstance type so the check can read the
+    // fence's instance reference out of its declaration. Every other identifier - the lock local,
+    // the parameters, the engine field - the check reads out of the source rather than pinning.
+    // assertSpecializedCommit() orders them.
+    private static final Pattern CALLBACK_PARAMETER = Pattern.compile(
+            "\\b(?:Callable|Consumer|Function|Runnable|Supplier)\\b"
+    );
+    private static final Pattern FINALLY_BLOCK = Pattern.compile("\\}\\s*finally\\s*\\{");
+    private static final Pattern INSTANCE_PARAMETER = Pattern.compile(
+            "\\b(?:[A-Za-z_$][A-Za-z0-9_$]*\\s*\\.\\s*)*LiveViewInstance\\s+([A-Za-z_$][A-Za-z0-9_$]*)\\b"
+    );
+    // The job's own field, so a bare or this-qualified assignment only. A clear reached through
+    // any other receiver leaves this job's flag set.
+    private static final Pattern JOB_WINDOW_STATE_CLEAR = Pattern.compile(
+            "(?:\\bthis\\s*\\.\\s*|(?<![.\\w$]))windowStateDirty\\s*=\\s*false\\s*;"
+    );
+    private static final Pattern MINT_OBSERVER_CALL = Pattern.compile(
+            "\\bfireRoleSwitchMintObserver\\s*\\(\\s*\\)\\s*;"
+    );
+    private static final Pattern ROLE_SWITCH_READ_LOCK = Pattern.compile(
+            "(?:\\bfinal\\s+)?(?:[A-Za-z_$][A-Za-z0-9_$.]*\\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\\s*=\\s*"
+                    + "(?:[A-Za-z_$][A-Za-z0-9_$.]*\\s*\\.\\s*)?getRoleSwitchReadLock\\s*\\(\\s*\\)\\s*;"
+    );
+    private static final Pattern TRY_BLOCK = Pattern.compile("\\btry\\s*\\{");
     private static final Pattern STATIC_FINAL = Pattern.compile("\\bstatic\\s+final\\b");
     private static final Pattern TYPE_DECLARATION = Pattern.compile(
             "\\b(?:class|enum|interface|record)\\s+[A-Za-z_$][A-Za-z0-9_$]*[^;{]*\\{"
     );
+    private static final String FENCE_NAME = "commitLiveViewFenced";
+    private static final String FENCE_SIGNATURE =
+            "private void " + FENCE_NAME + "(LiveViewInstance instance, WalWriter walWriter, long seqTxn)";
 
     @Test
     public void testCompactionSourcesAvoidGcConstructs() throws IOException {
@@ -270,35 +301,207 @@ public class LiveViewNoGcSourceHygieneTest {
         final Path sourceRoot = findSourceRoot();
         final Path file = sourceRoot.resolve("io/questdb/cairo/lv/LiveViewRefreshJob.java");
         final String code = stripCommentsAndLiterals(Files.readString(file, StandardCharsets.UTF_8));
-        assertSpecializedCommit(
-                file,
-                code,
-                "commitLiveViewFenced",
-                "walWriter.commitLiveView(seqTxn);",
-                2
-        );
-        assertSpecializedCommit(
-                file,
-                code,
-                "commitLiveViewWithoutDedupFenced",
-                "walWriter.commitLiveViewWithoutDedup(seqTxn);",
-                2
-        );
-        assertSpecializedCommit(
-                file,
-                code,
-                "commitLiveViewWithUpsertFenced",
-                "walWriter.commitLiveViewWithUpsert(seqTxn);",
-                3
-        );
-        assertSpecializedCommit(
-                file,
-                code,
-                "commitLiveViewWithReplaceRangeFenced",
-                "walWriter.commitLiveViewWithReplaceRange(seqTxn, replaceLowTs, replaceHighTs);",
-                4
-        );
+        assertSpecializedCommit(file, code, "commitLiveViewFenced", "commitLiveView");
+        assertSpecializedCommit(file, code, "commitLiveViewWithoutDedupFenced", "commitLiveViewWithoutDedup");
+        assertSpecializedCommit(file, code, "commitLiveViewWithUpsertFenced", "commitLiveViewWithUpsert");
+        assertSpecializedCommit(file, code, "commitLiveViewWithReplaceRangeFenced", "commitLiveViewWithReplaceRange");
         Assert.assertFalse(code.contains("fencedLiveViewCommit"));
+    }
+
+    /**
+     * Self-coverage for the specialized commit fence check. The first block feeds it shapes a
+     * behaviour-preserving refactor produces - a renamed lock local, renamed parameters, a
+     * {@code this.} qualifier, extra call sites - and each must stay green. The second block
+     * breaks the property itself and each must go red, so the tolerance above buys nothing at
+     * the expense of the hazard the check exists for.
+     */
+    @Test
+    public void testSpecializedCommitFenceSelfCoverage() {
+        final String fencedBody = """
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    walWriter.commitLiveView(seqTxn);
+                    windowStateDirty = false;
+                    instance.setWindowStateDirty(false);
+                } finally {
+                    lock.unlock();
+                }
+                """;
+        assertSpecializedCommitAccepted(specializedCommitSource(fencedBody));
+        // A behaviour-preserving rename of every identifier the fence touches - declaration and
+        // body together - plus a this-qualified field clear, still describes the same fence.
+        assertSpecializedCommitAccepted(specializedCommitSource(
+                "private void " + FENCE_NAME + "(LiveViewInstance view, WalWriter writer, long txn)",
+                """
+                        final Lock roleSwitchReadLock = this.cairoEngine.getRoleSwitchReadLock();
+                        roleSwitchReadLock.lock();
+                        try {
+                            this.cairoEngine.fireRoleSwitchMintObserver();
+                            writer.commitLiveView(txn);
+                            this.windowStateDirty = false;
+                            view.setWindowStateDirty(false);
+                        } finally {
+                            roleSwitchReadLock.unlock();
+                        }
+                        """,
+                "private void drain() { " + FENCE_NAME + "(view, writer, txn); }"
+        ));
+        // A third legitimate caller is an ordinary refactor, not a broken fence.
+        assertSpecializedCommitAccepted(specializedCommitSource(
+                FENCE_SIGNATURE,
+                fencedBody,
+                """
+                        private void drain() { commitLiveViewFenced(instance, walWriter, seqTxn); }
+                        private void flush() { commitLiveViewFenced(instance, walWriter, seqTxn); }
+                        private void sweep() { commitLiveViewFenced(instance, walWriter, seqTxn); }
+                        """
+        ));
+
+        // The commit itself escapes the read lock.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                walWriter.commitLiveView(seqTxn);
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    windowStateDirty = false;
+                    instance.setWindowStateDirty(false);
+                } finally {
+                    lock.unlock();
+                }
+                """));
+        // The fence clears the job's dirty flag after it releases the lock.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    walWriter.commitLiveView(seqTxn);
+                    instance.setWindowStateDirty(false);
+                } finally {
+                    lock.unlock();
+                }
+                windowStateDirty = false;
+                """));
+        // The fence clears the instance's dirty flag after it releases the lock.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    walWriter.commitLiveView(seqTxn);
+                    windowStateDirty = false;
+                } finally {
+                    lock.unlock();
+                }
+                instance.setWindowStateDirty(false);
+                """));
+        // The release is not in a finally, so a throwing commit leaks the lock.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    walWriter.commitLiveView(seqTxn);
+                    windowStateDirty = false;
+                    instance.setWindowStateDirty(false);
+                    lock.unlock();
+                }
+                """));
+        // The mint observer no longer fires under the lock.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    walWriter.commitLiveView(seqTxn);
+                    windowStateDirty = false;
+                    instance.setWindowStateDirty(false);
+                } finally {
+                    lock.unlock();
+                }
+                """));
+        // A second, unfenced commit path opens elsewhere in the class.
+        assertSpecializedCommitRejected(specializedCommitSource(
+                FENCE_SIGNATURE,
+                fencedBody,
+                """
+                        private void drain() { commitLiveViewFenced(instance, walWriter, seqTxn); }
+                        private void shortcut() { walWriter.commitLiveView(seqTxn); }
+                        """
+        ));
+        // The fence is orphaned: nothing routes a commit through it any more.
+        assertSpecializedCommitRejected(specializedCommitSource(
+                FENCE_SIGNATURE,
+                fencedBody,
+                "private void drain() { }"
+        ));
+        // The fence takes a callback, so its caller decides what runs under the lock.
+        assertSpecializedCommitRejected(specializedCommitSource(
+                "private void commitLiveViewFenced(LiveViewInstance instance, WalWriter walWriter, "
+                        + "long seqTxn, Runnable after)",
+                fencedBody,
+                "private void drain() { commitLiveViewFenced(instance, walWriter, seqTxn, after); }"
+        ));
+        // The fence clears the instance dirty flag on the job's own cached field rather than on
+        // the instance it was handed, which is a different object whenever the two disagree, so
+        // the committing instance still believes it must rebuild rows that are already durable.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    walWriter.commitLiveView(seqTxn);
+                    windowStateDirty = false;
+                    this.instance.setWindowStateDirty(false);
+                } finally {
+                    lock.unlock();
+                }
+                """));
+        // The fence clears a dirty flag the instance carries instead of the job's own, so the
+        // job's stays set.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    walWriter.commitLiveView(seqTxn);
+                    instance.windowStateDirty = false;
+                    instance.setWindowStateDirty(false);
+                } finally {
+                    lock.unlock();
+                }
+                """));
+        // The release sits below the finally block rather than inside it, so a throwing commit
+        // leaks the read lock.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    walWriter.commitLiveView(seqTxn);
+                    windowStateDirty = false;
+                    instance.setWindowStateDirty(false);
+                } finally {
+                    engine.getConfiguration();
+                }
+                lock.unlock();
+                """));
+        // A second commit opens inside the fence itself, above the acquisition.
+        assertSpecializedCommitRejected(specializedCommitSource("""
+                walWriter.commitLiveView(seqTxn);
+                final Lock lock = engine.getRoleSwitchReadLock();
+                lock.lock();
+                try {
+                    engine.fireRoleSwitchMintObserver();
+                    walWriter.commitLiveView(seqTxn);
+                    windowStateDirty = false;
+                    instance.setWindowStateDirty(false);
+                } finally {
+                    lock.unlock();
+                }
+                """));
     }
 
     /**
@@ -833,18 +1036,76 @@ public class LiveViewNoGcSourceHygieneTest {
         Assert.assertTrue("unexpected method-scoped compiled encoding violation: " + violations, violations.isEmpty());
     }
 
+    private static void assertSpecializedCommitAccepted(String source) {
+        assertSpecializedCommit(
+                Path.of("source/Snippet.java"),
+                stripCommentsAndLiterals(source),
+                FENCE_NAME,
+                "commitLiveView"
+        );
+    }
+
+    private static void assertSpecializedCommitRejected(String source) {
+        boolean isRejected = false;
+        try {
+            assertSpecializedCommit(
+                    Path.of("source/Snippet.java"),
+                    stripCommentsAndLiterals(source),
+                    FENCE_NAME,
+                    "commitLiveView"
+            );
+        } catch (AssertionError expected) {
+            isRejected = true;
+        }
+        Assert.assertTrue("expected specialized commit violation for: " + source, isRejected);
+    }
+
+    private static String specializedCommitSource(String fenceBody) {
+        return specializedCommitSource(
+                FENCE_SIGNATURE,
+                fenceBody,
+                "private void drain() { " + FENCE_NAME + "(instance, walWriter, seqTxn); }"
+        );
+    }
+
+    private static String specializedCommitSource(String signature, String fenceBody, String extraMembers) {
+        return "class Job {" + System.lineSeparator()
+                + signature + " {" + System.lineSeparator()
+                + fenceBody
+                + "}" + System.lineSeparator()
+                + extraMembers + System.lineSeparator()
+                + "}" + System.lineSeparator();
+    }
+
     private static void assertArrayCopyDetected(String source) {
         final List<String> violations = new ArrayList<>();
         findArrayCopies(Path.of("source"), Path.of("source/Snippet.java"), source, violations);
         Assert.assertFalse("expected byte-array copy violation for: " + source, violations.isEmpty());
     }
 
+    /**
+     * Pins the shape of one specialized commit fence: the job reads the role-switch read
+     * lock into a local, takes it, fires the mint observer, commits through
+     * {@code writerCommitMethod}, clears both window-state dirty flags while it still holds
+     * the lock, and releases the lock from inside a {@code finally}.
+     * <p>
+     * The check matches token patterns rather than verbatim statements, so renaming the
+     * local, the parameters or the engine field, or qualifying a field with {@code this.},
+     * leaves it green. Both dirty-flag clears keep their receiver, though: the job's flag
+     * takes a bare or {@code this.}-qualified assignment, and the instance's takes the very
+     * reference the declaration binds the {@code LiveViewInstance} to. A fence that clears
+     * either flag on some other object leaves the flag it was handed set.
+     * <p>
+     * It counts no call sites. In their place it asserts the two properties a call site can
+     * actually break: every {@code writerCommitMethod} call in the file sits inside this
+     * fence, and inside its lock - no commit escapes the role-switch read lock - and at
+     * least one caller still reaches the fence, so an orphaned fence still shows up.
+     */
     private static void assertSpecializedCommit(
             Path file,
             String code,
             String methodName,
-            String writerCall,
-            int expectedInvocationCount
+            String writerCommitMethod
     ) {
         final List<MethodRegion> methods = findMethodRegions(code, file);
         MethodRegion found = null;
@@ -856,37 +1117,145 @@ public class LiveViewNoGcSourceHygieneTest {
             }
         }
         Assert.assertNotNull("missing specialized commit method " + methodName, found);
-        final String declaration = code.substring(findDeclarationStart(code, found.openBrace), found.openBrace);
+        final int declarationStart = findDeclarationStart(code, found.openBrace);
+        final String declaration = code.substring(declarationStart, found.openBrace);
         Assert.assertFalse("commit fence must not accept a callback: " + declaration,
-                Pattern.compile("\\b(?:Callable|Consumer|Function|Runnable|Supplier)\\b").matcher(declaration).find());
-        final String body = singleLine(code.substring(found.openBrace, found.closeBrace + 1));
-        assertInOrder(
-                body,
-                "final Lock lock = engine.getRoleSwitchReadLock();",
-                "lock.lock();",
-                "try {",
-                "engine.fireRoleSwitchMintObserver();",
-                writerCall,
-                "windowStateDirty = false;",
-                "instance.setWindowStateDirty(false);",
-                "} finally {",
-                "lock.unlock();"
+                CALLBACK_PARAMETER.matcher(declaration).find());
+
+        final Matcher instanceParameter = INSTANCE_PARAMETER.matcher(declaration);
+        Assert.assertTrue(
+                "commit fence " + methodName + " must take the live-view instance it clears: " + declaration,
+                instanceParameter.find()
         );
-        int invocationCount = 0;
+        // The instance clear names this reference and no other. Anything else clears a flag on
+        // an object the fence was not handed, and the instance it was handed stays dirty.
+        final Pattern instanceWindowStateClear = Pattern.compile(
+                "(?<![.\\w$])" + Pattern.quote(instanceParameter.group(1))
+                        + "\\s*\\.\\s*setWindowStateDirty\\s*\\(\\s*false\\s*\\)\\s*;"
+        );
+
+        final String body = singleLine(code.substring(found.openBrace, found.closeBrace + 1));
+        final Matcher acquisition = ROLE_SWITCH_READ_LOCK.matcher(body);
+        Assert.assertTrue(
+                "commit fence " + methodName + " must read the role-switch read lock into a local: " + body,
+                acquisition.find()
+        );
+        final String lockName = acquisition.group(1);
+        final Pattern lockCall = Pattern.compile(
+                "\\b" + Pattern.quote(lockName) + "\\s*\\.\\s*lock\\s*\\(\\s*\\)\\s*;"
+        );
+        final Pattern unlockCall = Pattern.compile(
+                "\\b" + Pattern.quote(lockName) + "\\s*\\.\\s*unlock\\s*\\(\\s*\\)\\s*;"
+        );
+        final Pattern writerCall = Pattern.compile("\\.\\s*" + Pattern.quote(writerCommitMethod) + "\\s*\\(");
+
+        final int locked = matchAfter(body, lockCall, acquisition.end(), methodName).end();
+        int offset = matchAfter(body, TRY_BLOCK, locked, methodName).end();
+        offset = matchAfter(body, MINT_OBSERVER_CALL, offset, methodName).end();
+        final int committed = matchAfter(body, writerCall, offset, methodName).end();
+        final Matcher release = matchAfter(body, FINALLY_BLOCK, committed, methodName);
+        final int released = release.start();
+        // The release sits inside that finally, not merely after it: an unlock below the whole
+        // block leaks the lock on the throwing commit the block exists to cover.
+        final int releaseBlockEnd = findBlockEnd(body, release.end() - 1, methodName);
+        final Matcher unlock = matchAfter(body, unlockCall, released, methodName);
+        Assert.assertTrue(
+                "commit fence " + methodName + " releases the role-switch read lock outside its finally"
+                        + " block, so a throwing commit leaks it: " + body,
+                unlock.end() <= releaseBlockEnd
+        );
+
+        // Both dirty flags fall between the commit and the release. A clear that escapes the
+        // lock lets a role switch observe durable rows the job still believes it must rebuild.
+        assertWithin(body, JOB_WINDOW_STATE_CLEAR, committed, released, methodName);
+        assertWithin(body, instanceWindowStateClear, committed, released, methodName);
+
+        // Every commit the fence itself makes runs under the lock. Sitting inside the method is
+        // not enough: a call above the acquisition or below the release commits unfenced from
+        // within the fence.
+        final Matcher fencedCommit = writerCall.matcher(body);
+        while (fencedCommit.find()) {
+            Assert.assertTrue(
+                    "commit fence " + methodName + " calls " + writerCommitMethod
+                            + " outside the role-switch read lock: " + body,
+                    fencedCommit.start() >= locked && fencedCommit.end() <= released
+            );
+        }
+
+        // No unfenced commit path: every writer commit in the file lives inside this fence.
+        final Matcher writerInvocation = writerCall.matcher(code);
+        while (writerInvocation.find()) {
+            Assert.assertTrue(
+                    "unfenced " + writerCommitMethod + " call at offset " + writerInvocation.start()
+                            + " in " + file + ": every commit must run inside " + methodName,
+                    writerInvocation.start() > found.openBrace && writerInvocation.end() <= found.closeBrace
+            );
+        }
+
+        // The fence stays reachable. Any number of call sites is legitimate; none is not.
+        int callSiteCount = 0;
         final Matcher invocation = Pattern.compile("\\b" + Pattern.quote(methodName) + "\\s*\\(").matcher(code);
         while (invocation.find()) {
-            invocationCount++;
+            if (invocation.start() >= declarationStart && invocation.start() < found.openBrace) {
+                continue;
+            }
+            callSiteCount++;
         }
-        Assert.assertEquals("unexpected call-site count for " + methodName, expectedInvocationCount, invocationCount);
+        Assert.assertTrue(
+                "specialized commit fence " + methodName + " in " + file + " has no call site",
+                callSiteCount > 0
+        );
     }
 
-    private static void assertInOrder(String text, String... fragments) {
-        int offset = 0;
-        for (int i = 0; i < fragments.length; i++) {
-            final int found = text.indexOf(fragments[i], offset);
-            Assert.assertTrue("missing or out-of-order fragment " + fragments[i] + " in " + text, found > -1);
-            offset = found + fragments[i].length();
+    /**
+     * Returns the offset of the brace that closes the block opening at {@code openBrace}. The
+     * caller has already stripped comments and literals, so counting braces is exact here.
+     */
+    private static int findBlockEnd(String body, int openBrace, String methodName) {
+        int depth = 0;
+        for (int i = openBrace, n = body.length(); i < n; i++) {
+            final char c = body.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
         }
+        Assert.fail("unbalanced block in " + methodName + ": " + body);
+        return -1;
+    }
+
+    /**
+     * Asserts the first match at or after {@code offset} and hands the matcher back, so the
+     * caller can chain the next fragment off its end and pin the order without pinning text.
+     */
+    private static Matcher matchAfter(String body, Pattern pattern, int offset, String methodName) {
+        final Matcher matcher = pattern.matcher(body);
+        Assert.assertTrue(
+                "missing or out-of-order fragment /" + pattern.pattern() + "/ in " + methodName + ": " + body,
+                matcher.find(offset)
+        );
+        return matcher;
+    }
+
+    /**
+     * Asserts the fragment appears in {@code [from, to)} - the window this check uses for the
+     * region the fence still holds the lock over.
+     */
+    private static void assertWithin(String body, Pattern pattern, int from, int to, String methodName) {
+        final Matcher matcher = pattern.matcher(body);
+        Assert.assertTrue(
+                "missing fragment /" + pattern.pattern() + "/ in " + methodName + ": " + body,
+                matcher.find(from)
+        );
+        Assert.assertTrue(
+                "fragment /" + pattern.pattern() + "/ escapes the role-switch read lock in "
+                        + methodName + ": " + body,
+                matcher.end() <= to
+        );
     }
 
     private static void assertBoxedCollectionDetected(String source) {
