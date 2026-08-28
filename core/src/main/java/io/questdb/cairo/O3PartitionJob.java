@@ -1476,10 +1476,24 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // i.e. the composite table accumulated one split fragment per O3 round where its plain
                 // twin accumulated one per two. Clamping restores the intended comparison for both:
                 // where the sum is already >= 0 -- every plain case measured -- this changes nothing.
-                final long o3MergedRowCount = Math.max(
-                        0L,
-                        mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo
-                );
+                // SCOPED TO COMPOSITE, corrected 2026-08-28. The first version clamped for every
+                // table on the reasoning that a negative sum is degenerate anyway and no plain case
+                // measured produced one. That was wrong, and an ENTERPRISE test found the counterexample
+                // this repository's own suites did not: StoragePolicyJobTest#
+                // testParquetConversionGivesUpWhenSquashPublishesAsync builds a fixture that RELIES on
+                // 2020-01-01 splitting, and its sum is negative -- pre-clamp, "prefixHi > 2 * negative"
+                // was trivially true and the split happened. Clamping made prefixHi > 0 the requirement
+                // and the fixture stopped splitting. Confirmed by direct experiment: reverting the clamp
+                // makes that test pass again, restoring it composite-only keeps it passing.
+                //
+                // So the clamp genuinely changes PLAIN split behaviour, and plain tables keep the
+                // pre-existing expression exactly. Composite keeps the clamp, which is what stops a cell
+                // splitting on every O3 write (see the measurements below).
+                final long o3MergedRowCountRaw =
+                        mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo;
+                final long o3MergedRowCount = tableWriter.isComposite()
+                        ? Math.max(0L, o3MergedRowCountRaw)
+                        : o3MergedRowCountRaw;
                 if (
                         prefixType == O3_BLOCK_DATA
                                 && (mergeType == O3_BLOCK_MERGE || mergeType == O3_BLOCK_O3)
@@ -1509,10 +1523,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // Check that splitting still makes sense
                             // Same clamp as above -- this re-check uses the same expression with the
                             // shifted merge-data low bound, so it underflows the same way.
+                            final long newMergedRaw =
+                                    mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo;
+                            final long newMergedRowCount = tableWriter.isComposite()
+                                    ? Math.max(0L, newMergedRaw)
+                                    : newMergedRaw;
                             if (newPrefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                                    && newPrefixHi > 2 * Math.max(
-                                    0L,
-                                    mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
+                                    && newPrefixHi > 2 * newMergedRowCount
                             ) {
                                 prefixHi = newPrefixHi;
                                 mergeDataLo = newMergeDataLo;
