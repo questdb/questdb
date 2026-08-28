@@ -36,11 +36,24 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.TestOnly;
+
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Cursors returned by this class are not thread-safe.
  */
 public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
+    // @TestOnly observability for what countMatchesInRange() spends. The two block seeks read no rows
+    // and pull no index entries, so every counter one level up reports zero for them, yet each hop is
+    // a random read into the mapped value file and the chain a hot key builds is arbitrarily long.
+    // Only a count of the hops themselves shows whether admission costs the posting list or the range.
+    // A plain static boolean guards it: the JIT folds the always-false production branch away, and the
+    // tests that flip it drive their queries on the calling thread.
+    @TestOnly
+    public static boolean isBlockHopCounterEnabled = false;
+    @TestOnly
+    public static final AtomicLong testRangeCountBlockHops = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(BitmapIndexFwdReader.class);
     private final ObjList<Cursor> freeCursors = new ObjList<>();
     private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
@@ -67,7 +80,8 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
     /**
      * The exact number of rows {@code key} matches within {@code [minValue, maxValue]} -- the same
      * count the cursor from {@link #getCursor(int, long, long)} yields over that range, read from
-     * index metadata instead of walked.
+     * index metadata instead of walked -- or {@link AbstractPostingIndexReader#ESTIMATE_REJECT} when
+     * reaching that range would cost more than {@code maxBlockHops} block hops.
      * <p>
      * The key entry's stored value count is NOT that answer on its own: it counts every posting the
      * key holds anywhere in this partition, so it equals the range count only when the range covers
@@ -78,20 +92,31 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
      * Their difference is precisely what the cursor emits, because the cursor starts at the first
      * posting at or above {@code minValue} and stops at the first one past {@code maxValue}.
      * <p>
-     * Cost is one block read per seek for a range that covers the whole posting list (both seeks
-     * break out on the first block they inspect), and otherwise one read per value block lying
-     * outside the range -- the same positioning the cursor already performs, never a per-row walk.
+     * Those two seeks are also what makes an exact answer expensive. They hop block by block along a
+     * linked chain, so a range in the MIDDLE of a hot key's posting list makes the forward seek cross
+     * every block below it and the backward seek cross every block above it: together they inspect
+     * the whole chain however few rows the range selects, and the chain grows with the partition
+     * while the range stays put. {@code maxBlockHops} caps the pair -- the backward seek gets what the
+     * forward seek left -- and this reports ESTIMATE_REJECT instead of a count once the cap runs out.
+     * There is no cheaper exact answer to fall back on: the key entry carries no rank or skip
+     * metadata over the chain, so a caller that cannot afford the walk has to pick a plan that needs
+     * no count. Cost is one block read per seek for a range that covers the whole posting list (both
+     * seeks break out on the first block they inspect), and otherwise one read per value block lying
+     * outside the range, up to the cap -- never a per-row walk.
      * <p>
      * Callers must respect the single-owner discipline the cursors follow (see
      * {@link AbstractBitmapIndexReader#isOperatingThread()}): this reuses one seeker instance and is
      * not safe to call concurrently against one reader.
      *
-     * @param key      index key; a negative key matches nothing
-     * @param minValue inclusive lower bound
-     * @param maxValue inclusive upper bound
-     * @return the exact match count, never negative
+     * @param key          index key; a negative key matches nothing
+     * @param minValue     inclusive lower bound
+     * @param maxValue     inclusive upper bound
+     * @param maxBlockHops how many value blocks the two seeks may hop across in total; pass
+     *                     {@link BitmapIndexUtils#UNBOUNDED_BLOCK_HOPS} to always get a count
+     * @return the exact match count, or {@link AbstractPostingIndexReader#ESTIMATE_REJECT} when the
+     * hop budget ran out
      */
-    public long countMatchesInRange(int key, long minValue, long maxValue) {
+    public long countMatchesInRange(int key, long minValue, long maxValue, int maxBlockHops) {
         if (key < 0 || minValue > maxValue) {
             return 0;
         }
@@ -145,23 +170,35 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
             return total;
         }
         valueMem.extend(lastValueBlockOffset + blockCapacity);
-        BitmapIndexUtils.seekValueBlockLTR(
+        final int hopsBelowMin = BitmapIndexUtils.seekValueBlockLTR(
                 valueCount,
                 firstValueBlockOffset,
                 valueMem,
                 minValue,
                 blockValueCountMod,
-                rangeCountSeeker
+                rangeCountSeeker,
+                maxBlockHops
         );
+        if (hopsBelowMin == BitmapIndexUtils.BLOCK_HOP_BUDGET_EXHAUSTED) {
+            countBlockHops(maxBlockHops);
+            return AbstractPostingIndexReader.ESTIMATE_REJECT;
+        }
+        countBlockHops(hopsBelowMin);
         final long countBelowMin = rangeCountSeeker.count;
-        BitmapIndexUtils.seekValueBlockRTL(
+        final int hopsAtOrBelowMax = BitmapIndexUtils.seekValueBlockRTL(
                 valueCount,
                 lastValueBlockOffset,
                 valueMem,
                 maxValue,
                 blockValueCountMod,
-                rangeCountSeeker
+                rangeCountSeeker,
+                maxBlockHops - hopsBelowMin
         );
+        if (hopsAtOrBelowMax == BitmapIndexUtils.BLOCK_HOP_BUDGET_EXHAUSTED) {
+            countBlockHops(maxBlockHops - hopsBelowMin);
+            return AbstractPostingIndexReader.ESTIMATE_REJECT;
+        }
+        countBlockHops(hopsAtOrBelowMax);
         final long countAtOrBelowMax = rangeCountSeeker.count;
         // seekValueBlockLTR reports the whole value count when the posting list runs past the mapped
         // extent of the value file, which is its way of saying it found nothing at or above
@@ -226,6 +263,17 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
         }
 
         return NullIndexFrameCursor.INSTANCE;
+    }
+
+    @TestOnly
+    public static void resetTestCounters() {
+        testRangeCountBlockHops.set(0);
+    }
+
+    private static void countBlockHops(int blockHops) {
+        if (isBlockHopCounterEnabled) {
+            testRangeCountBlockHops.addAndGet(blockHops);
+        }
     }
 
     private class Cursor implements RowCursor, IndexFrameCursor {

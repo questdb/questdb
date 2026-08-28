@@ -32,7 +32,9 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.BitmapIndexFwdReader;
+import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.pool.PoolListener;
@@ -1043,6 +1045,11 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
      * not that. This drives every key against a spread of sub-ranges -- inside one value block, on
      * block boundaries, straddling both ends, empty, and past the end of the data -- and requires the
      * count to equal what draining the cursor over the identical range yields.
+     * <p>
+     * Every range runs a second time against a three-hop budget, the cap the adaptive estimate spends
+     * on the same seeks. A capped count may refuse to answer, but it may never answer WRONGLY: the
+     * short budget has to produce either the identical exact count or
+     * {@link AbstractPostingIndexReader#ESTIMATE_REJECT}.
      */
     private void assertBitmapExactCountMatchesCursor(String tableName) {
         try (TableReader reader = engine.getReader(tableName)) {
@@ -1073,10 +1080,16 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                                 viaCursor++;
                             }
                         }
+                        final String message = tableName + " key=" + key + " lo=" + lo + " hi=" + hi;
                         Assert.assertEquals(
-                                tableName + " key=" + key + " lo=" + lo + " hi=" + hi,
+                                message,
                                 viaCursor,
-                                index.countMatchesInRange(key, lo, hi)
+                                index.countMatchesInRange(key, lo, hi, BitmapIndexUtils.UNBOUNDED_BLOCK_HOPS)
+                        );
+                        final long capped = index.countMatchesInRange(key, lo, hi, 3);
+                        Assert.assertTrue(
+                                message + " capped=" + capped,
+                                capped == viaCursor || capped == AbstractPostingIndexReader.ESTIMATE_REJECT
                         );
                         comparisons++;
                     }
@@ -1405,6 +1418,104 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                         SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
                 );
             } finally {
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
+    /**
+     * The admission probe must cost the SELECTED RANGE, not the posting list the matched key holds in
+     * the partition. {@link BitmapIndexFwdReader#countMatchesInRange} reaches a range in the middle of
+     * a chain by hopping forward from the first value block and backward from the last one, so an
+     * unbounded pair of seeks inspects nearly every block a hot key owns before the estimate can even
+     * reject the route. Nothing one level up notices: the seeks read no index entry and pull no extra
+     * frame, so both of those counters stay at zero while the probe walks the whole chain.
+     * <p>
+     * Two tables of identical shape and different length pin it. The interval sits in the middle of
+     * each and selects the same five rows, so the hop count must not grow with the posting list, and
+     * it must stay inside the configured probe budget. A WAL table of the long shape repeats the
+     * measurement, because the apply job builds that index through a different writer path.
+     */
+    @Test
+    public void testEstimatorBoundsBitmapBlockHops() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "16");
+        assertMemoryLeak(() -> {
+            // One YEAR partition each, so all of the hot key's rows land on a single posting chain:
+            // about 79 value blocks for the short table and about 782 for the long one, at the
+            // default block size of 256.
+            execute("CREATE TABLE t_short (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("INSERT INTO t_short SELECT 'HOT', x, timestamp_sequence(0, 1_000) FROM long_sequence(20_000)");
+            execute("CREATE TABLE t_long (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
+            execute("INSERT INTO t_long SELECT 'HOT', x, timestamp_sequence(0, 1_000) FROM long_sequence(200_000)");
+            execute("CREATE TABLE t_wal (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR WAL");
+            execute("INSERT INTO t_wal SELECT 'HOT', x, timestamp_sequence(0, 1_000) FROM long_sequence(200_000)");
+            drainWalQueue();
+
+            final String shortQuery = "SELECT v FROM t_short WHERE sym LIKE 'H%' AND ts >= 10_000_000 AND ts < 10_005_000";
+            final String longQuery = "SELECT v FROM t_long WHERE sym LIKE 'H%' AND ts >= 100_000_000 AND ts < 100_005_000";
+            final String walQuery = "SELECT v FROM t_wal WHERE sym LIKE 'H%' AND ts >= 100_000_000 AND ts < 100_005_000";
+            assertQuery(shortQuery).returns("v\n10001\n10002\n10003\n10004\n10005\n");
+            assertQuery(longQuery).returns("v\n100001\n100002\n100003\n100004\n100005\n");
+            assertQuery(walQuery).returns("v\n100001\n100002\n100003\n100004\n100005\n");
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            BitmapIndexFwdReader.isBlockHopCounterEnabled = true;
+            try {
+                BitmapIndexFwdReader.resetTestCounters();
+                select(shortQuery);
+                final long shortHops = BitmapIndexFwdReader.testRangeCountBlockHops.get();
+
+                BitmapIndexFwdReader.resetTestCounters();
+                select(longQuery);
+                final long longHops = BitmapIndexFwdReader.testRangeCountBlockHops.get();
+
+                BitmapIndexFwdReader.resetTestCounters();
+                select(walQuery);
+                final long walHops = BitmapIndexFwdReader.testRangeCountBlockHops.get();
+
+                Assert.assertEquals(
+                        "a WAL table's index must bound the probe the same way",
+                        longHops,
+                        walHops
+                );
+                Assert.assertEquals(
+                        "a ten times longer posting list must not cost the probe ten times more block hops",
+                        shortHops,
+                        longHops
+                );
+                Assert.assertTrue(
+                        "the configured probe budget of 16 must bound the block hops, got " + longHops,
+                        longHops <= 16
+                );
+                // Guards the guard: a shape that never reached the estimate would hop zero blocks
+                // too. Five matched rows out of five selected sit far above the admitted share, so
+                // the estimate must have run on all three intervals and sent every one to the scan.
+                Assert.assertEquals(
+                        "the estimate must have costed one interval frame per query",
+                        3,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorFramesWalked.get()
+                );
+                Assert.assertEquals(
+                        "the estimate must reject the index route without walking index entries",
+                        0,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorIndexEntryReads.get()
+                );
+                Assert.assertEquals(
+                        "a key matching every selected row must not take the index route",
+                        0,
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+                );
+                Assert.assertTrue(
+                        "the rejected route must land on the scan",
+                        SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+                );
+            } finally {
+                BitmapIndexFwdReader.isBlockHopCounterEnabled = false;
+                BitmapIndexFwdReader.resetTestCounters();
                 AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
                 AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
                 SymbolPatternIndexRecordCursorFactory.resetTestCounters();

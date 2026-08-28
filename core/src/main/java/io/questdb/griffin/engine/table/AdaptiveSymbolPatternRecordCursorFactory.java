@@ -113,8 +113,11 @@ import java.util.concurrent.atomic.AtomicLong;
  * {@code IndexFwdNullReader} computes its contiguous implicit-NULL range directly. Any future reader
  * shape that cannot answer still falls back to walking row cursors, but a single traversal-probe
  * budget spans the whole estimate and selects the scan delegate before another entry could exceed
- * it. A cursor that cannot state its row count up front (every interval-filtered query) supplies the
- * denominator frame by frame instead of being rejected outright. Unknown-reader probe exhaustion
+ * it. The bitmap count is metadata rather than a walk, yet it is not free: its two block seeks hop a
+ * linked chain, so the same threshold caps the hops one count may spend, and a range sitting deeper
+ * into the chain than that selects the scan delegate instead of being counted exactly. A cursor that
+ * cannot state its row count up front (every interval-filtered query) supplies the denominator frame
+ * by frame instead of being rejected outright. Unknown-reader probe exhaustion
  * selects the scan delegate; a safe metadata upper bound may admit the index only when that upper
  * bound itself fits the selectivity limit.
  * <p>
@@ -130,8 +133,13 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>
  * The configured threshold {@code max(1, configuredThreshold)} caps planning work on the
  * two INDEPENDENT metadata axes the estimate spends it on: at most that many partition frames,
- * and at most that many key probes within each frame. It separately caps the TOTAL index entries
- * that traversal fallbacks may read across all keys and frames in one estimate. A single counter
+ * and at most that many key probes within each frame. It also caps the value blocks ONE bitmap
+ * count may hop across, which keeps a probe over a hot key proportional to the frame the query
+ * selects rather than to the posting list the key holds across the whole partition: a narrow
+ * interval in the middle of a ten-million-row chain used to cost every one of its 39,063 blocks on
+ * each cursor open, measured at 11.3 ms against 7.5 ms for the same query on the merge base. It
+ * separately caps the TOTAL index entries that traversal fallbacks may read across all keys and
+ * frames in one estimate. A single counter
  * spent across the metadata axes makes the two multiply, and then partition count alone exhausts
  * the budget - on a 50-partition table the default 100 was gone the moment a pattern matched a
  * third symbol, which measured as a 40x regression (0.51 ms on the index route against 20.2 ms
@@ -652,14 +660,20 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                     // default shape. countMatchesInRange() answers the same question from the key
                     // entry and two block seeks; without it every open of a broad pattern walked
                     // index entries up to the whole maxIndexRows budget before rejecting the route.
-                    count = bitmap.countMatchesInRange(indexKey, rowLo, callerHiInclusive);
+                    // Those seeks hop a linked chain, so a frame narrowed to the middle of a hot
+                    // key's posting list makes them cross the whole chain -- cost that grows with the
+                    // partition while the frame stays put. The probe budget caps the hops, and a key
+                    // that runs it out rejects the route below rather than paying the crossing.
+                    count = bitmap.countMatchesInRange(indexKey, rowLo, callerHiInclusive, maxEstimateProbes);
                 } else if (reader instanceof IndexFwdNullReader nullReader) {
                     count = nullReader.estimateMatches(indexKey, rowLo, callerHiInclusive);
                 }
                 if (count == AbstractPostingIndexReader.ESTIMATE_REJECT) {
-                    // A genuinely clipped legacy EF blob has no bounded rank metadata. Reject it
-                    // without disguising the compatibility exception as a generic unknown that
-                    // would spend the fallback cursor budget.
+                    // Two readers ask for the same treatment. A genuinely clipped legacy EF blob has
+                    // no bounded rank metadata, and a bitmap range that sits deeper into the posting
+                    // chain than the probe budget reaches has no bounded exact count either. Reject
+                    // both without disguising them as a generic unknown that would spend the fallback
+                    // cursor budget -- and, for the bitmap, position a cursor over the same chain.
                     return false;
                 }
                 if (count == Numbers.LONG_NULL) {
