@@ -69,6 +69,7 @@ public final class TimerShards {
     private final ObjList<DelayHeap<DelayedFireable>> shards;
     private final String threadNamePrefix;
     private final ObjList<Thread> threads;
+    private boolean hasTimedOutThread;
     private boolean isShutdownComplete;
     private boolean isShutdownRequested;
     private volatile boolean isRunning;
@@ -106,7 +107,26 @@ public final class TimerShards {
      * Stops the timer threads and releases every accepted entry.
      */
     public void halt() {
-        shutdown();
+        synchronized (this) {
+            if (isShutdownComplete) {
+                return;
+            }
+            requestShutdown();
+            // a previous bounded shutdown exhausted its join budget on a still-blocked
+            // shard thread; do not spend an unbounded join on the same thread
+            if (hasTimedOutThread && hasLiveThread()) {
+                return;
+            }
+            hasTimedOutThread = false;
+        }
+        if (!isJoinComplete()) {
+            throw new IllegalStateException("timer shards did not halt");
+        }
+        synchronized (this) {
+            if (!isShutdownComplete) {
+                finishShutdown();
+            }
+        }
     }
 
     /**
@@ -150,6 +170,29 @@ public final class TimerShards {
                 finishShutdown();
             }
         }
+    }
+
+    /**
+     * Bounded variant of {@link #shutdown()}: gives the shard threads until the absolute
+     * {@link System#nanoTime()} deadline to exit. Returns false without draining when a
+     * thread outlives the deadline; a later call retries from where this one stopped.
+     */
+    public boolean shutdown(long deadlineNanos) {
+        synchronized (this) {
+            if (isShutdownComplete) {
+                return true;
+            }
+            requestShutdown();
+        }
+        if (!isJoinComplete(deadlineNanos)) {
+            return false;
+        }
+        synchronized (this) {
+            if (!isShutdownComplete) {
+                finishShutdown();
+            }
+        }
+        return true;
     }
 
     /**
@@ -213,6 +256,19 @@ public final class TimerShards {
         }
     }
 
+    private synchronized boolean hasLiveThread() {
+        for (int i = 0, n = threads.size(); i < n; i++) {
+            final Thread t = threads.getQuick(i);
+            if (t != null) {
+                if (t.isAlive()) {
+                    return true;
+                }
+                threads.setQuick(i, null);
+            }
+        }
+        return false;
+    }
+
     private boolean isCurrentThreadAShard() {
         final Thread current = Thread.currentThread();
         for (int i = 0, n = threads.size(); i < n; i++) {
@@ -250,6 +306,44 @@ public final class TimerShards {
             Thread.currentThread().interrupt();
         }
         return true;
+    }
+
+    private synchronized boolean isJoinComplete(long deadlineNanos) {
+        if (isCurrentThreadAShard()) {
+            return false;
+        }
+        boolean isInterrupted = false;
+        boolean isComplete = true;
+        for (int i = 0, n = threads.size(); i < n; i++) {
+            final Thread t = getThread(i);
+            if (t == null) {
+                continue;
+            }
+            while (t.isAlive()) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    hasTimedOutThread = true;
+                    isComplete = false;
+                    break;
+                }
+                try {
+                    t.join(remainingNanos / 1_000_000L, (int) (remainingNanos % 1_000_000L));
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            if (!t.isAlive()) {
+                synchronized (this) {
+                    if (threads.getQuick(i) == t) {
+                        threads.setQuick(i, null);
+                    }
+                }
+            }
+        }
+        if (isInterrupted) {
+            Thread.currentThread().interrupt();
+        }
+        return isComplete;
     }
 
     private void requestShutdown() {

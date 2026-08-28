@@ -145,6 +145,17 @@ public class LogFactory implements Closeable {
         INSTANCE = null;
     }
 
+    public static synchronized void closeInstanceWithin(long timeoutNanos) {
+        final LogFactory logFactory = INSTANCE;
+        if (logFactory == null) {
+            return;
+        }
+        if (!logFactory.closeWithin(true, timeoutNanos)) {
+            throw new IllegalStateException("logging worker pool did not halt");
+        }
+        INSTANCE = null;
+    }
+
     public static void configureRootDir(String rootDir) {
         LogFactory.rootDir = rootDir;
     }
@@ -251,7 +262,49 @@ public class LogFactory implements Closeable {
     }
 
     public void close(boolean flush) {
-        closeInternal(flush);
+        if (!closeInternal(flush, 0, false)) {
+            throw new IllegalStateException("logging worker pool did not halt within timeout");
+        }
+    }
+
+    private synchronized boolean closeInternal(boolean flush, long deadlineNanos, boolean isBounded) {
+        if (closed.compareAndSet(false, true)) {
+            try {
+                if (isBounded ? !haltThreadBy(deadlineNanos) : !haltThread()) {
+                    closed.set(false);
+                    return false;
+                }
+            } catch (Throwable th) {
+                closed.set(false);
+                throw th;
+            }
+            for (int i = 0, n = jobs.size(); i < n; i++) {
+                LogWriter job = jobs.get(i);
+                try {
+                    if (job != null && flush) {
+                        try {
+                            // noinspection StatementWithEmptyBody
+                            while (job.run(Job.TERMINATING_STATUS)) {
+                                // Keep running the job until it returns false to log all the buffered messages
+                            }
+                        } catch (Exception th) {
+                            // Exception means we cannot log anymore. Perhaps network is down or disk is full.
+                            // Switch to the next job.
+                        }
+                    }
+                } finally {
+                    Misc.freeIfCloseable(job);
+                }
+            }
+            for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
+                Misc.free(scopeConfigs.getQuick(i));
+            }
+        }
+        return true;
+    }
+
+    private boolean closeWithin(boolean flush, long timeoutNanos) {
+        return closeInternal(flush, System.nanoTime() + Math.max(0, timeoutNanos), true);
     }
 
     public Log create(Class<?> clazz) {
@@ -564,41 +617,6 @@ public class LogFactory implements Closeable {
         }
     }
 
-    private synchronized void closeInternal(boolean flush) {
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
-        try {
-            if (!haltThread()) {
-                throw new IllegalStateException("logging worker pool did not halt within timeout");
-            }
-        } catch (Throwable th) {
-            closed.set(false);
-            throw th;
-        }
-        for (int i = 0, n = jobs.size(); i < n; i++) {
-            LogWriter job = jobs.get(i);
-            try {
-                if (job != null && flush) {
-                    try {
-                        // noinspection StatementWithEmptyBody
-                        while (job.run(Job.TERMINATING_STATUS)) {
-                            // Keep running the job until it returns false to log all the buffered messages
-                        }
-                    } catch (Exception th) {
-                        // Exception means we cannot log anymore. Perhaps network is down or disk is full.
-                        // Switch to the next job.
-                    }
-                }
-            } finally {
-                Misc.freeIfCloseable(job);
-            }
-        }
-        for (int i = 0, n = scopeConfigs.size(); i < n; i++) {
-            Misc.free(scopeConfigs.getQuick(i));
-        }
-    }
-
     private void configure(InputStream fis, String rootDir) throws IOException {
         Properties properties = new Properties();
         properties.load(fis);
@@ -744,6 +762,16 @@ public class LogFactory implements Closeable {
         isThreadHaltStarted = true;
         running.set(false);
         isThreadHaltComplete = loggingWorkerPool.haltWithin(workerPoolHaltTimeoutNanos);
+        return isThreadHaltComplete;
+    }
+
+    private boolean haltThreadBy(long deadlineNanos) {
+        if (isThreadHaltComplete) {
+            return true;
+        }
+        isThreadHaltStarted = true;
+        running.set(false);
+        isThreadHaltComplete = loggingWorkerPool.haltBy(deadlineNanos);
         return isThreadHaltComplete;
     }
 

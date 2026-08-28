@@ -13,6 +13,17 @@ import io.questdb.std.ObjList;
 public interface Component {
 
     /**
+     * Signals that a deadline-aware {@link #stop(long)} attempt retained resources and must be retried.
+     * The orchestrator catches only this signal and keeps the component in {@link State#STOPPING}; all
+     * other exceptions keep their existing failure semantics.
+     */
+    final class ShutdownIncompleteException extends RuntimeException {
+        public ShutdownIncompleteException() {
+            super(null, null, false, false);
+        }
+    }
+
+    /**
      * Names of components that MUST reach {@link State#READY} or
      * {@link State#DEGRADED} before this component's {@link #start} runs.
      * A FAILED hard-required dep auto-cascades this component to FAILED.
@@ -42,7 +53,8 @@ public interface Component {
      * Implementations must make this method non-blocking, idempotent, and safe to call concurrently
      * with {@link #start(LifecycleContext)} or a role switch. The request must remain visible to work
      * that publishes its cancellable resource after this method returns. This method only signals
-     * cancellation; {@link #stop()} retains responsibility for waiting and releasing resources.
+     * cancellation; {@link #stop()} or {@link #stop(long)} retains responsibility for waiting and
+     * releasing resources.
      */
     default void requestStop() {
     }
@@ -73,4 +85,15 @@ public interface Component {
      * a component that never reached READY.
      */
     void stop();
+
+    /**
+     * Attempts to stop this component using one absolute {@link System#nanoTime()} deadline.
+     * Implementations must retain resources still in use when the deadline expires so a later
+     * attempt can retry safely. A normal return means shutdown completed; an implementation that
+     * retains resources must throw {@link ShutdownIncompleteException}. Implementations that do not
+     * wait may use this default.
+     */
+    default void stop(long deadlineNanos) {
+        stop();
+    }
 }

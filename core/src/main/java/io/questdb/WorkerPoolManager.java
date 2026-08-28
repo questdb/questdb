@@ -144,6 +144,22 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     /**
+     * Halts every managed pool, bounding the combined wait by an absolute deadline.
+     * <p>
+     * The deadline is shared across all pools: each pool gets the time remaining until the deadline,
+     * so a single wedged pool cannot reset the budget for the next one. This keeps server shutdown
+     * bounded even when a worker thread is stuck. Timed-out pools retain worker-owned resources
+     * so a later {@link #haltBy(long)} attempt can finish safely.
+     *
+     * @param deadlineNanos absolute deadline from {@link System#nanoTime()} by which all pools should be halted
+     * @deprecated use {@link #haltBy(long)} and inspect its completion result
+     */
+    @Deprecated
+    public void halt(long deadlineNanos) {
+        haltBy(deadlineNanos);
+    }
+
+    /**
      * Attempts to halt every managed pool and reports whether all cleanup completed.
      */
     public boolean haltAndReportCompletion() {
@@ -156,12 +172,11 @@ public abstract class WorkerPoolManager implements Target {
     }
 
     /**
-     * Attempts to halt every managed pool within a relative budget and reports whether all
-     * cleanup completed. All pools share the call's single deadline, so a wedged pool cannot
-     * multiply the budget. A timed-out pool retains its object graph and stays retryable.
+     * Attempts to halt every managed pool by one absolute {@link System#nanoTime()} deadline
+     * shared across all pools, so a wedged pool cannot multiply the budget. A timed-out pool
+     * retains its object graph and stays retryable.
      */
-    public boolean haltWithin(long timeoutNanos) {
-        final long deadlineNanos = System.nanoTime() + timeoutNanos;
+    public boolean haltBy(long deadlineNanos) {
         boolean isInterrupted = false;
         boolean isLockAcquired = haltLock.tryLock();
         try {
@@ -185,6 +200,11 @@ public abstract class WorkerPoolManager implements Target {
                 Thread.currentThread().interrupt();
             }
         }
+    }
+
+    public boolean haltWithin(long timeoutNanos) {
+        return haltBy(System.nanoTime() + timeoutNanos);
+    }
     }
 
     @Override
