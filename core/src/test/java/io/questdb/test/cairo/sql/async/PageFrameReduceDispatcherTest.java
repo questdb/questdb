@@ -77,9 +77,6 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -165,17 +162,19 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 queue.get(cursor).of(frameSequence, 0, false);
                 pubSeq.done(cursor);
 
-                final Field taskPoolField = PageFrameReduceDispatcher.class.getDeclaredField("taskPool");
-                taskPoolField.setAccessible(true);
-                final Object taskPool = taskPoolField.get(dispatcher);
-                synchronized (taskPool) {
+                dispatcher.runWithTaskPoolLockedForTesting(() -> {
                     consumer.start();
-                    Assert.assertTrue("consumer did not claim the cursor", subSeq.awaitClaim());
-                    Assert.assertTrue(
-                            "ordered producer entered the task-pool monitor after claiming the cursor",
-                            consumerDone.await(5, TimeUnit.SECONDS)
-                    );
-                }
+                    try {
+                        Assert.assertTrue("consumer did not claim the cursor", subSeq.awaitClaim());
+                        Assert.assertTrue(
+                                "ordered producer entered the task-pool monitor after claiming the cursor",
+                                consumerDone.await(5, TimeUnit.SECONDS)
+                        );
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError(e);
+                    }
+                });
                 consumer.join(5_000);
                 Assert.assertFalse("consumer did not return", consumer.isAlive());
                 Assert.assertNull(failure.get());
@@ -324,6 +323,51 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTaskPoolAcquisitionFailureAndDoubleRelease() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            final RuntimeException injected = new RuntimeException("injected page-frame task creation failure");
+            try {
+                circuitBreakerConfiguration = failingCircuitBreakerConfiguration(injected);
+                try {
+                    dispatcher.acquireTaskLeaseForTesting();
+                    Assert.fail("expected injected task creation failure");
+                } catch (RuntimeException th) {
+                    Assert.assertSame(injected, th);
+                } finally {
+                    circuitBreakerConfiguration = null;
+                }
+
+                final boolean isRawLeaseGranted = dispatcher.tryLeaseTaskForTesting();
+                try {
+                    Assert.assertTrue(isRawLeaseGranted);
+                } finally {
+                    dispatcher.releaseTaskLeaseForTesting();
+                }
+
+                final PageFrameReduceDispatcher.TaskLeaseForTesting taskLease =
+                        dispatcher.acquireTaskLeaseForTesting();
+                taskLease.release();
+                try {
+                    taskLease.release();
+                    Assert.fail("expected repeated task lease release to fail");
+                } catch (IllegalStateException e) {
+                    TestUtils.assertContains(e.getMessage(), "already released");
+                }
+            } finally {
+                circuitBreakerConfiguration = null;
+                close(runtime);
+                Misc.free(dispatcher);
+            }
+        });
+    }
+
+    @Test
     public void testTaskPoolReleaseRacingCloseDoesNotRetainTask() throws Exception {
         assertMemoryLeak(() -> {
             for (int i = 0; i < 128; i++) {
@@ -334,19 +378,8 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                         runtime
                 );
                 try {
-                    final Field taskPoolField = PageFrameReduceDispatcher.class.getDeclaredField("taskPool");
-                    taskPoolField.setAccessible(true);
-                    final Object taskPool = taskPoolField.get(dispatcher);
-                    final Method tryLease = taskPool.getClass().getDeclaredMethod("tryLease");
-                    final Method acquireLeased = taskPool.getClass().getDeclaredMethod("acquireLeased");
-                    tryLease.setAccessible(true);
-                    acquireLeased.setAccessible(true);
-                    Assert.assertEquals(Boolean.TRUE, tryLease.invoke(taskPool));
-                    final Object task = acquireLeased.invoke(taskPool);
-                    final Method release = taskPool.getClass().getDeclaredMethod("release", task.getClass());
-                    final Method close = taskPool.getClass().getDeclaredMethod("close");
-                    release.setAccessible(true);
-                    close.setAccessible(true);
+                    final PageFrameReduceDispatcher.TaskLeaseForTesting taskLease =
+                            dispatcher.acquireTaskLeaseForTesting();
 
                     final CountDownLatch start = new CountDownLatch(1);
                     final AtomicReference<Throwable> closeFailure = new AtomicReference<>();
@@ -354,17 +387,17 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                     final Thread closeThread = new Thread(() -> {
                         try {
                             start.await();
-                            close.invoke(taskPool);
+                            dispatcher.closeTaskPoolForTesting();
                         } catch (Throwable th) {
-                            closeFailure.set(unwrapInvocationFailure(th));
+                            closeFailure.set(th);
                         }
                     });
                     final Thread releaseThread = new Thread(() -> {
                         try {
                             start.await();
-                            release.invoke(taskPool, task);
+                            taskLease.release();
                         } catch (Throwable th) {
-                            releaseFailure.set(unwrapInvocationFailure(th));
+                            releaseFailure.set(th);
                         }
                     });
                     closeThread.start();
@@ -381,7 +414,7 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                         TestUtils.assertContains(closeFailure.get().getMessage(), "closed with leased tasks");
                     }
                     Assert.assertEquals(0, dispatcher.getCreatedTaskCount());
-                    Assert.assertEquals(Boolean.FALSE, tryLease.invoke(taskPool));
+                    Assert.assertFalse(dispatcher.tryLeaseTaskForTesting());
                 } finally {
                     close(runtime);
                     Misc.free(dispatcher);
@@ -3795,13 +3828,6 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 return super.getCircuitBreakerThrottle();
             }
         };
-    }
-
-    private static Throwable unwrapInvocationFailure(Throwable failure) {
-        if (failure instanceof InvocationTargetException && failure.getCause() != null) {
-            return failure.getCause();
-        }
-        return failure;
     }
 
     private static void park(FiberWalWaitQueue waitQueue) {

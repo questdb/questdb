@@ -66,9 +66,10 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private static final int QUIESCE_DRAINING = 2;
     private static final int QUIESCE_OPEN = 0;
     private static final int QUIESCE_REQUESTED = 1;
-    private final QueryParallelFiberTaskPool<LatestByFiberTask> latestByTaskPool;
-    private final QueryParallelFiberTaskPool<GroupByLongTopKFiberTask> longTopKTaskPool;
-    private final QueryParallelFiberTaskPool<GroupByMergeShardFiberTask> mergeShardTaskPool;
+    private final long batchRowBudget;
+    private final FiberTaskPool<LatestByFiberTask> latestByTaskPool;
+    private final FiberTaskPool<GroupByLongTopKFiberTask> longTopKTaskPool;
+    private final FiberTaskPool<GroupByMergeShardFiberTask> mergeShardTaskPool;
     private final MessageBus messageBus;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
@@ -78,10 +79,12 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
     private final TimerShards timerShards;
-    private final QueryParallelFiberTaskPool<VectorAggregateFiberTask> vectorAggregateTaskPool;
+    private final FiberTaskPool<VectorAggregateFiberTask> vectorAggregateTaskPool;
     private volatile boolean isClosed;
 
     public QueryParallelFiberDispatcher(CairoEngine engine, MessageBus messageBus, FiberRuntime runtime) {
+        // Stop each batch after it reaches one configured-max-frame's row count.
+        this.batchRowBudget = engine.getConfiguration().getSqlPageFrameMaxRows();
         this.messageBus = messageBus;
         this.runtime = runtime;
         this.timerClock = engine.getConfiguration().getMillisecondClock();
@@ -89,22 +92,22 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         this.timerShards = engine.getTimerShards();
         final int capacity = runtime.getMaxLiveFiberCount();
         final int maxRetainedCount = runtime.getMaxRetainedFiberCount();
-        this.latestByTaskPool = new QueryParallelFiberTaskPool<>(
+        this.latestByTaskPool = new FiberTaskPool<>(
                 capacity,
                 maxRetainedCount,
                 pool -> new LatestByFiberTask(this, pool, timerShards)
         );
-        this.longTopKTaskPool = new QueryParallelFiberTaskPool<>(
+        this.longTopKTaskPool = new FiberTaskPool<>(
                 capacity,
                 maxRetainedCount,
                 pool -> new GroupByLongTopKFiberTask(this, pool, timerShards)
         );
-        this.mergeShardTaskPool = new QueryParallelFiberTaskPool<>(
+        this.mergeShardTaskPool = new FiberTaskPool<>(
                 capacity,
                 maxRetainedCount,
                 pool -> new GroupByMergeShardFiberTask(this, pool, timerShards)
         );
-        this.vectorAggregateTaskPool = new QueryParallelFiberTaskPool<>(
+        this.vectorAggregateTaskPool = new FiberTaskPool<>(
                 capacity,
                 maxRetainedCount,
                 pool -> new VectorAggregateFiberTask(this, pool, timerShards)
@@ -167,6 +170,29 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
             default -> throw new IllegalStateException(
                     "unexpected query parallel progress wait reason [reason=" + reason + ']'
+            );
+        };
+    }
+
+    // Drain loops must run to latch completion before their callers release native state, so this
+    // variant never throws; the loop-top breaker check surfaces the error after the drain.
+    public boolean awaitProgressWhileDraining(
+            AsyncQueryProgressState progressState,
+            long observedVersion,
+            long observedGlobalVersion
+    ) {
+        final int reason = awaitProgress(
+                progressState,
+                observedVersion,
+                observedGlobalVersion,
+                null,
+                CancellationBinding.NO_GENERATION
+        );
+        return switch (reason) {
+            case FiberWaitCoordinator.REASON_PROGRESS, FiberWaitCoordinator.REASON_TIMER -> true;
+            case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
+            default -> throw new IllegalStateException(
+                    "unexpected query parallel drain wait reason [reason=" + reason + ']'
             );
         };
     }
@@ -247,14 +273,15 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor < 0) {
                 return true;
             }
-            final LatestByTask task = messageBus.getLatestByQueue().get(cursor);
+            final RingQueue<LatestByTask> queue = messageBus.getLatestByQueue();
+            final LatestByTask task = queue.get(cursor);
             try {
                 fiberTask = latestByTaskPool.acquireLeased();
             } catch (Throwable th) {
                 completeFailedLatestByAcquisition(subSeq, cursor, task, th);
                 throw th;
             }
-            fiberTask.of(task, subSeq, cursor);
+            fiberTask.of(task, queue, subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
             return false;
@@ -293,14 +320,15 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor < 0) {
                 return true;
             }
-            final GroupByLongTopKTask task = messageBus.getGroupByLongTopKQueue().get(cursor);
+            final RingQueue<GroupByLongTopKTask> queue = messageBus.getGroupByLongTopKQueue();
+            final GroupByLongTopKTask task = queue.get(cursor);
             try {
                 fiberTask = longTopKTaskPool.acquireLeased();
             } catch (Throwable th) {
                 completeFailedLongTopKAcquisition(subSeq, cursor, task, th);
                 throw th;
             }
-            fiberTask.of(workerId, task, subSeq, cursor);
+            fiberTask.of(workerId, task, queue, subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
             return false;
@@ -339,14 +367,15 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor < 0) {
                 return true;
             }
-            final GroupByMergeShardTask task = messageBus.getGroupByMergeShardQueue().get(cursor);
+            final RingQueue<GroupByMergeShardTask> queue = messageBus.getGroupByMergeShardQueue();
+            final GroupByMergeShardTask task = queue.get(cursor);
             try {
                 fiberTask = mergeShardTaskPool.acquireLeased();
             } catch (Throwable th) {
                 completeFailedMergeShardAcquisition(subSeq, cursor, task, th);
                 throw th;
             }
-            fiberTask.of(workerId, task, subSeq, cursor);
+            fiberTask.of(workerId, task, queue, subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
             return false;
@@ -385,14 +414,15 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor < 0) {
                 return true;
             }
-            final VectorAggregateTask task = messageBus.getVectorAggregateQueue().get(cursor);
+            final RingQueue<VectorAggregateTask> queue = messageBus.getVectorAggregateQueue();
+            final VectorAggregateTask task = queue.get(cursor);
             try {
                 fiberTask = vectorAggregateTaskPool.acquireLeased();
             } catch (Throwable th) {
                 completeFailedVectorAggregateAcquisition(subSeq, cursor, task, th);
                 throw th;
             }
-            fiberTask.of(workerId, task, subSeq, cursor);
+            fiberTask.of(workerId, task, queue, subSeq, cursor);
             launchOwnership = false;
             launch(fiber, reservationEpoch, fiberTask, workerId > -1);
             return false;
@@ -411,10 +441,6 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
     }
 
-    public long getProgressVersion() {
-        return progressVersion.get();
-    }
-
     @TestOnly
     public int getLatestByCreatedTaskCount() {
         return latestByTaskPool.getCreatedCount();
@@ -430,14 +456,13 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         return mergeShardTaskPool.getCreatedCount();
     }
 
-    @TestOnly
-    public int getVectorAggregateCreatedTaskCount() {
-        return vectorAggregateTaskPool.getCreatedCount();
+    public long getProgressVersion() {
+        return progressVersion.get();
     }
 
     @TestOnly
-    public void setBeforeMergeShardTaskCreationForTesting(Runnable hook) {
-        mergeShardTaskPool.setBeforeNewTaskForTesting(hook);
+    public int getVectorAggregateCreatedTaskCount() {
+        return vectorAggregateTaskPool.getCreatedCount();
     }
 
     public boolean isOwnerParkable() {
@@ -487,11 +512,37 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
     }
 
-    public void signalProgress(@Nullable AsyncQueryProgressState progressState) {
-        signalProgress();
+    @TestOnly
+    public void runWithOwnerWaitQueueLockedForTesting(
+            AsyncQueryProgressState progressState,
+            Runnable action
+    ) {
+        synchronized (progressState.getWaitQueue()) {
+            action.run();
+        }
+    }
+
+    @TestOnly
+    public void runWithQueueWaitQueueLockedForTesting(Runnable action) {
+        synchronized (progressWaitQueue) {
+            action.run();
+        }
+    }
+
+    @TestOnly
+    public void setBeforeMergeShardTaskCreationForTesting(Runnable hook) {
+        mergeShardTaskPool.setBeforeNewTaskForTesting(hook);
+    }
+
+    public void signalOwnerProgress(@Nullable AsyncQueryProgressState progressState) {
         if (progressState != null) {
             progressState.signalProgress();
         }
+    }
+
+    public void signalQueueProgress() {
+        progressVersion.incrementAndGet();
+        progressWaitQueue.fire();
     }
 
     public boolean tryAcquirePublication() {
@@ -512,9 +563,17 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
     }
 
-    private static void abortOrRelease(
-            AbstractQueryParallelFiberTask task,
-            QueryParallelFiberTaskPool<?> taskPool
+    int getBatchLimit() {
+        return PageFrameReduceDispatcher.DEFAULT_BATCH_LIMIT;
+    }
+
+    long getBatchRowBudget() {
+        return batchRowBudget;
+    }
+
+    private static <T extends AbstractQueryParallelFiberTask> void abortOrRelease(
+            T task,
+            FiberTaskPool<T> taskPool
     ) {
         if (task.isBound()) {
             task.abortBeforeLaunch();
@@ -690,7 +749,12 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             addSuppressed(failure, cleanupFailure);
         }
         try {
-            signalProgress(progressState);
+            signalQueueProgress();
+        } catch (Throwable cleanupFailure) {
+            addSuppressed(failure, cleanupFailure);
+        }
+        try {
+            signalOwnerProgress(progressState);
         } catch (Throwable cleanupFailure) {
             addSuppressed(failure, cleanupFailure);
         }
@@ -702,11 +766,20 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         while (true) {
             final long cursor = subSeq.next();
             if (cursor > -1) {
+                final LatestByTask task = queue.get(cursor);
+                final AsyncQueryProgressState progressState = task.getProgressState();
                 try {
-                    queue.get(cursor).abort();
+                    task.abort();
                 } finally {
-                    subSeq.done(cursor);
-                    signalProgress();
+                    try {
+                        subSeq.done(cursor);
+                    } finally {
+                        try {
+                            signalQueueProgress();
+                        } finally {
+                            signalOwnerProgress(progressState);
+                        }
+                    }
                 }
             } else {
                 return cursor == -1;
@@ -724,6 +797,9 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
                 final AtomicInteger startedCounter = task.getStartedCounter();
                 final CountDownLatchSPI doneLatch = task.getDoneLatch();
+                final AsyncQueryProgressState progressState = task.getAtom() != null
+                        ? task.getAtom().getShardingContext().getProgressState()
+                        : null;
                 task.clear();
                 try {
                     circuitBreaker.cancel();
@@ -732,8 +808,15 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                         startedCounter.incrementAndGet();
                         doneLatch.countDown();
                     } finally {
-                        subSeq.done(cursor);
-                        signalProgress();
+                        try {
+                            subSeq.done(cursor);
+                        } finally {
+                            try {
+                                signalQueueProgress();
+                            } finally {
+                                signalOwnerProgress(progressState);
+                            }
+                        }
                     }
                 }
             } else {
@@ -752,6 +835,9 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
                 final AtomicInteger startedCounter = task.getStartedCounter();
                 final CountDownLatchSPI doneLatch = task.getDoneLatch();
+                final AsyncQueryProgressState progressState = task.getShardingContext() != null
+                        ? task.getShardingContext().getProgressState()
+                        : null;
                 task.clear();
                 try {
                     circuitBreaker.cancel();
@@ -760,8 +846,15 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                         startedCounter.incrementAndGet();
                         doneLatch.countDown();
                     } finally {
-                        subSeq.done(cursor);
-                        signalProgress();
+                        try {
+                            subSeq.done(cursor);
+                        } finally {
+                            try {
+                                signalQueueProgress();
+                            } finally {
+                                signalOwnerProgress(progressState);
+                            }
+                        }
                     }
                 }
             } else {
@@ -785,14 +878,22 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             if (cursor > -1) {
                 final VectorAggregateTask task = queue.get(cursor);
                 final VectorAggregateEntry entry = task.entry;
+                final AsyncQueryProgressState progressState = entry != null ? entry.getProgressState() : null;
                 task.entry = null;
                 try {
                     if (entry != null) {
                         entry.abort(false);
                     }
                 } finally {
-                    subSeq.done(cursor);
-                    signalProgress();
+                    try {
+                        subSeq.done(cursor);
+                    } finally {
+                        try {
+                            signalQueueProgress();
+                        } finally {
+                            signalOwnerProgress(progressState);
+                        }
+                    }
                 }
             } else {
                 return cursor == -1;
@@ -838,18 +939,13 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private <T extends AbstractQueryParallelFiberTask> boolean tryLeaseTask(
             Fiber fiber,
             long reservationEpoch,
-            QueryParallelFiberTaskPool<T> taskPool
+            FiberTaskPool<T> taskPool
     ) {
         final boolean isLeased = taskPool.tryLease();
         if (!isLeased) {
             runtime.releaseReservedFiber(fiber, reservationEpoch);
         }
         return isLeased;
-    }
-
-    void signalProgress() {
-        progressVersion.incrementAndGet();
-        progressWaitQueue.fire();
     }
 
     private int awaitProgress(

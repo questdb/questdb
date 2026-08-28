@@ -26,28 +26,30 @@ package io.questdb.cairo.sql.async;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.mp.MCSequence;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
+import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 abstract class AbstractQueryParallelFiberTask extends FiberTask implements QuietCloseable {
-    AbstractQueryParallelFiberTask nextFree;
-    boolean pooled;
     private final CancellationBinding cancellationBinding = new CancellationBinding();
     private final QueryParallelFiberDispatcher dispatcher;
-    private final QueryParallelFiberTaskPool<?> pool;
+    private final FiberTaskPool<?> pool;
     private final TimerShards timerShards;
+    private MCSequence batchSubSeq;
+    private int batchWorkerId = -1;
     private AsyncQueryProgressState progressState;
 
     protected AbstractQueryParallelFiberTask(
             QueryParallelFiberDispatcher dispatcher,
-            QueryParallelFiberTaskPool<?> pool,
+            FiberTaskPool<?> pool,
             TimerShards timerShards
     ) {
         this.dispatcher = dispatcher;
@@ -68,7 +70,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
             failure = addFailure(failure, th);
         }
         try {
-            dispatcher.signalProgress(progressState);
+            dispatcher.signalOwnerProgress(progressState);
         } catch (Throwable th) {
             failure = addFailure(failure, th);
         }
@@ -78,6 +80,11 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
             failure = addFailure(failure, th);
         }
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    final void bindBatch(int workerId, MCSequence subSeq) {
+        this.batchWorkerId = workerId;
+        this.batchSubSeq = subSeq;
     }
 
     final void bindCancellation(SqlExecutionCircuitBreaker circuitBreaker) {
@@ -91,6 +98,9 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     @Override
     public void close() {
         clearBinding();
+        clearBatchBinding();
+        batchSubSeq = null;
+        batchWorkerId = -1;
         cancellationBinding.clear();
         progressState = null;
     }
@@ -119,7 +129,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
             completeOwnership();
         } finally {
             try {
-                dispatcher.signalProgress(progressState);
+                dispatcher.signalOwnerProgress(progressState);
             } finally {
                 recycle();
             }
@@ -134,10 +144,41 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     @Override
     protected final boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
-        return runTask();
+        long batchWeight = boundEntryWeight();
+        if (!runTask()) {
+            return false;
+        }
+        final MCSequence subSeq = batchSubSeq;
+        if (subSeq != null) {
+            final int batchLimit = dispatcher.getBatchLimit();
+            final long batchWeightBudget = dispatcher.getBatchRowBudget();
+            for (int i = 1; i < batchLimit && batchWeight < batchWeightBudget; i++) {
+                final long cursor = claimNext(subSeq);
+                if (cursor < 0) {
+                    break;
+                }
+                // onDone() signals only the last entry's owner
+                signalOwnerProgress();
+                rebind(batchWorkerId, subSeq, cursor);
+                // entries of one batch can belong to different queries; the carrier scope's
+                // signal must track the entry, not the mount
+                enterBoundCancellationScope();
+                batchWeight += boundEntryWeight();
+                if (!runTask()) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    protected long boundEntryWeight() {
+        return 0;
     }
 
     protected abstract void cancelOwner();
+
+    protected abstract void clearBatchBinding();
 
     protected abstract void clearBinding();
 
@@ -145,10 +186,16 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
 
     protected abstract void onTaskError(Throwable th);
 
+    protected abstract void rebind(int workerId, MCSequence subSeq, long cursor);
+
     protected abstract boolean runTask();
 
-    protected final void signalProgress() {
-        dispatcher.signalProgress(progressState);
+    protected final void signalOwnerProgress() {
+        dispatcher.signalOwnerProgress(progressState);
+    }
+
+    protected final void signalQueueProgress() {
+        dispatcher.signalQueueProgress();
     }
 
     private static Throwable addFailure(@Nullable Throwable primary, Throwable failure) {
@@ -161,14 +208,37 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         return primary;
     }
 
+    private static long claimNext(MCSequence subSeq) {
+        while (true) {
+            final long next = subSeq.next();
+            if (next != -2) {
+                return next;
+            }
+            Os.pause();
+        }
+    }
+
+    private void enterBoundCancellationScope() {
+        final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+        if (cancelledFlag instanceof FiberCancellationSignal signal) {
+            SuspensionScope.enterCancellationSignal(signal, cancellationBinding.getGeneration(cancelledFlag));
+        } else {
+            SuspensionScope.enterCancellationSignal(null, CancellationBinding.NO_GENERATION);
+        }
+        SuspensionScope.enterSupplementalCancellationSignal(null, CancellationBinding.NO_GENERATION);
+    }
+
     private void recycle() {
         clearBinding();
+        clearBatchBinding();
+        batchSubSeq = null;
+        batchWorkerId = -1;
         cancellationBinding.clear();
         progressState = null;
         try {
             tryReopen();
         } finally {
-            pool.release(this);
+            pool.releaseSelf(this);
         }
     }
 }

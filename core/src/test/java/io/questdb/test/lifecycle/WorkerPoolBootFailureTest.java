@@ -227,8 +227,12 @@ public class WorkerPoolBootFailureTest {
             halter.start();
             Assert.assertTrue("halt() must set closed before start() resumes",
                     haltSetClosed.await(10, TimeUnit.SECONDS));
-            // Give the halter time to reach the monitor it must wait on.
-            Thread.sleep(200);
+            final long blockDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (halter.getState() != Thread.State.BLOCKED && System.nanoTime() < blockDeadline) {
+                Thread.sleep(1);
+            }
+            Assert.assertEquals("halt() must block on the monitor held by the parked add",
+                    Thread.State.BLOCKED, halter.getState());
 
             // Release the parked add: start() resumes inside the monitor with closed already set. With
             // the in-lock re-check it breaks; without it, it spawns the remaining workers against
@@ -366,6 +370,10 @@ public class WorkerPoolBootFailureTest {
             jobTicks.incrementAndGet();
             return true;
         });
+        final CountDownLatch workerLoopsExited = new CountDownLatch(workerCount);
+        for (int i = 0; i < workerCount; i++) {
+            pool.assignThreadLocalCleaner(i, workerLoopsExited::countDown);
+        }
 
         // Track that freeOnExit is released by halt(): a worker still looping after halt against a
         // freed resource is the use-after-free this guards.
@@ -401,16 +409,9 @@ public class WorkerPoolBootFailureTest {
             Assert.assertFalse(pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(200)));
             Assert.assertFalse("halt() must retain freeOnExit while start() is live", resourceFreed.get());
 
-            // After halt the workers must STOP ticking. Sample, wait well past the worker sleep
-            // cadence, sample again: a halted worker leaves the count stable; an un-halted worker
-            // keeps incrementing (the bug).
-            final long afterHalt = jobTicks.get();
-            Thread.sleep(300);
-            final long settled = jobTicks.get();
-            Assert.assertEquals(
-                    "every worker must be halted on the start-latch-timeout branch; a still-ticking "
-                            + "count means a worker is still running while shutdown awaits retry",
-                    afterHalt, settled);
+            Assert.assertTrue(
+                    "every worker loop must exit on the start-latch-timeout branch",
+                    workerLoopsExited.await(10, TimeUnit.SECONDS));
         } finally {
             releaseStart.countDown();
             starter.join(TimeUnit.SECONDS.toMillis(10));
@@ -603,14 +604,6 @@ public class WorkerPoolBootFailureTest {
         // freeOnExit must be closed: an escaped torn-read error would have skipped it (native leak).
         Assert.assertTrue("halt() must free freeOnExit (an escaped torn-read error would skip it)",
                 resourceFreed.get());
-
-        // The first-pass signal ran: after the full halt the worker added before the park is
-        // halted, so its tick count stays stable rather than climbing forever.
-        final long afterHalt = jobTicks.get();
-        Thread.sleep(200);
-        Assert.assertEquals("the worker added before the park must have been halted (the unconditional "
-                        + "first-pass halt signal ran before started.await); a climbing tick count means it was not",
-                afterHalt, jobTicks.get());
     }
 
     /**

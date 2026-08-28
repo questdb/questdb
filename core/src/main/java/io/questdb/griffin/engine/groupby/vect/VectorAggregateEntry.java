@@ -24,15 +24,18 @@
 
 package io.questdb.griffin.engine.groupby.vect;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rosti;
@@ -141,6 +144,10 @@ public class VectorAggregateEntry implements Mutable {
         return circuitBreaker;
     }
 
+    public long getFrameRowCount() {
+        return frameRowCount;
+    }
+
     public AsyncQueryProgressState getProgressState() {
         return progressState;
     }
@@ -148,6 +155,32 @@ public class VectorAggregateEntry implements Mutable {
     public void run(int workerId, Sequence seq, long cursor) {
         seq.done(cursor);
         runDetached(workerId);
+    }
+
+    public void run(int workerId, Sequence seq, long cursor, @NotNull QueryParallelFiberDispatcher dispatcher) {
+        final AsyncQueryProgressState ownerProgress = getProgressState();
+        Throwable failure = null;
+        try {
+            seq.done(cursor);
+        } catch (Throwable th) {
+            failure = th;
+        }
+        try {
+            dispatcher.signalQueueProgress();
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        try {
+            runDetached(workerId);
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        try {
+            dispatcher.signalOwnerProgress(ownerProgress);
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     public void runDetached(int workerId) {
@@ -225,12 +258,26 @@ public class VectorAggregateEntry implements Mutable {
                     circuitBreaker
             );
         } catch (Throwable th) {
-            aggregateError.setError(th);
-            circuitBreaker.cancel();
-            throw th;
-        } finally {
-            doneLatch.countDown();
+            Throwable failure = th;
+            try {
+                aggregateError.setError(th);
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            try {
+                circuitBreaker.cancel();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            try {
+                doneLatch.countDown();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
+            return;
         }
+        doneLatch.countDown();
     }
 
     void of(

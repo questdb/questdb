@@ -26,20 +26,24 @@ package io.questdb.test.griffin.engine;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfigurationWrapper;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
+import io.questdb.log.LogFactory;
 import io.questdb.mp.MPSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.DelayedFireable;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.LaunchResult;
+import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.ObjList;
@@ -52,9 +56,12 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Delayed;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
@@ -280,6 +287,109 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerRefusalDuringShutdownReportsClosingAndCleansUp() throws Exception {
+        final CountDownLatch blockerEntered = new CountDownLatch(1);
+        final CountDownLatch releaseBlocker = new CountDownLatch(1);
+        final AtomicBoolean isShutdownHookEnabled = new AtomicBoolean();
+        final AtomicReference<Throwable> shutdownFailure = new AtomicReference<>();
+        final AtomicReference<Thread> shutdownThreadRef = new AtomicReference<>();
+        final AtomicReference<TimerShards> timerShardsRef = new AtomicReference<>();
+        final TimerShards timerShards = new TimerShards(
+                1,
+                "test-slot-shutdown-timer",
+                LogFactory.getLog(PerWorkerLocksFiberTest.class),
+                () -> {
+                    if (isShutdownHookEnabled.compareAndSet(true, false)) {
+                        final Thread shutdownThread = new Thread(() -> {
+                            try {
+                                timerShardsRef.get().shutdown();
+                            } catch (Throwable th) {
+                                shutdownFailure.set(th);
+                            }
+                        }, "test-slot-timer-shutdown");
+                        shutdownThread.setDaemon(true);
+                        shutdownThreadRef.set(shutdownThread);
+                        shutdownThread.start();
+                        awaitThreadWaiting(shutdownThread);
+                    }
+                }
+        );
+        timerShardsRef.set(timerShards);
+
+        final PerWorkerLocks locks = new PerWorkerLocks(configuration, 1);
+        final int heldSlot = locks.acquireSlot(0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+        final FiberRuntime runtime = new FiberRuntime(2, 2);
+        final SlotTask task = new SlotTask(
+                locks,
+                null,
+                SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER,
+                timerShards
+        );
+        timerShards.start();
+        try {
+            Assert.assertSame(
+                    SourceRegistrationResult.ACCEPTED,
+                    timerShards.register(new TestTimerEntry(System.currentTimeMillis(), () -> {
+                        blockerEntered.countDown();
+                        try {
+                            releaseBlocker.await();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }, null))
+            );
+            Assert.assertTrue(blockerEntered.await(5, TimeUnit.SECONDS));
+
+            isShutdownHookEnabled.set(true);
+            Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.drain(1));
+
+            Assert.assertNotNull(task.error);
+            Assert.assertTrue(task.error instanceof CairoException);
+            final CairoException error = (CairoException) task.error;
+            Assert.assertTrue(error.isInterruption());
+            TestUtils.assertContains(error.getMessage(), "query aborted, server is closing");
+            Assert.assertFalse(error.getMessage().contains("reducer slot wait could not suspend"));
+            Assert.assertTrue(task.hasError);
+            Assert.assertFalse(task.hasRun);
+            Assert.assertEquals(1, locks.getAcquiredSlotCount());
+            Assert.assertEquals(0, runtime.getMountedCount());
+            Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            Assert.assertEquals(0, runtime.getParkedFiberCount());
+            Assert.assertEquals(0, runtime.getQueuedCount());
+
+            releaseBlocker.countDown();
+            final Thread shutdownThread = shutdownThreadRef.get();
+            Assert.assertNotNull(shutdownThread);
+            shutdownThread.join(TimeUnit.SECONDS.toMillis(10));
+            Assert.assertFalse(shutdownThread.isAlive());
+            Assert.assertNull(shutdownFailure.get());
+            Assert.assertEquals(0, timerShards.size());
+
+            close(runtime);
+            Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
+            Assert.assertEquals(0, runtime.getLiveFiberCount());
+            Assert.assertEquals(0, runtime.getMountedCount());
+            Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            Assert.assertEquals(0, runtime.getParkedFiberCount());
+            Assert.assertEquals(0, runtime.getQueuedCount());
+            Assert.assertEquals(0, runtime.getRetainedFiberCount());
+        } finally {
+            releaseBlocker.countDown();
+            final Thread shutdownThread = shutdownThreadRef.get();
+            if (shutdownThread != null) {
+                shutdownThread.join(TimeUnit.SECONDS.toMillis(10));
+            }
+            timerShards.shutdown();
+            locks.releaseSlot(heldSlot);
+            if (runtime.state() != FiberRuntimeState.CLOSED) {
+                close(runtime);
+            }
+        }
+        Assert.assertEquals(0, locks.getAcquiredSlotCount());
+    }
+
+    @Test
     public void testTimerWakesSlotWaiterToObserveCancellation() {
         final PerWorkerLocks locks = new PerWorkerLocks(new CairoConfigurationWrapper(configuration) {
             @Override
@@ -335,6 +445,23 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
         } finally {
             SuspensionScope.restore(previousMode);
         }
+    }
+
+    private static void awaitThreadWaiting(Thread thread) {
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            final Thread.State state = thread.getState();
+            if (state == Thread.State.BLOCKED
+                    || state == Thread.State.TIMED_WAITING
+                    || state == Thread.State.WAITING) {
+                return;
+            }
+            if (state == Thread.State.TERMINATED) {
+                Assert.fail("thread terminated before waiting [name=" + thread.getName() + ']');
+            }
+            LockSupport.parkNanos(100_000);
+        }
+        Assert.fail("thread did not wait [name=" + thread.getName() + ", state=" + thread.getState() + ']');
     }
 
     private static void close(FiberRuntime runtime) {
@@ -461,6 +588,7 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
         private final PerWorkerLocks locks;
         private final @Nullable FiberCancellationSignal supplementalCancellationSignal;
         private final @Nullable TimerShards timerShards;
+        private @Nullable Throwable error;
         private boolean hasError;
         private boolean hasRun;
 
@@ -512,6 +640,7 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
 
         @Override
         protected void onError(Throwable th) {
+            error = th;
             hasError = true;
         }
 
@@ -530,6 +659,57 @@ public class PerWorkerLocksFiberTest extends AbstractCairoTest {
                 locks.releaseSlot(slot);
             }
             return true;
+        }
+    }
+
+    private static class TestTimerEntry implements DelayedFireable {
+        private final long deadlineMillis;
+        private int heapIndex = -1;
+        private final @Nullable Runnable onExpire;
+        private final @Nullable Runnable onShutdown;
+
+        private TestTimerEntry(
+                long deadlineMillis,
+                @Nullable Runnable onExpire,
+                @Nullable Runnable onShutdown
+        ) {
+            this.deadlineMillis = deadlineMillis;
+            this.onExpire = onExpire;
+            this.onShutdown = onShutdown;
+        }
+
+        @Override
+        public int compareTo(Delayed other) {
+            return Long.compare(getDelay(TimeUnit.NANOSECONDS), other.getDelay(TimeUnit.NANOSECONDS));
+        }
+
+        @Override
+        public void expire() {
+            if (onExpire != null) {
+                onExpire.run();
+            }
+        }
+
+        @Override
+        public long getDelay(TimeUnit unit) {
+            return unit.convert(deadlineMillis - System.currentTimeMillis(), TimeUnit.MILLISECONDS);
+        }
+
+        @Override
+        public int getHeapIndex() {
+            return heapIndex;
+        }
+
+        @Override
+        public void setHeapIndex(int heapIndex) {
+            this.heapIndex = heapIndex;
+        }
+
+        @Override
+        public void shutdown() {
+            if (onShutdown != null) {
+                onShutdown.run();
+            }
         }
     }
 }

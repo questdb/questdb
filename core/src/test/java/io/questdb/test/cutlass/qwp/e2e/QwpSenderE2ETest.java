@@ -35,6 +35,7 @@ import io.questdb.client.std.Decimal128;
 import io.questdb.client.std.Decimal256;
 import io.questdb.client.std.Decimal64;
 import io.questdb.client.std.bytes.DirectByteSlice;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import org.junit.Assert;
@@ -138,7 +139,8 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
-    public void testAsyncModeSingleRow() throws Exception {
+    public void testAsyncModeSingleRowOnFiberHost() throws Exception {
+        workerPoolMode = WorkerPoolMode.FIBER_HOST;
         runInContext((port) -> {
             try (QwpWebSocketSender sender = connectWs(port)) {
                 sender.table("async_single")

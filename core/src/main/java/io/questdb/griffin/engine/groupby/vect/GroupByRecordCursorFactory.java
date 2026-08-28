@@ -343,26 +343,26 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (cursor > -1) {
                     VectorAggregateTask task = queue.get(cursor);
                     // run() releases the slot
-                    final AsyncQueryProgressState stolenProgress = task.entry.getProgressState();
                     // Keep draining even if an entry throws (e.g. OOM in a parquet decode): a
                     // survivor left in the shared queue references frame memory pools buildRosti
                     // frees on exit, so a later query would steal it and hit the freed pool.
                     // Surface the first error only once the queue is fully drained.
                     try {
-                        task.entry.run(workerId, subSeq, cursor);
+                        if (dispatcher != null) {
+                            task.entry.run(workerId, subSeq, cursor, dispatcher);
+                        } else {
+                            task.entry.run(workerId, subSeq, cursor);
+                        }
                     } catch (Throwable th) {
                         aggregateError.setError(th);
                         sharedCB.cancel();
-                    }
-                    if (dispatcher != null) {
-                        dispatcher.signalProgress(stolenProgress);
                     }
                     reclaimed++;
                 } else {
                     Os.pause();
                 }
             } else if (isOwnerParkable) {
-                if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
+                if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
                     Os.pause();
                 }
             } else {

@@ -27,12 +27,15 @@ package io.questdb.cairo.sql.async;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.tasks.VectorAggregateTask;
 
 final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
     private static final Log LOG = LogFactory.getLog(VectorAggregateFiberTask.class);
+    private RingQueue<VectorAggregateTask> batchQueue;
     private long cursor = -1;
     private VectorAggregateEntry entry;
     private boolean started;
@@ -41,17 +44,19 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
 
     VectorAggregateFiberTask(
             QueryParallelFiberDispatcher dispatcher,
-            QueryParallelFiberTaskPool<?> pool,
+            FiberTaskPool<?> pool,
             TimerShards timerShards
     ) {
         super(dispatcher, pool, timerShards);
     }
 
-    void of(int workerId, VectorAggregateTask task, Sequence subSeq, long cursor) {
+    void of(int workerId, VectorAggregateTask task, RingQueue<VectorAggregateTask> queue, MCSequence subSeq, long cursor) {
         this.workerId = workerId;
         this.entry = task.entry;
         this.subSeq = subSeq;
         this.cursor = cursor;
+        this.batchQueue = queue;
+        bindBatch(workerId, subSeq);
         bindCancellation(entry.getCircuitBreaker());
         bindProgress(entry.getProgressState());
         task.entry = null;
@@ -64,10 +69,21 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
     }
 
     @Override
+    protected long boundEntryWeight() {
+        final VectorAggregateEntry boundEntry = entry;
+        return boundEntry != null ? boundEntry.getFrameRowCount() : 0;
+    }
+
+    @Override
     protected void cancelOwner() {
         if (entry != null) {
             entry.getCircuitBreaker().cancel();
         }
+    }
+
+    @Override
+    protected void clearBatchBinding() {
+        batchQueue = null;
     }
 
     @Override
@@ -104,6 +120,11 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
     }
 
     @Override
+    protected void rebind(int workerId, MCSequence subSeq, long cursor) {
+        of(workerId, batchQueue.get(cursor), batchQueue, subSeq, cursor);
+    }
+
+    @Override
     protected boolean runTask() {
         started = true;
         try {
@@ -122,7 +143,7 @@ final class VectorAggregateFiberTask extends AbstractQueryParallelFiberTask {
             cursor = -1;
             subSeq = null;
             claimedSubSeq.done(claimedCursor);
-            signalProgress();
+            signalQueueProgress();
         }
     }
 }
