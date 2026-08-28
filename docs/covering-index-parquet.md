@@ -100,6 +100,38 @@ is that the cost is per MAPPING -- a pooled TableReader maps once per
 partition-open and serves many queries, where these benchmarks open a reader
 every iteration and then make as few as 500 lookups.
 
+### When to use it: cheap per row, expensive per key lookup
+
+The single rule that predicts every number in this document: **the parquet form
+costs more per KEY LOOKUP than the native chain and no more per ROW.** A cursor
+that binds once and walks a long run amortises that; a query that opens hundreds
+of cursors and reads a few rows from each does not.
+
+| workload | parquet form |
+| --- | --- |
+| scans over many rows per key | **1.45-1.62x FASTER** at 200k and 1M keys |
+| covered `WHERE` | parity at 16 / 2,000 / 200,000 keys |
+| indexed `LATEST ON` (one short cursor per key) | **2.7-4.4x slower**, and worse than no index |
+
+Measured against the native chain on the same data, by rows per key -- note this
+is NOT monotonic, which is why a single threshold does not capture it:
+
+| rows per key | 25,000 | 2,000 | 1,000 | 6 | 4 | 2 |
+| --- | --- | --- | --- | --- | --- | --- |
+| point read | 1.05x | 2.98x | 3.43x | 1.13x | 1.63x | 2.28x |
+
+The band around 1,000-2,000 rows per key is **not explained**. Ruled out:
+row-group planning (`TARGET_ROW_GROUP_ROWS` gives every fixture 100k-row groups,
+one PLAIN page, direct read available), `questdb.idx.rgkeys` (inert, groups close
+on the target first), `questdb.idx.rgminrows` and `questdb.idx.page` (both make
+it worse -- a smaller page costs the direct-read path), and the whole-group
+decode threshold (disabling it entirely moved 201.8 to 205.1 ops/s). The
+high-cardinality end IS explained: `_im` directory cold misses, which grow with
+the key count.
+
+Closing either end means reducing per-cursor bind cost, which is QuestDB's shared
+cursor layer rather than anything inside this format.
+
 ### Where the parquet form LOSES: indexed LATEST ON
 
 `LATEST ON` that names its symbol values compiles to
