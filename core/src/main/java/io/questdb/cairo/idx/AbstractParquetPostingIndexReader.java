@@ -126,6 +126,32 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     private int[] packedBitWidths;
     /** True when the bound file stores a blob per row group rather than a row id per posting. */
     protected boolean packedPayload;
+    /**
+     * Upper bound on how many row ids are widened per native call while walking
+     * a packed run. The batch STARTS at {@link #PACKED_WIDEN_BATCH_MIN} and
+     * doubles up to this, which is what lets one constant serve two workloads
+     * that want opposite things.
+     * <p>
+     * A fixed small batch is right for a partial read: taking one row of a key
+     * should not widen the key. Measured at P400K, widening whole runs cost
+     * 5,498 ops/s against 22,301 for a 64-row batch -- 4x, for rows the caller
+     * never asked for.
+     * <p>
+     * A fixed small batch is wrong for a full drain, because the per-batch cost
+     * is a native call and 64-row batches make 391 of them per key where one
+     * would do. Measured at P400K on the same cell, a full drain ran 2,414 ops/s
+     * batched against 3,013 whole-run.
+     * <p>
+     * Doubling settles both: a first-row read widens 64, and a 25,000-row drain
+     * reaches the end in nine calls rather than 391. No tuning constant has to
+     * be right, which matters because the machine these figures came from had
+     * competing load and the fixed-size sweep was not resolvable against it.
+     */
+    protected static final int PACKED_WIDEN_BATCH =
+            Integer.getInteger("questdb.idx.packed.batch", 1 << 16);
+    /** First batch of a run. Small, so a partial read stays cheap. */
+    protected static final int PACKED_WIDEN_BATCH_MIN =
+            Integer.getInteger("questdb.idx.packed.batch.min", 64);
     protected long columnTop;
     /**
      * Pruning instrumentation, and shared by every cursor this reader serves.

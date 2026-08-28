@@ -187,6 +187,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private long packedNext;
         /** Exclusive end of that run. See refillPackedBatch. */
         private long packedEnd;
+        /** Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH. */
+        private int packedBatch = PACKED_WIDEN_BATCH_MIN;
         private long rowLo;
         private boolean detached;
         private boolean pooled;
@@ -328,9 +330,12 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             if (packedNext >= packedEnd) {
                 return false;
             }
-            final int batch = (int) Math.min(packedEnd - packedNext, PostingIndexUtils.PACKED_BATCH_SIZE);
+            final int batch = (int) Math.min(packedEnd - packedNext, packedBatch);
             rowIdPtr = unpackRowIds(rg, (int) packedNext, batch);
             packedNext += batch;
+            // Grow toward the cap, so a drain amortises the native call while a
+            // partial read never widens more than the minimum.
+            packedBatch = Math.min(packedBatch << 1, PACKED_WIDEN_BATCH);
             rowInGroup = 0;
             groupRows = batch;
             return true;
@@ -452,6 +457,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     // not all at once. See refillPackedBatch.
                     packedNext = from;
                     packedEnd = to;
+                    packedBatch = PACKED_WIDEN_BATCH_MIN;
                     refillPackedBatch();
                     return true;
                 }

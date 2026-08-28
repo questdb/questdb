@@ -305,6 +305,24 @@ and made the packed bind cheaper than the per-posting arm's. Full-drain throughp
 barely moved, because the widen relocated from bind into traversal rather than
 disappearing -- which is the same finding as above, seen from another angle.
 
+**The batch SIZE is a genuine trade-off and this machine could not settle it.**
+A small batch is right for a partial read and wrong for a drain, where the
+per-batch cost is a native call: 64-row batches make 391 of them per key at P400K
+where one would do. Measured whole-run against fixed-64 on the same cell, the
+drain went 3,013 against 2,414 ops/s while the first row went 5,498 against
+22,301 -- opposite directions, both real. The batch therefore STARTS at 64 and
+doubles to a cap, so a first-row read widens 64 and a 25,000-row drain finishes
+in nine calls rather than 391, and no constant has to be correct.
+
+That the doubling BEATS either fixed choice is not claimed. A sweep of 64 / 1,024
+/ 4,096 / 65,536 was attempted and is not reportable: the in-run control moved
+21% between runs (the per-posting arm's P400K point read read 2,440 in two runs
+and 3,100 in three, on identical code), because the machine had a competing
+`javac` at 400% CPU. Effects of that size cannot be resolved against it. What
+survives is the first-row figure, which is a 4x effect measured twice with
+matching controls, and the structural argument that doubling cannot be much worse
+than either endpoint on either workload.
+
 Two design decisions worth carrying forward:
 
 - **Flat mode, not delta.** Delta compresses better above ~10 values per key, but

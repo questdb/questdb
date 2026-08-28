@@ -166,6 +166,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private long packedNext;
         /** Inclusive bottom of that run. See refillPackedBatch. */
         private long packedLo;
+        /** Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH. */
+        private int packedBatch = PACKED_WIDEN_BATCH_MIN;
         private int cachedRowGroup = -1;
         private int[] cachedCovers;
         private int lastTouchedRowGroup = -1;
@@ -270,8 +272,10 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             if (packedNext <= packedLo) {
                 return false;
             }
-            final int batch = (int) Math.min(packedNext - packedLo, PostingIndexUtils.PACKED_BATCH_SIZE);
+            final int batch = (int) Math.min(packedNext - packedLo, packedBatch);
             packedNext -= batch;
+            // See the forward reader: grow toward the cap.
+            packedBatch = Math.min(packedBatch << 1, PACKED_WIDEN_BATCH);
             rowIdPtr = unpackRowIds(rg, (int) packedNext, batch);
             // The batch is ascending in the buffer; the countdown walks it from
             // its top, so the next step down continues the descending order.
@@ -366,6 +370,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     // rather than the whole run at once. See refillPackedBatch.
                     packedLo = from;
                     packedNext = to;
+                    packedBatch = PACKED_WIDEN_BATCH_MIN;
                     refillPackedBatch();
                     return true;
                 }
