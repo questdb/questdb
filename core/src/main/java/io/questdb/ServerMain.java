@@ -466,7 +466,7 @@ public class ServerMain implements Closeable {
                 // mirrors the halt-then-free order of close(); WorkerPool.halt() is CAS-guarded, so
                 // the normal-shutdown second call is a no-op.
                 lifecycleOrchestrator.setPreStopHook(() -> {
-                    if (workerPoolManager != null && !workerPoolManager.haltAndReportCompletion()) {
+                    if (workerPoolManager != null && !workerPoolManager.haltWithin(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
                         throw new IllegalStateException("worker pools did not halt before lifecycle teardown");
                     }
                 });
@@ -639,7 +639,7 @@ public class ServerMain implements Closeable {
         // already applies this guard; the check here keeps the two call sites consistent.
         boolean isWorkerPoolHaltComplete = true;
         if (workerPoolManager != null) {
-            isWorkerPoolHaltComplete = workerPoolManager.haltAndReportCompletion();
+            isWorkerPoolHaltComplete = workerPoolManager.haltWithin(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
         }
         if (!isMinHttpHaltComplete || !isWorkerPoolHaltComplete) {
             try {
@@ -656,13 +656,15 @@ public class ServerMain implements Closeable {
             }
         }
         Throwable cleanupFailure = workerPoolManager != null ? workerPoolManager.getHaltFailure() : null;
-        try {
-            freeOnExit.close();
-        } catch (Throwable th) {
-            if (cleanupFailure == null) {
-                cleanupFailure = th;
-            } else if (cleanupFailure != th) {
-                cleanupFailure.addSuppressed(th);
+        if (isWorkerPoolHaltComplete) {
+            try {
+                freeOnExit.close();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
             }
         }
         // Deregister the shutdown hook: the JVM-static ApplicationShutdownHooks map holds
@@ -680,7 +682,7 @@ public class ServerMain implements Closeable {
                 // JVM shutdown already in progress; the hook is running or about to run.
             }
         }
-        isCloseComplete.set(true);
+        isCloseComplete.set(isWorkerPoolHaltComplete);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -1962,7 +1964,7 @@ public class ServerMain implements Closeable {
             // to ensure the pool is quiesced before engine resources are freed. WorkerPool.halt()
             // is CAS-guarded, so whichever call arrives second is a no-op.
             if (ServerMain.this.workerPoolManager != null) {
-                if (!ServerMain.this.workerPoolManager.haltAndReportCompletion()) {
+                if (!ServerMain.this.workerPoolManager.haltWithin(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS)) {
                     throw new IllegalStateException("worker pools did not halt");
                 }
             }

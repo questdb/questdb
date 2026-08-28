@@ -732,8 +732,7 @@ public class LogFactory implements Closeable {
         }
         isThreadHaltStarted = true;
         running.set(false);
-        loggingWorkerPool.halt();
-        isThreadHaltComplete = true;
+        isThreadHaltComplete = loggingWorkerPool.haltWithin(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
     }
 
     @TestOnly

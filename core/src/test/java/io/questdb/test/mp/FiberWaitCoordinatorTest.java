@@ -108,6 +108,44 @@ public class FiberWaitCoordinatorTest {
     }
 
     @Test
+    public void testPreferPendingCancelResolvesEarlyReturn() {
+        TestTarget target = new TestTarget();
+        FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);
+        long token = coordinator.beginBuild(2);
+        armSources(coordinator, token, 1);
+
+        // no pending reason: the early-return reason stands
+        Assert.assertEquals(
+                FiberWaitCoordinator.REASON_CAPACITY,
+                coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_CAPACITY)
+        );
+
+        // a cancellation recorded while the wait is still building wins over the early return
+        Assert.assertTrue(coordinator.fire(token, FiberWaitCoordinator.REASON_CANCEL));
+        Assert.assertEquals(
+                FiberWaitCoordinator.REASON_CANCEL,
+                coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_CAPACITY)
+        );
+        Assert.assertEquals(
+                FiberWaitCoordinator.REASON_CAPACITY,
+                coordinator.preferPendingCancel(token + 1, FiberWaitCoordinator.REASON_CAPACITY)
+        );
+        Assert.assertTrue(coordinator.abort(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
+
+        // a non-cancel pending reason does not override the early return
+        token = coordinator.beginBuild(2);
+        armSources(coordinator, token, 1);
+        Assert.assertTrue(coordinator.fire(token, FiberWaitCoordinator.REASON_PROGRESS));
+        Assert.assertEquals(
+                FiberWaitCoordinator.REASON_CAPACITY,
+                coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_CAPACITY)
+        );
+        Assert.assertTrue(coordinator.abort(token));
+        Assert.assertEquals(FiberWaitCoordinator.REASON_NONE, coordinator.consume(token));
+    }
+
+    @Test
     public void testShutdownDuringBuildFiresAtSeal() {
         TestTarget target = new TestTarget();
         FiberWaitCoordinator coordinator = new FiberWaitCoordinator(target);

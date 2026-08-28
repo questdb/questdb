@@ -326,6 +326,42 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testManagerBoundedHaltTimesOutAndStaysRetryable() {
+        final AtomicBoolean release = new AtomicBoolean(false);
+        final SOCountDownLatch jobEntered = new SOCountDownLatch(1);
+        final AtomicInteger closeOrder = new AtomicInteger();
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1, pool -> {
+            pool.assign(workerContext -> {
+                jobEntered.countDown();
+                while (!release.get()) {
+                    Os.pause();
+                }
+                return false;
+            });
+            pool.freeOnExit(new OrderedCloseJob(closeOrder, 0));
+        });
+        try {
+            workerPoolManager.start(null);
+            Assert.assertTrue("worker job never started", jobEntered.await(TimeUnit.SECONDS.toNanos(30L)));
+
+            final long budgetNanos = TimeUnit.MILLISECONDS.toNanos(200L);
+            final long start = System.nanoTime();
+            Assert.assertFalse(workerPoolManager.haltWithin(budgetNanos));
+            final long elapsed = System.nanoTime() - start;
+            Assert.assertTrue(
+                    "bounded manager halt did not respect its budget [elapsedMs=" + (elapsed / 1_000_000) + "]",
+                    elapsed < TimeUnit.SECONDS.toNanos(10L)
+            );
+            Assert.assertNull(workerPoolManager.getHaltFailure());
+            Assert.assertEquals(0, closeOrder.get());
+        } finally {
+            release.set(true);
+            Assert.assertTrue(workerPoolManager.haltWithin(TimeUnit.SECONDS.toNanos(30L)));
+        }
+        Assert.assertEquals(1, closeOrder.get());
+    }
+
+    @Test
     public void testManagerHaltContinuesAfterPoolCleanupFailure() {
         final AtomicInteger closeOrder = new AtomicInteger();
         final RuntimeException failure = new RuntimeException("close");

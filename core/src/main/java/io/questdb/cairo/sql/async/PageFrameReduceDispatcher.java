@@ -572,7 +572,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
             }
             if (progressVersion.get() != observedVersion) {
-                return FiberWaitCoordinator.REASON_PROGRESS;
+                return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
         } finally {
@@ -634,7 +634,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             }
             if (frameSequence.getProgressVersion() != observedSequenceVersion
                     || progressVersion.get() != observedGlobalVersion) {
-                return FiberWaitCoordinator.REASON_PROGRESS;
+                return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
         } finally {

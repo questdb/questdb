@@ -3037,6 +3037,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             LOG.critical().$("materialized view refresh failed on fiber [view=").$(notification.matViewToken)
                     .$(", ex=").$(th)
                     .I$();
+            executor.engine.getMetrics().healthMetrics().incrementUnhandledErrors();
         }
 
         @Override

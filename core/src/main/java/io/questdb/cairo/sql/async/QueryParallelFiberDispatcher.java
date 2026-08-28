@@ -986,7 +986,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
             }
             if (progressState.getVersion() != observedVersion || progressVersion.get() != observedGlobalVersion) {
-                return FiberWaitCoordinator.REASON_PROGRESS;
+                return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
         } finally {

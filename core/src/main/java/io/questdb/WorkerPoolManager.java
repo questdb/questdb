@@ -37,6 +37,7 @@ import io.questdb.std.str.BorrowableUtf8Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -148,9 +149,41 @@ public abstract class WorkerPoolManager implements Target {
     public boolean haltAndReportCompletion() {
         haltLock.lock();
         try {
-            return isHaltComplete();
+            return isHaltComplete(0);
         } finally {
             haltLock.unlock();
+        }
+    }
+
+    /**
+     * Attempts to halt every managed pool within a relative budget and reports whether all
+     * cleanup completed. All pools share the call's single deadline, so a wedged pool cannot
+     * multiply the budget. A timed-out pool retains its object graph and stays retryable.
+     */
+    public boolean haltWithin(long timeoutNanos) {
+        final long deadlineNanos = System.nanoTime() + timeoutNanos;
+        boolean isInterrupted = false;
+        boolean isLockAcquired = haltLock.tryLock();
+        try {
+            while (!isLockAcquired) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    return false;
+                }
+                try {
+                    isLockAcquired = haltLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            return isHaltComplete(deadlineNanos);
+        } finally {
+            if (isLockAcquired) {
+                haltLock.unlock();
+            }
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -184,6 +217,14 @@ public abstract class WorkerPoolManager implements Target {
         }
     }
 
+    private static boolean haltPool(WorkerPool p, long deadlineNanos) {
+        if (deadlineNanos != 0) {
+            return p.haltBy(deadlineNanos);
+        }
+        p.halt();
+        return true;
+    }
+
     private static void startWorkerPool(Log sharedPoolLog, WorkerPool p, String msg) {
         if (p != null) {
             p.start(sharedPoolLog);
@@ -193,7 +234,7 @@ public abstract class WorkerPoolManager implements Target {
         }
     }
 
-    private boolean closePool(WorkerPool p, String message) {
+    private boolean closePool(WorkerPool p, String message, long deadlineNanos) {
         if (p != null) {
             try {
                 LOG.debug().$(message).$(p.getPoolName())
@@ -202,8 +243,7 @@ public abstract class WorkerPoolManager implements Target {
             } catch (Throwable ignore) {
             }
             try {
-                p.halt();
-                return true;
+                return haltPool(p, deadlineNanos);
             } catch (Throwable th) {
                 recordHaltFailure(th);
                 try {
@@ -212,8 +252,7 @@ public abstract class WorkerPoolManager implements Target {
                 } catch (Throwable ignore) {
                 }
                 try {
-                    p.halt();
-                    return true;
+                    return haltPool(p, deadlineNanos);
                 } catch (Throwable retryFailure) {
                     recordHaltFailure(retryFailure);
                     try {
@@ -228,15 +267,16 @@ public abstract class WorkerPoolManager implements Target {
         return true;
     }
 
-    private boolean isHaltComplete() {
+    private boolean isHaltComplete(long deadlineNanos) {
         boolean isHaltComplete = true;
         final boolean isLineTcpIOHaltComplete = closePool(
                 lineTcpIOPool,
-                "closing Line TCP I/O pool [name="
+                "closing Line TCP I/O pool [name=",
+                deadlineNanos
         );
         isHaltComplete &= isLineTcpIOHaltComplete;
         if (sharedPoolNetwork != lineTcpIOPool && sharedPoolNetwork != lineTcpWriterPool) {
-            isHaltComplete &= closePool(sharedPoolNetwork, "closing shared Network pool [name=");
+            isHaltComplete &= closePool(sharedPoolNetwork, "closing shared Network pool [name=", deadlineNanos);
         }
 
         ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
@@ -244,17 +284,17 @@ public abstract class WorkerPoolManager implements Target {
             CharSequence name = poolNames.getQuick(i);
             WorkerPool pool = dedicatedPools.get(name);
             if (pool != lineTcpIOPool && pool != lineTcpWriterPool) {
-                isHaltComplete &= closePool(pool, "closing dedicated pool [name=");
+                isHaltComplete &= closePool(pool, "closing dedicated pool [name=", deadlineNanos);
             }
         }
 
         if (sharedPoolQuery != lineTcpIOPool
                 && sharedPoolQuery != lineTcpWriterPool
                 && sharedPoolQuery != sharedPoolNetwork) {
-            isHaltComplete &= closePool(sharedPoolQuery, "closing shared Query pool [name=");
+            isHaltComplete &= closePool(sharedPoolQuery, "closing shared Query pool [name=", deadlineNanos);
         }
         if (isLineTcpIOHaltComplete && lineTcpWriterPool != lineTcpIOPool) {
-            isHaltComplete &= closePool(lineTcpWriterPool, "closing Line TCP writer pool [name=");
+            isHaltComplete &= closePool(lineTcpWriterPool, "closing Line TCP writer pool [name=", deadlineNanos);
         } else if (!isLineTcpIOHaltComplete && lineTcpWriterPool != null && lineTcpWriterPool != lineTcpIOPool) {
             try {
                 LOG.error().$("retaining Line TCP writer pool because Line TCP I/O pool did not halt [name=")
@@ -266,7 +306,7 @@ public abstract class WorkerPoolManager implements Target {
                 && sharedPoolWrite != lineTcpWriterPool
                 && sharedPoolWrite != sharedPoolNetwork
                 && sharedPoolWrite != sharedPoolQuery) {
-            isHaltComplete &= closePool(sharedPoolWrite, "closing shared Write pool [name=");
+            isHaltComplete &= closePool(sharedPoolWrite, "closing shared Write pool [name=", deadlineNanos);
         }
 
         closed.set(true);

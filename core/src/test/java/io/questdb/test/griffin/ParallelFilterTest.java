@@ -354,7 +354,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
     @Test
     public void testDateParsingInParallelFilter() throws Exception {
-        WorkerPool pool = new WorkerPool(() -> 4);
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, _, sqlExecutionContext) -> {
