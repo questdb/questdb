@@ -25,12 +25,13 @@
 package io.questdb.test.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.CairoException;
 import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.orderby.LimitedSizeLongTreeChain;
 import io.questdb.std.LongList;
+import io.questdb.std.Rnd;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -40,6 +41,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 /**
  * Test RBTree removal cases asserting final tree structure.
  */
@@ -48,8 +51,8 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     LimitedSizeLongTreeChain chain;
     RecordComparator comparator;
     TestRecordCursor cursor;
-    TestRecord left;
-    TestRecord placeholder;
+    SingleLongRecord left;
+    SingleLongRecord placeholder;
 
     @After
     public void after() {
@@ -58,14 +61,7 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     @Before
     public void before() {
-        chain = new LimitedSizeLongTreeChain(
-                configuration.getSqlSortKeyPageSize(),
-                configuration.getSqlSortKeyMaxBytes(),
-                configuration.getSqlSortLightValuePageSize(),
-                configuration.getSqlSortLightValueMaxBytes(),
-                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
-        );
+        chain = newChain();
         chain.updateLimits(true, 20);
     }
 
@@ -126,34 +122,190 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testKeyHeapOverflowNamesConfigKey() {
+    public void testCursorClearLeavesCursorExhausted() throws Exception {
+        // clear() used to reset the cursor to 0/0, but 0 is a legal block and value offset, so
+        // hasNext() reported true and next() read rowId(0) - from address 0 once the chain had
+        // been closed. It has to clear to the sentinels instead.
+        assertMemoryLeak(() -> {
+            createTree(5, 3, 9);
+            LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+            Assert.assertTrue(treeCursor.hasNext());
+
+            treeCursor.clear();
+            Assert.assertFalse("a cleared cursor must be exhausted", treeCursor.hasNext());
+        });
+    }
+
+    @Test
+    public void testIncrementalMinMaxMatchesFullWalk() throws Exception {
+        // put() and removeAndCache() maintain the cached extreme in place instead of re-walking the
+        // spine from root on every accepted row. The cache decides which row a full chain evicts,
+        // so a wrong cache silently keeps the wrong rows rather than failing an invariant. Drive
+        // random data through both limit directions and compare against a sorted reference: any
+        // drift in the cache shows up as a wrong result set.
+        //
+        // Close the @Before chain and build the one under test inside the leak window: the
+        // freelist outgrows its initial 16 entries over these trials, and only close() gives that
+        // back, so bracketing the puts alone would report the growth as a leak.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = newChain();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            for (int trial = 0; trial < 40; trial++) {
+                final int n = 1 + rnd.nextInt(200);
+                final int limit = 1 + rnd.nextInt(32);
+                final boolean isFirstN = rnd.nextBoolean();
+                final long[] values = new long[n];
+                for (int i = 0; i < n; i++) {
+                    // A narrow range on purpose, so duplicates land on the chain-append path too.
+                    values[i] = rnd.nextInt(40);
+                }
+
+                chain.clear();
+                chain.updateLimits(isFirstN, limit);
+                createTree(values);
+
+                final long[] sorted = values.clone();
+                Arrays.sort(sorted);
+                final int kept = Math.min(limit, n);
+                final long[] expected = new long[kept];
+                System.arraycopy(sorted, isFirstN ? 0 : n - kept, expected, 0, kept);
+
+                final LongList actual = new LongList();
+                LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+                while (treeCursor.hasNext()) {
+                    cursor.recordAt(placeholder, treeCursor.next());
+                    actual.add(placeholder.getLong(0));
+                }
+                // The tree yields ascending order, and so does the reference slice.
+                Assert.assertEquals("trial " + trial + " isFirstN=" + isFirstN + " limit=" + limit
+                        + " n=" + n + " kept count", expected.length, actual.size());
+                for (int i = 0; i < expected.length; i++) {
+                    Assert.assertEquals("trial " + trial + " isFirstN=" + isFirstN + " limit=" + limit
+                            + " position " + i, expected[i], actual.getQuick(i));
+                }
+            }
+            chain.close();
+        });
+    }
+
+    @Test
+    public void testKeyHeapClampsToMaxHeapSize() throws Exception {
+        // A 200-byte key budget is not a power of two, while every doubling step is. The chain
+        // goes 64 -> 128 and then wants 256; rejecting there stranded a quarter of the budget
+        // at 5 blocks. Clamping to 200 fits 8 of the 24-byte blocks instead.
+        // Close the @Before chain first, so the leak check brackets only the
+        // replacement chain's clamped, non-power-of-two realloc/free accounting.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,             // key page >= BLOCK_SIZE
+                    200,            // key heap budget, deliberately not a power of two
+                    128 * 1024,
+                    Long.MAX_VALUE, // value heap uncapped
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+            );
+            chain.updateLimits(true, 1_000);
+            Assert.assertEquals(8, fillUntilOverflow("memory exceeded in RedBlackTree"));
+            chain.close();
+        });
+    }
+
+    @Test
+    public void testKeyHeapOverflowNamesConfigKey() throws Exception {
         // Tiny key-heap budget (one page) with an uncapped value heap: the red-black key heap
         // overflows and the message must name the sort.key config key. Pins the LimitedSize key
         // path's (raise ...) hint that no query-level test exercises.
         chain.close();
-        chain = new LimitedSizeLongTreeChain(
-                64,             // key page >= BLOCK_SIZE; doubling past one page overflows
-                64,             // key heap budget = one page
-                128 * 1024,
-                Long.MAX_VALUE, // value heap uncapped
-                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
-        );
-        chain.updateLimits(true, 1_000);
-        final long[] values = new long[256];
-        for (int i = 0; i < values.length; i++) {
-            values[i] = i;
-        }
-        try {
-            createTree(values);
-            Assert.fail("expected LimitOverflowException");
-        } catch (LimitOverflowException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(),
-                    "memory exceeded in RedBlackTree (raise cairo.sql.sort.key.max.bytes)");
-        }
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,             // key page >= BLOCK_SIZE; doubling past one page overflows
+                    64,             // key heap budget = one page
+                    128 * 1024,
+                    Long.MAX_VALUE, // value heap uncapped
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+            );
+            chain.updateLimits(true, 1_000);
+            final long[] values = new long[256];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = i;
+            }
+            try {
+                createTree(values);
+                Assert.fail("expected LimitOverflowException");
+            } catch (LimitOverflowException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "memory exceeded in RedBlackTree (raise cairo.sql.sort.key.max.bytes)");
+            }
+            chain.close();
+        });
     }
 
-    // sibling is black and its both children are black (?)
+    @Test
+    public void testLazyChainAllocatesOnFirstPutWithoutReopen() throws Exception {
+        // LimitedSizeSortedLightRecordCursorFactory and AsyncTopKAtom both construct this chain
+        // with openOnInit == false and reopen() before use. The constructor still records the
+        // configured page size in both heap-size fields, so a put() that skips reopen() grew from
+        // a null heap pointer while booking only the doubling delta: the counters ended up short
+        // of what was allocated, and close() then freed the full amount.
+        //
+        // This pins the key-heap guard in AbstractRedBlackTree. The value-heap guard cannot be
+        // reached from here - allocateBlock() runs first and its reopen() opens both heaps - and
+        // only fires when a previous reopen() failed part way, leaving the key heap open and the
+        // value heap null.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,
+                    Long.MAX_VALUE,
+                    128,
+                    Long.MAX_VALUE,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                    false
+            );
+            chain.updateLimits(true, 1_000);
+
+            final long[] values = new long[8];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = i;
+            }
+            createTree(values);
+
+            assertReadsBack(values.length);
+            chain.close();
+        });
+    }
+
+    @Test
+    public void testPutAfterNonExtremeRemovalRecomputesMinMax() throws Exception {
+        // put() maintains the cached extreme in place and falls back to the full spine walk only
+        // when removeAndCache() could not name a replacement. Its production caller only ever
+        // removes the cached extreme, so after that optimisation the fallback - and with it
+        // refreshMinMaxNode(), findMinNode() and findMaxNode() - is reachable only through the
+        // removeAndCache(node) API a dozen tests here already drive. Keep it covered: the walk is
+        // the safety net for every one of those removals.
+        assertMemoryLeak(() -> {
+            chain.updateLimits(true, 4);
+            createTree(1, 2, 3, 4, 5);
+
+            // 2 is neither the smallest nor the cached maximum, so removeAndCache() cannot name a
+            // replacement and invalidates the cache outright.
+            removeRowWithValue(2);
+
+            // Back below the limit, so this insert takes the fallback and has to find the new
+            // maximum from the tree rather than trust the cache.
+            putValue(5);
+            // At the limit again. The accept/reject compare now runs against whatever the fallback
+            // decided the maximum is: 2 is below it, so it must be accepted and evict 5.
+            putValue(2);
+
+            assertChainHolds(1, 2, 3, 4);
+        });
+    }
+
     @Test
     public void testRemoveBlackNodeWithBlackSiblingWithBothChildrenBlack() {
         assertTree(
@@ -423,31 +575,166 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testValueHeapOverflowNamesConfigKey() {
+    public void testValueHeapAcceptsRequiredEqualToMaxHeapSize() throws Exception {
+        // A 36-byte value budget is an exact multiple of the 12-byte chain value, so the 3rd value
+        // makes required exactly 36. That is the boundary of the throw predicate: a value that fits
+        // exactly must be accepted, not rejected.
+        // Close the @Before chain first, so the leak check brackets only the
+        // replacement chain's clamped, non-power-of-two realloc/free accounting.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,
+                    Long.MAX_VALUE, // key heap uncapped
+                    12,             // value page == CHAIN_VALUE_SIZE
+                    36,             // value heap budget == 3 values exactly
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+            );
+            chain.updateLimits(true, 1_000);
+            Assert.assertEquals(3, fillUntilOverflow("limit of 36 memory exceeded in LimitedSizeLongTreeChain"));
+            chain.close();
+        });
+    }
+
+    @Test
+    public void testValueHeapAllocatesAfterPartialReopen() throws Exception {
+        // Twin of LongTreeChainTest#testValueHeapAllocatesAfterPartialReopen. The growValueHeap()
+        // guard itself lives once, in AbstractRedBlackTree, so this is not here to re-cover it -
+        // it is here for the state only this subclass can reach. reopen() takes the two heaps
+        // before the two freelists, so a value-heap malloc that breaches the RSS limit returns with
+        // the key heap open, the value heap null and both freelists still closed.
+        //
+        // The load-bearing part is the FIRST put(): allocateBlock() reads freeList.size() and
+        // chainFreeList.size() while both lists are genuinely closed, before appendValue() reaches
+        // growValueHeap() and re-enters reopen() to repair them. That read is safe only because a
+        // closed DirectIntList reports size 0. Reaching add() on a closed list is impossible by
+        // construction - it needs currentValues == limit > 0, hence a prior appendValue(), which is
+        // itself what repairs the lists - so the evictions below run against reopened lists and
+        // demonstrate that the repair happened.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,             // key page, allocated first
+                    Long.MAX_VALUE,
+                    1024,           // value page, allocated second - the one that must fail
+                    Long.MAX_VALUE,
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath(),
+                    false
+            );
+            // The constructor opens the freelists eagerly, so close them first - otherwise the
+            // partial reopen below leaves them open and the state under test never arises.
+            chain.close();
+
+            final long savedLimit = Unsafe.getRssMemLimit();
+            try {
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 768);
+                chain.reopen();
+                Assert.fail("expected CairoException");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "global RSS memory limit exceeded");
+                TestUtils.assertContains(e.getFlyweightMessage(), "size=1024");
+            } finally {
+                Unsafe.setRssMemLimit(savedLimit);
+            }
+
+            chain.updateLimits(true, 4);
+            // Descending, deliberately. put() pins the comparator to the cached maximum once the
+            // chain is full, so an ascending tail would take the isFirstN && cmp <= 0 reject branch
+            // and never evict - assertChainHolds(1,2,3,4) would then pass without removeAndCache()
+            // ever running. Descending forces the else branch on each of the last four rows, so the
+            // same assertion can only hold if eviction really ran: reject-only would leave 5,6,7,8.
+            createTree(8, 7, 6, 5, 4, 3, 2, 1);
+            assertChainHolds(1, 2, 3, 4);
+            chain.close();
+        });
+    }
+
+    @Test
+    public void testValueHeapClampsToMaxHeapSize() throws Exception {
+        // Same clamp on the value heap: a 96-byte budget is not a power of two, the chain goes
+        // 16 -> 32 -> 64 and then wants 128. Clamping to 96 fits 8 of the 12-byte chain values
+        // instead of the 5 that fitted before.
+        // Close the @Before chain first, so the leak check brackets only the
+        // replacement chain's clamped, non-power-of-two realloc/free accounting.
+        chain.close();
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,
+                    Long.MAX_VALUE, // key heap uncapped
+                    16,             // value page >= CHAIN_VALUE_SIZE
+                    96,             // value heap budget, deliberately not a power of two
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+            );
+            chain.updateLimits(true, 1_000);
+            Assert.assertEquals(8, fillUntilOverflow("memory exceeded in LimitedSizeLongTreeChain"));
+            chain.close();
+        });
+    }
+
+    @Test
+    public void testValueHeapOverflowNamesConfigKey() throws Exception {
         // Tiny value-heap budget (one page) with an uncapped key heap: the rowid value chain
         // overflows and the message must name the sort.light.value config key. This branch is
         // otherwise never fired by a test.
         chain.close();
-        chain = new LimitedSizeLongTreeChain(
-                64,
-                Long.MAX_VALUE, // key heap uncapped
-                16,             // value page >= CHAIN_VALUE_SIZE; doubling past one page overflows
-                16,             // value heap budget = one page
-                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
-                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
-        );
-        chain.updateLimits(true, 1_000);
-        final long[] values = new long[256];
-        for (int i = 0; i < values.length; i++) {
-            values[i] = i;
+        assertMemoryLeak(() -> {
+            chain = new LimitedSizeLongTreeChain(
+                    64,
+                    Long.MAX_VALUE, // key heap uncapped
+                    16,             // value page >= CHAIN_VALUE_SIZE; doubling past one page overflows
+                    16,             // value heap budget = one page
+                    PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                    PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+            );
+            chain.updateLimits(true, 1_000);
+            final long[] values = new long[256];
+            for (int i = 0; i < values.length; i++) {
+                values[i] = i;
+            }
+            try {
+                createTree(values);
+                Assert.fail("expected LimitOverflowException");
+            } catch (LimitOverflowException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(),
+                        "memory exceeded in LimitedSizeLongTreeChain (raise cairo.sql.sort.light.value.max.bytes)");
+            }
+            chain.close();
+        });
+    }
+
+    /**
+     * Asserts the exact set the chain kept, in the ascending order the tree yields. Which rows
+     * survive is what the cached extreme decides, so this is the assertion the top-N tests use.
+     */
+    private void assertChainHolds(long... expected) {
+        final LongList actual = new LongList();
+        LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+        while (treeCursor.hasNext()) {
+            cursor.recordAt(placeholder, treeCursor.next());
+            actual.add(placeholder.getLong(0));
         }
-        try {
-            createTree(values);
-            Assert.fail("expected LimitOverflowException");
-        } catch (LimitOverflowException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(),
-                    "memory exceeded in LimitedSizeLongTreeChain (raise cairo.sql.sort.light.value.max.bytes)");
+        Assert.assertEquals("kept count", expected.length, actual.size());
+        for (int i = 0; i < expected.length; i++) {
+            Assert.assertEquals("position " + i, expected[i], actual.getQuick(i));
         }
+    }
+
+    /**
+     * Walks the tree back after a clamped growth step. Values go in ascending with rowId == value,
+     * so the cursor has to yield 0..inserted-1 in order - which only holds if every heap-relative
+     * offset survived the reallocs that moved the heap.
+     */
+    private void assertReadsBack(int inserted) {
+        LimitedSizeLongTreeChain.TreeCursor treeCursor = chain.getCursor();
+        int count = 0;
+        while (treeCursor.hasNext()) {
+            Assert.assertEquals(count, treeCursor.next());
+            count++;
+        }
+        Assert.assertEquals(inserted, count);
     }
 
     private void assertTree(String expected, long... values) {
@@ -461,13 +748,64 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
 
     private void createTree(long... values) {
         cursor = new TestRecordCursor(values);
-        left = (TestRecord) cursor.getRecord();
-        placeholder = (TestRecord) cursor.getRecordB();
+        left = (SingleLongRecord) cursor.getRecord();
+        placeholder = (SingleLongRecord) cursor.getRecordB();
         comparator = new TestRecordComparator();
         comparator.setLeft(left);
         while (cursor.hasNext()) {
             chain.put(left, cursor, placeholder, comparator);
         }
+    }
+
+    /**
+     * Inserts distinct ascending values until one of the heaps runs out, and returns how many
+     * of them the chain accepted. Fails when no overflow happens at all.
+     * <p>
+     * Deliberately not shared with the namesake in {@code LongTreeChainTest}: this chain's
+     * {@code put()} expects the caller to have set the comparator's left side, while
+     * {@link io.questdb.griffin.engine.orderby.LongTreeChain#put} sets it itself. Both drive the
+     * same {@link TestRecordCursor}; it is the one {@code comparator.setLeft} call that differs.
+     */
+    private int fillUntilOverflow(String expectedMessage) {
+        final long[] values = new long[256];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+        cursor = new TestRecordCursor(values);
+        left = (SingleLongRecord) cursor.getRecord();
+        placeholder = (SingleLongRecord) cursor.getRecordB();
+        comparator = new TestRecordComparator();
+        comparator.setLeft(left);
+
+        int inserted = 0;
+        while (cursor.hasNext()) {
+            try {
+                chain.put(left, cursor, placeholder, comparator);
+            } catch (LimitOverflowException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+                assertReadsBack(inserted);
+                return inserted;
+            }
+            inserted++;
+        }
+        Assert.fail("expected LimitOverflowException");
+        return -1;
+    }
+
+    private LimitedSizeLongTreeChain newChain() {
+        return new LimitedSizeLongTreeChain(
+                configuration.getSqlSortKeyPageSize(),
+                configuration.getSqlSortKeyMaxBytes(),
+                configuration.getSqlSortLightValuePageSize(),
+                configuration.getSqlSortLightValueMaxBytes(),
+                PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath(),
+                PropertyKey.CAIRO_SQL_SORT_LIGHT_VALUE_MAX_BYTES.getPropertyPath()
+        );
+    }
+
+    private void putValue(long value) {
+        cursor.recordAtValue(left, value);
+        chain.put(left, cursor, placeholder, comparator);
     }
 
     private void removeRowWithValue(long value) {
@@ -477,112 +815,12 @@ public class LimitedSizeLongTreeChainTest extends AbstractCairoTest {
     }
 
     @NotNull
-    private String toString(TestRecordCursor cursor, TestRecord right) {
+    private String toString(TestRecordCursor cursor, SingleLongRecord right) {
         StringSink sink = new StringSink();
         chain.print(sink, rowid -> {
             cursor.recordAt(right, rowid);
             return String.valueOf(right.getLong(0));
         });
         return sink.toString();
-    }
-
-    static class TestRecord implements Record {
-        long position;
-        long value;
-
-        @Override
-        public long getLong(int col) {
-            return value;
-        }
-
-        @Override
-        public long getRowId() {
-            return position;
-        }
-    }
-
-    static class TestRecordComparator implements RecordComparator {
-        Record left;
-
-        @Override
-        public int compare(Record record) {
-            return (int) (left.getLong(0) - record.getLong(0));
-        }
-
-        @Override
-        public void setLeft(Record record) {
-            left = record;
-        }
-    }
-
-    static class TestRecordCursor implements RecordCursor {
-        final Record left = new TestRecord();
-        final Record right = new TestRecord();
-        final LongList values = new LongList();
-        int position = -1;
-
-        TestRecordCursor(long... newValues) {
-            for (int i = 0; i < newValues.length; i++) {
-                this.values.add(newValues[i]);
-            }
-        }
-
-        @Override
-        public void close() {
-            // nothing to do here
-        }
-
-        @Override
-        public Record getRecord() {
-            return left;
-        }
-
-        @Override
-        public Record getRecordB() {
-            return right;
-        }
-
-        @Override
-        public boolean hasNext() {
-            if (position < values.size() - 1) {
-                position++;
-                recordAt(left, position);
-                return true;
-            }
-
-            return false;
-        }
-
-        @Override
-        public long preComputedStateSize() {
-            return 0;
-        }
-
-        @Override
-        public void recordAt(Record record, long atRowId) {
-            ((TestRecord) record).value = values.get((int) atRowId);
-            ((TestRecord) record).position = atRowId;
-        }
-
-        public void recordAtValue(Record record, long value) {
-            for (int i = 0; i < values.size(); i++) {
-                if (values.get(i) == value) {
-                    recordAt(record, i);
-                    return;
-                }
-            }
-
-            throw new RuntimeException("Can't find value " + value + " in " + values);
-        }
-
-        @Override
-        public long size() {
-            return values.size();
-        }
-
-        @Override
-        public void toTop() {
-            position = 0;
-        }
     }
 }

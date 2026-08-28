@@ -311,13 +311,15 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
             symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
-            // Skip the group by functions: the atom initializes them in initGroupByFunctions(),
-            // before any frame is dispatched, and donates the owner state to the per-worker
-            // clones. Re-initializing them here would re-run stateful initialization, such as a
-            // cursor comparison re-executing its scalar sub-query, and could diverge from the
-            // state the workers observe. The constructor pre-filters the non-group-by functions
-            // once, so cached re-executions skip the per-function classification scan.
+            // The constructor pre-filters the non-group-by functions once, so cached re-executions
+            // skip the per-function classification scan.
             Function.init(nonGroupByFunctions, symbolTableSource, executionContext, null);
+            // The owner group by and key functions bind here too, and only here: a parent
+            // projection or sort over a SYMBOL aggregate resolves the output column's static symbol
+            // table at getCursor() time, which is before the slave time-frame cache is built on the
+            // first read. The atom donates the owner state to the per-worker clones when it binds
+            // those in initGroupByFunctions().
+            atom.initOwnerFunctions(executionContext);
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);
             throw th;

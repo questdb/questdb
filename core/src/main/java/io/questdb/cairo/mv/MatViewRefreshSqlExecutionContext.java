@@ -27,6 +27,7 @@ package io.questdb.cairo.mv;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
@@ -64,6 +65,13 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
                 if (!tableToken.equals(viewTableToken)) {
                     throw CairoException.authorization().put("Write permission denied").setCacheable(true);
                 }
+            }
+
+            @Override
+            protected SecurityContext newPrincipalContext(CharSequence principal) {
+                // this refresh context is never re-derived per principal; return this so forPrincipal keeps
+                // the view-scoped authorizeInsert override instead of downgrading to plain read-only
+                return this;
             }
         };
         this.bindVariableService = new BindVariableServiceImpl(engine.getConfiguration());
