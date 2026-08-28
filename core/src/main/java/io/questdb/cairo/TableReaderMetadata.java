@@ -468,7 +468,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                     var colMeta = new TableReaderMetadataColumn(
                             newName,
                             columnType,
-                            isIndexed,
+                            indexType,
                             indexBlockCapacity,
                             true,
                             null,
@@ -477,7 +477,8 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             denseSymbolIndex,
                             stableIndex,
                             symbolIsCached,
-                            symbolCapacity
+                            symbolCapacity,
+                            existing != null ? existing.getOriginalWriterIndex() : writerIndex
                     );
                     colMeta.setNotNullFlag(isNotNull);
                     columnMetadata.setQuick(outIndex, colMeta);

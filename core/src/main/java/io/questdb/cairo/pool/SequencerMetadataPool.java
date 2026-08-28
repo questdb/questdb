@@ -113,7 +113,7 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
                 var colMeta = new TableColumnMetadata(
                         columnName,
                         columnType,
-                        columnIndexed,
+                        indexType,
                         indexValueBlockCapacity,
                         symbolTableStatic,
                         null,

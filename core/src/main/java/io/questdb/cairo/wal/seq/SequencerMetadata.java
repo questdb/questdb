@@ -98,7 +98,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             boolean isDedupKey,
             boolean isNotNull
     ) {
-        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, isIndexed, indexValueBlockCapacity, isDedupKey);
+        addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, indexType, indexValueBlockCapacity, isDedupKey);
         columnMetadata.getQuick(columnMetadata.size() - 1).setNotNullFlag(isNotNull);
         readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
@@ -440,7 +440,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
                 TableColumnMetadata colMeta;
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    colMeta = new TableColumnMetadata(name, type, true, 1024, true, null);
+                    colMeta = new TableColumnMetadata(name, type, IndexType.NONE, 1024, true, null);
                 } else {
                     colMeta = new TableColumnMetadata(name, type);
                 }

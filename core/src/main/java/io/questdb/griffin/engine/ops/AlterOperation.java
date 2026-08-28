@@ -77,11 +77,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH_TIMER = SET_MAT_VIEW_REFRESH_LIMIT + 1; // 24
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
-    public final static short SET_COLUMN_NOT_NULL = SET_PARQUET_ENCODING + 1; // 27
-    public final static short DROP_COLUMN_NOT_NULL = SET_COLUMN_NOT_NULL + 1; // 28
-    private static final long BIT_INDEXED = 0x1L;
-    private static final long BIT_DEDUP_KEY = BIT_INDEXED << 1;
-    private static final long BIT_NOT_NULL = BIT_DEDUP_KEY << 1;
+    public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
+    public final static short SET_COLUMN_NOT_NULL = SET_TABLE_FORMAT + 1; // 28
+    public final static short DROP_COLUMN_NOT_NULL = SET_COLUMN_NOT_NULL + 1; // 29
+    private static final long BIT_DEDUP_KEY = 0x08L;
+    private static final long FLAGS_FORMAT_V2 = 1L << 63;
+    private static final long FLAGS_FORMAT_V_CURRENT = FLAGS_FORMAT_V2;
+    private static final long FLAGS_V1_BIT_DEDUP_KEY = 0x02L;
+    private static final long FLAGS_V1_BIT_INDEXED = 0x01L;
+    private static final long INDEX_TYPE_MASK = 0x07L;
+    private static final long BIT_NOT_NULL = 0x10L;
     private static final Log LOG = LogFactory.getLog(AlterOperation.class);
     private final ObjList<CharSequence> authColumnNames = new ObjList<>();
     private final DirectCharSequenceList directExtraStrInfo = new DirectCharSequenceList();
@@ -105,18 +110,16 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     }
 
     public static long getFlags(boolean indexed, boolean dedupKey, boolean notNull) {
-        long flags = 0;
-        if (indexed) {
-            flags |= BIT_INDEXED;
+        return getFlags(indexed ? IndexType.BITMAP : IndexType.NONE, dedupKey, notNull);
+    }
+
+    public static byte decodeIndexType(long flags) {
+        if ((flags & FLAGS_FORMAT_V2) != 0) {
+            return (byte) (flags & INDEX_TYPE_MASK);
         }
-        // v1: only BIT_INDEXED (0x1) and BIT_DEDUP_KEY (0x2) were ever set,
-        // and "indexed" implied BITMAP (the only index type at the time).
         return (flags & FLAGS_V1_BIT_INDEXED) != 0 ? IndexType.BITMAP : IndexType.NONE;
     }
 
-    /**
-     * See {@link #decodeIndexType(long)}.
-     */
     public static boolean decodeIsDedupKey(long flags) {
         if ((flags & FLAGS_FORMAT_V2) != 0) {
             return (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
@@ -124,7 +127,15 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         return (flags & FLAGS_V1_BIT_DEDUP_KEY) == FLAGS_V1_BIT_DEDUP_KEY;
     }
 
+    public static boolean decodeIsNotNull(long flags) {
+        return (flags & BIT_NOT_NULL) != 0;
+    }
+
     public static long getFlags(byte indexType, boolean dedupKey) {
+        return getFlags(indexType, dedupKey, false);
+    }
+
+    public static long getFlags(byte indexType, boolean dedupKey, boolean notNull) {
         long flags = FLAGS_FORMAT_V_CURRENT | (indexType & INDEX_TYPE_MASK);
         if (dedupKey) {
             flags |= BIT_DEDUP_KEY;
@@ -376,7 +387,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         extraInfo.add(columnType);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, dedupKey, notNull));
+        extraInfo.add(getFlags(indexType, dedupKey, notNull));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }
@@ -438,9 +449,10 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             int symbolCapacity = (int) extraInfo.get(lParam++);
             boolean symbolCacheFlag = extraInfo.get(lParam++) > 0;
             long flags = extraInfo.get(lParam++);
-            boolean isIndexed = (flags & BIT_INDEXED) == BIT_INDEXED;
-            boolean isDedupKey = (flags & BIT_DEDUP_KEY) == BIT_DEDUP_KEY;
-            boolean isNotNull = (flags & BIT_NOT_NULL) == BIT_NOT_NULL;
+            byte indexType = decodeIndexType(flags);
+            boolean isIndexed = indexType != IndexType.NONE;
+            boolean isDedupKey = decodeIsDedupKey(flags);
+            boolean isNotNull = decodeIsNotNull(flags);
             assert !isDedupKey; // adding column as dedup key is not supported in SQL yet.
             int indexValueBlockCapacity = (int) extraInfo.get(lParam++);
             int columnNamePosition = (int) extraInfo.get(lParam++);
@@ -797,6 +809,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 break;
             case SET_PARQUET_ENCODING:
                 setParquetEncoding(svc);
+                break;
+            case SET_TABLE_FORMAT:
+                applyTableFormat(svc);
                 break;
             case SET_COLUMN_NOT_NULL:
                 applySetColumnNotNull(svc, true);

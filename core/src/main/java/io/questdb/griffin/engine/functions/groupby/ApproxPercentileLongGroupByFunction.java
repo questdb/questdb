@@ -70,7 +70,11 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
         if (isArgNotNull || val != Numbers.LONG_NULL) {
-            histogram.recordValue(val);
+            histogramA.of(0);
+            histogramA.recordValue(val);
+            mapValue.putLong(valueIndex, histogramA.ptr());
+        } else {
+            mapValue.putLong(valueIndex, 0);
         }
     }
 
@@ -78,7 +82,12 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
         if (isArgNotNull || val != Numbers.LONG_NULL) {
-            histogram.recordValue(val);
+            long ptr = mapValue.getLong(valueIndex);
+            histogramA.of(ptr).recordValue(val);
+            long newPtr = histogramA.ptr();
+            if (newPtr != ptr) {
+                mapValue.putLong(valueIndex, newPtr);
+            }
         }
     }
 

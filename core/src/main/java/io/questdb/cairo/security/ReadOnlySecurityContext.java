@@ -24,8 +24,13 @@
 
 package io.questdb.cairo.security;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.catalogue.Constants;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.NotNull;
 
 /**
  * The concrete read-only security context. The shared singletons ({@link #INSTANCE} /
@@ -304,6 +309,11 @@ public class ReadOnlySecurityContext extends AbstractReadOnlySecurityContext {
     @Override
     public boolean isQueryCancellationAllowed() {
         return false;
+    }
+
+    @Override
+    protected SecurityContext newPrincipalContext(CharSequence principal) {
+        return new ReadOnlySecurityContext(settingsReadOnly, principal);
     }
 
     @Override

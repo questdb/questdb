@@ -64,7 +64,7 @@ public class AlterOperationBuilder implements Mutable {
         extraInfo.add(type);
         extraInfo.add(symbolCapacity);
         extraInfo.add(cache ? 1 : -1);
-        extraInfo.add(getFlags(indexed, dedupKey, notNull));
+        extraInfo.add(getFlags(indexType, dedupKey, notNull));
         extraInfo.add(indexValueBlockCapacity);
         extraInfo.add(columnNamePosition);
     }

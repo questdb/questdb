@@ -53,7 +53,7 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.ops.CreateTableOperationBuilderImpl.*;
+import static io.questdb.griffin.engine.ops.CreateTableOperationBuilder.*;
 
 public class CreateTableOperationImpl implements CreateTableOperation {
     // augmentedColumnMetadata contains information from "cast models", the extra syntax
@@ -750,7 +750,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                 if (columnType == ColumnType.UNDEFINED) {
                     columnType = fromType;
                 }
-                if (!isCompatibleCast(fromType, columnType)) {
+                if (!CreateTableOperationBuilderImpl.isCompatibleCast(fromType, columnType)) {
                     throw SqlException.unsupportedCast(this.colNameToCastClausePos.get(columnName), columnName, fromType, columnType);
                 }
                 symbolCapacity = augMeta.getSymbolCapacity();
@@ -835,7 +835,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
             int parquetEncodingConfig
     ) {
         int flags = (symbolCacheFlag ? COLUMN_FLAG_CACHED : 0)
-                | (indexFlag ? COLUMN_FLAG_INDEXED : 0)
+                | ((indexType & 0x07) << COLUMN_FLAG_INDEX_TYPE_SHIFT)
                 | (dedupFlag ? COLUMN_FLAG_DEDUP_KEY : 0)
                 | (notNullFlag ? COLUMN_FLAG_NOT_NULL : 0);
         columnBits.add(

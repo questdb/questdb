@@ -221,12 +221,16 @@ public class TableColumnMetadata implements Plannable {
         return columnType < 0;
     }
 
+    public boolean isIndexed() {
+        return IndexType.isIndexed(indexType);
+    }
+
     public boolean isNotNull() {
         return notNullFlag;
     }
 
-    public boolean isSymbolCacheFlag() {
-        return symbolCacheFlag;
+    public boolean isSymbolIndexFlag() {
+        return isIndexed();
     }
 
     public boolean isSymbolCacheFlag() {

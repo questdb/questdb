@@ -249,7 +249,8 @@ public final class TableUtils {
     //   10 = POSTING_EF
     //   11 = reserved
     static final int META_FLAG_BIT_INDEXED = 1;
-    static final int META_FLAG_BIT_NOT_NULL = 1 << 1;
+    static final int META_FLAG_BIT_IS_POSTING = 1 << 1;
+    static final int META_FLAG_BIT_NOT_NULL = 1 << 7;
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = 1 << 3;
     static final int META_FLAG_BIT_POSTING_VARIANT_LO = 1 << 4;
@@ -340,7 +341,7 @@ public final class TableUtils {
         var newMeta = new TableColumnMetadata(
                 columnNameStr,
                 columnType,
-                isIndexed,
+                indexType,
                 indexValueBlockCapacity,
                 false,
                 null,

@@ -132,7 +132,7 @@ public class ConvertOperatorImpl implements Closeable {
         clear();
         partitionUpdated = 0;
         isNotNull = tableWriter.getMetadata().isNotNull(existingColIndex);
-        convertColumn0(columnName, existingColIndex, existingType, existingIndexed, columnIndex, newType);
+        convertColumn0(columnName, existingColIndex, existingType, existingIndexType, columnIndex, newType);
     }
 
     public void finishColumnConversion() {

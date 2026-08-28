@@ -43,6 +43,7 @@ import org.jetbrains.annotations.NotNull;
 public class MaxTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
+    private boolean isDesignated;
     private final boolean isArgNotNull;
     private int valueIndex;
 

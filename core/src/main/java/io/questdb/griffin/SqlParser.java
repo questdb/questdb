@@ -3408,7 +3408,7 @@ public class SqlParser {
         CharSequence tok = tok(lexer, "')', 'index', 'parquet', 'not' or 'null'");
 
         if (isFieldTerm(tok) || isParquetKeyword(tok) || isNotKeyword(tok) || isNullKeyword(tok) || isPrecisionKeyword(tok)) {
-            model.setIndexed(false, -1, configuration.getIndexValueBlockSize());
+            model.setIndexType(IndexType.NONE, -1, configuration.getIndexValueBlockSize());
             return tok;
         }
 
@@ -3417,7 +3417,7 @@ public class SqlParser {
 
         tok = tok(lexer, ") | , expected");
         if (isFieldTerm(tok) || isParquetKeyword(tok) || isNotKeyword(tok) || isNullKeyword(tok) || isPrecisionKeyword(tok)) {
-            model.setIndexed(true, indexColumnPosition, configuration.getIndexValueBlockSize());
+            model.setIndexType(IndexType.BITMAP, indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
         }
 

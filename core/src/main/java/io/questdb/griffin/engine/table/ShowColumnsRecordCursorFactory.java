@@ -63,6 +63,8 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_DESIGNATED_COL = N_SYMBOL_TABLE_SIZE_COL + 1;
     private static final int N_NOT_NULL_COL = N_DESIGNATED_COL + 1;
     private static final int N_UPSERT_KEY_COL = N_NOT_NULL_COL + 1;
+    private static final int N_INDEX_TYPE_COL = N_UPSERT_KEY_COL + 1;
+    private static final int N_INDEX_INCLUDE_COL = N_INDEX_TYPE_COL + 1;
     private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;

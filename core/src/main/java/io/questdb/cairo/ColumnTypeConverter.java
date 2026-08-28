@@ -269,7 +269,7 @@ public class ColumnTypeConverter {
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink, notNull)) {
+            if (convertFixedToVar(addr, sink, srcColumnType, converterInt2String, notNull)) {
                 StringTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 sink.clear();
             } else {
@@ -329,7 +329,7 @@ public class ColumnTypeConverter {
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink, notNull)) {
+            if (convertFixedToVar(addr, sink, srcColumnType, converterInt2String, notNull)) {
                 int value = symbolMapWriter.resolveSymbol(sink);
                 dstFixMem.putInt(value);
                 sink.clear();
@@ -395,7 +395,7 @@ public class ColumnTypeConverter {
         long hi = srcMapAddress + srcColumnTypeSize * rowCount;
         sink.clear();
         for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-            if (converterInt2String.convert(addr, sink, notNull)) {
+            if (convertFixedToVar(addr, sink, srcColumnType, converterInt2String, notNull)) {
                 VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
                 sink.clear();
             } else {
@@ -1050,82 +1050,89 @@ public class ColumnTypeConverter {
         mem.putLong(Numbers.LONG_NULL);
     }
 
-    private static boolean stringFromBoolean(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean convertFixedToVar(long srcAddr, CharSink<?> sink, int columnType, Fixed2VarConverter converter, boolean notNull) {
+        if (ColumnType.isDecimal(columnType)) {
+            return converter.convert(srcAddr, sink, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType));
+        }
+        return converter.convert(srcAddr, sink, notNull ? 1 : 0, 0);
+    }
+
+    private static boolean stringFromBoolean(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         byte value = Unsafe.getByte(srcAddr);
         sink.put(value != 0);
         return true;
     }
 
-    private static boolean stringFromByte(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromByte(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         byte value = Unsafe.getByte(srcAddr);
         sink.put(value);
         return true;
     }
 
-    private static boolean stringFromChar(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromChar(long srcAddr, CharSink<?> sink, int arg1, int arg2) {
         char value = Unsafe.getChar(srcAddr);
-        if (notNull || value != 0) {
+        if (arg1 != 0 || value != 0) {
             sink.put(value);
             return true;
         }
         return false;
     }
 
-    private static boolean stringFromDouble(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromDouble(long srcAddr, CharSink<?> sink, int arg1, int arg2) {
         double value = Unsafe.getDouble(srcAddr);
-        if (notNull || !Numbers.isNull(value)) {
+        if (arg1 != 0 || !Numbers.isNull(value)) {
             sink.put(value);
             return true;
         }
         return false;
     }
 
-    private static boolean stringFromFloat(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromFloat(long srcAddr, CharSink<?> sink, int arg1, int arg2) {
         float value = Unsafe.getFloat(srcAddr);
-        if (notNull || !Numbers.isNull(value)) {
+        if (arg1 != 0 || !Numbers.isNull(value)) {
             sink.put(value);
             return true;
         }
         return false;
     }
 
-    private static boolean stringFromIPv4(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromIPv4(long srcAddr, CharSink<?> sink, int arg1, int arg2) {
         int value = Unsafe.getInt(srcAddr);
-        if (notNull || value != Numbers.IPv4_NULL) {
+        if (arg1 != 0 || value != Numbers.IPv4_NULL) {
             Numbers.intToIPv4Sink(sink, value);
             return true;
         }
         return false;
     }
 
-    private static boolean stringFromInt(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromInt(long srcAddr, CharSink<?> sink, int arg1, int arg2) {
         int value = Unsafe.getInt(srcAddr);
-        if (notNull || value != Numbers.INT_NULL) {
+        if (arg1 != 0 || value != Numbers.INT_NULL) {
             sink.put(value);
             return true;
         }
         return false;
     }
 
-    private static boolean stringFromLong(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromLong(long srcAddr, CharSink<?> sink, int arg1, int arg2) {
         long value = Unsafe.getLong(srcAddr);
-        if (notNull || value != Numbers.LONG_NULL) {
+        if (arg1 != 0 || value != Numbers.LONG_NULL) {
             sink.put(value);
             return true;
         }
         return false;
     }
 
-    private static boolean stringFromShort(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromShort(long srcAddr, CharSink<?> sink, int unused1, int unused2) {
         short value = Unsafe.getShort(srcAddr);
         sink.put(value);
         return true;
     }
 
-    private static boolean stringFromUuid(long srcAddr, CharSink<?> sink, boolean notNull) {
+    private static boolean stringFromUuid(long srcAddr, CharSink<?> sink, int arg1, int arg2) {
         long lo = Unsafe.getLong(srcAddr);
         long hi = Unsafe.getLong(srcAddr + 8L);
-        if (notNull || lo != Numbers.LONG_NULL || hi != Numbers.LONG_NULL) {
+        if (arg1 != 0 || lo != Numbers.LONG_NULL || hi != Numbers.LONG_NULL) {
             Numbers.appendUuid(lo, hi, sink);
             return true;
         }
@@ -1392,6 +1399,64 @@ public class ColumnTypeConverter {
                 .put(" to ").put(ColumnType.nameOf(dstColumnType));
     }
 
+    private static boolean stringFromDecimal128(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        long hi = Unsafe.getLong(srcAddr);
+        long lo = Unsafe.getLong(srcAddr + Long.BYTES);
+        if (Decimal128.isNull(hi, lo)) {
+            return false;
+        }
+        Decimals.appendNonNull(hi, lo, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal16(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        short value = Unsafe.getShort(srcAddr);
+        if (value == Decimals.DECIMAL16_NULL) {
+            return false;
+        }
+        Decimals.appendNonNull(value, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal256(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        long hh = Unsafe.getLong(srcAddr);
+        long hl = Unsafe.getLong(srcAddr + 8L);
+        long lh = Unsafe.getLong(srcAddr + 16L);
+        long ll = Unsafe.getLong(srcAddr + 24L);
+        if (Decimal256.isNull(hh, hl, lh, ll)) {
+            return false;
+        }
+        Decimals.appendNonNull(hh, hl, lh, ll, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal32(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        int value = Unsafe.getInt(srcAddr);
+        if (value == Decimals.DECIMAL32_NULL) {
+            return false;
+        }
+        Decimals.appendNonNull(value, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal64(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        long value = Unsafe.getLong(srcAddr);
+        if (value == Decimals.DECIMAL64_NULL) {
+            return false;
+        }
+        Decimals.appendNonNull(value, precision, scale, sink);
+        return true;
+    }
+
+    private static boolean stringFromDecimal8(long srcAddr, CharSink<?> sink, int precision, int scale) {
+        byte value = Unsafe.getByte(srcAddr);
+        if (value == Decimals.DECIMAL8_NULL) {
+            return false;
+        }
+        Decimals.appendNonNull(value, precision, scale, sink);
+        return true;
+    }
+
     /**
      * Reads a single fixed-size value from {@code fixedAddr} and appends its text representation
      * to {@code sink}. Returns {@code true} when a value was written, {@code false} for a null
@@ -1405,7 +1470,7 @@ public class ColumnTypeConverter {
      */
     @FunctionalInterface
     public interface Fixed2VarConverter {
-        boolean convert(long fixedAddr, CharSink<?> stringSink, boolean notNull);
+        boolean convert(long fixedAddr, CharSink<?> stringSink, int arg1, int arg2);
     }
 
     @FunctionalInterface

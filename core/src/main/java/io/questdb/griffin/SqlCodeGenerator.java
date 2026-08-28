@@ -10723,7 +10723,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         TableColumnMetadata windowMeta = new TableColumnMetadata(
                                 Chars.toString(qc.getAlias()),
                                 m.getColumnType(),
-                                m.isSymbolIndexFlag(),
+                                m.getIndexType(),
                                 m.getIndexValueBlockCapacity(),
                                 m.isSymbolTableStatic(),
                                 baseMetadata
@@ -10872,7 +10872,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         TableColumnMetadata windowMeta2 = new TableColumnMetadata(
                                 Chars.toString(qc.getAlias()),
                                 m.getColumnType(),
-                                m.isSymbolIndexFlag(),
+                                m.getIndexType(),
                                 m.getIndexValueBlockCapacity(),
                                 m.isSymbolTableStatic(),
                                 baseMetadata

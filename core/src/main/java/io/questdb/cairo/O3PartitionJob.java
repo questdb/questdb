@@ -72,9 +72,14 @@ import static io.questdb.cairo.TableWriter.*;
 public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
     private static final Log LOG = LogFactory.getLog(O3PartitionJob.class);
-    private static final io.questdb.std.ThreadLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
-            new io.questdb.std.ThreadLocal<>(O3ParquetMergeContext::new);
-    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT;
+    private static final CarrierLocal<O3ParquetMergeContext> PARQUET_MERGE_CONTEXT =
+            new CarrierLocal<>(O3ParquetMergeContext::new);
+    public static final Closeable THREAD_LOCAL_CLEANER = PARQUET_MERGE_CONTEXT::removeAndFree;
+    // Tells the Rust encoder that the designated-timestamp column's
+    // primary_data is laid out as 16-byte (ts, rowId) merge-index entries
+    // (timestamp at offset 0). Lets the encoder read timestamps in place
+    // instead of pre-extracting a flat ts vector.
+    private static final int PARQUET_TIMESTAMP_STRIDED_16 = 0x4000_0000;
 
     public O3PartitionJob(MessageBus messageBus) {
         super(messageBus.getO3PartitionQueue(), messageBus.getO3PartitionSubSeq());
@@ -1735,6 +1740,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int metadataPosition
     ) {
         final long rowCount = o3Hi - o3Lo + 1;
+        final int columnCount = tableWriterMetadata.getColumnCount();
         // Use the sorted timestamps directly as merge index for the timestamp
         // extraction below. Each entry is (ts, originalRowId); bit 63 of the
         // rowId is irrelevant for oooCopyIndex, which only reads timestamps.
@@ -1796,7 +1802,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     throw th;
                 }
 
-                partitionDescriptor.addColumn(
+                descriptor.addColumn(
                         columnName,
                         isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                         columnId,
@@ -1859,7 +1865,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
                         throw th;
                     }
-                    partitionDescriptor.addColumn(
+                    descriptor.addColumn(
                             columnName,
                             encodeColumnType,
                             columnId,
@@ -1874,7 +1880,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             parquetEncodingConfig
                     );
                 } else {
-                    partitionDescriptor.addColumn(
+                    descriptor.addColumn(
                             columnName,
                             isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                             columnId,

@@ -102,6 +102,7 @@ public interface MetadataService {
                 indexValueBlockCapacity,
                 isSequential,
                 isDedupKey,
+                false,
                 null
         );
     }

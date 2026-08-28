@@ -26,6 +26,7 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AbstractRecordMetadata;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
@@ -347,7 +348,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         var colMeta = new TableColumnMetadata(
                 name,
                 columnType,
-                false,
+                IndexType.NONE,
                 0,
                 false,
                 null,

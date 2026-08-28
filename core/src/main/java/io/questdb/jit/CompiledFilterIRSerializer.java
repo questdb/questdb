@@ -244,7 +244,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final StringSink sink = new StringSink();
     private final ObjList<ExpressionNode> sortedPredicates = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
-    private final IntStack typeStack = new IntStack();
+    private final IntList typeStack = new IntList();
     private boolean allColumnsNotNull;
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
@@ -657,6 +657,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 || typeTag == ColumnType.LONG
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.TIMESTAMP;
+    }
+
+    private boolean isNullConstant(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.CONSTANT && node.token != null && SqlKeywords.isNullKeyword(node.token);
     }
 
     private boolean isWideLaneIntegerInElement(ExpressionNode node) {

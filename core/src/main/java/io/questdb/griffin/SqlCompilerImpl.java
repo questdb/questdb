@@ -969,6 +969,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final boolean cache;
         int symbolCapacity;
         final boolean indexed;
+        byte indexType = IndexType.NONE;
         boolean isNotNull = false;
 
         if (
@@ -1018,7 +1019,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             TableUtils.validateSymbolCapacityCached(cache, symbolCapacity, lexer.lastTokenPosition());
 
-            boolean indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
+            indexed = Chars.equalsLowerCaseAsciiNc("index", tok);
             boolean indexTypeExplicit = false;
             if (indexed) {
                 tok = SqlUtil.fetchNext(lexer);
@@ -1075,6 +1076,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 SqlUtil.fetchNext(lexer);
             }
         } else { // set defaults
+            indexed = false;
             if (tok != null && isNotKeyword(tok)) {
                 int notPos = lexer.lastTokenPosition();
                 tok = SqlUtil.fetchNext(lexer);
