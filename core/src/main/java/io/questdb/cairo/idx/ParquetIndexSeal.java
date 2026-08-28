@@ -85,6 +85,13 @@ public final class ParquetIndexSeal {
     private static final int IM_FILE_SIZE_BYTES = 8;
     private static final int KEY_ID_COLUMN = 0;
     private static final int ROW_ID_COLUMN = 1;
+    // Descriptor index of the packed payload's blob column. It takes the slot
+    // row_id occupies under the per-posting arm, because exactly one of the two
+    // is written and the cover slots start after it either way.
+    private static final int ROW_ID_BLOB_COLUMN = 1;
+    // A QuestDB BINARY value is an i64 length followed by that many bytes, and
+    // the aux vector holds one i64 offset per row pointing at the length.
+    private static final int BINARY_HEADER_SIZE = Long.BYTES;
     // Bytes the streaming writer prefixes each drained buffer with:
     // [data length][rows written to row groups].
     private static final int STREAM_BUFFER_HEADER_SIZE = 16;
@@ -120,6 +127,31 @@ public final class ParquetIndexSeal {
     private static final long WRITER_ROW_GROUP_ROWS = Long.MAX_VALUE;
 
     private ParquetIndexSeal() {
+    }
+
+    /**
+     * The packed payload's two native buffers: the BINARY aux vector and the
+     * blob data it points into.
+     */
+    private static final class PackedPayload {
+        private long auxAddr;
+        private long auxSize;
+        private long dataAddr;
+        private long dataSize;
+        // One key id per row group -- the group's first key -- since a parquet
+        // row is a group here. See writeIndexArtifacts for why the column is
+        // still written at all.
+        private long keyIdAddr;
+        private long keyIdSize;
+
+        private void free() {
+            freeIfSet(dataAddr, dataSize);
+            dataAddr = 0;
+            freeIfSet(auxAddr, auxSize);
+            auxAddr = 0;
+            freeIfSet(keyIdAddr, keyIdSize);
+            keyIdAddr = 0;
+        }
     }
 
     /**
@@ -211,11 +243,20 @@ public final class ParquetIndexSeal {
         final LongList sortedCoverAddrs = new LongList();
         final LongList sortedCoverSizes = new LongList();
 
+        // Arm B packs the row ids into one blob per row group, which makes a
+        // parquet row a GROUP rather than a posting. Every column in a row group
+        // shares one row count, so covered columns would have to become
+        // per-group blobs too -- buying nothing, since the covered gather is
+        // already at parity -- and the covered case falls back to arm N instead.
+        // PAYLOAD_KIND in the _im is what records which arm actually ran.
+        final boolean packedPayload = configuration.isPostingIndexParquetPackedPayload() && coverCount == 0;
+
         final long keyIdsSize = rowCount * Integer.BYTES;
         final long rowIdsSize = rowCount * Long.BYTES;
         long imFileSize;
         long keyIdsAddr = 0;
         long rowIdsAddr = 0;
+        PackedPayload payload = null;
         try {
             keyIdsAddr = Unsafe.malloc(keyIdsSize, MemoryTag.NATIVE_TABLE_WRITER);
             rowIdsAddr = Unsafe.malloc(rowIdsSize, MemoryTag.NATIVE_TABLE_WRITER);
@@ -245,6 +286,9 @@ public final class ParquetIndexSeal {
                     configuration.getPostingIndexParquetMaxKeysPerRowGroup(),
                     configuration.getPostingIndexParquetMinRowsPerRowGroup()
             );
+            if (packedPayload) {
+                payload = buildPackedPayload(rowIdsAddr, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs);
+            }
             imFileSize = writeIndexArtifacts(
                     configuration, ff, path, plen, indexColumnName, indexTxn, keySpaceSize,
                     rowCount, keyIdsAddr, keyIdsSize, rowIdsAddr, rowIdsSize,
@@ -252,9 +296,12 @@ public final class ParquetIndexSeal {
                     sortedCoverAddrs, sortedCoverSizes,
                     groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs,
                     keyDirEntries, groupKeyDirCounts,
-                    dataRowGroupBoundaries
+                    dataRowGroupBoundaries, payload
             );
         } finally {
+            if (payload != null) {
+                payload.free();
+            }
             for (int slot = 0, n = sortedCoverAddrs.size(); slot < n; slot++) {
                 freeIfSet(sortedCoverAddrs.getQuick(slot), sortedCoverSizes.getQuick(slot));
             }
@@ -266,11 +313,19 @@ public final class ParquetIndexSeal {
     }
 
     private static void addChunkColumn(DirectLongList columnData, long dataAddr, long dataSize) {
+        addChunkColumn(columnData, dataAddr, dataSize, 0, 0);
+    }
+
+    /**
+     * @param auxAddr aux (secondary) vector address, or 0 for a fixed-width
+     *                column. A BINARY column's aux holds one i64 offset per row.
+     */
+    private static void addChunkColumn(DirectLongList columnData, long dataAddr, long dataSize, long auxAddr, long auxSize) {
         columnData.add(0);
         columnData.add(dataAddr);
         columnData.add(dataSize);
-        columnData.add(0);
-        columnData.add(0);
+        columnData.add(auxAddr);
+        columnData.add(auxSize);
         columnData.add(0);
         columnData.add(0);
     }
@@ -409,6 +464,87 @@ public final class ParquetIndexSeal {
     private static void freeIfSet(long addr, long size) {
         if (addr != 0) {
             Unsafe.free(addr, size, MemoryTag.NATIVE_TABLE_WRITER);
+        }
+    }
+
+    /**
+     * Bits a group's row ids pack to: enough for the widest offset from the
+     * group's own minimum. Per group rather than per partition, so a partition
+     * whose row ids span a wide range still packs each group at the width that
+     * group needs.
+     */
+    private static int groupBitWidth(LongList groupRowIdMins, LongList groupRowIdMaxs, int group) {
+        return BitpackUtils.bitsNeeded(groupRowIdMaxs.getQuick(group) - groupRowIdMins.getQuick(group));
+    }
+
+    /**
+     * Builds the packed payload column: one QuestDB BINARY value per row group,
+     * holding that group's row ids frame-of-reference packed at the width the
+     * group needs.
+     * <p>
+     * This is what {@code PAYLOAD_KIND 1} exists for. The per-posting arm stores
+     * {@code row_id} PLAIN at 8 bytes a posting; here a 2M-row partition packs
+     * to 21 bits, which is the native chain's figure and the whole measured gap.
+     * <p>
+     * The row ids are copied nowhere: {@code rowIdsAddr} is already key-major
+     * and ascending within each key, and groups are contiguous runs of it, so
+     * group {@code g} packs straight from {@code rowIdsAddr + postingLo * 8}.
+     *
+     * @return the built payload; the caller owns it and must {@link PackedPayload#free}
+     */
+    private static PackedPayload buildPackedPayload(
+            long rowIdsAddr,
+            IntList groupFirstKeys,
+            LongList groupRowCounts,
+            LongList groupRowIdMins,
+            LongList groupRowIdMaxs
+    ) {
+        final int groupCount = groupRowCounts.size();
+        // Sizing pass. The blob widths are wanted twice and are two ops each, so
+        // they are recomputed in the write pass rather than parked in a list.
+        long dataSize = 0;
+        for (int g = 0; g < groupCount; g++) {
+            final int bitWidth = groupBitWidth(groupRowIdMins, groupRowIdMaxs, g);
+            dataSize += BINARY_HEADER_SIZE
+                    + PostingIndexUtils.packedPayloadBlobSize((int) groupRowCounts.getQuick(g), bitWidth);
+        }
+
+        final PackedPayload payload = new PackedPayload();
+        payload.auxSize = (long) groupCount * Long.BYTES;
+        payload.dataSize = dataSize;
+        payload.keyIdSize = (long) groupCount * Integer.BYTES;
+        try {
+            payload.auxAddr = Unsafe.malloc(payload.auxSize, MemoryTag.NATIVE_TABLE_WRITER);
+            // Zero-filled: encodePackedPayloadBlob ORs the packed values into
+            // the destination and writes no padding bits of its own.
+            payload.dataAddr = Unsafe.calloc(payload.dataSize, MemoryTag.NATIVE_TABLE_WRITER);
+            payload.keyIdAddr = Unsafe.malloc(payload.keyIdSize, MemoryTag.NATIVE_TABLE_WRITER);
+
+            long dataOffset = 0;
+            long postingLo = 0;
+            for (int g = 0; g < groupCount; g++) {
+                Unsafe.getUnsafe().putInt(payload.keyIdAddr + (long) g * Integer.BYTES, groupFirstKeys.getQuick(g));
+                final int rows = (int) groupRowCounts.getQuick(g);
+                final long baseValue = groupRowIdMins.getQuick(g);
+                final int bitWidth = groupBitWidth(groupRowIdMins, groupRowIdMaxs, g);
+                final int blobSize = PostingIndexUtils.packedPayloadBlobSize(rows, bitWidth);
+
+                Unsafe.getUnsafe().putLong(payload.auxAddr + (long) g * Long.BYTES, dataOffset);
+                Unsafe.getUnsafe().putLong(payload.dataAddr + dataOffset, blobSize);
+                PostingIndexUtils.encodePackedPayloadBlob(
+                        payload.dataAddr + dataOffset + BINARY_HEADER_SIZE,
+                        rowIdsAddr + postingLo * Long.BYTES,
+                        rows,
+                        baseValue,
+                        bitWidth
+                );
+                dataOffset += BINARY_HEADER_SIZE + blobSize;
+                postingLo += rows;
+            }
+            return payload;
+        } catch (Throwable e) {
+            payload.free();
+            throw e;
         }
     }
 
@@ -638,10 +774,15 @@ public final class ParquetIndexSeal {
             LongList groupRowIdMaxs,
             IntList keyDirEntries,
             IntList groupKeyDirCounts,
-            LongList dataRowGroupBoundaries
+            LongList dataRowGroupBoundaries,
+            PackedPayload payload
     ) {
         final int coverCount = coveredNames.size();
         final int columnCount = FIRST_COVER_COLUMN + coverCount;
+        // Under the packed arm a parquet row is a ROW GROUP, so the chunk holds
+        // one row per group and each group is flushed with a count of 1. The
+        // posting counts stay the _im's, which is what logicalRowCounts carries.
+        final long parquetRowCount = payload != null ? groupRowCounts.size() : rowCount;
 
         DirectUtf8Sink columnNames = null;
         DirectLongList columnMetadata = null;
@@ -676,13 +817,30 @@ public final class ParquetIndexSeal {
             // slower than native to 40-44x and range reads from 4-9x to 15-32x,
             // while scans, which read a group start to end anyway, were
             // unaffected. Random access is what this column is for.
-            addSchemaColumn(columnNames, columnMetadata, "row_id", SYNTHETIC_COLUMN_ID, ColumnType.LONG,
-                    TableUtils.packParquetConfig(
-                            ParquetEncoding.ENCODING_PLAIN,
-                            ParquetCompression.COMPRESSION_UNCOMPRESSED + 1,
-                            -1,
-                            false
-                    ) | PARQUET_CONFIG_REQUIRED_FLAG);
+            //
+            // Under the packed arm the same slot holds one BINARY blob per row
+            // group instead. PLAIN and UNCOMPRESSED for the same reason, and
+            // REQUIRED for a sharper one: a BYTE_ARRAY column that carries
+            // definition levels cannot be addressed in the mapping at all, so
+            // without it every blob read would decode the page it sits in --
+            // which is the cost the arm exists to remove.
+            if (payload != null) {
+                addSchemaColumn(columnNames, columnMetadata, "row_id_blob", SYNTHETIC_COLUMN_ID, ColumnType.BINARY,
+                        TableUtils.packParquetConfig(
+                                ParquetEncoding.ENCODING_PLAIN,
+                                ParquetCompression.COMPRESSION_UNCOMPRESSED + 1,
+                                -1,
+                                false
+                        ) | PARQUET_CONFIG_REQUIRED_FLAG);
+            } else {
+                addSchemaColumn(columnNames, columnMetadata, "row_id", SYNTHETIC_COLUMN_ID, ColumnType.LONG,
+                        TableUtils.packParquetConfig(
+                                ParquetEncoding.ENCODING_PLAIN,
+                                ParquetCompression.COMPRESSION_UNCOMPRESSED + 1,
+                                -1,
+                                false
+                        ) | PARQUET_CONFIG_REQUIRED_FLAG);
+            }
             for (int slot = 0; slot < coverCount; slot++) {
                 addSchemaColumn(
                         columnNames, columnMetadata, coveredNames.getQuick(slot),
@@ -690,8 +848,22 @@ public final class ParquetIndexSeal {
                 );
             }
 
-            addChunkColumn(columnData, keyIdsAddr, keyIdsSize);
-            addChunkColumn(columnData, rowIdsAddr, rowIdsSize);
+            if (payload != null) {
+                // key_id is still written, degenerate at one value per group.
+                // The _im's key-alignment invariant reads this chunk's min and
+                // max statistics, and holding the group's FIRST key makes min
+                // and max both equal it -- which satisfies the invariant, but
+                // no longer PROVES what it proves under the per-posting arm,
+                // namely that the group does not split a key. The planner is
+                // what guarantees that here: it closes a group only at a key
+                // boundary, and gives an oversized key consecutive groups of
+                // its own.
+                addChunkColumn(columnData, payload.keyIdAddr, payload.keyIdSize);
+                addChunkColumn(columnData, payload.dataAddr, payload.dataSize, payload.auxAddr, payload.auxSize);
+            } else {
+                addChunkColumn(columnData, keyIdsAddr, keyIdsSize);
+                addChunkColumn(columnData, rowIdsAddr, rowIdsSize);
+            }
             for (int slot = 0; slot < coverCount; slot++) {
                 addChunkColumn(columnData, sortedCoverAddrs.getQuick(slot), sortedCoverSizes.getQuick(slot));
             }
@@ -724,7 +896,7 @@ public final class ParquetIndexSeal {
 
             final long parquetFileSize = writeIndexParquet(
                     ff, path, plen, indexColumnName, indexTxn, writerPtr,
-                    columnData.getAddress(), rowCount, groupRowCounts
+                    columnData.getAddress(), parquetRowCount, groupRowCounts, payload != null
             );
             if (parquetFileSize <= 0) {
                 throw CairoException.critical(0)
@@ -733,8 +905,8 @@ public final class ParquetIndexSeal {
             }
             return writeIndexMeta(
                     ff, path, plen, indexColumnName, indexTxn, writerPtr, keySpaceSize,
-                    groupFirstKeys, groupRowIdMins, groupRowIdMaxs,
-                    keyDirEntries, groupKeyDirCounts, dataRowGroupBoundaries
+                    groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs,
+                    keyDirEntries, groupKeyDirCounts, dataRowGroupBoundaries, payload != null
             );
         } finally {
             if (writerPtr != 0) {
@@ -763,11 +935,13 @@ public final class ParquetIndexSeal {
             long writerPtr,
             int keySpaceSize,
             IntList groupFirstKeys,
+            LongList groupRowCounts,
             LongList groupRowIdMins,
             LongList groupRowIdMaxs,
             IntList keyDirEntries,
             IntList groupKeyDirCounts,
-            LongList dataRowGroupBoundaries
+            LongList dataRowGroupBoundaries,
+            boolean packedPayload
     ) {
         final int groupCount = groupFirstKeys.size();
         final int boundaryCount = dataRowGroupBoundaries.size();
@@ -788,6 +962,10 @@ public final class ParquetIndexSeal {
         long rowIdMinsAddr = 0;
         long keyDirAddr = 0;
         long keyDirCountsAddr = 0;
+        // Postings per row group, needed only when a parquet row is a whole
+        // group and the footer's count of 1 says nothing about them.
+        final long logicalRowCountsSize = packedPayload ? (long) groupCount * Long.BYTES : 0;
+        long logicalRowCountsAddr = 0;
         long resultPtr = 0;
         try {
             boundariesAddr = Unsafe.malloc(boundariesSize, MemoryTag.NATIVE_TABLE_WRITER);
@@ -812,6 +990,12 @@ public final class ParquetIndexSeal {
             for (int i = 0; i < boundaryCount; i++) {
                 Unsafe.putLong(boundariesAddr + (long) i * Long.BYTES, dataRowGroupBoundaries.getQuick(i));
             }
+            if (logicalRowCountsSize > 0) {
+                logicalRowCountsAddr = Unsafe.malloc(logicalRowCountsSize, MemoryTag.NATIVE_TABLE_WRITER);
+                for (int i = 0; i < groupCount; i++) {
+                    Unsafe.putLong(logicalRowCountsAddr + (long) i * Long.BYTES, groupRowCounts.getQuick(i));
+                }
+            }
 
             resultPtr = IndexMetaFileWriter.generateIndexMetadata(
                     writerPtr,
@@ -824,13 +1008,15 @@ public final class ParquetIndexSeal {
                     groupCount,
                     keySpaceSize,
                     KEY_ID_COLUMN,
-                    ROW_ID_COLUMN,
+                    packedPayload ? -1 : ROW_ID_COLUMN,
+                    packedPayload ? ROW_ID_BLOB_COLUMN : -1,
                     FIRST_COVER_COLUMN,
-                    IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING,
-                    // Arm N: one parquet row per posting, so the footer's row
-                    // count already IS the posting count and there is nothing
-                    // to override.
-                    0
+                    packedPayload
+                            ? IndexMetaFileWriter.PAYLOAD_ROW_PER_KEY
+                            : IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING,
+                    // Under the per-posting arm the footer's row count already
+                    // IS the posting count and there is nothing to override.
+                    logicalRowCountsAddr
             );
 
             final long dataPtr = IndexMetaFileWriter.resultDataPtr(resultPtr);
@@ -854,6 +1040,7 @@ public final class ParquetIndexSeal {
             if (resultPtr != 0) {
                 IndexMetaFileWriter.destroyResult(resultPtr);
             }
+            freeIfSet(logicalRowCountsAddr, logicalRowCountsSize);
             freeIfSet(keyDirCountsAddr, keyDirCountsSize);
             freeIfSet(keyDirAddr, keyDirSize);
             freeIfSet(rowIdMinsAddr, rowIdMinsSize);
@@ -881,7 +1068,8 @@ public final class ParquetIndexSeal {
             long writerPtr,
             long columnDataAddr,
             long rowCount,
-            LongList groupRowCounts
+            LongList groupRowCounts,
+            boolean packedPayload
     ) {
         final LPSZ pidxFile = indexParquetFileName(path.trimTo(plen), indexColumnName, indexTxn);
         ff.removeQuiet(pidxFile);
@@ -896,7 +1084,9 @@ public final class ParquetIndexSeal {
                     0, pidxFile
             );
             for (int i = 0, n = groupRowCounts.size(); i < n; i++) {
-                PartitionEncoder.flushRowGroup(writerPtr, groupRowCounts.getQuick(i));
+                // One parquet row per group under the packed arm, whatever the
+                // group's posting count is.
+                PartitionEncoder.flushRowGroup(writerPtr, packedPayload ? 1 : groupRowCounts.getQuick(i));
                 fileOffset = drainStreamedRowGroups(ff, fd, writerPtr, fileOffset, pidxFile);
             }
             fileOffset = appendStreamedBuffer(

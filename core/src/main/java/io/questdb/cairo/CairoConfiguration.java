@@ -766,6 +766,33 @@ public interface CairoConfiguration {
     }
 
     /**
+     * Whether a sealed index parquet stores one row per POSTING (false, the
+     * default) or one row per row GROUP with that group's row ids packed into a
+     * single blob (true).
+     * <p>
+     * The per-posting form stores {@code row_id} PLAIN at 8 bytes. The native
+     * chain packs the same row ids frame-of-reference at the width the
+     * partition needs -- about 2.6 bytes at 2M rows -- and that width, not any
+     * slow code, is the whole measured gap: the per-posting form walks row ids
+     * at 0.73 ns/row against native's 0.70 while the working set fits in cache,
+     * and degrades to 2.45 ns/row at 16 MB. Every parquet encoding that packs
+     * (delta, dictionary, a compression codec) also makes the column
+     * sequential-only, which costs more than the width saves. Packing the ids
+     * into an opaque blob whose addressing QuestDB controls is the way to get
+     * both.
+     * <p>
+     * <b>Ignored when the index covers any column.</b> Every column in a
+     * parquet row group shares one row count, so a per-group {@code row_id}
+     * blob forces the covered columns to become per-group blobs too -- which
+     * buys nothing, since the covered gather already measures at parity. The
+     * seal falls back to the per-posting form in that case; {@code PAYLOAD_KIND}
+     * in the {@code _im} is what actually says which form was written.
+     */
+    default boolean isPostingIndexParquetPackedPayload() {
+        return false;
+    }
+
+    /**
      * Data page size for the covering index's own parquet, which is NOT
      * {@link #getPartitionEncoderParquetDataPageSize()}. A page is the unit the
      * reader can skip when it decodes one key's contiguous run, so the data

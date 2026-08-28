@@ -143,9 +143,35 @@ fn binary_segments_to_page(
             Ok(())
         })?;
     }
-    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
-    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
-    let null_count = def_levels.null_count;
+    // Required means NO definition levels. See `binary_slices_to_page` for why
+    // that is what makes a var-size column addressable in the mapping at all.
+    //
+    // Getting this wrong here does not fail loudly, which is how it was missed:
+    // the SCHEMA already said Required, so `max_def_level` was 0 and
+    // `plain_column_data_offset` returned an offset happily, while this function
+    // still wrote a def-level block in front of the values. Every value in the
+    // chunk came out shifted by that block's length -- six bytes, for one row.
+    // This is the path `encode_binary` takes; the sibling above is the one the
+    // Required support was first added to, and it is not this one.
+    let required = primitive_type.field_info.repetition == Repetition::Required;
+    let (definition_levels_byte_length, null_count) = if required {
+        // Required cannot express a null, so one would be silently dropped and
+        // shift every later value. Refuse instead of corrupting.
+        let null_count = validity.null_count();
+        if null_count > 0 {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "a Required binary column cannot hold nulls [nulls={null_count}]"
+            ));
+        }
+        (0, 0)
+    } else {
+        let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+        (
+            def_levels.definition_levels_byte_length,
+            def_levels.null_count,
+        )
+    };
     let mut stats = BinaryMaxMinStats::new(&primitive_type);
     for segment in segments {
         for &offset in segment.index {
@@ -174,7 +200,7 @@ fn binary_segments_to_page(
         primitive_type,
         options,
         Encoding::Plain,
-        false,
+        required,
     )
     .map(Page::Data)
 }
@@ -186,6 +212,18 @@ fn string_segments_to_page(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows: usize = segments.iter().map(BinarySegment::num_rows).sum();
+    // These two always emit definition levels, so a Required column here would
+    // be written with a def-level block the schema says is absent and every
+    // value would come out shifted -- the exact silent corruption the binary
+    // path above was found to have. Nothing sets Required on a String or
+    // Varchar column today; refuse rather than leave the trap one flag away.
+    if primitive_type.field_info.repetition == Repetition::Required {
+        return Err(fmt_err!(
+            Unsupported,
+            "Required repetition is not supported for this column type [type={:?}]",
+            primitive_type.physical_type
+        ));
+    }
     let mut buffer = vec![];
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);
@@ -248,6 +286,18 @@ fn varchar_segments_to_page(
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows: usize = segments.iter().map(VarcharSegment::num_rows).sum();
+    // These two always emit definition levels, so a Required column here would
+    // be written with a def-level block the schema says is absent and every
+    // value would come out shifted -- the exact silent corruption the binary
+    // path above was found to have. Nothing sets Required on a String or
+    // Varchar column today; refuse rather than leave the trap one flag away.
+    if primitive_type.field_info.repetition == Repetition::Required {
+        return Err(fmt_err!(
+            Unsupported,
+            "Required repetition is not supported for this column type [type={:?}]",
+            primitive_type.physical_type
+        ));
+    }
     let mut buffer = vec![];
     let mut validity = FlatValidity::new();
     validity.reset(num_rows);

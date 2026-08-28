@@ -43,14 +43,16 @@ import org.junit.Test;
 public class BitpackUtilsPackTest extends AbstractCairoTest {
 
     /**
-     * The flat blob must be decodable by the field offsets
-     * {@code AbstractPostingIndexReader} reads, because the whole point of
-     * reusing the native layout is that the existing decoder understands it. So
-     * this decodes with those constants directly rather than with a helper that
-     * could share a bug with the encoder.
+     * A packed-payload blob is addressed by the {@code _im} key directory, not
+     * by anything inside itself, so this decodes it the way the reader will:
+     * take a key's start offset from a directory held outside the blob, and
+     * unpack from {@link PostingIndexUtils#PACKED_PAYLOAD_HEADER_SIZE} at that
+     * ordinal. {@code keyDir} here stands in for the {@code _im} directory the
+     * seal writes, and has the same shape -- cumulative starts, terminated by
+     * the group's total.
      */
     @Test
-    public void testFlatBlobDecodesAtTheOffsetsTheReaderUses() throws Exception {
+    public void testPackedPayloadBlobDecodesAtTheKeyDirectoryOffsets() throws Exception {
         assertMemoryLeak(() -> {
             final int keys = 5;
             final int[] perKey = {3, 0, 7, 1, 4}; // one key deliberately empty
@@ -58,6 +60,11 @@ public class BitpackUtilsPackTest extends AbstractCairoTest {
             for (int c : perKey) {
                 total += c;
             }
+            final int[] keyDir = new int[keys + 1];
+            for (int k = 0; k < keys; k++) {
+                keyDir[k + 1] = keyDir[k] + perKey[k];
+            }
+
             final long baseValue = 1_000_000L;
             final long[] rowIds = new long[total];
             for (int i = 0; i < total; i++) {
@@ -67,33 +74,24 @@ public class BitpackUtilsPackTest extends AbstractCairoTest {
 
             final long srcSize = (long) total * Long.BYTES;
             final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-            final long prefixSize = (long) (keys + 1) * Integer.BYTES;
-            final long prefix = Unsafe.malloc(prefixSize, MemoryTag.NATIVE_DEFAULT);
-            final int blobSize = PostingIndexUtils.flatBlobSize(keys, total, bitWidth);
+            final int blobSize = PostingIndexUtils.packedPayloadBlobSize(total, bitWidth);
             final long blob = Unsafe.calloc(blobSize, MemoryTag.NATIVE_DEFAULT);
             try {
                 for (int i = 0; i < total; i++) {
                     Unsafe.getUnsafe().putLong(src + ((long) i << 3), rowIds[i]);
                 }
-                int running = 0;
-                for (int k = 0; k < keys; k++) {
-                    Unsafe.getUnsafe().putInt(prefix + (long) k * Integer.BYTES, running);
-                    running += perKey[k];
-                }
-                Unsafe.getUnsafe().putInt(prefix + (long) keys * Integer.BYTES, running);
 
-                PostingIndexUtils.encodeFlatBlob(blob, src, total, keys, prefix, baseValue, bitWidth);
+                PostingIndexUtils.encodePackedPayloadBlob(blob, src, total, baseValue, bitWidth);
 
                 Assert.assertEquals("mode", PostingIndexUtils.STRIDE_MODE_FLAT, Unsafe.getUnsafe().getByte(blob));
                 Assert.assertEquals("bitWidth", bitWidth, Unsafe.getUnsafe().getByte(blob + 1) & 0xFF);
                 Assert.assertEquals("baseValue", baseValue,
                         Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET));
 
-                final long prefixAddr = blob + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-                final long dataAddr = blob + PostingIndexUtils.strideFlatHeaderSize(keys);
+                final long dataAddr = blob + PostingIndexUtils.PACKED_PAYLOAD_HEADER_SIZE;
                 for (int k = 0; k < keys; k++) {
-                    final int start = Unsafe.getUnsafe().getInt(prefixAddr + (long) k * Integer.BYTES);
-                    final int end = Unsafe.getUnsafe().getInt(prefixAddr + (long) (k + 1) * Integer.BYTES);
+                    final int start = keyDir[k];
+                    final int end = keyDir[k + 1];
                     Assert.assertEquals("count for key " + k, perKey[k], end - start);
                     for (int j = start; j < end; j++) {
                         Assert.assertEquals(
@@ -105,7 +103,6 @@ public class BitpackUtilsPackTest extends AbstractCairoTest {
                 }
             } finally {
                 Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(prefix, prefixSize, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(blob, blobSize, MemoryTag.NATIVE_DEFAULT);
             }
         });

@@ -462,6 +462,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int postingIndexParquetDataPageSize;
     private final int postingIndexParquetMaxKeysPerRowGroup;
     private final int postingIndexParquetMinRowsPerRowGroup;
+    private final boolean postingIndexParquetPackedPayload;
     private final byte postingIndexParquetPartitionFormat;
     private final byte postingIndexRowIdEncoding;
     private final long postingIndexerSpillBytesMax;
@@ -1723,6 +1724,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     CairoConfiguration.defaultPostingIndexParquetDataPageSize(this.postingIndexParquetCompressionCodec));
             this.postingIndexParquetMaxKeysPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, 16);
             this.postingIndexParquetMinRowsPerRowGroup = getInt(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MIN_ROWS_PER_ROW_GROUP, 65536);
+            this.postingIndexParquetPackedPayload = getBoolean(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, false);
             this.postingIndexParquetPartitionFormat = switch (getString(properties, env, PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native")) {
                 case "parquet" -> PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
                 default -> PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE;
@@ -4702,6 +4704,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getPostingIndexParquetMinRowsPerRowGroup() {
             return postingIndexParquetMinRowsPerRowGroup;
+        }
+
+        @Override
+        public boolean isPostingIndexParquetPackedPayload() {
+            return postingIndexParquetPackedPayload;
         }
 
         @Override

@@ -930,6 +930,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isPostingIndexParquetPackedPayload() {
+        return getDelegate().isPostingIndexParquetPackedPayload();
+    }
+
+    @Override
     public byte getPostingIndexParquetPartitionFormat() {
         return getDelegate().getPostingIndexParquetPartitionFormat();
     }

@@ -96,6 +96,7 @@ pub fn generate_index_metadata<W: Write>(
     key_space_size: u32,
     key_id_column: i32,
     row_id_column: i32,
+    row_id_blob_column: i32,
     first_cover_column: u32,
     payload_kind: u32,
     logical_row_counts: &[i64],
@@ -164,6 +165,7 @@ pub fn generate_index_metadata<W: Write>(
         row_id_column,
         first_cover_column,
     );
+    writer.set_row_id_blob_column(row_id_blob_column);
     writer.set_pidx_footer(pidx_footer_offset, pidx_footer_length);
     writer.set_data_row_group_boundaries(data_boundaries);
 
@@ -194,7 +196,13 @@ pub fn generate_index_metadata<W: Write>(
             block.set_num_rows(logical_row_counts[i].max(0) as u64);
         }
         let key_dir: &[u32] = key_dirs.get(i).map(|d| d.as_slice()).unwrap_or(&[]);
-        writer.add_row_group(first_keys[i], row_id_mins[i], row_id_maxs[i], key_dir, block);
+        writer.add_row_group(
+            first_keys[i],
+            row_id_mins[i],
+            row_id_maxs[i],
+            key_dir,
+            block,
+        );
     }
 
     writer.finish().map_err(ParquetError::from)
@@ -408,6 +416,7 @@ mod tests {
             10,
             0,
             1,
+            -1,
             2,
             0,
             &[],
@@ -486,6 +495,7 @@ mod tests {
             10,
             0,
             1,
+            -1,
             2,
             0,
             &[],

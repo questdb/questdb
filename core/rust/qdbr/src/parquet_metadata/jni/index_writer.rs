@@ -338,7 +338,11 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_addRowGroup(
     ffi_guard(&mut env, "addRowGroup", |env| {
         check_not_null!(env, ptr, "IndexMetaFileWriter");
         check_not_null!(env, chunks_ptr, "IndexMetaFileWriter column chunks");
-        check_not_negative!(env, key_dir_count, "IndexMetaFileWriter key directory count");
+        check_not_negative!(
+            env,
+            key_dir_count,
+            "IndexMetaFileWriter key directory count"
+        );
         if key_dir_count > 0 {
             check_not_null!(env, key_dir_ptr, "IndexMetaFileWriter key directory");
         }
@@ -532,6 +536,9 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
     key_space_size: jint,
     key_id_column: jint,
     row_id_column: jint,
+    // Descriptor index of the packed payload's blob column, or -1 when the
+    // file carries none. Absent from the header as a biased zero.
+    row_id_blob_column: jint,
     first_cover_column: jint,
     payload_kind: jint,
     // Postings per row group, or null under a payload kind whose parquet row
@@ -544,7 +551,11 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
         check_not_null!(env, row_id_min_ptr, "IndexMetaFileWriter row id minima");
         check_not_null!(env, row_id_max_ptr, "IndexMetaFileWriter row id maxima");
         check_not_null!(env, data_boundaries_ptr, "IndexMetaFileWriter boundaries");
-        check_not_null!(env, key_dir_counts_ptr, "IndexMetaFileWriter key directory counts");
+        check_not_null!(
+            env,
+            key_dir_counts_ptr,
+            "IndexMetaFileWriter key directory counts"
+        );
         // A negative jint would become an enormous slice length below.
         check_not_negative!(env, count, "IndexMetaFileWriter row group count");
         check_not_negative!(env, key_space_size, "IndexMetaFileWriter key space size");
@@ -668,6 +679,7 @@ pub extern "system" fn Java_io_questdb_cairo_IndexMetaFileWriter_generateIndexMe
             key_space_size as u32,
             key_id_column,
             row_id_column,
+            row_id_blob_column,
             first_cover_column as u32,
             payload_kind as u32,
             &logical_row_counts,

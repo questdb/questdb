@@ -38,7 +38,12 @@ pub fn column_type_to_parquet_type(
     raw_array_encoding: bool,
 ) -> ParquetResult<ParquetType> {
     column_type_to_parquet_type_with_repetition(
-        column_id, column_name, column_type, designated_timestamp, raw_array_encoding, false,
+        column_id,
+        column_name,
+        column_type,
+        designated_timestamp,
+        raw_array_encoding,
+        false,
     )
 }
 

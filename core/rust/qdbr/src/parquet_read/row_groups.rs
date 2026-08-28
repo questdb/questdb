@@ -1741,9 +1741,7 @@ impl ParquetDecoder {
         }
         // SAFETY: the range is inside the mapping the decoder was built over,
         // which the bound above checks.
-        let col_data = unsafe {
-            std::slice::from_raw_parts(file_ptr.add(col_start), col_len)
-        };
+        let col_data = unsafe { std::slice::from_raw_parts(file_ptr.add(col_start), col_len) };
         let page_reader = SlicePageReader::from_parts(
             col_data,
             0,

@@ -245,6 +245,14 @@ public final class PostingIndexUtils {
     public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)
     public static final int STRIDE_FLAT_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
     public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
+    /**
+     * Header size of a parquet packed-payload blob: the flat stride's mode
+     * prefix and base, with no prefix-count array after them. Numerically the
+     * same as {@link #STRIDE_FLAT_PREFIX_COUNTS_OFFSET}, which is where a native
+     * stride's array would begin and where the packed values begin instead.
+     * See {@link #encodePackedPayloadBlob}.
+     */
+    public static final int PACKED_PAYLOAD_HEADER_SIZE = STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
     // v2 chain layout — append-only chain of immutable seal entries.
     // The two header pages (A/B) at offsets 0 and 4096 are seqlock-protected
     // and contain only the chain head pointer and counters. Each entry lives
@@ -1556,61 +1564,65 @@ public final class PostingIndexUtils {
     }
 
     /**
-     * Total size of a flat-mode blob holding {@code valueCount} row ids for
-     * {@code keysInStride} keys at {@code bitWidth} bits each.
+     * Size of a packed-payload blob holding {@code valueCount} row ids at
+     * {@code bitWidth} bits each.
      */
-    public static int flatBlobSize(int keysInStride, int valueCount, int bitWidth) {
-        return strideFlatHeaderSize(keysInStride) + BitpackUtils.packedDataSize(valueCount, bitWidth);
+    public static int packedPayloadBlobSize(int valueCount, int bitWidth) {
+        return PACKED_PAYLOAD_HEADER_SIZE + BitpackUtils.packedDataSize(valueCount, bitWidth);
     }
 
     /**
-     * Writes a flat-mode stride blob: the layout
-     * {@code AbstractPostingIndexReader} already decodes, produced outside the
-     * native writer so the parquet-form seal can emit the same bytes.
+     * Writes the parquet covering index's packed payload blob: one row group's
+     * row ids, frame-of-reference packed, as the single BINARY value that group
+     * holds under {@code PAYLOAD_KIND 1}.
      * <p>
-     * Byte for byte: mode at 0, bitWidth at 1, {@code baseValue} at
-     * {@link #STRIDE_FLAT_BASE_OFFSET}, then {@code keysInStride + 1} prefix
-     * counts at {@link #STRIDE_FLAT_PREFIX_COUNTS_OFFSET}, then the packed
-     * values. The prefix array is cumulative and its last entry is the total, so
-     * key {@code k} owns {@code [prefix[k], prefix[k+1])}.
+     * Byte for byte: {@link #STRIDE_MODE_FLAT} at 0, bitWidth at 1, two padding
+     * bytes, then {@code baseValue} at {@link #STRIDE_FLAT_BASE_OFFSET}, then the
+     * packed values at {@link #PACKED_PAYLOAD_HEADER_SIZE}.
      * <p>
-     * {@code rowIdsAddr} must hold the stride's row ids ALREADY GROUPED BY KEY in
-     * the order {@code prefixCounts} describes, and ascending within each key --
-     * the order the seal's key-major sort produces. Nothing here re-sorts, and a
-     * caller that passes them unsorted gets a blob that decodes without error and
-     * returns row ids in the wrong order.
+     * <b>Deliberately not the native chain's flat stride, which this header is
+     * otherwise byte-identical to.</b> A native stride follows its base with a
+     * cumulative per-key prefix-count array, because a native reader has nowhere
+     * else to learn where a key's run starts. The parquet form does: the
+     * {@code _im} key directory already stores exactly that offset, so a copy
+     * inside the blob would be pure duplication -- and worse than free. A native
+     * stride spans at most {@link #DENSE_STRIDE} keys, so its array is bounded
+     * at 257 entries; a row group's key directory spans {@code firstKey} to the
+     * largest key it holds, which the sparse key space leaves unbounded. Carrying
+     * the array here would import a bound that does not hold.
+     * <p>
+     * What the header does carry is what a reader cannot get from the
+     * {@code _im}: the mode, the bit width, and the base. Keeping them in the
+     * blob means a corrupt or mismatched {@code _im} cannot silently make the
+     * payload decode as different row ids.
+     * <p>
+     * {@code rowIdsAddr} must hold the group's row ids ALREADY GROUPED BY KEY and
+     * ascending within each key -- the order the seal's key-major sort produces.
+     * Nothing here re-sorts, and a caller that passes them unsorted gets a blob
+     * that decodes without error and returns row ids in the wrong order.
      *
-     * @param destAddr    destination, at least {@link #flatBlobSize} bytes, ZERO-FILLED
-     * @param rowIdsAddr  source row ids, {@code valueCount} longs, key-major
-     * @param prefixCounts cumulative per-key counts, {@code keysInStride + 1} ints
-     * @param baseValue   value subtracted from every row id before packing
-     * @param bitWidth    bits per packed value, from {@link BitpackUtils#bitsNeeded}
+     * @param destAddr   destination, at least {@link #packedPayloadBlobSize} bytes, ZERO-FILLED
+     * @param rowIdsAddr source row ids, {@code valueCount} longs, key-major
+     * @param baseValue  value subtracted from every row id before packing, that is the
+     *                   group's minimum row id
+     * @param bitWidth   bits per packed value, from {@link BitpackUtils#bitsNeeded}
      */
-    public static void encodeFlatBlob(
+    public static void encodePackedPayloadBlob(
             long destAddr,
             long rowIdsAddr,
             int valueCount,
-            int keysInStride,
-            long prefixCountsAddr,
             long baseValue,
             int bitWidth
     ) {
         Unsafe.getUnsafe().putByte(destAddr, STRIDE_MODE_FLAT);
         Unsafe.getUnsafe().putByte(destAddr + 1, (byte) bitWidth);
         Unsafe.getUnsafe().putLong(destAddr + STRIDE_FLAT_BASE_OFFSET, baseValue);
-        final long prefixDest = destAddr + STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-        for (int k = 0; k <= keysInStride; k++) {
-            Unsafe.getUnsafe().putInt(
-                    prefixDest + (long) k * Integer.BYTES,
-                    Unsafe.getUnsafe().getInt(prefixCountsAddr + (long) k * Integer.BYTES)
-            );
-        }
         BitpackUtils.packAllValues(
                 rowIdsAddr,
                 valueCount,
                 bitWidth,
                 baseValue,
-                destAddr + strideFlatHeaderSize(keysInStride)
+                destAddr + PACKED_PAYLOAD_HEADER_SIZE
         );
     }
 

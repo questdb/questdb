@@ -187,6 +187,13 @@ public class IndexMetaFileWriter {
             int keySpaceSize,
             int keyIdColumn,
             int rowIdColumn,
+            /*
+             * Descriptor index of the packed payload's blob column, or -1 when
+             * the file carries none. Exactly one of rowIdColumn and this is set:
+             * a payload kind either stores a row id per posting or a blob per
+             * row group, never both.
+             */
+            int rowIdBlobColumn,
             int firstCoverColumn,
             int payloadKind,
             /*

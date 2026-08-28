@@ -4,8 +4,8 @@ use std::sync::{Arc, Mutex};
 use super::*;
 use crate::parquet::error::ParquetErrorReason;
 use crate::parquet::tests::ColumnTypeTagExt;
-use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::encoders::plain::varlen::binary_slices_to_page;
+use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::schema::{
     column_type_to_parquet_type, column_type_to_parquet_type_with_repetition,
     COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT,
