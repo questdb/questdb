@@ -277,8 +277,7 @@ public class Worker extends Thread {
                     jobIndex = 0;
                 }
             }
-            // rotate only on fiber hosts; a LEGACY pool keeps the fixed job order it always had
-            if (fiberRuntime != null && n > 0 && ++jobStartIndex == n) {
+            if (n > 0 && ++jobStartIndex == n) {
                 jobStartIndex = 0;
             }
             return isRunAsap;
