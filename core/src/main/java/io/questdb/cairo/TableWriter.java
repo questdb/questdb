@@ -5031,6 +5031,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return SWITCH_NO_PARQUET;
             }
 
+            // A NEGATIVE size means "measure it". Each cell of a day has its own parquet file and so
+            // its own size, but a caller that converted the whole day in one pass (the storage-policy
+            // job) only has the day's total. Rather than make it build cell paths to stat each file --
+            // duplicating path logic outside this class -- it passes -1 and the size is taken here,
+            // where the path is already resolved and known to exist.
+            if (parquetFileSize < 0) {
+                parquetFileSize = ff.length(path.$());
+            }
+
             // upgrade the cell's version
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn(), cellSegment);
             createDirsOrFail(ff, other, configuration.getMkDirMode());
