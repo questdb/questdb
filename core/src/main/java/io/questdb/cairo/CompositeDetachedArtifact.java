@@ -167,8 +167,13 @@ public final class CompositeDetachedArtifact {
             int expectedTableId,
             CharSequence tableName
     ) {
-        // WHAT IT WOULD TAKE to lift this, established 2026-08-26 by looking at what DETACH actually
-        // copies rather than by argument -- so the next attempt starts from evidence.
+        // BANNED BY DECISION 2026-08-28: cross-table ATTACH is not supported for composite tables and
+        // is not planned. The message below says "does not support", not "does not yet support" --
+        // the same wording as the UPDATE ban, so a reader can tell a decision from a backlog item.
+        //
+        // The analysis that led to the decision is kept because it records what was traded away, and
+        // because it is the argument to re-open if the decision ever changes. Established 2026-08-26
+        // by looking at what DETACH actually copies rather than by argument.
         //
         // detachPartition copies exactly three table-level files into the artifact via copyOverwrite:
         // _meta, _cv, _txn. It does NOT copy symbol tables. A composite _txn stores cellKeys, and
@@ -186,20 +191,21 @@ public final class CompositeDetachedArtifact {
         // So the existing convention does NOT settle it -- both options are new behaviour, and it is
         // a genuine format decision with compatibility consequences (free while unreleased, a break
         // afterwards). It also means invariant 4 ("values, not ordinals, across table boundaries") is
-        // not satisfiable by today's artifact at all.
+        // not satisfiable by today's artifact at all. Presented as a choice; the answer was to ban it
+        // rather than grow the artifact format, so neither option was taken.
         final int rootLen = artifactRoot.size();
         try (TableReaderMetadata artifactMeta = new TableReaderMetadata(configuration)) {
             final LPSZ metaPath = artifactRoot.concat(TableUtils.META_FILE_NAME).$();
             if (!ff.exists(metaPath)) {
                 throw CairoException.critical(0)
-                        .put("composite partitioning does not yet support attaching a partition from another table")
+                        .put("composite partitioning does not support attaching a partition from another table")
                         .put(" [table=").put(tableName).put(", reason=artifact carries no _meta]");
             }
             artifactMeta.loadMetadata(metaPath);
             final int artifactTableId = artifactMeta.getTableId();
             if (artifactTableId != expectedTableId) {
                 throw CairoException.critical(0)
-                        .put("composite partitioning does not yet support attaching a partition from another table")
+                        .put("composite partitioning does not support attaching a partition from another table")
                         .put(" [table=").put(tableName)
                         .put(", tableId=").put(expectedTableId)
                         .put(", artifactTableId=").put(artifactTableId).put(']');
