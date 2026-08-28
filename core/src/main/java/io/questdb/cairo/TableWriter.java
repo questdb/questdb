@@ -1918,11 +1918,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // throws on isRoutedComposite() before it can queue anything. A non-empty queue here on a
         // routed composite table therefore means that gate was bypassed or removed: fail loudly
         // rather than silently deleting the wrong cell's directory.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not support pending parquet-to-native conversions [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // Composite is supported now: every queued entry carries the cellKey whose directory it
+        // describes, so the deletes below address the right cell rather than cellKey 0.
         try {
             // Persist reconstructed column tops before the txn, else _txn references a stale _cv.
             if (columnVersionWriter.hasChanges()) {
@@ -1938,14 +1935,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
             }
 
-            for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
+            for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 4) {
                 long pts = pendingParquetToNativeConversions.getQuick(i);
                 long oldNameTxn = pendingParquetToNativeConversions.getQuick(i + 1);
                 boolean isLastConverted = pendingParquetToNativeConversions.getQuick(i + 2) != 0L;
+                // -1 on a plain table, where safeDeletePartitionDir's cell-aware overload is
+                // byte-identical to the cellKey-0 one it replaces.
+                int cellKey = (int) pendingParquetToNativeConversions.getQuick(i + 3);
                 if (isLastConverted) {
                     closeActivePartition(false);
                 }
-                safeDeletePartitionDir(pts, oldNameTxn);
+                safeDeletePartitionDir(pts, oldNameTxn, cellKey < 0 ? 0 : cellKey);
                 if (isLastConverted) {
                     openPartition(pts, txWriter.getTransientRowCount());
                     setAppendPosition(txWriter.getTransientRowCount(), false);
@@ -2244,12 +2244,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // is still cell-blind and still gated. Committing per-cell right here would quietly change
             // that caller's atomicity contract instead of failing, so refuse -- reusing the pending
             // conversions literal, which is exactly what is unsupported.
-            if (!doCommit) {
-                throw CairoException.critical(0)
-                        .put("composite partitioning does not support pending parquet-to-native conversions [table=")
-                        .put(tableToken.getTableName()).put(']');
-            }
-            return convertCompositePartitionParquetToNative(partitionTimestamp);
+            // The DEFERRED form is now supported: the conversion queues its per-CELL cleanup and the
+            // batched commitPendingParquetToNativeConversions does the single commit plus the
+            // cell-aware directory deletes, preserving the caller's atomicity contract.
+            return doCommit
+                    ? convertCompositePartitionParquetToNative(partitionTimestamp)
+                    : convertCompositePartitionParquetToNativeDeferred(partitionTimestamp);
         }
 
         if (doCommit && inTransaction()) {
@@ -2341,6 +2341,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 pendingParquetToNativeConversions.add(partitionTimestamp);
                 pendingParquetToNativeConversions.add(partitionNameTxn);
                 pendingParquetToNativeConversions.add(lastPartitionConverted ? 1L : 0L);
+                // Fourth slot: the cellKey, -1 on a plain table. The drain reads the queue in strides
+                // of FOUR, so every producer must push four -- a three-wide push here would shift every
+                // later entry and delete the wrong directory.
+                pendingParquetToNativeConversions.add(-1L);
             }
 
         } catch (Throwable th) {
@@ -3134,7 +3138,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public int getParquetColumnType(int partitionIndex, int metadataColumnIndex) {
         long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        // Cell-aware: partitionIndex IS a cell on a composite table, so its data.parquet is at
+        // <day>/<cell>.<txn>/, not <day>.<txn>/. Built the bare way this opened a day-level path that
+        // does not exist and suspended the table on ALTER COLUMN TYPE over a parquet partition.
+        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp,
+                partitionNameTxn, cellSegmentOrNull(txWriter.getPartitionCellKey(partitionIndex)));
         final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
         final long parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         try {
@@ -17339,7 +17347,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * half-converted, and only then does PHASE 2 take the single commit.
      */
     private boolean convertCompositePartitionParquetToNative(long partitionTimestamp) {
-        return convertCompositePartitionParquetToNative(partitionTimestamp, -1);
+        return convertCompositePartitionParquetToNative(partitionTimestamp, -1, true);
+    }
+
+    private boolean convertCompositePartitionParquetToNativeDeferred(long partitionTimestamp) {
+        return convertCompositePartitionParquetToNative(partitionTimestamp, -1, false);
     }
 
     /**
@@ -17347,7 +17359,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                    is what produces a day holding a MIX of native and parquet cells -- a state
      *                    per-cell conversion makes reachable and whole-partition conversion never could.
      */
-    private boolean convertCompositePartitionParquetToNative(long partitionTimestamp, int onlyCellKey) {
+    private boolean convertCompositePartitionParquetToNative(long partitionTimestamp, int onlyCellKey, boolean doCommit) {
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
         final IntList cellKeys = new IntList();
         final IntList rawIndexes = new IntList();
@@ -17432,6 +17444,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
         }
         txWriter.bumpPartitionTableVersion();
+
+        if (!doCommit) {
+            // DEFERRED form. The caller (ConvertOperatorImpl, for a column-type change spanning
+            // parquet partitions) batches several conversions and commits them together, so the
+            // commit and the old-directory deletes move to commitPendingParquetToNativeConversions.
+            // Queueing per CELL is what makes that batched cleanup cell-aware: each entry carries the
+            // cellKey whose directory it describes.
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                pendingParquetToNativeConversions.add(
+                        partitionTimestamp,
+                        oldCellNameTxns.getQuick(i),
+                        // isLastConverted: a routed composite table has no day-level active partition
+                        // to reopen (see openLastPartitionAndSetAppendPosition), so never.
+                        0L,
+                        cellKeys.getQuick(i)
+                );
+            }
+            return true;
+        }
+
         commitTxWriter();
 
         // PHASE 3 -- post-commit housekeeping, on the OLD name-txns captured above.
@@ -17461,7 +17493,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     @TestOnly
     public boolean convertCompositeCellToNativeForTest(long partitionTimestamp, int cellKey) {
-        return convertCompositePartitionParquetToNative(partitionTimestamp, cellKey);
+        return convertCompositePartitionParquetToNative(partitionTimestamp, cellKey, true);
     }
 
     /**
