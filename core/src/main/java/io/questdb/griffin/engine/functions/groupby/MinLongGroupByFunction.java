@@ -180,6 +180,11 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
+    }
+
+    @Override
     public boolean supportsBatchComputation() {
         return !isArgNotNull;
     }

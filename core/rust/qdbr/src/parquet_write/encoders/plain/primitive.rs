@@ -41,10 +41,8 @@ where
     T: SimdEncodable,
 {
     let rows_per_page = rows_per_primitive_page(&options, primitive_type.physical_type);
-    let not_null_hint = columns
-        .iter()
-        .all(|column| column.not_null_hint && column.column_top == 0);
-    if not_null_hint {
+    let not_null_hint = columns.iter().all(|column| column.not_null_hint);
+    if not_null_hint && columns.iter().all(|column| column.column_top == 0) {
         return encode_column_chunk(
             columns,
             first_partition_start,
@@ -79,6 +77,7 @@ where
                 options,
                 primitive_type.clone(),
                 bloom,
+                not_null_hint,
             )
         },
     )
@@ -499,6 +498,7 @@ fn simd_segments_to_page<T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null_hint: bool,
 ) -> ParquetResult<Page> {
     if primitive_type.field_info.repetition != Repetition::Optional {
         return Err(fmt_err!(
@@ -518,7 +518,7 @@ fn simd_segments_to_page<T: SimdEncodable>(
     match views.next() {
         None => {
             // Single view: use SIMD-accelerated path (fused def levels + stats + bloom).
-            simd_single_view_page(first, options, primitive_type, bloom_hashes)
+            simd_single_view_page(first, options, primitive_type, bloom_hashes, not_null_hint)
         }
         Some(second) => {
             // Multiple views: scalar single-pass fallback.
@@ -529,6 +529,7 @@ fn simd_segments_to_page<T: SimdEncodable>(
                 options,
                 primitive_type,
                 bloom_hashes,
+                not_null_hint,
             )
         }
     }
@@ -540,7 +541,11 @@ fn simd_single_view_page<T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null_hint: bool,
 ) -> ParquetResult<Page> {
+    if not_null_hint {
+        return simd_notnull_single_view_page(view, options, primitive_type, bloom_hashes);
+    }
     let num_rows = view.num_rows();
     let mut buffer = Vec::new();
 
@@ -600,6 +605,56 @@ fn simd_single_view_page<T: SimdEncodable>(
     .map(Page::Data)
 }
 
+fn simd_notnull_single_view_page<T: SimdEncodable>(
+    view: PartitionChunkView<'_, T>,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    let num_rows = view.num_rows();
+    let mut buffer = Vec::new();
+    let mut validity = FlatValidity::new();
+    validity.reset(num_rows);
+    for _ in 0..view.adjusted_column_top {
+        validity.push_null();
+    }
+    for _ in view.slice {
+        validity.push_present();
+    }
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let mut statistics = SimdMaxMin::new();
+    for &value in view.slice {
+        if options.write_statistics {
+            statistics.update(value);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(value));
+        }
+    }
+    for &value in view.slice {
+        buffer.extend_from_slice(value.to_bytes().as_ref());
+    }
+    let stats = options.write_statistics.then(|| {
+        build_statistics(
+            Some(view.adjusted_column_top as i64),
+            statistics.to_minmax_stats(!view.slice.is_empty()),
+            primitive_type.clone(),
+        )
+    });
+    build_plain_page(
+        buffer,
+        num_rows,
+        def_levels.null_count,
+        def_levels.definition_levels_byte_length,
+        stats,
+        primitive_type,
+        options,
+        Encoding::Plain,
+        false,
+    )
+    .map(Page::Data)
+}
+
 /// Scalar fallback for multi-partition pages.
 fn simd_multi_view_page<'a, T: SimdEncodable>(
     first: PartitionChunkView<'a, T>,
@@ -608,6 +663,7 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
+    not_null_hint: bool,
 ) -> ParquetResult<Page> {
     let num_rows = window.row_count;
     let mut validity = FlatValidity::new();
@@ -624,7 +680,7 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
             validity.push_null();
         }
         for &value in view.slice {
-            if value.is_null() {
+            if !not_null_hint && value.is_null() {
                 validity.push_null();
             } else {
                 validity.push_present();
@@ -642,7 +698,7 @@ fn simd_multi_view_page<'a, T: SimdEncodable>(
     // Pass 2: append present values, updating stats/bloom.
     for view in &views {
         for &value in view.slice {
-            if !value.is_null() {
+            if not_null_hint || !value.is_null() {
                 if options.write_statistics {
                     statistics.update(value);
                 }

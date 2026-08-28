@@ -170,6 +170,11 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     }
 
     @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
+    }
+
+    @Override
     public boolean supportsBatchComputation() {
         return !isArgNotNull;
     }

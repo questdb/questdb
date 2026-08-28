@@ -10,10 +10,10 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_write::encoders::helpers::FlatValidity;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
-    build_plain_page, encode_all_ones_def_levels, encode_primitive_def_levels, ExactSizedIter,
-    MaxMin,
+    build_plain_page, encode_primitive_def_levels, ExactSizedIter, MaxMin,
 };
 use crate::parquet_write::Nullable;
 use parquet2::bloom_filter::hash_native;
@@ -704,6 +704,17 @@ pub fn slice_to_page_simd_notnull<T: SimdEncodable>(
     options: WriteOptions,
     primitive_type: PrimitiveType,
     encoding: Encoding,
+    bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    slice_to_page_simd_notnull_with_top(slice, 0, options, primitive_type, encoding, bloom_hashes)
+}
+
+pub fn slice_to_page_simd_notnull_with_top<T: SimdEncodable>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
     mut bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     if primitive_type.field_info.repetition != Repetition::Optional {
@@ -715,8 +726,17 @@ pub fn slice_to_page_simd_notnull<T: SimdEncodable>(
         ));
     }
     let mut buffer = Vec::new();
-    encode_all_ones_def_levels(&mut buffer, slice.len(), options.version);
-    let definition_levels_byte_length = buffer.len();
+    let num_rows = column_top + slice.len();
+    let mut validity = FlatValidity::new();
+    validity.reset(num_rows);
+    for _ in 0..column_top {
+        validity.push_null();
+    }
+    for _ in slice {
+        validity.push_present();
+    }
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
     let mut statistics: MaxMin<T> = MaxMin::new();
     for &value in slice {
         if options.write_statistics {
@@ -729,11 +749,11 @@ pub fn slice_to_page_simd_notnull<T: SimdEncodable>(
     buffer = T::encode_data_notnull(slice, encoding, buffer)?;
     let stats = options
         .write_statistics
-        .then(|| build_statistics(Some(0), statistics, primitive_type.clone()));
+        .then(|| build_statistics(Some(column_top as i64), statistics, primitive_type.clone()));
     build_plain_page(
         buffer,
-        slice.len(),
-        0,
+        num_rows,
+        column_top,
         definition_levels_byte_length,
         stats,
         primitive_type,

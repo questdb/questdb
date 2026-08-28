@@ -70,7 +70,7 @@ public class BitwiseAndLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
-            return l != Numbers.LONG_NULL && r != Numbers.LONG_NULL ? l & r : Numbers.LONG_NULL;
+            return isNotNull() || (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) ? l & r : Numbers.LONG_NULL;
         }
 
         @Override

@@ -382,7 +382,12 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
-            columnMetadata.getQuick(i).setNotNullFlag(tableStruct.isNotNull(i));
+            TableColumnMetadata colMeta = columnMetadata.getQuick(i);
+            colMeta.setNotNullFlag(tableStruct.isNotNull(i));
+            IntList coveringIndices = tableStruct.getCoveringColumnIndices(i);
+            if (coveringIndices != null && coveringIndices.size() > 0) {
+                colMeta.setCoveringColumnIndices(new IntList(coveringIndices));
+            }
             readColumnOrder.add(i);
         }
 

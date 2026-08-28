@@ -190,6 +190,11 @@ public class MaxFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
+    }
+
+    @Override
     public boolean supportsBatchComputation() {
         // NOT NULL columns take the per-row compute path; the native batch
         // kernel treats the type sentinel as null and under-counts / skips

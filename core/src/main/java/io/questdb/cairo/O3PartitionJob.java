@@ -378,8 +378,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // all-ones RLE run for definition levels and the round-trip
                         // reader can restore NOT NULL via QdbMeta. It does NOT change
                         // the parquet schema Repetition — all columns stay Optional.
-                        final boolean noNulls = tableWriterMetadata.isNotNull(i)
-                                || (ColumnType.isSymbol(colType) && !tableWriter.getSymbolMapWriter(i).getNullFlag());
+                        final boolean noNulls = tableWriterMetadata.isNotNull(i);
                         if (noNulls) {
                             colType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                         }
@@ -1858,7 +1857,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         // High bit = no-null hint for def level encoding, not schema Repetition.
                         encodeColumnType = columnType;
-                        if (isNotNull || !symbolMapWriter.getNullFlag()) {
+                        if (isNotNull) {
                             encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                         }
                     } catch (Throwable th) {
@@ -2702,7 +2701,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             // High bit = no-null hint for def level encoding, not schema Repetition.
                             int encodeColumnType = columnType;
-                            if (isNotNull || !symbolMapWriter.getNullFlag()) {
+                            if (isNotNull) {
                                 encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                             }
                             chunkDescriptor.addColumn(
@@ -2939,7 +2938,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 assert valuesMemSize <= valuesMem.size();
 
                 int encodeColumnType = columnType;
-                if (!symbolMapWriter.getNullFlag()) {
+                if (metadata.isNotNull(columnIndex)) {
                     encodeColumnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
                 }
                 descriptor.addColumn(

@@ -1051,6 +1051,46 @@ public class ColumnTypeConverter {
     }
 
     private static boolean convertFixedToVar(long srcAddr, CharSink<?> sink, int columnType, Fixed2VarConverter converter, boolean notNull) {
+        if (ColumnType.isDecimal(columnType) && notNull) {
+            final int precision = ColumnType.getDecimalPrecision(columnType);
+            final int scale = ColumnType.getDecimalScale(columnType);
+            switch (ColumnType.tagOf(columnType)) {
+                case ColumnType.DECIMAL8:
+                    Decimals.appendNonNull(Unsafe.getByte(srcAddr), precision, scale, sink);
+                    return true;
+                case ColumnType.DECIMAL16:
+                    Decimals.appendNonNull(Unsafe.getShort(srcAddr), precision, scale, sink);
+                    return true;
+                case ColumnType.DECIMAL32:
+                    Decimals.appendNonNull(Unsafe.getInt(srcAddr), precision, scale, sink);
+                    return true;
+                case ColumnType.DECIMAL64:
+                    Decimals.appendNonNull(Unsafe.getLong(srcAddr), precision, scale, sink);
+                    return true;
+                case ColumnType.DECIMAL128:
+                    Decimals.appendNonNull(
+                            Unsafe.getLong(srcAddr),
+                            Unsafe.getLong(srcAddr + Long.BYTES),
+                            precision,
+                            scale,
+                            sink
+                    );
+                    return true;
+                case ColumnType.DECIMAL256:
+                    Decimals.appendNonNull(
+                            Unsafe.getLong(srcAddr),
+                            Unsafe.getLong(srcAddr + Long.BYTES),
+                            Unsafe.getLong(srcAddr + 2L * Long.BYTES),
+                            Unsafe.getLong(srcAddr + 3L * Long.BYTES),
+                            precision,
+                            scale,
+                            sink
+                    );
+                    return true;
+                default:
+                    throw new IllegalArgumentException("unsupported decimal type: " + columnType);
+            }
+        }
         if (ColumnType.isDecimal(columnType)) {
             return converter.convert(srcAddr, sink, ColumnType.getDecimalPrecision(columnType), ColumnType.getDecimalScale(columnType));
         }

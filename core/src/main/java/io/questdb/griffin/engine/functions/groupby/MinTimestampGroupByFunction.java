@@ -179,6 +179,11 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     }
 
     @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
+    }
+
+    @Override
     public boolean supportsBatchComputation() {
         return !isArgNotNull;
     }

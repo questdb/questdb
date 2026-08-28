@@ -1992,6 +1992,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private long toPgMicros(long value, boolean valueIsMillis) throws PGMessageProcessingException {
+        // Long.MIN_VALUE is QuestDB's in-band NULL sentinel. A NOT NULL column
+        // treats it as a real value, so preserve a concrete wire value instead
+        // of rejecting it through the overflow checks used for normal dates.
+        if (value == Numbers.LONG_NULL) {
+            return value;
+        }
         try {
             long micros = valueIsMillis ? Math.multiplyExact(value, 1000L) : value;
             return Math.subtractExact(micros, Numbers.JULIAN_EPOCH_OFFSET_USEC);
@@ -2406,12 +2412,18 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColTxtDate(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final long longValue = record.getDate(columnIndex);
-        if (notNull || longValue != Numbers.LONG_NULL) {
+        if (longValue == Numbers.LONG_NULL) {
+            if (!notNull) {
+                utf8Sink.setNullValue();
+                return;
+            }
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(longValue);
+            utf8Sink.putLenEx(a);
+        } else {
             final long a = utf8Sink.skipInt();
             PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, EN_LOCALE, null, utf8Sink);
             utf8Sink.putLenEx(a);
-        } else {
-            utf8Sink.setNullValue();
         }
     }
 
@@ -2589,8 +2601,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void outColTxtTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int timestampType, boolean notNull) {
         long offset;
         long timestamp = record.getTimestamp(columnIndex);
-        if (!notNull && timestamp == Numbers.LONG_NULL) {
-            utf8Sink.setNullValue();
+        if (timestamp == Numbers.LONG_NULL) {
+            if (!notNull) {
+                utf8Sink.setNullValue();
+                return;
+            }
+            offset = utf8Sink.skipInt();
+            utf8Sink.put(timestamp);
+            utf8Sink.putLenEx(offset);
         } else {
             offset = utf8Sink.skipInt();
             ColumnType.getTimestampDriver(timestampType).appendToPGWireText(utf8Sink, timestamp);

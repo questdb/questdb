@@ -230,7 +230,7 @@ public class PartitionEncoder {
                     final MemoryR symbolValuesMem = symbolMapReader.getSymbolValuesColumn();
                     final MemoryR symbolOffsetsMem = symbolMapReader.getSymbolOffsetsColumn();
                     int encodeColumnType = columnType;
-                    if (isNotNull || !symbolMapReader.containsNullValue()) {
+                    if (isNotNull) {
                         encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                     }
                     descriptor.addColumn(

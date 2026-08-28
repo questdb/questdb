@@ -29,6 +29,15 @@ import io.questdb.griffin.engine.functions.BinaryFunction;
 
 public interface ArithmeticBinaryFunction extends BinaryFunction {
     @Override
+    default boolean isNotNull() {
+        return getLeft().isNotNull() && getRight().isNotNull();
+    }
+
+    default boolean areArgsNotNull() {
+        return getLeft().isNotNull() && getRight().isNotNull();
+    }
+
+    @Override
     default int getComplexity() {
         return Function.addComplexity(COMPLEXITY_ARITHMETIC, BinaryFunction.super.getComplexity());
     }

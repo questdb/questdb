@@ -150,8 +150,8 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
             long decimal64B = srcValue.getDecimal64(valueIndex + 1);
             long decimal64A = destValue.getDecimal64(valueIndex + 1);
 
-            boolean srcNull = decimal64B == Decimals.DECIMAL64_NULL;
-            boolean destNull = decimal64A == Decimals.DECIMAL64_NULL;
+            boolean srcNull = !isArgNotNull && decimal64B == Decimals.DECIMAL64_NULL;
+            boolean destNull = !isArgNotNull && decimal64A == Decimals.DECIMAL64_NULL;
 
             if (!destNull && !srcNull) {
                 // both not null
@@ -200,6 +200,11 @@ class SumDecimal64GroupByFunction extends Decimal128Function implements GroupByF
         mapValue.putDecimal128Null(valueIndex);
         mapValue.putLong(valueIndex + 1, Decimals.DECIMAL64_NULL);
         mapValue.putBool(valueIndex + 2, false);
+    }
+
+    @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
     }
 
     @Override

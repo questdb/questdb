@@ -94,7 +94,9 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 if (isArgNotNull || !Double.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final double current = Unsafe.getDouble(addr);
-                    Unsafe.putDouble(addr, !Double.isNaN(current) ? current + value : value);
+                    Unsafe.putDouble(addr, isArgNotNull
+                            ? (encoded < 0 ? value : current + value)
+                            : (!Double.isNaN(current) ? current + value : value));
                 }
             }
         } else {
@@ -105,7 +107,9 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 if (isArgNotNull || !Double.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final double current = Unsafe.getDouble(addr);
-                    Unsafe.putDouble(addr, !Double.isNaN(current) ? current + value : value);
+                    Unsafe.putDouble(addr, isArgNotNull
+                            ? (encoded < 0 ? value : current + value)
+                            : (!Double.isNaN(current) ? current + value : value));
                 }
             }
         }
@@ -114,13 +118,11 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (isArgNotNull || !Double.isNaN(value)) {
+        if (isArgNotNull) {
+            mapValue.putDouble(valueIndex, mapValue.getDouble(valueIndex) + value);
+        } else if (!Double.isNaN(value)) {
             final double sum = mapValue.getDouble(valueIndex);
-            if (!Double.isNaN(sum)) {
-                mapValue.putDouble(valueIndex, sum + value);
-            } else {
-                mapValue.putDouble(valueIndex, value);
-            }
+            mapValue.putDouble(valueIndex, !Double.isNaN(sum) ? sum + value : value);
         }
     }
 
@@ -173,13 +175,11 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final double srcSum = srcValue.getDouble(valueIndex);
-        if (!Double.isNaN(srcSum)) {
+        if (isArgNotNull) {
+            destValue.putDouble(valueIndex, destValue.getDouble(valueIndex) + srcSum);
+        } else if (!Double.isNaN(srcSum)) {
             final double destSum = destValue.getDouble(valueIndex);
-            if (!Double.isNaN(destSum)) {
-                destValue.putDouble(valueIndex, destSum + srcSum);
-            } else {
-                destValue.putDouble(valueIndex, srcSum);
-            }
+            destValue.putDouble(valueIndex, !Double.isNaN(destSum) ? destSum + srcSum : srcSum);
         }
     }
 
@@ -191,6 +191,11 @@ public class SumDoubleGroupByFunction extends DoubleFunction implements GroupByF
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDouble(valueIndex, Double.NaN);
+    }
+
+    @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
     }
 
     @Override

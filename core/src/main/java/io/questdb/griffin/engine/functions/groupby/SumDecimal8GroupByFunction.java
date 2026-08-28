@@ -128,6 +128,11 @@ class SumDecimal8GroupByFunction extends Decimal64Function implements GroupByFun
     }
 
     @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
+    }
+
+    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }

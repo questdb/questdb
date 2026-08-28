@@ -29,6 +29,11 @@ import io.questdb.griffin.engine.functions.UnaryFunction;
 
 public interface ArithmeticUnaryFunction extends UnaryFunction {
     @Override
+    default boolean isNotNull() {
+        return getArg().isNotNull();
+    }
+
+    @Override
     default int getComplexity() {
         return Function.addComplexity(COMPLEXITY_ARITHMETIC, getArg().getComplexity());
     }

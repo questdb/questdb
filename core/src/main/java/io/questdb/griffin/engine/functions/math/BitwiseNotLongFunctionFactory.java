@@ -68,7 +68,7 @@ public class BitwiseNotLongFunctionFactory implements FunctionFactory {
         @Override
         public long getLong(Record rec) {
             final long val = value.getLong(rec);
-            return val != Numbers.LONG_NULL ? ~val : Numbers.LONG_NULL;
+            return isNotNull() || val != Numbers.LONG_NULL ? ~val : Numbers.LONG_NULL;
         }
 
         @Override

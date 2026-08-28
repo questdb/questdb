@@ -349,7 +349,8 @@ public final class TableUtils {
                 false,
                 existingIndex + 1, // replacing column index by convention can be 0 if not in use
                 symbolCacheFlag,
-                symbolCapacity
+                symbolCapacity,
+                existingMeta.getOriginalWriterIndex()
         );
         newMeta.setNotNullFlag(preserveNotNull);
         columnMetadata.add(newMeta);
@@ -1942,7 +1943,7 @@ public final class TableUtils {
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
                             int encodeColumnType = columnType;
-                            if (isNotNull || !symbolTableProvider.containsNullValue(columnIndex)) {
+                            if (isNotNull) {
                                 encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                             }
 

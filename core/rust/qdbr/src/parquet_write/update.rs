@@ -822,13 +822,19 @@ impl ParquetUpdater {
                 col.data_type
             };
 
+            let not_null = old_col_id_to_idx
+                .get(&col.id)
+                .and_then(|&old_idx| old_qdb_meta.as_ref().and_then(|m| m.schema.get(old_idx)))
+                .map(|old_col| old_col.not_null)
+                .unwrap_or(col.not_null_hint);
+
             qdb_meta.schema.push(QdbMetaCol {
                 column_type,
                 column_top: 0,
                 format,
                 ascii: None,
                 id: Some(col.id),
-                not_null: false,
+                not_null,
             });
         }
 

@@ -67,9 +67,10 @@ where
             // page-aligned. The byte content represents valid `T` values.
             let data: &[T] = unsafe { transmute_slice(column.primary_data) };
             let slice = &data[chunk.lower_bound..chunk.upper_bound];
-            if column.not_null_hint && chunk.adjusted_column_top == 0 {
-                numeric::slice_to_page_simd_notnull::<T>(
+            if column.not_null_hint {
+                numeric::slice_to_page_simd_notnull_with_top::<T>(
                     slice,
+                    chunk.adjusted_column_top,
                     options,
                     primitive_type.clone(),
                     Encoding::DeltaBinaryPacked,

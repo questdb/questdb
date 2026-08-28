@@ -185,6 +185,11 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     }
 
     @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
+    }
+
+    @Override
     public boolean supportsBatchComputation() {
         // NOT NULL columns take the per-row compute path; the native batch
         // kernel treats the type sentinel as null and under-counts / skips

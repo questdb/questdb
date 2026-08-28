@@ -99,7 +99,9 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
                 if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                    Unsafe.putLong(addr, isArgNotNull
+                            ? (encoded < 0 ? value : current + value)
+                            : (current != Numbers.LONG_NULL ? current + value : value));
                 }
             }
         } else {
@@ -110,7 +112,9 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
                 if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? current + value : value);
+                    Unsafe.putLong(addr, isArgNotNull
+                            ? (encoded < 0 ? value : current + value)
+                            : (current != Numbers.LONG_NULL ? current + value : value));
                 }
             }
         }
@@ -119,13 +123,11 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (isArgNotNull || value != Numbers.INT_NULL) {
+        if (isArgNotNull) {
+            mapValue.putLong(valueIndex, mapValue.getLong(valueIndex) + value);
+        } else if (value != Numbers.INT_NULL) {
             final long sum = mapValue.getLong(valueIndex);
-            if (sum != Numbers.LONG_NULL) {
-                mapValue.putLong(valueIndex, sum + value);
-            } else {
-                mapValue.putLong(valueIndex, value);
-            }
+            mapValue.putLong(valueIndex, sum != Numbers.LONG_NULL ? sum + value : value);
         }
     }
 
@@ -183,13 +185,11 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final long srcSum = srcValue.getLong(valueIndex);
-        if (srcSum != Numbers.LONG_NULL) {
+        if (isArgNotNull) {
+            destValue.putLong(valueIndex, destValue.getLong(valueIndex) + srcSum);
+        } else if (srcSum != Numbers.LONG_NULL) {
             final long destSum = destValue.getLong(valueIndex);
-            if (destSum != Numbers.LONG_NULL) {
-                destValue.putLong(valueIndex, destSum + srcSum);
-            } else {
-                destValue.putLong(valueIndex, srcSum);
-            }
+            destValue.putLong(valueIndex, destSum != Numbers.LONG_NULL ? destSum + srcSum : srcSum);
         }
     }
 
@@ -201,6 +201,11 @@ public class SumIntGroupByFunction extends LongFunction implements GroupByFuncti
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
+    }
+
+    @Override
+    public boolean isNotNull() {
+        return isArgNotNull;
     }
 
     @Override
