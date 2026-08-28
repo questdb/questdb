@@ -90,7 +90,7 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean isCloseComplete = new AtomicBoolean();
-    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private final ReentrantLock closeLock = new ReentrantLock();
     private final AtomicBoolean running = new AtomicBoolean();
     private boolean isClosing;
     private WorkerPoolManager workerPoolManager;
@@ -219,7 +219,7 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         requestClose();
-        lifecycleLock.lock();
+        closeLock.lock();
         try {
             if (isClosing) {
                 return;
@@ -229,7 +229,7 @@ public class ServerMain implements Closeable {
                 throw new IllegalStateException("QuestDB shutdown did not complete");
             }
         } finally {
-            lifecycleLock.unlock();
+            closeLock.unlock();
         }
     }
 
@@ -239,7 +239,7 @@ public class ServerMain implements Closeable {
      */
     public boolean closeBy(long deadlineNanos) {
         boolean isInterrupted = false;
-        boolean isLocked = lifecycleLock.tryLock();
+        boolean isLocked = closeLock.tryLock();
         while (!isLocked) {
             final long remainingNanos = deadlineNanos - System.nanoTime();
             if (remainingNanos <= 0) {
@@ -249,7 +249,7 @@ public class ServerMain implements Closeable {
                 return false;
             }
             try {
-                isLocked = lifecycleLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+                isLocked = closeLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
             } catch (InterruptedException e) {
                 isInterrupted = true;
             }
@@ -289,7 +289,7 @@ public class ServerMain implements Closeable {
             isCloseComplete.set(true);
             return true;
         } finally {
-            lifecycleLock.unlock();
+            closeLock.unlock();
             if (isInterrupted) {
                 Thread.currentThread().interrupt();
             }
@@ -503,11 +503,11 @@ public class ServerMain implements Closeable {
     }
 
     public void start(boolean addShutdownHook) {
-        lifecycleLock.lock();
+        closeLock.lock();
         try {
             startLocked(addShutdownHook);
         } finally {
-            lifecycleLock.unlock();
+            closeLock.unlock();
         }
     }
 

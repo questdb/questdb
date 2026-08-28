@@ -205,7 +205,6 @@ public abstract class WorkerPoolManager implements Target {
     public boolean haltWithin(long timeoutNanos) {
         return haltBy(System.nanoTime() + timeoutNanos);
     }
-    }
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {

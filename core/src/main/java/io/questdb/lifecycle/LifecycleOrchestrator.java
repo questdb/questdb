@@ -291,7 +291,6 @@ public class LifecycleOrchestrator implements QuietCloseable {
             return true;
 
         } finally {
-            releaseCloseOwnership(isComplete);
             if (isInterrupted) {
                 Thread.currentThread().interrupt();
             }
