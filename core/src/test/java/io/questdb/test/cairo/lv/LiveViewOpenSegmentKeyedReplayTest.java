@@ -100,6 +100,62 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         });
     }
 
+    /**
+     * A cold keyed head miss opens the view's own stored-row cursor in the executor's
+     * prologue, some three hundred lines above the {@code try} whose {@code finally}
+     * releases it, and the prologue can throw: the row-position rebase reads the pinned
+     * generation's checkpoint metadata and raises {@link io.questdb.cairo.CairoException}
+     * over a missing or torn page, and the rebase itself throws outright on an overflow.
+     * The cursor holds a pooled reader of the live view's table, so one faulted repair
+     * strands it for the process's life and the pool drains a tenant per fault.
+     * <p>
+     * The fault is injected rather than driven off a {@code FilesFacade}: the two steps
+     * ahead of the rebase answer every I/O failure by dropping the capture - which deletes
+     * the rebase rather than faulting it - and the rebase reads no file at all while the
+     * pinned generation carries no row-position delta, which is every cold head miss a
+     * fresh view takes. See {@code setSimulateColdKeyedTimelineFaultForTest}.
+     */
+    @Test
+    public void testAColdKeyedHeadMissFreesItsStoredRowCursorWhenTheTimelineFaults() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+
+                // Same correction as the cold keyed route's own case: it sits below the
+                // seed's single head root, so the replay starts cold at the day origin and
+                // opens the stored-row merge in the prologue.
+                job.setSimulateColdKeyedTimelineFaultForTest(true);
+                commit(row(3, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "the injected checkpoint fault must have unwound exactly one refresh",
+                        1,
+                        instance.getRefreshFaultCount()
+                );
+                Assert.assertEquals(
+                        "a faulted cold keyed head miss must release the stored-row cursor's pooled reader",
+                        0,
+                        engine.getBusyReaderCount()
+                );
+
+                // The fault is one-shot, so the retry behind it repairs the view for real.
+                // That it produces the correct output is what says the release above did not
+                // take a cursor some later turn still meant to read.
+                assertViewMatchesRecomputeIgnoringFaults();
+                Assert.assertEquals(
+                        "the retry must leave no reader behind either",
+                        0,
+                        engine.getBusyReaderCount()
+                );
+            }
+        });
+    }
+
     @Test
     public void testAColdKeyedSpliceSurvivesARestart() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
@@ -654,6 +710,11 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     private void assertViewMatchesRecompute() throws Exception {
+        assertViewMatchesRecomputeIgnoringFaults();
+        assertNoRefreshFaults("lv");
+    }
+
+    private void assertViewMatchesRecomputeIgnoringFaults() throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
         final String recompute = "select created_at, account_id, "
                 + "sum(amount) over (partition by account_id, bucket order by created_at "
@@ -669,7 +730,6 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 LOG,
                 true
         );
-        assertNoRefreshFaults("lv");
     }
 
     /**

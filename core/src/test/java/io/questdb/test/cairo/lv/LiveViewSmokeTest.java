@@ -14325,6 +14325,54 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnchorResetsDoubleExtremaWithoutFusionAcrossDayBoundary() throws Exception {
+        // The DOUBLE twin of testAnchorResetsLongExtremaWithoutFusionAcrossDayBoundary.
+        // With the fusion kill switch off the window declines the state plan, both calls
+        // keep their own private map, and the crossing runs
+        // MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction's
+        // resetPartition/computeNext pair instead of the group's accumulateWindowState.
+        // resetPartition re-arms the slot by writing the NaN sentinel, and the DOUBLE
+        // asymmetry mirrors the LONG one: Double.compare(d, NaN) is -1 for every finite d,
+        // so max's `compare > 0` holds for no row while min's `compare < 0` holds for
+        // every one. Only computeNext's `Numbers.isNull(max) ||` disjunct re-anchors both,
+        // and it can only fire because the reset wrote that sentinel.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, max(x) OVER w AS mx, min(x) OVER w AS mn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 2 is bracketed by day 1 on both sides - its max 30.0 is below day 1's
+            // 50.0 and its min 30.0 is above day 1's 5.0 - so a carried-forward extremum
+            // fails on either column. Every value is strictly positive, so a slot the
+            // reset left on a zero-filled map entry also fails: min would report 0.0 for
+            // the whole view. The non-null day-2 expectations fail a third way if a slot
+            // is left reading the NaN sentinel.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 50.0, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 5.0, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 30.0, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, mx, mn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tmx\tmn\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t50.0\t50.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t50.0\t5.0\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t50.0\t5.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t30.0\t30.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t30.0\t7.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsLongExtremaWithoutFusionAcrossDayBoundary() throws Exception {
         // The same crossing on the other runtime. With the fusion kill switch off, the
         // window declines the state plan, both calls keep their own private map, and the

@@ -511,6 +511,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private QuietCloseable simulateBaseMetadataCloseFailureForTest;
+    // Test-only: when armed, a cold keyed head-miss raises, at the point it rebases its
+    // boundary row positions, the CairoException that
+    // LiveViewCheckpointTimelineStoreWriter.RepairCapture#collectEffectiveRowPositions
+    // raises over a missing or torn checkpoint metadata page. No FilesFacade fault reaches
+    // that call: beginCheckpointTimelineRepair and writeCheckpointRepairMarker, the two
+    // steps ahead of it, answer every I/O failure by dropping the capture - which deletes
+    // the call rather than faulting it - and the call itself reads no file when the pinned
+    // generation carries no row-position delta. One-shot (self-clears on fire); always
+    // false in production.
+    @TestOnly
+    private boolean simulateColdKeyedTimelineFaultForTest;
     // Test-only: when armed, a forward live-view commit goes out at the default dedup
     // mode instead of NO_DEDUP, which is what the ordinary path did before it was
     // stamped. On a view whose table carries the (timestamp, key) dedup keys the apply
@@ -1151,6 +1162,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateBaseMetadataCloseFailureForTest(QuietCloseable closeFault) {
         this.simulateBaseMetadataCloseFailureForTest = closeFault;
+    }
+
+    /**
+     * Test-only: makes a cold keyed head-miss raise, where it rebases its boundary row
+     * positions, the {@link CairoException} a missing or torn checkpoint metadata page
+     * raises out of
+     * {@link LiveViewCheckpointTimelineStoreWriter.RepairCapture#collectEffectiveRowPositions}.
+     * That throw leaves the repair through the executor's prologue, which is the one
+     * stretch of the head-miss executor the replay's own {@code try} does not cover, so it
+     * is what proves the stored-row cursor opened there is still released. One-shot, so the
+     * refresh that follows the fault repairs the view for real. A {@code FilesFacade} fault
+     * cannot stand in for it - see the field's comment. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateColdKeyedTimelineFaultForTest(boolean simulate) {
+        this.simulateColdKeyedTimelineFaultForTest = simulate;
     }
 
     /**
@@ -4368,7 +4395,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Table metadata rather than sequencer metadata, deliberately: CairoEngine documents
         // that the dedup flag is the one change sequencer metadata cannot confirm. A table
         // whose dedup this answers "no" for takes repair routes a deduplicating base must
-        // not take, so a stale or absent answer here is a wrong answer, not a delayed one.
+        // not take, so a stale answer here is a wrong answer, not a delayed one.
+        //
+        // Which is why a read that FAILS propagates rather than answering "no". The metadata
+        // pool raises CairoException over a perfectly healthy base - the "Transaction read
+        // timeout" / "Metadata read timeout" TableReaderMetadataTenantImpl.reloadSlow spins
+        // into under metadata churn, a locked or exhausted entry - and a "no" there routes a
+        // deduplicating base down the raw-WAL path for the whole cycle, where a replacement at
+        // exactly the frontier timestamp appends as an additive duplicate row and is committed
+        // with recordRefreshSuccess(). handleRefreshFailure classifies the propagated error
+        // instead, and the next tick re-reads the same healthy base and routes correctly.
+        //
+        // A base table that is GONE is the shape still answered "no", though not because the
+        // base is provably gone: verifyTableToken throws tableDoesNotExist only when the token's
+        // name is unregistered or locked - a stale token whose name still resolves raises
+        // TableReferenceOutOfDateException, which is not a CairoException and never reaches this
+        // catch - and renameToNew retires the old name while nothing re-points
+        // LiveViewDefinition.baseTableToken, so a RENAMEd base that is alive and deduplicating
+        // lands here too. The "no" holds for a stronger reason - it reaches no route that emits
+        // a row: incrementalRefresh, on the lead and raw-WAL paths alike, goes through
+        // buildColumnMappings -> engine.getTableMetadata(baseToken), which catches nothing, and
+        // drainAppliedBase goes through engine.getReader(baseToken); both re-verify the token
+        // before any output. Neither shape heals: RENAME retires the old name for good, and
+        // notifyDropped removes the registry name BEFORE it notifies the pools, so a pool
+        // tableDropped implies the next verifyTableToken throws tableDoesNotExist. A route that
+        // reads the base raises the same error and handleRefreshFailure classifies it there; a
+        // flush-only lead cycle reads none and only commits the lead earlier turns drained.
+        // baseColumnWriterIndex answers -1 on the same shape, but it swallows every
+        // CairoException to do so, which is exactly what this catch no longer does.
         try (TableMetadata baseTableMetadata = engine.getTableMetadata(baseToken)) {
             for (int i = 0, n = baseTableMetadata.getColumnCount(); i < n; i++) {
                 if (baseTableMetadata.isDedupKey(i)) {
@@ -4377,6 +4431,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             return false;
         } catch (CairoException e) {
+            if (!e.isTableDoesNotExist() && !e.isTableDropped()) {
+                throw e;
+            }
+            LOG.info().$("live view base table is gone, treating it as non-deduplicating [view=")
+                    .$(instance.getDefinition().getViewName())
+                    .$(", base=").$(baseToken)
+                    .$(", error=").$safe(e.getFlyweightMessage()).I$();
             return false;
         }
     }
@@ -8080,1369 +8141,1408 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // leaves an ordinary checkpoint resume behind it rather than another cold repair.
         boolean coldKeyedRoute = false;
         RecordCursor storedRowCursor = null;
-        if (resumed == null && isColdOpenSegmentKeyedHeadMissAvailable(windowFactory, plan)) {
-            priceOpenSegmentKeyedScan(
-                    instance,
-                    instance.getCompiledPlan(),
-                    reader,
-                    scanLowTs,
-                    plan.getScanHighTsInclusive(),
-                    0,
-                    false,
-                    true,
-                    emitLowTs
-            );
-            if (isOpenSegmentKeyedReplayAvailable(instance, scanLowTs)
-                    && armOpenSegmentKeyedReplay(instance, reader)
-                    && instance.getCompiledPlan().getPageFrameFactory()
-                    .isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())) {
-                storedRowCursor = openStoredRowCursor(instance, emitLowTs, Long.MAX_VALUE);
-                coldKeyedRoute = storedRowCursor != null;
+        // The prologue below acquires these and the replay's own try/finally releases them.
+        // They sit at method scope, next to storedRowCursor above, so the prologue's own
+        // cleanup can reach them too. replayEntered is what tells the two cleanups apart: it
+        // turns true on the replay's first statement, so the prologue's runs only when the
+        // replay never started.
+        LiveViewCheckpointRepairSession session = null;
+        LiveViewCheckpointTimelineStoreWriter.RepairCapture timelineCapture = null;
+        boolean replayEntered = false;
+        // The executor's prologue runs from here to the replay's own try/finally below,
+        // and it opens the view's stored-row merge cursor on the way: the cold keyed route
+        // straight away, the closed-segment keyed route once its key domain is priced. It
+        // also throws - the row-position rebase reads the pinned generation's checkpoint
+        // metadata and raises over a missing or torn page, and raises outright when the
+        // rebased position overflows - so what it acquires needs a cleanup of its own from
+        // the open onward, the way replayFromAnchor's keyed resume gets one after its own.
+        try {
+            if (resumed == null && isColdOpenSegmentKeyedHeadMissAvailable(windowFactory, plan)) {
+                priceOpenSegmentKeyedScan(
+                        instance,
+                        instance.getCompiledPlan(),
+                        reader,
+                        scanLowTs,
+                        plan.getScanHighTsInclusive(),
+                        0,
+                        false,
+                        true,
+                        emitLowTs
+                );
+                if (isOpenSegmentKeyedReplayAvailable(instance, scanLowTs)
+                        && armOpenSegmentKeyedReplay(instance, reader)
+                        && instance.getCompiledPlan().getPageFrameFactory()
+                        .isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())) {
+                    storedRowCursor = openStoredRowCursor(instance, emitLowTs, Long.MAX_VALUE);
+                    coldKeyedRoute = storedRowCursor != null;
+                }
+                if (!coldKeyedRoute) {
+                    Misc.free(storedRowCursor);
+                    storedRowCursor = null;
+                    keyedReplay.clear();
+                }
             }
-            if (!coldKeyedRoute) {
+            final LiveViewRepairRuntime repairRuntime = isolatedRepairRuntime(
+                    instance,
+                    finiteHighBound || coldKeyedRoute
+            );
+            if (coldKeyedRoute && repairRuntime == null) {
                 Misc.free(storedRowCursor);
                 storedRowCursor = null;
                 keyedReplay.clear();
+                coldKeyedRoute = false;
             }
-        }
-        final LiveViewRepairRuntime repairRuntime = isolatedRepairRuntime(
-                instance,
-                finiteHighBound || coldKeyedRoute
-        );
-        if (coldKeyedRoute && repairRuntime == null) {
-            Misc.free(storedRowCursor);
-            storedRowCursor = null;
-            keyedReplay.clear();
-            coldKeyedRoute = false;
-        }
-        final boolean isolated = repairRuntime != null;
-        if (isolated) {
-            isolatedReplayTurnCount++;
-        }
-        final WindowRecordCursorFactory replayWindowFactory = isolated ? repairRuntime.getWindowFactory() : windowFactory;
-        final LiveViewWindow replayAnchorWindow = isolated ? repairRuntime.getAnchorWindow() : anchorWindow;
-        // Whether this repair may re-version the logical boundaries it crosses instead
-        // of truncating the timeline at R. What it needs is that the publication be able
-        // to describe every key the boundary held. Two ways to get there. A time-expiring
-        // dependency reconstructs every key outright, which is
-        // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete(). A ROWS dependency
-        // does not - a root frozen from such a replay would describe a narrower key set
-        // than the boundary it replaces, which a later resume or restore then reads as
-        // the whole truth - so it instead names the keys it does describe, and the
-        // publication leaves every other key's entry exactly as the old root wrote it.
-        // With neither, the repair truncates at R: the runtime survives a narrowed
-        // state because the overlay puts it back, and a published root has nothing to
-        // put it back from.
-        //
-        // The two arms are not the same repair, and the key domain belongs to one of
-        // them only. A converging repair restores the runtime it entered with, so a
-        // narrowed replay costs it nothing and Q is what carries the splice. A repair
-        // reaching the end of the base table promotes what its replay ends on instead,
-        // and a ROWS frame is exactly the dependency that promotion is unsafe for - it
-        // never expires by time, so a key with no row at or above L keeps state no
-        // replay from L reconstructs. The plan already refuses to localize that shape
-        // behind an EOF bound; the predicate says so too rather than leaning on it, so
-        // the domain disjunct cannot follow a future ROWS repair over the boundary.
-        // What the EOF arm does admit is every key-complete localization - the anchored
-        // repair this exists for, and the bounded RANGE one that has localized behind
-        // EOF since the localization existed - on one argument for both: a key the
-        // replay never saw has an expired frame, or a reset segment, at every timestamp
-        // the re-versioned roots describe, so a root that omits it and a root that
-        // carries its empty accumulator say the same thing.
-        final boolean isTimelineSpliceable = coldKeyedRoute || (finiteHighBound
-                ? plan.isReplayStateKeyComplete() || plan.getOutputKeyDomain() != null
-                : localized && plan.isReplayStateKeyComplete());
-        // The publication ordering this rebuild walks. It owns the two decisions the
-        // rest of the method used to spread across local flags: what happens to the
-        // runtime once the repair publishes, and whether the replacement is
-        // materialised enough for a generation, a watermark or a head seal to
-        // describe it.
-        repairPublication.clear();
-        repairPublication.plan();
-        // The runtime this replay folds its rows into. A converging repair gets its own,
-        // holding only the keys of [L, H): the primary runtime is then neither wiped nor
-        // copied aside, and the state above H it was already correct in stays where it is.
-        // Null puts the replay back through the primary runtime, which is what an
-        // unlocalized rebuild wants - its replay state IS the new runtime - and what a
-        // converging repair falls back to when the second compile is unavailable.
-        // Everything one localized repair carries across the turns it may take. A
-        // repair that never yields uses it as plain scratch and disposes of it on
-        // the way out; only a repair that parks leaves it on the instance. The
-        // unlocalized rebuild has none - it stages no roots, keeps no overlay and
-        // may not yield.
-        //
-        // Opened for a spliceable repair as well as a converging one, because the
-        // capture below dereferences the session for its boundary schedule and its
-        // durable descriptor: without one, an EOF-localized repair would splice
-        // through a null. It also makes the turn budget reachable for that repair,
-        // which is what stops a correction over a long open segment from holding one
-        // worker for the whole replay.
-        final boolean resuming = resumed != null;
-        final LiveViewCheckpointRepairSession session = resuming
-                ? resumed
-                : (finiteHighBound || isTimelineSpliceable || coldKeyedRoute) ? openRepairSession(plan, replayWindowFactory) : null;
-        boolean readerAttached = false;
-        // Whether the primary runtime comes out of this repair holding the state it went
-        // in with. True both for a replay that ran beside it and for one that copied it
-        // aside and puts it back; false for one whose own replay state becomes the
-        // runtime. The empty-range branch below is the one place it is retracted.
-        //
-        // A resumed turn recovers it rather than being told: the isolation is decided by
-        // the same plan the prior turn read, and a copy-aside repair left the scratch
-        // overlay captured, once, by its first turn.
-        boolean primaryKept = isolated || (session != null && session.getOverlay().isCaptured());
-        // Cumulative across every turn of this repair; a resumed turn continues the
-        // counts the prior ones left.
-        long appendedRows = resuming ? resumed.getAppendedRows() : 0;
-        long o3ScanRows = resuming ? resumed.getScanRows() : 0;
-        long replayMaxTs = resuming ? resumed.getReplayMaxTs() : Numbers.LONG_NULL;
-        // Minimum output ts the replay actually produced (rows arrive
-        // ts-ascending, so the first appended row is the minimum). Base of the
-        // REPLACE_RANGE low boundary decided at the commit site below.
-        long replayMinTs = resuming ? resumed.getReplayMinTs() : Numbers.LONG_NULL;
-        // Rows this turn's window cursor produced, emitted or suppressed. The
-        // scan-cost counter is sourced from it when no filter is present to count
-        // base rows itself.
-        long scannedRows = 0;
-        // Whether this replay follows the keys its correction touched instead of reading
-        // the segment whole, and the view's own rows it publishes for every other key. The
-        // caller armed the key domain either for one closed segment or for a no-anchor
-        // replay from the active segment's origin. What is decided here is whether this
-        // repair is a shape that route can serve: the former needs the bounded interval a
-        // converging repair has, while the cold route was fully gated and opened its merge
-        // before the isolated runtime was acquired above.
-        //
-        // Ahead of the capture rather than beside the cursor, because the capture carries
-        // Q: a keyed replay's frozen roots describe its own keys and leave every other
-        // key's entry exactly as the old root wrote it, and a capture opened without Q
-        // would instead take the replay's narrower state for the whole truth.
-        boolean keyedRoute = coldKeyedRoute || (keyedReplay.isArmed()
-                && !resuming
-                && !fullRebuild
-                && localized
-                && finiteHighBound);
-        if (keyedRoute && !coldKeyedRoute) {
-            storedRowCursor = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive());
-            if (storedRowCursor == null) {
-                keyedRoute = false;
+            final boolean isolated = repairRuntime != null;
+            if (isolated) {
+                isolatedReplayTurnCount++;
             }
-        }
-        // The timeline range splice this repair publishes instead of retiring
-        // the whole timeline. Taken by a repair whose replay can describe every key
-        // the boundaries it crosses held - see isTimelineSpliceable. Null leaves the
-        // retire - or, for a localized repair, the prefix truncate - in place, and
-        // the boundary list stays empty so the replay's segmentation is a dead
-        // branch.
-        LiveViewCheckpointTimelineStoreWriter.RepairCapture timelineCapture = null;
-        if (resuming) {
-            timelineCapture = resumed.takeCapture();
-        } else if (isTimelineSpliceable) {
-            // C, not R: a root in [R, C) keeps its state - nothing it holds changed -
-            // and its output is re-emitted identically, so the splice reuses it. Only
-            // [C, H) receives new payload versions - and for a repair reaching the end
-            // of the base table that is every root above C, which is what makes it a
-            // splice rather than a truncate.
-            timelineCapture = beginCheckpointTimelineRepair(
-                    instance,
-                    plan,
-                    session,
-                    plan.getRetireLowTs(),
-                    timelineHighTsExclusive,
-                    // Never chained, whichever bound this repair reached. A chain seeds
-                    // its first boundary from the published root below the interval and
-                    // images only the keys the runtime has marked dirty since, which
-                    // needs a runtime standing at that root. A head miss stands nowhere
-                    // near it: it wipes the accumulators and replays from L, so a key it
-                    // never touched would keep the predecessor's entry instead of the
-                    // identity the anchor reset - or the frame expiry - actually leaves
-                    // it at. The resume path is the one that restores the predecessor
-                    // first, and the one that chains.
-                    false,
-                    true,
-                    keyedRoute ? keyedReplay.getOutputKeys() : null
-            );
-            final int maxRepairedBoundaries =
-                    engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries();
-            if (timelineCapture != null
-                    && (maxRepairedBoundaries <= 0 || session.getBoundaries().size() > maxRepairedBoundaries)) {
-                // Same bound the resume path applies, and it earns its keep here for a
-                // reason the resume path does not have: an EOF repair's interval is
-                // [C, +inf), so it collects every root the cadence has sealed above the
-                // correction rather than the handful inside a finite H. Re-versioning
-                // that many roots stops being worth what keeping the ladder buys - a
-                // repair this deep is bounded by the rows it replays long before it is
-                // bounded by its roots. Drop back to the truncate, which is what every
-                // out-of-order head miss did before the splice existed.
-                //
-                // Logged rather than silently taken: a view that keeps arriving here is
-                // one whose lateness has outgrown its checkpoint cadence, and that is an
-                // operator's decision to make.
-                LOG.info().$("live view O3 head miss declined the checkpoint splice, truncating instead [view=")
-                        .$(viewName)
-                        .$(", boundaries=").$(session.getBoundaries().size())
-                        .$(", max=").$(maxRepairedBoundaries)
-                        .$(", outputLowTs=").$ts(emitLowTs).I$();
-                timelineCapture = Misc.free(timelineCapture);
-                session.discardDescriptor();
-                session.getBoundaries().clear();
-            }
-            if (timelineCapture != null && !writeCheckpointRepairMarker(instance, emitLowTs)) {
-                // The marker is what makes keeping the roots safe to attempt: it is the
-                // only thing standing between a crash after the replacement commits and
-                // a restart restoring a root that replacement has moved under. The
-                // splice leaves every root where it is and rewrites the output beneath
-                // them, so the window is real on both bounds - and on the EOF bound it
-                // is the whole timeline above C. Without a marker the repair takes the
-                // truncate below, which carries its own.
-                //
-                // Decided here, before the cursor chain is built, so a capture the
-                // repair cannot protect is dropped while dropping it is still free.
-                timelineCapture = Misc.free(timelineCapture);
-                session.discardDescriptor();
-                session.getBoundaries().clear();
-            } else if (timelineCapture != null) {
-                session.setRepairMarkerLive(true);
-            }
-        }
-        if (timelineCapture != null && coldKeyedRoute) {
-            // The cold keyed envelope is insert-only, unfiltered and over a base that
-            // does not deduplicate, so each residual base row adds exactly one output
-            // row. Rebase the old roots' effective positions by that exact delta instead
-            // of walking the live view's stored interval. This is the same proof the
-            // keyed resume uses; the only difference is that no anchor position exists
-            // to serve as the origin.
-            timelineCapture.collectEffectiveRowPositions(
-                    session.getBoundaries(),
-                    openSegmentArithmeticBoundaryPositions
-            );
-            for (int i = 0, n = session.getBoundaries().size(); i < n; i++) {
-                try {
-                    openSegmentArithmeticBoundaryPositions.setQuick(
-                            i,
-                            Math.addExact(
-                                    openSegmentArithmeticBoundaryPositions.getQuick(i),
-                                    segmentChangeSet.getResidualRowCountAtOrBelow(
-                                            session.getBoundaries().getQuick(i).maxTimestamp
-                                    )
-                            )
-                    );
-                } catch (ArithmeticException e) {
-                    throw CairoException.critical(0).put("live view checkpoint row position overflow");
+            final WindowRecordCursorFactory replayWindowFactory = isolated ? repairRuntime.getWindowFactory() : windowFactory;
+            final LiveViewWindow replayAnchorWindow = isolated ? repairRuntime.getAnchorWindow() : anchorWindow;
+            // Whether this repair may re-version the logical boundaries it crosses instead
+            // of truncating the timeline at R. What it needs is that the publication be able
+            // to describe every key the boundary held. Two ways to get there. A time-expiring
+            // dependency reconstructs every key outright, which is
+            // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete(). A ROWS dependency
+            // does not - a root frozen from such a replay would describe a narrower key set
+            // than the boundary it replaces, which a later resume or restore then reads as
+            // the whole truth - so it instead names the keys it does describe, and the
+            // publication leaves every other key's entry exactly as the old root wrote it.
+            // With neither, the repair truncates at R: the runtime survives a narrowed
+            // state because the overlay puts it back, and a published root has nothing to
+            // put it back from.
+            //
+            // The two arms are not the same repair, and the key domain belongs to one of
+            // them only. A converging repair restores the runtime it entered with, so a
+            // narrowed replay costs it nothing and Q is what carries the splice. A repair
+            // reaching the end of the base table promotes what its replay ends on instead,
+            // and a ROWS frame is exactly the dependency that promotion is unsafe for - it
+            // never expires by time, so a key with no row at or above L keeps state no
+            // replay from L reconstructs. The plan already refuses to localize that shape
+            // behind an EOF bound; the predicate says so too rather than leaning on it, so
+            // the domain disjunct cannot follow a future ROWS repair over the boundary.
+            // What the EOF arm does admit is every key-complete localization - the anchored
+            // repair this exists for, and the bounded RANGE one that has localized behind
+            // EOF since the localization existed - on one argument for both: a key the
+            // replay never saw has an expired frame, or a reset segment, at every timestamp
+            // the re-versioned roots describe, so a root that omits it and a root that
+            // carries its empty accumulator say the same thing.
+            final boolean isTimelineSpliceable = coldKeyedRoute || (finiteHighBound
+                    ? plan.isReplayStateKeyComplete() || plan.getOutputKeyDomain() != null
+                    : localized && plan.isReplayStateKeyComplete());
+            // The publication ordering this rebuild walks. It owns the two decisions the
+            // rest of the method used to spread across local flags: what happens to the
+            // runtime once the repair publishes, and whether the replacement is
+            // materialised enough for a generation, a watermark or a head seal to
+            // describe it.
+            repairPublication.clear();
+            repairPublication.plan();
+            // The runtime this replay folds its rows into. A converging repair gets its own,
+            // holding only the keys of [L, H): the primary runtime is then neither wiped nor
+            // copied aside, and the state above H it was already correct in stays where it is.
+            // Null puts the replay back through the primary runtime, which is what an
+            // unlocalized rebuild wants - its replay state IS the new runtime - and what a
+            // converging repair falls back to when the second compile is unavailable.
+            // Everything one localized repair carries across the turns it may take. A
+            // repair that never yields uses it as plain scratch and disposes of it on
+            // the way out; only a repair that parks leaves it on the instance. The
+            // unlocalized rebuild has none - it stages no roots, keeps no overlay and
+            // may not yield.
+            //
+            // Opened for a spliceable repair as well as a converging one, because the
+            // capture below dereferences the session for its boundary schedule and its
+            // durable descriptor: without one, an EOF-localized repair would splice
+            // through a null. It also makes the turn budget reachable for that repair,
+            // which is what stops a correction over a long open segment from holding one
+            // worker for the whole replay.
+            final boolean resuming = resumed != null;
+            session = resuming
+                    ? resumed
+                    : (finiteHighBound || isTimelineSpliceable || coldKeyedRoute) ? openRepairSession(plan, replayWindowFactory) : null;
+            boolean readerAttached = false;
+            // Whether the primary runtime comes out of this repair holding the state it went
+            // in with. True both for a replay that ran beside it and for one that copied it
+            // aside and puts it back; false for one whose own replay state becomes the
+            // runtime. The empty-range branch below is the one place it is retracted.
+            //
+            // A resumed turn recovers it rather than being told: the isolation is decided by
+            // the same plan the prior turn read, and a copy-aside repair left the scratch
+            // overlay captured, once, by its first turn.
+            boolean primaryKept = isolated || (session != null && session.getOverlay().isCaptured());
+            // Cumulative across every turn of this repair; a resumed turn continues the
+            // counts the prior ones left.
+            long appendedRows = resuming ? resumed.getAppendedRows() : 0;
+            long o3ScanRows = resuming ? resumed.getScanRows() : 0;
+            long replayMaxTs = resuming ? resumed.getReplayMaxTs() : Numbers.LONG_NULL;
+            // Minimum output ts the replay actually produced (rows arrive
+            // ts-ascending, so the first appended row is the minimum). Base of the
+            // REPLACE_RANGE low boundary decided at the commit site below.
+            long replayMinTs = resuming ? resumed.getReplayMinTs() : Numbers.LONG_NULL;
+            // Rows this turn's window cursor produced, emitted or suppressed. The
+            // scan-cost counter is sourced from it when no filter is present to count
+            // base rows itself.
+            long scannedRows = 0;
+            // Whether this replay follows the keys its correction touched instead of reading
+            // the segment whole, and the view's own rows it publishes for every other key. The
+            // caller armed the key domain either for one closed segment or for a no-anchor
+            // replay from the active segment's origin. What is decided here is whether this
+            // repair is a shape that route can serve: the former needs the bounded interval a
+            // converging repair has, while the cold route was fully gated and opened its merge
+            // before the isolated runtime was acquired above.
+            //
+            // Ahead of the capture rather than beside the cursor, because the capture carries
+            // Q: a keyed replay's frozen roots describe its own keys and leave every other
+            // key's entry exactly as the old root wrote it, and a capture opened without Q
+            // would instead take the replay's narrower state for the whole truth.
+            boolean keyedRoute = coldKeyedRoute || (keyedReplay.isArmed()
+                    && !resuming
+                    && !fullRebuild
+                    && localized
+                    && finiteHighBound);
+            if (keyedRoute && !coldKeyedRoute) {
+                storedRowCursor = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive());
+                if (storedRowCursor == null) {
+                    keyedRoute = false;
                 }
             }
-            openSegmentArithmeticRowPositionCount++;
-        }
-        final long insertedRowDelta = coldKeyedRoute ? segmentChangeSet.getResidualRowCount() : 0;
-        if (session != null) {
-            // The publication mirrors every stage it records into the descriptor, and
-            // a resumed turn walks the stages from PLAN again over the same record.
-            repairPublication.of(session.getDescriptor());
-        }
-        // Live-view rows below R, and the rows the replacement is about to delete
-        // from [R, H). Both are read from the pre-repair table, which is the only
-        // moment they exist: the first anchors every repaired root's position, the
-        // second proves after the fact that the replacement moved exactly the rows
-        // the arithmetic says it did. A resumed turn inherits them - the table has
-        // not moved since, because nothing was committed.
-        long durableRowsBelowFloor = resuming ? resumed.getDurableRowsBelowFloor() : 0;
-        long durableRowsBeforeRepair = resuming ? resumed.getDurableRowsBeforeRepair() : 0;
-        long durableRowsReplaced = resuming ? resumed.getDurableRowsReplaced() : 0;
-        if (!resuming && timelineCapture != null) {
-            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                durableRowsBeforeRepair = lvReader.size();
-                durableRowsBelowFloor = countDurableRowsBelow(lvReader, emitLowTs);
-                final long rowsBelowHighBound = countDurableRowsBelow(lvReader, timelineHighTsExclusive);
-                if (durableRowsBelowFloor < 0 || rowsBelowHighBound < 0) {
-                    throw CairoException.critical(0)
-                            .put("live view table has no searchable prefix for a checkpoint timeline repair");
-                }
-                durableRowsReplaced = rowsBelowHighBound - durableRowsBelowFloor;
-                session.setDurableRowCounts(durableRowsBeforeRepair, durableRowsBelowFloor, durableRowsReplaced);
-            } catch (Throwable t) {
-                LOG.error().$("could not measure live view durable prefix for a checkpoint timeline repair [view=")
-                        .$(viewName).$(", error=").$(t).I$();
-                timelineCapture = Misc.free(timelineCapture);
-                session.discardDescriptor();
-                session.getBoundaries().clear();
-                durableRowsBelowFloor = 0;
-                durableRowsBeforeRepair = 0;
-                durableRowsReplaced = 0;
-            }
-        }
-        // The logical boundaries this repair re-versions, and the cursor into them:
-        // the ones the replay has already frozen. Empty for an unlocalized rebuild,
-        // which freezes none.
-        final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries =
-                session != null ? session.getBoundaries() : emptyRepairBoundaries;
-        int capturedBoundaries = resuming ? resumed.getCapturedBoundaries() : 0;
-        boolean replayCompleted = false;
-        // The range splice this repair published, null until it does (and if it
-        // never does). Carries the newest logical key the spliced timeline holds,
-        // which the post-replay seal below needs: a splice appends no root, so a
-        // frontier that has run past that key leaves the generation claiming base
-        // coverage no root has.
-        LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice = null;
-        // Set when this turn left a durable repair marker behind, which the two ways of
-        // keeping a timeline both do: the prefix truncate an EOF-reaching localized
-        // repair takes when it holds no capture, and the splice, which leaves every
-        // root where it is and rewrites the output beneath them. The post-replay seal
-        // resolves it either way - see the block that reads it.
-        //
-        // Read off the session rather than re-derived, because it outlives the turn: a
-        // repair that parks on its budget leaves the marker on disk, and the turn that
-        // finishes it is the one that owes the clear.
-        boolean prefixMarkerLive = session != null && session.isRepairMarkerLive();
-        // Set when the replay stops on its turn budget with the repair unfinished,
-        // together with the inclusive timestamp the next turn re-opens the scan at.
-        boolean yielded = false;
-        long resumeFromTs = Numbers.LONG_NULL;
-        long resumeSkipRows = 0;
-        if (resuming && !isolated) {
-            // The accumulators already lead the last durable commit - the prior turns
-            // put them there - so a fault anywhere in this turn has to rebuild them from
-            // the applied base rather than let the next cycle drain over a half-replayed
-            // runtime. handleRefreshFailure reads this flag to decide that.
-            //
-            // An isolated replay leads nothing: the accumulators the prior turns advanced
-            // are the isolated runtime's, and the primary's still stand exactly where the
-            // forward drain left them. A fault there costs the candidate, not the view.
-            windowStateDirty = true;
-        }
-        try {
-            // The incremental-seal bookkeeping, taken aside before anything else moves. The
-            // wipe below resets it and the overlay's restore resets it again - both through
-            // the contract a checkpoint restore reads state under, which deliberately leaves
-            // every target owing a complete freeze - so without this the seal that closes the
-            // repair images the whole live domain instead of the keys its own batch touched.
-            //
-            // Ahead of the retire rather than beside the overlay capture, because the retire
-            // clears the head and with it the batch-minimum window that travels here. Nothing
-            // between this point and the wipe feeds a row, so what it takes is exactly what
-            // the wipe would have destroyed.
-            //
-            // A repair replaying through the primary runtime takes it only when it holds a
-            // splice capture AND converges, which is exactly the repair that puts the
-            // primary's own state back. Without a capture the timeline is retired outright,
-            // no generation is left for a baseline to name, and the wipe below leaves every
-            // target owing the complete freeze anyway; and a repair reaching the end of the
-            // base table promotes what its replay ends on, so bookkeeping recorded against
-            // the state it replaced describes nothing that survives - settleRepairRuntime
-            // drops it on that path rather than re-stamping it. An isolated replay takes it
-            // whether or not it holds a capture, because it wipes nothing: its targets would
-            // otherwise keep a baseline naming a generation the retire is about to delete,
-            // and the restore below is what re-stamps that baseline against the splice or
-            // drops it.
-            if (!resuming && (isolated || (timelineCapture != null && finiteHighBound))) {
-                session.getSealCarryover().capture(
-                        windowFactory.getWindowFunctions(),
-                        anchorWindow,
-                        instance.getMinSeenTsSinceCheckpoint()
-                );
-            }
-
-            // Retire the checkpoint state this O3 has unsealed. Clearing the head
-            // puts the post-replay seal on its first-checkpoint path; the follow-up
-            // seal below opens a fresh history, and until then a restart rebuilds
-            // from the view boundary.
-            //
-            // The versioned timeline goes with it unless this repair holds a splice
-            // capture, which corrects the same roots precisely instead of dropping
-            // them all.
-            //
-            // First turn only: a repair that yielded already retired what its change
-            // unsealed, and the timeline it may still splice into is the one its
-            // capture pinned.
-            if (!resuming) {
-                if (timelineCapture == null && localized) {
-                    // Localized repair with no capture to splice through - the view's
-                    // timeline was retired by an earlier repair and no seal has re-opened
-                    // it, or the boundary bound or the marker declined it. There is no
-                    // suffix to correct, but the roots below R are still correct.
-                    // Preserve them - keeping the long-term anchors and the checkpoint id
-                    // space - instead of retiring the whole timeline for one near-head
-                    // correction. The durable marker this writes forces a mid-repair
-                    // crash to rebuild from the applied base.
-                    prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
-                } else {
-                    retireCheckpointStateOnO3(instance, timelineCapture == null);
-                }
-                if (session != null) {
-                    // Whatever this turn decided, the session is what carries it to the
-                    // turn that resolves it. The truncate may have retired instead of
-                    // preserving, which takes the marker with it.
-                    session.setRepairMarkerLive(prefixMarkerLive);
-                }
-            }
-
-            engine.detachReader(reader);
-            executionContext.of(reader);
-            readerAttached = true;
-
-            // The replay's own decomposition: its base scan, filter, projections and window
-            // factory. An isolated replay reads every node off its own runtime, so no cursor
-            // it opens advances a memoizer or a function the forward drain reads.
-            final LiveViewCompiledPlan compiledPlan = isolated ? repairRuntime.getPlan() : instance.getCompiledPlan();
-            final Function filter = compiledPlan.getFilter();
-            final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
-            RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
-            final int cursorTimestampIndex = outMetadata.getTimestampIndex();
-            // The emitted (designated timestamp, projected key) pairs are the identity a
-            // sparse upsert stands on. Both keyed routes arm the detector, while bounded
-            // localized fallbacks keep collecting the pre-existing diagnostic verdict.
-            //
-            // A resumed turn continues the check the prior turns left rather than
-            // restarting it: a duplicate whose two rows sit on either side of a park is
-            // still a duplicate, and the group the park stopped inside is the one place
-            // that can happen.
+            // The timeline range splice this repair publishes instead of retiring
+            // the whole timeline. Taken by a repair whose replay can describe every key
+            // the boundaries it crosses held - see isTimelineSpliceable. Null leaves the
+            // retire - or, for a localized repair, the prefix truncate - in place, and
+            // the boundary list stays empty so the replay's segmentation is a dead
+            // branch.
             if (resuming) {
-                outputUniqueness.copyFrom(resumed.getOutputUniqueness());
-            } else {
-                outputUniqueness.of((keyedRoute || (localized && finiteHighBound))
-                        ? LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(compiledPlan)
-                        : LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
+                timelineCapture = resumed.takeCapture();
+            } else if (isTimelineSpliceable) {
+                // C, not R: a root in [R, C) keeps its state - nothing it holds changed -
+                // and its output is re-emitted identically, so the splice reuses it. Only
+                // [C, H) receives new payload versions - and for a repair reaching the end
+                // of the base table that is every root above C, which is what makes it a
+                // splice rather than a truncate.
+                timelineCapture = beginCheckpointTimelineRepair(
+                        instance,
+                        plan,
+                        session,
+                        plan.getRetireLowTs(),
+                        timelineHighTsExclusive,
+                        // Never chained, whichever bound this repair reached. A chain seeds
+                        // its first boundary from the published root below the interval and
+                        // images only the keys the runtime has marked dirty since, which
+                        // needs a runtime standing at that root. A head miss stands nowhere
+                        // near it: it wipes the accumulators and replays from L, so a key it
+                        // never touched would keep the predecessor's entry instead of the
+                        // identity the anchor reset - or the frame expiry - actually leaves
+                        // it at. The resume path is the one that restores the predecessor
+                        // first, and the one that chains.
+                        false,
+                        true,
+                        keyedRoute ? keyedReplay.getOutputKeys() : null
+                );
+                final int maxRepairedBoundaries =
+                        engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries();
+                if (timelineCapture != null
+                        && (maxRepairedBoundaries <= 0 || session.getBoundaries().size() > maxRepairedBoundaries)) {
+                    // Same bound the resume path applies, and it earns its keep here for a
+                    // reason the resume path does not have: an EOF repair's interval is
+                    // [C, +inf), so it collects every root the cadence has sealed above the
+                    // correction rather than the handful inside a finite H. Re-versioning
+                    // that many roots stops being worth what keeping the ladder buys - a
+                    // repair this deep is bounded by the rows it replays long before it is
+                    // bounded by its roots. Drop back to the truncate, which is what every
+                    // out-of-order head miss did before the splice existed.
+                    //
+                    // Logged rather than silently taken: a view that keeps arriving here is
+                    // one whose lateness has outgrown its checkpoint cadence, and that is an
+                    // operator's decision to make.
+                    LOG.info().$("live view O3 head miss declined the checkpoint splice, truncating instead [view=")
+                            .$(viewName)
+                            .$(", boundaries=").$(session.getBoundaries().size())
+                            .$(", max=").$(maxRepairedBoundaries)
+                            .$(", outputLowTs=").$ts(emitLowTs).I$();
+                    timelineCapture = Misc.free(timelineCapture);
+                    session.discardDescriptor();
+                    session.getBoundaries().clear();
+                }
+                if (timelineCapture != null && !writeCheckpointRepairMarker(instance, emitLowTs)) {
+                    // The marker is what makes keeping the roots safe to attempt: it is the
+                    // only thing standing between a crash after the replacement commits and
+                    // a restart restoring a root that replacement has moved under. The
+                    // splice leaves every root where it is and rewrites the output beneath
+                    // them, so the window is real on both bounds - and on the EOF bound it
+                    // is the whole timeline above C. Without a marker the repair takes the
+                    // truncate below, which carries its own.
+                    //
+                    // Decided here, before the cursor chain is built, so a capture the
+                    // repair cannot protect is dropped while dropping it is still free.
+                    timelineCapture = Misc.free(timelineCapture);
+                    session.discardDescriptor();
+                    session.getBoundaries().clear();
+                } else if (timelineCapture != null) {
+                    session.setRepairMarkerLive(true);
+                }
             }
-
-            // Both scans below open the snapshot AT the scan floor rather than scanning up
-            // to it, the same inclusive-lower-bound cursor the seed and the forward drain
-            // take: it culls whole partitions and binary-searches into the first one instead
-            // of walking the sub-floor history row by row. A view with a finite boundary over
-            // a long-lived base has that history in front of it on every rebuild - and a
-            // rebuild fires on any O3 commit, base metadata drift, mid-drain failure, corrupt
-            // checkpoint or checkpoint-less restart - so the walk was paid twice per rebuild
-            // (probe + recompute). BEGINNING persists Numbers.LONG_NULL (= Long.MIN_VALUE),
-            // which the cursor turns into a full scan; a localized rebuild replaces that with
-            // its dependency floor L and culls the history below it as well.
-            // Both take their high bound from the plan's tagged H, so probe and recompute
-            // agree on the read interval. Long.MAX_VALUE as an INCLUSIVE bound admits the
-            // whole tail exactly as an unbounded scan did; a finite H culls the partitions
-            // above the convergence boundary as well.
-            final long scanHighTs = finiteHighBound ? plan.getScanHighTsInclusive() : Long.MAX_VALUE;
-            // Where this turn's scan starts. A resumed turn re-opens at the timestamp
-            // the prior one stopped on: everything below it is already in the window
-            // state the compiled functions still hold, and the rows AT it that the
-            // prior turn folded are skipped once the cursor chain is up.
-            final long turnLowTs = resuming ? resumed.getResumeFromTs() : scanLowTs;
-
-            // Probe pass: open a separate cursor over the same source + filter
-            // chain and check whether any row survives. Skipping the wipe when
-            // no rows pass the filter prevents a degenerate replay (e.g. WHERE
-            // discards every row in the replay window) from permanently
-            // erasing cumulative accumulator state for every partition.
+            if (timelineCapture != null && coldKeyedRoute) {
+                // The cold keyed envelope is insert-only, unfiltered and over a base that
+                // does not deduplicate, so each residual base row adds exactly one output
+                // row. Rebase the old roots' effective positions by that exact delta instead
+                // of walking the live view's stored interval. This is the same proof the
+                // keyed resume uses; the only difference is that no anchor position exists
+                // to serve as the origin.
+                if (simulateColdKeyedTimelineFaultForTest) {
+                    simulateColdKeyedTimelineFaultForTest = false;
+                    throw CairoException.critical(0).put("simulated live view checkpoint row position fault");
+                }
+                timelineCapture.collectEffectiveRowPositions(
+                        session.getBoundaries(),
+                        openSegmentArithmeticBoundaryPositions
+                );
+                for (int i = 0, n = session.getBoundaries().size(); i < n; i++) {
+                    try {
+                        openSegmentArithmeticBoundaryPositions.setQuick(
+                                i,
+                                Math.addExact(
+                                        openSegmentArithmeticBoundaryPositions.getQuick(i),
+                                        segmentChangeSet.getResidualRowCountAtOrBelow(
+                                                session.getBoundaries().getQuick(i).maxTimestamp
+                                        )
+                                )
+                        );
+                    } catch (ArithmeticException e) {
+                        throw CairoException.critical(0).put("live view checkpoint row position overflow");
+                    }
+                }
+                openSegmentArithmeticRowPositionCount++;
+            }
+            final long insertedRowDelta = coldKeyedRoute ? segmentChangeSet.getResidualRowCount() : 0;
+            if (session != null) {
+                // The publication mirrors every stage it records into the descriptor, and
+                // a resumed turn walks the stages from PLAN again over the same record.
+                repairPublication.of(session.getDescriptor());
+            }
+            // Live-view rows below R, and the rows the replacement is about to delete
+            // from [R, H). Both are read from the pre-repair table, which is the only
+            // moment they exist: the first anchors every repaired root's position, the
+            // second proves after the fact that the replacement moved exactly the rows
+            // the arithmetic says it did. A resumed turn inherits them - the table has
+            // not moved since, because nothing was committed.
+            long durableRowsBelowFloor = resuming ? resumed.getDurableRowsBelowFloor() : 0;
+            long durableRowsBeforeRepair = resuming ? resumed.getDurableRowsBeforeRepair() : 0;
+            long durableRowsReplaced = resuming ? resumed.getDurableRowsReplaced() : 0;
+            if (!resuming && timelineCapture != null) {
+                try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                    durableRowsBeforeRepair = lvReader.size();
+                    durableRowsBelowFloor = countDurableRowsBelow(lvReader, emitLowTs);
+                    final long rowsBelowHighBound = countDurableRowsBelow(lvReader, timelineHighTsExclusive);
+                    if (durableRowsBelowFloor < 0 || rowsBelowHighBound < 0) {
+                        throw CairoException.critical(0)
+                                .put("live view table has no searchable prefix for a checkpoint timeline repair");
+                    }
+                    durableRowsReplaced = rowsBelowHighBound - durableRowsBelowFloor;
+                    session.setDurableRowCounts(durableRowsBeforeRepair, durableRowsBelowFloor, durableRowsReplaced);
+                } catch (Throwable t) {
+                    LOG.error().$("could not measure live view durable prefix for a checkpoint timeline repair [view=")
+                            .$(viewName).$(", error=").$(t).I$();
+                    timelineCapture = Misc.free(timelineCapture);
+                    session.discardDescriptor();
+                    session.getBoundaries().clear();
+                    durableRowsBelowFloor = 0;
+                    durableRowsBeforeRepair = 0;
+                    durableRowsReplaced = 0;
+                }
+            }
+            // The logical boundaries this repair re-versions, and the cursor into them:
+            // the ones the replay has already frozen. Empty for an unlocalized rebuild,
+            // which freezes none.
+            final ObjList<LiveViewCheckpointTimelineEntry> repairBoundaries =
+                    session != null ? session.getBoundaries() : emptyRepairBoundaries;
+            int capturedBoundaries = resuming ? resumed.getCapturedBoundaries() : 0;
+            boolean replayCompleted = false;
+            // The range splice this repair published, null until it does (and if it
+            // never does). Carries the newest logical key the spliced timeline holds,
+            // which the post-replay seal below needs: a splice appends no root, so a
+            // frontier that has run past that key leaves the generation claiming base
+            // coverage no root has.
+            LiveViewCheckpointTimelineStoreWriter.RepairResult timelineSplice = null;
+            // Set when this turn left a durable repair marker behind, which the two ways of
+            // keeping a timeline both do: the prefix truncate an EOF-reaching localized
+            // repair takes when it holds no capture, and the splice, which leaves every
+            // root where it is and rewrites the output beneath them. The post-replay seal
+            // resolves it either way - see the block that reads it.
             //
-            // A localized rebuild needs no probe and must not take one: it reconstructs the
-            // window state from [L, R) whatever the emit range holds, so the wipe it does is
-            // never the permanent erasure the probe guards against, and an empty [R, H)
-            // must still commit a truncating replacement to clear the ghost rows sitting
-            // there. Skipping the probe also saves it the second pass over [L, H).
-            final boolean hasReplayRow;
-            if (localized) {
-                hasReplayRow = true;
-            } else {
-                try (RecordCursor probeCursor = pageFrameFactory.getCursorInTimestampRange(
-                        executionContext,
-                        scanLowTs,
-                        scanHighTs
-                )) {
-                    RecordCursor probeSource = probeCursor;
-                    if (filter != null) {
-                        filteringCursor.of(probeSource, filter, executionContext);
-                        probeSource = filteringCursor;
-                    }
-                    hasReplayRow = probeSource.hasNext();
-                }
+            // Read off the session rather than re-derived, because it outlives the turn: a
+            // repair that parks on its budget leaves the marker on disk, and the turn that
+            // finishes it is the one that owes the clear.
+            boolean prefixMarkerLive = session != null && session.isRepairMarkerLive();
+            // Set when the replay stops on its turn budget with the repair unfinished,
+            // together with the inclusive timestamp the next turn re-opens the scan at.
+            boolean yielded = false;
+            long resumeFromTs = Numbers.LONG_NULL;
+            long resumeSkipRows = 0;
+            if (resuming && !isolated) {
+                // The accumulators already lead the last durable commit - the prior turns
+                // put them there - so a fault anywhere in this turn has to rebuild them from
+                // the applied base rather than let the next cycle drain over a half-replayed
+                // runtime. handleRefreshFailure reads this flag to decide that.
+                //
+                // An isolated replay leads nothing: the accumulators the prior turns advanced
+                // are the isolated runtime's, and the primary's still stand exactly where the
+                // forward drain left them. A fault there costs the candidate, not the view.
+                windowStateDirty = true;
             }
+            try {
+                // From here on the replay's own finally blocks below own everything the
+                // prologue acquired - the inner one the stored-row cursor and the keyed merge
+                // state, the outer one the capture and the session - so the prologue's cleanup
+                // stands down.
+                replayEntered = true;
+                // The incremental-seal bookkeeping, taken aside before anything else moves. The
+                // wipe below resets it and the overlay's restore resets it again - both through
+                // the contract a checkpoint restore reads state under, which deliberately leaves
+                // every target owing a complete freeze - so without this the seal that closes the
+                // repair images the whole live domain instead of the keys its own batch touched.
+                //
+                // Ahead of the retire rather than beside the overlay capture, because the retire
+                // clears the head and with it the batch-minimum window that travels here. Nothing
+                // between this point and the wipe feeds a row, so what it takes is exactly what
+                // the wipe would have destroyed.
+                //
+                // A repair replaying through the primary runtime takes it only when it holds a
+                // splice capture AND converges, which is exactly the repair that puts the
+                // primary's own state back. Without a capture the timeline is retired outright,
+                // no generation is left for a baseline to name, and the wipe below leaves every
+                // target owing the complete freeze anyway; and a repair reaching the end of the
+                // base table promotes what its replay ends on, so bookkeeping recorded against
+                // the state it replaced describes nothing that survives - settleRepairRuntime
+                // drops it on that path rather than re-stamping it. An isolated replay takes it
+                // whether or not it holds a capture, because it wipes nothing: its targets would
+                // otherwise keep a baseline naming a generation the retire is about to delete,
+                // and the restore below is what re-stamps that baseline against the splice or
+                // drops it.
+                if (!resuming && (isolated || (timelineCapture != null && finiteHighBound))) {
+                    session.getSealCarryover().capture(
+                            windowFactory.getWindowFunctions(),
+                            anchorWindow,
+                            instance.getMinSeenTsSinceCheckpoint()
+                    );
+                }
 
-            if (hasReplayRow) {
+                // Retire the checkpoint state this O3 has unsealed. Clearing the head
+                // puts the post-replay seal on its first-checkpoint path; the follow-up
+                // seal below opens a fresh history, and until then a restart rebuilds
+                // from the view boundary.
+                //
+                // The versioned timeline goes with it unless this repair holds a splice
+                // capture, which corrects the same roots precisely instead of dropping
+                // them all.
+                //
+                // First turn only: a repair that yielded already retired what its change
+                // unsealed, and the timeline it may still splice into is the one its
+                // capture pinned.
                 if (!resuming) {
-                    if (isolated) {
-                        // Nothing of the primary's moves. The replay folds into the
-                        // isolated runtime's own accumulators, so what needs rewinding to
-                        // identity is those - the segment the last repair replayed left its
-                        // keys in them - and the primary's stay exactly as the forward drain
-                        // left them, which is what makes this repair invisible to the seal
-                        // that follows it.
-                        repairRuntime.reset();
+                    if (timelineCapture == null && localized) {
+                        // Localized repair with no capture to splice through - the view's
+                        // timeline was retired by an earlier repair and no seal has re-opened
+                        // it, or the boundary bound or the marker declined it. There is no
+                        // suffix to correct, but the roots below R are still correct.
+                        // Preserve them - keeping the long-term anchors and the checkpoint id
+                        // space - instead of retiring the whole timeline for one near-head
+                        // correction. The durable marker this writes forces a mid-repair
+                        // crash to rebuild from the applied base.
+                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
                     } else {
-                        if (finiteHighBound) {
-                            // Copy the published runtime state aside before the wipe below
-                            // reaches it. The replay has to run through these same function
-                            // instances - the compiled cursor stack owns them and there is only
-                            // one of it - so the overlay is what keeps the repair from
-                            // overwriting state it has already proved correct.
-                            session.captureRuntime(
-                                    windowFactory.getWindowFunctions(),
-                                    anchorWindow,
-                                    instance.getMemoryTracker()
-                            );
-                            primaryKept = true;
-                        }
-                        // Reset per-function accumulator state and the anchor map to
-                        // identity. The compiled factory's WindowFunction instances
-                        // stay live so the cursor chain below can reuse them; only
-                        // their accumulated state resets. clearWindowState rewinds via
-                        // toTop(), not a bare partition-map clear, so no-partition
-                        // ranking like row_number() OVER () - whose counter lives in a
-                        // scalar field with no map - also rewinds; otherwise it would
-                        // accumulate across head-miss replays.
-                        //
-                        // A resumed turn skips both: the state it continues from is the one
-                        // the prior turn built, and the overlay already holds what the repair
-                        // took aside.
-                        clearWindowState(windowFactory, anchorWindow);
+                        retireCheckpointStateOnO3(instance, timelineCapture == null);
                     }
-                    if (!primaryKept) {
-                        // The runtime is now identity while the durable tier still holds
-                        // the full history, and everything that rebuilds it can throw.
-                        // Mark before the scan, not after, so an unwind leaves the view
-                        // knowing it must rebuild before a later turn drains over these
-                        // accumulators.
-                        //
-                        // The predicate is "the primary runtime was not taken over", which
-                        // finiteHighBound decides: an isolated replay never touches it, and
-                        // a copy-aside one has the session's close() put the pre-repair
-                        // state back as the turn unwinds. Marking under either would
-                        // escalate a recoverable fault into a full recompute that also
-                        // discards the checkpoint timeline.
-                        // It is NOT the same as "unlocalized" - a localized repair whose
-                        // plan keeps an EOF high bound has finiteHighBound false, captures
-                        // nothing, and does need the mark. A restore that itself fails
-                        // raises the flag through endRepairSession and settleRepairRuntime.
-                        markWindowStateDirty(instance);
+                    if (session != null) {
+                        // Whatever this turn decided, the session is what carries it to the
+                        // turn that resolves it. The truncate may have retired instead of
+                        // preserving, which takes the marker with it.
+                        session.setRepairMarkerLive(prefixMarkerLive);
                     }
                 }
 
-                // Opened once per repair, not once per turn: the rows emitted so far sit
-                // uncommitted in this writer, so a repair that yields hands it to the
-                // session rather than closing it - closing rolls them back.
-                WalWriter walWriter = resuming ? resumed.takeWalWriter() : engine.getWalWriter(instance.getLiveViewToken());
-                boolean walWriterRetained = false;
-                try {
-                    RecordToRowCopier copier = ensureCopier(instance, walWriter);
-                    if (keyedRoute) {
-                        final PageFrameRecordCursorFactory storedRowFactory = storedRowScanFactory(instance);
-                        if (storedRowFactory != null
-                                && storedRowFactory.getMetadata().getColumnCount() == walWriter.getMetadata().getColumnCount()
-                                && pageFrameFactory.isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())) {
-                            // Whether to attempt publishing this segment sparsely: only
-                            // the keys the correction touched, upserted onto the view's
-                            // own (designated timestamp, projected key) dedup keys,
-                            // instead of a replacement carrying the segment's whole row
-                            // set. Three things have to hold and this is where all three
-                            // are known - the view's table carries the identity, the read
-                            // is keyed so there is a smaller row set to publish at all,
-                            // and the pair the detector is checking is the pair the table
-                            // deduplicates on. The last is not a formality: a repair that
-                            // proved one identity and upserted on another would collapse
-                            // rows nothing checked. The verdict itself is not known until
-                            // the replay ends, which is what makes it an attempt.
-                            final boolean sparseAttempt = instance.isDedupKeyed()
-                                    && outputUniqueness.isArmed()
-                                    && instance.getDedupKeyColumnIndex() == outputUniqueness.getKeyColumnIndex();
-                            keyedReplay.bindOutput(
-                                    storedRowCopier(instance, walWriter, storedRowFactory.getMetadata()),
-                                    walWriter,
-                                    executionContext,
-                                    instance,
-                                    sparseAttempt
-                            );
-                            if (coldKeyedRoute) {
-                                openSegmentColdKeyedReplayCount++;
-                                instance.recordO3OpenSegmentColdKeyedReplay();
-                            } else {
-                                keyedReplaySegmentCount++;
-                            }
-                            LOG.info().$("live view repair replayed by key [view=").$(viewName)
-                                    .$(", origin=").$(coldKeyedRoute ? "segment start" : "closed segment")
-                                    .$(", keys=").$(keyedReplay.getBaseSymbolKeys().size())
-                                    .$(", sparseAttempt=").$(sparseAttempt)
-                                    .$(", outputLowTs=").$ts(emitLowTs)
-                                    .$(", highTsExclusive=").$ts(plan.getHighTsExclusive()).I$();
-                        } else {
-                            // The replay's own factory does not admit the index substitution,
-                            // or the view's schema has moved out from under the scan built
-                            // against it. Read the segment whole, which needs none of it.
-                            declineStoredRows(instance, storedRowFactory == null
-                                    ? "no scan of the view's own table"
-                                    : "the replay's base scan does not admit an indexed substitution");
-                            keyedRoute = false;
-                        }
-                    }
-                    try (RecordCursor pageCursor = keyedRoute
-                            // The keys the correction touched, followed through the base's
-                            // posting index, rather than every row of the range they landed
-                            // in. The merge above supplies the rest of the segment.
-                            ? pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
+                engine.detachReader(reader);
+                executionContext.of(reader);
+                readerAttached = true;
+
+                // The replay's own decomposition: its base scan, filter, projections and window
+                // factory. An isolated replay reads every node off its own runtime, so no cursor
+                // it opens advances a memoizer or a function the forward drain reads.
+                final LiveViewCompiledPlan compiledPlan = isolated ? repairRuntime.getPlan() : instance.getCompiledPlan();
+                final Function filter = compiledPlan.getFilter();
+                final PageFrameRecordCursorFactory pageFrameFactory = compiledPlan.getPageFrameFactory();
+                RecordMetadata outMetadata = compiledPlan.getOutputMetadata();
+                final int cursorTimestampIndex = outMetadata.getTimestampIndex();
+                // The emitted (designated timestamp, projected key) pairs are the identity a
+                // sparse upsert stands on. Both keyed routes arm the detector, while bounded
+                // localized fallbacks keep collecting the pre-existing diagnostic verdict.
+                //
+                // A resumed turn continues the check the prior turns left rather than
+                // restarting it: a duplicate whose two rows sit on either side of a park is
+                // still a duplicate, and the group the park stopped inside is the one place
+                // that can happen.
+                if (resuming) {
+                    outputUniqueness.copyFrom(resumed.getOutputUniqueness());
+                } else {
+                    outputUniqueness.of((keyedRoute || (localized && finiteHighBound))
+                            ? LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(compiledPlan)
+                            : LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
+                }
+
+                // Both scans below open the snapshot AT the scan floor rather than scanning up
+                // to it, the same inclusive-lower-bound cursor the seed and the forward drain
+                // take: it culls whole partitions and binary-searches into the first one instead
+                // of walking the sub-floor history row by row. A view with a finite boundary over
+                // a long-lived base has that history in front of it on every rebuild - and a
+                // rebuild fires on any O3 commit, base metadata drift, mid-drain failure, corrupt
+                // checkpoint or checkpoint-less restart - so the walk was paid twice per rebuild
+                // (probe + recompute). BEGINNING persists Numbers.LONG_NULL (= Long.MIN_VALUE),
+                // which the cursor turns into a full scan; a localized rebuild replaces that with
+                // its dependency floor L and culls the history below it as well.
+                // Both take their high bound from the plan's tagged H, so probe and recompute
+                // agree on the read interval. Long.MAX_VALUE as an INCLUSIVE bound admits the
+                // whole tail exactly as an unbounded scan did; a finite H culls the partitions
+                // above the convergence boundary as well.
+                final long scanHighTs = finiteHighBound ? plan.getScanHighTsInclusive() : Long.MAX_VALUE;
+                // Where this turn's scan starts. A resumed turn re-opens at the timestamp
+                // the prior one stopped on: everything below it is already in the window
+                // state the compiled functions still hold, and the rows AT it that the
+                // prior turn folded are skipped once the cursor chain is up.
+                final long turnLowTs = resuming ? resumed.getResumeFromTs() : scanLowTs;
+
+                // Probe pass: open a separate cursor over the same source + filter
+                // chain and check whether any row survives. Skipping the wipe when
+                // no rows pass the filter prevents a degenerate replay (e.g. WHERE
+                // discards every row in the replay window) from permanently
+                // erasing cumulative accumulator state for every partition.
+                //
+                // A localized rebuild needs no probe and must not take one: it reconstructs the
+                // window state from [L, R) whatever the emit range holds, so the wipe it does is
+                // never the permanent erasure the probe guards against, and an empty [R, H)
+                // must still commit a truncating replacement to clear the ghost rows sitting
+                // there. Skipping the probe also saves it the second pass over [L, H).
+                final boolean hasReplayRow;
+                if (localized) {
+                    hasReplayRow = true;
+                } else {
+                    try (RecordCursor probeCursor = pageFrameFactory.getCursorInTimestampRange(
                             executionContext,
-                            turnLowTs,
-                            scanHighTs,
-                            keyedReplay.getBaseKeyColumnIndex(),
-                            keyedReplay.getBaseSymbolKeys()
-                    )
-                            : pageFrameFactory.getCursorInTimestampRange(
-                            executionContext,
-                            turnLowTs,
+                            scanLowTs,
                             scanHighTs
                     )) {
-                        RecordCursor source = pageCursor;
+                        RecordCursor probeSource = probeCursor;
                         if (filter != null) {
-                            filteringCursor.of(source, filter, executionContext);
-                            source = filteringCursor;
+                            filteringCursor.of(probeSource, filter, executionContext);
+                            probeSource = filteringCursor;
                         }
-                        if (timelineCapture != null) {
-                            // Below the anchor dispatch on purpose: a boundary this
-                            // replay crosses must freeze before the crossing row
-                            // resets any partition, not after.
-                            boundaryFreezingCursor.of(
-                                    source,
-                                    timelineCapture,
-                                    repairBoundaries,
-                                    coldKeyedRoute ? openSegmentArithmeticBoundaryPositions : null,
-                                    replayWindowFactory.getWindowFunctions(),
-                                    replayAnchorWindow,
-                                    session,
-                                    capturedBoundaries,
-                                    pageFrameFactory.getMetadata().getTimestampIndex()
-                            );
-                            boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
-                            if (keyedRoute && !coldKeyedRoute) {
-                                // A keyed replay's cursor yields only the affected keys'
-                                // rows, so the boundary about to be frozen has to count
-                                // the merged rows below it as well. Draining here rather
-                                // than only in the row loop is what makes the position it
-                                // records the count of every row at or below it.
-                                boundaryFreezingCursor.setRowDrain(keyedReplay);
+                        hasReplayRow = probeSource.hasNext();
+                    }
+                }
+
+                if (hasReplayRow) {
+                    if (!resuming) {
+                        if (isolated) {
+                            // Nothing of the primary's moves. The replay folds into the
+                            // isolated runtime's own accumulators, so what needs rewinding to
+                            // identity is those - the segment the last repair replayed left its
+                            // keys in them - and the primary's stay exactly as the forward drain
+                            // left them, which is what makes this repair invisible to the seal
+                            // that follows it.
+                            repairRuntime.reset();
+                        } else {
+                            if (finiteHighBound) {
+                                // Copy the published runtime state aside before the wipe below
+                                // reaches it. The replay has to run through these same function
+                                // instances - the compiled cursor stack owns them and there is only
+                                // one of it - so the overlay is what keeps the repair from
+                                // overwriting state it has already proved correct.
+                                session.captureRuntime(
+                                        windowFactory.getWindowFunctions(),
+                                        anchorWindow,
+                                        instance.getMemoryTracker()
+                                );
+                                primaryKept = true;
                             }
-                            source = boundaryFreezingCursor;
+                            // Reset per-function accumulator state and the anchor map to
+                            // identity. The compiled factory's WindowFunction instances
+                            // stay live so the cursor chain below can reuse them; only
+                            // their accumulated state resets. clearWindowState rewinds via
+                            // toTop(), not a bare partition-map clear, so no-partition
+                            // ranking like row_number() OVER () - whose counter lives in a
+                            // scalar field with no map - also rewinds; otherwise it would
+                            // accumulate across head-miss replays.
+                            //
+                            // A resumed turn skips both: the state it continues from is the one
+                            // the prior turn built, and the overlay already holds what the repair
+                            // took aside.
+                            clearWindowState(windowFactory, anchorWindow);
                         }
-                        source = compiledPlan.wrapWindowInput(source, executionContext);
-                        if (replayAnchorWindow != null) {
-                            anchorDispatchingCursor.of(source, replayAnchorWindow, executionContext);
-                            source = anchorDispatchingCursor;
+                        if (!primaryKept) {
+                            // The runtime is now identity while the durable tier still holds
+                            // the full history, and everything that rebuilds it can throw.
+                            // Mark before the scan, not after, so an unwind leaves the view
+                            // knowing it must rebuild before a later turn drains over these
+                            // accumulators.
+                            //
+                            // The predicate is "the primary runtime was not taken over", which
+                            // finiteHighBound decides: an isolated replay never touches it, and
+                            // a copy-aside one has the session's close() put the pre-repair
+                            // state back as the turn unwinds. Marking under either would
+                            // escalate a recoverable fault into a full recompute that also
+                            // discards the checkpoint timeline.
+                            // It is NOT the same as "unlocalized" - a localized repair whose
+                            // plan keeps an EOF high bound has finiteHighBound false, captures
+                            // nothing, and does need the mark. A restore that itself fails
+                            // raises the flag through endRepairSession and settleRepairRuntime.
+                            markWindowStateDirty(instance);
                         }
-                        try (RecordCursor windowCursor = replayWindowFactory.getIncrementalCursor(source, executionContext)) {
-                            RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
-                            Record outRecord = outCursor.getRecord();
-                            // Designated timestamp of the group the replay is inside, and
-                            // how many of its rows are already folded into the window
-                            // state. A turn may stop anywhere, including mid-group, so this
-                            // pair is what the next turn re-enters on. A resumed turn starts
-                            // holding the pair the prior one left.
-                            long groupTs = resuming ? turnLowTs : Numbers.LONG_NULL;
-                            long groupFoldedRows = resuming ? resumed.getResumeSkipRows() : 0;
-                            if (resuming && groupFoldedRows > 0) {
-                                // Those rows are in the window state already - the prior turn
-                                // folded them and emitted them - so they must not reach the
-                                // window cursor again. Skip below the anchor dispatch too, or
-                                // an anchored view would re-reset the partitions they opened.
-                                // Skipping after the cursor chain is built, not before, because
-                                // getIncrementalCursor rewinds it.
-                                repairSkipCounter.set(groupFoldedRows);
-                                (filter != null ? filteringCursor : pageCursor)
-                                        .skipRows(repairSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
-                            }
-                            final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-                            // Drive the projected cursor rather than the window one - it is
-                            // what advances the projection's per-row memoization before the
-                            // record is read. Nothing else invalidates a memoizer's cache:
-                            // wrapWindowOutput's of() re-inits the functions but leaves the
-                            // cached value valid, so the replay would emit the value the
-                            // preceding drain left behind for every row it re-emits.
-                            while (outCursor.hasNext()) {
-                                // The turn budget below ends a localized repair, but only a
-                                // localized one: an unlocalized rebuild recomputes the whole
-                                // view in this loop and may not yield, so the breaker is the
-                                // only thing that stops it early. It answers to DROP,
-                                // invalidation and engine shutdown - none of which is worth
-                                // finishing a rebuild for, and all of which otherwise wait it
-                                // out.
-                                circuitBreaker.statefulThrowExceptionIfTripped();
-                                long ts = outRecord.getTimestamp(cursorTimestampIndex);
-                                // Segmenting the replay at the logical boundaries it
-                                // crosses happens one level down, in
-                                // boundaryFreezingCursor: hasNext() above has already
-                                // folded this row into the window state, so freezing a
-                                // boundary below it from here would carry this row into
-                                // a root that must not hold it.
-                                if (ts == groupTs) {
-                                    groupFoldedRows++;
+                    }
+
+                    // Opened once per repair, not once per turn: the rows emitted so far sit
+                    // uncommitted in this writer, so a repair that yields hands it to the
+                    // session rather than closing it - closing rolls them back.
+                    WalWriter walWriter = resuming ? resumed.takeWalWriter() : engine.getWalWriter(instance.getLiveViewToken());
+                    boolean walWriterRetained = false;
+                    try {
+                        RecordToRowCopier copier = ensureCopier(instance, walWriter);
+                        if (keyedRoute) {
+                            final PageFrameRecordCursorFactory storedRowFactory = storedRowScanFactory(instance);
+                            if (storedRowFactory != null
+                                    && storedRowFactory.getMetadata().getColumnCount() == walWriter.getMetadata().getColumnCount()
+                                    && pageFrameFactory.isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())) {
+                                // Whether to attempt publishing this segment sparsely: only
+                                // the keys the correction touched, upserted onto the view's
+                                // own (designated timestamp, projected key) dedup keys,
+                                // instead of a replacement carrying the segment's whole row
+                                // set. Three things have to hold and this is where all three
+                                // are known - the view's table carries the identity, the read
+                                // is keyed so there is a smaller row set to publish at all,
+                                // and the pair the detector is checking is the pair the table
+                                // deduplicates on. The last is not a formality: a repair that
+                                // proved one identity and upserted on another would collapse
+                                // rows nothing checked. The verdict itself is not known until
+                                // the replay ends, which is what makes it an attempt.
+                                final boolean sparseAttempt = instance.isDedupKeyed()
+                                        && outputUniqueness.isArmed()
+                                        && instance.getDedupKeyColumnIndex() == outputUniqueness.getKeyColumnIndex();
+                                keyedReplay.bindOutput(
+                                        storedRowCopier(instance, walWriter, storedRowFactory.getMetadata()),
+                                        walWriter,
+                                        executionContext,
+                                        instance,
+                                        sparseAttempt
+                                );
+                                if (coldKeyedRoute) {
+                                    openSegmentColdKeyedReplayCount++;
+                                    instance.recordO3OpenSegmentColdKeyedReplay();
                                 } else {
-                                    groupTs = ts;
-                                    groupFoldedRows = 1;
+                                    keyedReplaySegmentCount++;
                                 }
-                                scannedRows++;
-                                // Anything below R is a warm-up row: the window functions
-                                // advanced over it, which is the only reason it was read. Its
-                                // durable output is already correct and the replacement does
-                                // not reach it, so emitting it would duplicate a row the LV
-                                // table still holds.
-                                if (ts >= emitLowTs) {
-                                    if (keyedRoute && !coldKeyedRoute) {
-                                        // Every unaffected key's stored row at or below
-                                        // this one, so the block's rows come out in
-                                        // timestamp order and the position stamped below
-                                        // counts them.
-                                        keyedReplay.drainUpTo(ts);
-                                    }
-                                    if (replayMinTs == Numbers.LONG_NULL) {
-                                        // First (= lowest) output row of the replay.
-                                        replayMinTs = ts;
-                                    }
-                                    if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
-                                        replayMaxTs = ts;
-                                    }
-                                    // Re-stamp the O3 detection watermark off the
-                                    // post-window output so any subsequent O3 in
-                                    // the same worker cycle is caught against the
-                                    // just-rebuilt state.
-                                    instance.setLatestSeenTs(ts);
-                                    if (outputUniqueness.isArmed()) {
-                                        // Read off the output record rather than the row
-                                        // about to carry it: the pair a sparse publication
-                                        // would key on is the one the view stores, and the
-                                        // copier is what turns that into a written row.
-                                        outputUniqueness.observe(
-                                                ts,
-                                                outRecord.getInt(outputUniqueness.getKeyColumnIndex())
-                                        );
-                                    }
-                                    TableWriter.Row row = walWriter.newRow(ts);
-                                    copier.copy(executionContext, outRecord, row);
-                                    row.append();
-                                    appendedRows++;
-                                    if (timelineCapture != null) {
-                                        // Keep the freeze cursor's row position in step:
-                                        // the next boundary it freezes sits below the row
-                                        // after this one, so it carries this row's position.
-                                        boundaryFreezingCursor.setRowPosition(
-                                                durableRowsBelowFloor + appendedRows + keyedReplay.getMergedRows());
-                                    }
-                                }
-                                if (!keyedRoute && mayYield && session != null && isRepairReplayBudgetSpent(scannedRows)) {
-                                    // Out of budget. This row is folded and, if it qualified,
-                                    // emitted, so the next turn re-opens at its timestamp and
-                                    // skips the rows of that group it has already seen.
-                                    // Nothing is committed or published here, so the durable
-                                    // view stays the pre-repair one until the final turn.
-                                    yielded = true;
-                                    resumeFromTs = ts;
-                                    resumeSkipRows = groupFoldedRows;
-                                    break;
-                                }
+                                LOG.info().$("live view repair replayed by key [view=").$(viewName)
+                                        .$(", origin=").$(coldKeyedRoute ? "segment start" : "closed segment")
+                                        .$(", keys=").$(keyedReplay.getBaseSymbolKeys().size())
+                                        .$(", sparseAttempt=").$(sparseAttempt)
+                                        .$(", outputLowTs=").$ts(emitLowTs)
+                                        .$(", highTsExclusive=").$ts(plan.getHighTsExclusive()).I$();
+                            } else {
+                                // The replay's own factory does not admit the index substitution,
+                                // or the view's schema has moved out from under the scan built
+                                // against it. Read the segment whole, which needs none of it.
+                                declineStoredRows(instance, storedRowFactory == null
+                                        ? "no scan of the view's own table"
+                                        : "the replay's base scan does not admit an indexed substitution");
+                                keyedRoute = false;
                             }
-                            // Boundaries the replay's cursor never crossed.
-                            //
-                            // A whole-segment replay read every row of [C, H), so a
-                            // boundary it did not cross has no row between it and the last
-                            // row read: the state the replay ends on is that boundary's
-                            // state, and so is the position.
-                            //
-                            // A keyed replay read nothing of the kind. Its cursor follows
-                            // the affected keys alone, so a boundary above the last of
-                            // their rows still has every other key's rows between it and
-                            // H - rows the merge accounts for rather than the loop. The
-                            // per-boundary drain inside the freeze is what holds each one
-                            // to the rows at or below itself, so the freeze has to run
-                            // BEFORE the rest of the merge is accounted for: draining
-                            // first leaves every uncrossed boundary carrying the whole
-                            // range up to H, which is a position no row set ever had.
-                            //
-                            // A turn that yielded owes them the rows it has not read yet,
-                            // so it freezes none.
-                            if (!yielded && timelineCapture != null) {
-                                boundaryFreezingCursor.freezeRemaining();
-                            }
-                            if (keyedRoute && !coldKeyedRoute && !yielded) {
-                                // The stored rows above the last boundary the freeze
-                                // drained to. They sit inside the range the replacement
-                                // deletes, so a repair that stopped accounting at its own
-                                // last row would drop them.
-                                keyedReplay.drainRemaining();
-                                if (keyedReplay.getMergedRows() > 0) {
-                                    // The block's extremes are the two routes' together: a
-                                    // merged row can sit below the first key the replay
-                                    // followed and above the last.
-                                    final long mergedMinTs = keyedReplay.getMergedMinTs();
-                                    final long mergedMaxTs = keyedReplay.getMergedMaxTs();
-                                    if (replayMinTs == Numbers.LONG_NULL || mergedMinTs < replayMinTs) {
-                                        replayMinTs = mergedMinTs;
-                                    }
-                                    if (replayMaxTs == Numbers.LONG_NULL || mergedMaxTs > replayMaxTs) {
-                                        replayMaxTs = mergedMaxTs;
-                                    }
-                                }
+                        }
+                        try (RecordCursor pageCursor = keyedRoute
+                                // The keys the correction touched, followed through the base's
+                                // posting index, rather than every row of the range they landed
+                                // in. The merge above supplies the rest of the segment.
+                                ? pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
+                                executionContext,
+                                turnLowTs,
+                                scanHighTs,
+                                keyedReplay.getBaseKeyColumnIndex(),
+                                keyedReplay.getBaseSymbolKeys()
+                        )
+                                : pageFrameFactory.getCursorInTimestampRange(
+                                executionContext,
+                                turnLowTs,
+                                scanHighTs
+                        )) {
+                            RecordCursor source = pageCursor;
+                            if (filter != null) {
+                                filteringCursor.of(source, filter, executionContext);
+                                source = filteringCursor;
                             }
                             if (timelineCapture != null) {
-                                capturedBoundaries = boundaryFreezingCursor.getCaptured();
-                            }
-                            // Capture base rows scanned before the cursor chain closes
-                            // (FilteringRecordCursor.close() resets its counter). No
-                            // filter -> scan equals the rows the window cursor produced;
-                            // a filter makes scan exceed it by the rows it dropped. A
-                            // yielding turn counts the row it stopped on, which the next
-                            // turn reads again - the only double-count, and one row wide.
-                            o3ScanRows += filter != null ? filteringCursor.getBaseRowsConsumed() : scannedRows;
-                        }
-
-                        // Every candidate root the repair owed is frozen and the runtime
-                        // disposition is fixed. The replacement commits only from here,
-                        // never before: a commit the roots do not describe leaves durable
-                        // output with no state version to recover it from. A turn that
-                        // yielded owes roots it has not read the rows for, so it parks
-                        // instead - and commits nothing, which is what leaves the durable
-                        // view as the repair found it.
-                        if (yielded) {
-                            session.suspend(
-                                    reader,
-                                    walWriter,
-                                    timelineCapture,
-                                    resumeFromTs,
-                                    resumeSkipRows,
-                                    capturedBoundaries,
-                                    appendedRows,
-                                    o3ScanRows,
-                                    replayMinTs,
-                                    replayMaxTs,
-                                    outputUniqueness
-                            );
-                            walWriterRetained = true;
-                            timelineCapture = null;
-                        } else {
-                            repairPublication.candidateReady(runtimeDisposition(primaryKept));
-                        }
-                        if (!yielded && (appendedRows > 0 || localized)) {
-                            // REPLACE_RANGE low boundary. replayMinTs alone freezes the
-                            // prefix when the base lost rows below it (DROP PARTITION /
-                            // TTL / TRUNCATE - intended). But a below-frontier dedup
-                            // replacement that drops the lowest result row via the filter
-                            // leaves the base row present, so replayMinTs jumps above it
-                            // and the stale LV row would survive. Extend down to the
-                            // trigger ts (lowest triggering DATA-commit ts, clamped to the
-                            // view's bound); removals are non-DATA and excluded from it, so
-                            // frozen prefixes stay safe. A full rebuild has no single
-                            // trigger - it recomputes the whole view - so it replaces the
-                            // entire view range to purge any stale below-frontier row.
-                            //
-                            // A localized rebuild answers all of this with R directly: it
-                            // re-emitted every qualifying row in [R, H), so anything the
-                            // LV table still holds in there is stale whatever produced it -
-                            // a dropped filter row, a dedup replacement or a base removal.
-                            // R already sits at or below the trigger ts, so the clamp above
-                            // could only raise it. The commit is unconditional here: an empty
-                            // emit range means the base no longer has a qualifying row in
-                            // [R, H), and the rows the LV table still holds there are ghosts
-                            // that the truncating replacement has to clear.
-                            final long replaceLowTs = localized
-                                    ? emitLowTs
-                                    : fullRebuild
-                                      ? viewLowerBoundTimestamp
-                                      : triggerLowTs != Numbers.LONG_NULL
-                                        ? Math.min(replayMinTs, triggerLowTs)
-                                        : replayMinTs;
-                            // The replacement's high bound is the same H the scan stopped at,
-                            // so what the replay did not re-evaluate it also does not delete.
-                            // Positive infinity otherwise, which is the truncating
-                            // replacement every rebuild issued before the bound existed -
-                            // and the same normalization the timeline consumers take.
-                            final long replaceHighTs = timelineHighTsExclusive;
-                            // Before the commit, which is where the check has to finish:
-                            // the publication chosen below stands on the pair, and a
-                            // duplicate admitted to a sparse commit is collapsed silently.
-                            reportOutputUniqueness(
-                                    viewName,
-                                    keyedRoute || localized && finiteHighBound,
-                                    keyedRoute
-                            );
-                            // The verdict, acted on. A sparse attempt publishes only the
-                            // rows the replay recomputed, upserted onto the view's dedup
-                            // keys, and leaves every other stored row where it stands -
-                            // but only when the pair it upserts on names each of those
-                            // rows once. A repeat, or a replay that recomputed nothing at
-                            // all, abandons the attempt: the merge writes the rows it had
-                            // only counted and the repair publishes its whole range with
-                            // the replacement, which collapses nothing.
-                            final boolean sparse = keyedReplay.isSparse()
-                                    && appendedRows > 0
-                                    && outputUniqueness.isUnique();
-                            if (!sparse && (coldKeyedRoute
-                                    ? keyedReplay.materializeUnaccountedMerge()
-                                    : keyedReplay.materializeMerge())) {
-                                sparsePublicationFallbackCount++;
-                                LOG.info().$("live view keyed repair abandoned its sparse publication [view=")
-                                        .$(viewName)
-                                        .$(", replayedRows=").$(appendedRows)
-                                        .$(", mergedRows=").$(keyedReplay.getMergedRows())
-                                        .$(", duplicateRows=").$(outputUniqueness.getDuplicateRows())
-                                        .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
-                                        .I$();
-                            }
-                            if (sparse) {
-                                sparsePublicationCount++;
-                                final long supersededRows = coldKeyedRoute
-                                        ? Math.max(0, appendedRows - insertedRowDelta)
-                                        : keyedReplay.getSupersededRows();
-                                final long rowsKept = coldKeyedRoute
-                                        ? Math.max(0, durableRowsReplaced - supersededRows)
-                                        : keyedReplay.getMergedRows();
-                                sparsePublicationRowsKept += rowsKept;
-                                LOG.info().$("live view keyed repair published sparsely [view=").$(viewName)
-                                        .$(", origin=").$(coldKeyedRoute ? "segment start" : "closed segment")
-                                        .$(", replayedRows=").$(appendedRows)
-                                        .$(", supersededRows=").$(supersededRows)
-                                        .$(", rowsKept=").$(rowsKept)
-                                        .$(", outputLowTs=").$ts(emitLowTs)
-                                        .$(", highTsExclusive=").$ts(timelineHighTsExclusive).I$();
-                                commitLiveViewWithUpsertFenced(instance, walWriter, effectiveSeqTxn);
-                            } else {
-                                commitLiveViewWithReplaceRangeFenced(instance, walWriter,
-                                        effectiveSeqTxn,
-                                        replaceLowTs,
-                                        replaceHighTs
+                                // Below the anchor dispatch on purpose: a boundary this
+                                // replay crosses must freeze before the crossing row
+                                // resets any partition, not after.
+                                boundaryFreezingCursor.of(
+                                        source,
+                                        timelineCapture,
+                                        repairBoundaries,
+                                        coldKeyedRoute ? openSegmentArithmeticBoundaryPositions : null,
+                                        replayWindowFactory.getWindowFunctions(),
+                                        replayAnchorWindow,
+                                        session,
+                                        capturedBoundaries,
+                                        pageFrameFactory.getMetadata().getTimestampIndex()
                                 );
+                                boundaryFreezingCursor.setRowPosition(durableRowsBelowFloor + appendedRows);
+                                if (keyedRoute && !coldKeyedRoute) {
+                                    // A keyed replay's cursor yields only the affected keys'
+                                    // rows, so the boundary about to be frozen has to count
+                                    // the merged rows below it as well. Draining here rather
+                                    // than only in the row loop is what makes the position it
+                                    // records the count of every row at or below it.
+                                    boundaryFreezingCursor.setRowDrain(keyedReplay);
+                                }
+                                source = boundaryFreezingCursor;
                             }
-                            repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
+                            source = compiledPlan.wrapWindowInput(source, executionContext);
+                            if (replayAnchorWindow != null) {
+                                anchorDispatchingCursor.of(source, replayAnchorWindow, executionContext);
+                                source = anchorDispatchingCursor;
+                            }
+                            try (RecordCursor windowCursor = replayWindowFactory.getIncrementalCursor(source, executionContext)) {
+                                RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
+                                Record outRecord = outCursor.getRecord();
+                                // Designated timestamp of the group the replay is inside, and
+                                // how many of its rows are already folded into the window
+                                // state. A turn may stop anywhere, including mid-group, so this
+                                // pair is what the next turn re-enters on. A resumed turn starts
+                                // holding the pair the prior one left.
+                                long groupTs = resuming ? turnLowTs : Numbers.LONG_NULL;
+                                long groupFoldedRows = resuming ? resumed.getResumeSkipRows() : 0;
+                                if (resuming && groupFoldedRows > 0) {
+                                    // Those rows are in the window state already - the prior turn
+                                    // folded them and emitted them - so they must not reach the
+                                    // window cursor again. Skip below the anchor dispatch too, or
+                                    // an anchored view would re-reset the partitions they opened.
+                                    // Skipping after the cursor chain is built, not before, because
+                                    // getIncrementalCursor rewinds it.
+                                    repairSkipCounter.set(groupFoldedRows);
+                                    (filter != null ? filteringCursor : pageCursor)
+                                            .skipRows(repairSkipCounter, RecordCursor.UNBOUNDED_ROW_COUNT);
+                                }
+                                final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+                                // Drive the projected cursor rather than the window one - it is
+                                // what advances the projection's per-row memoization before the
+                                // record is read. Nothing else invalidates a memoizer's cache:
+                                // wrapWindowOutput's of() re-inits the functions but leaves the
+                                // cached value valid, so the replay would emit the value the
+                                // preceding drain left behind for every row it re-emits.
+                                while (outCursor.hasNext()) {
+                                    // The turn budget below ends a localized repair, but only a
+                                    // localized one: an unlocalized rebuild recomputes the whole
+                                    // view in this loop and may not yield, so the breaker is the
+                                    // only thing that stops it early. It answers to DROP,
+                                    // invalidation and engine shutdown - none of which is worth
+                                    // finishing a rebuild for, and all of which otherwise wait it
+                                    // out.
+                                    circuitBreaker.statefulThrowExceptionIfTripped();
+                                    long ts = outRecord.getTimestamp(cursorTimestampIndex);
+                                    // Segmenting the replay at the logical boundaries it
+                                    // crosses happens one level down, in
+                                    // boundaryFreezingCursor: hasNext() above has already
+                                    // folded this row into the window state, so freezing a
+                                    // boundary below it from here would carry this row into
+                                    // a root that must not hold it.
+                                    if (ts == groupTs) {
+                                        groupFoldedRows++;
+                                    } else {
+                                        groupTs = ts;
+                                        groupFoldedRows = 1;
+                                    }
+                                    scannedRows++;
+                                    // Anything below R is a warm-up row: the window functions
+                                    // advanced over it, which is the only reason it was read. Its
+                                    // durable output is already correct and the replacement does
+                                    // not reach it, so emitting it would duplicate a row the LV
+                                    // table still holds.
+                                    if (ts >= emitLowTs) {
+                                        if (keyedRoute && !coldKeyedRoute) {
+                                            // Every unaffected key's stored row at or below
+                                            // this one, so the block's rows come out in
+                                            // timestamp order and the position stamped below
+                                            // counts them.
+                                            keyedReplay.drainUpTo(ts);
+                                        }
+                                        if (replayMinTs == Numbers.LONG_NULL) {
+                                            // First (= lowest) output row of the replay.
+                                            replayMinTs = ts;
+                                        }
+                                        if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
+                                            replayMaxTs = ts;
+                                        }
+                                        // Re-stamp the O3 detection watermark off the
+                                        // post-window output so any subsequent O3 in
+                                        // the same worker cycle is caught against the
+                                        // just-rebuilt state.
+                                        instance.setLatestSeenTs(ts);
+                                        if (outputUniqueness.isArmed()) {
+                                            // Read off the output record rather than the row
+                                            // about to carry it: the pair a sparse publication
+                                            // would key on is the one the view stores, and the
+                                            // copier is what turns that into a written row.
+                                            outputUniqueness.observe(
+                                                    ts,
+                                                    outRecord.getInt(outputUniqueness.getKeyColumnIndex())
+                                            );
+                                        }
+                                        TableWriter.Row row = walWriter.newRow(ts);
+                                        copier.copy(executionContext, outRecord, row);
+                                        row.append();
+                                        appendedRows++;
+                                        if (timelineCapture != null) {
+                                            // Keep the freeze cursor's row position in step:
+                                            // the next boundary it freezes sits below the row
+                                            // after this one, so it carries this row's position.
+                                            boundaryFreezingCursor.setRowPosition(
+                                                    durableRowsBelowFloor + appendedRows + keyedReplay.getMergedRows());
+                                        }
+                                    }
+                                    if (!keyedRoute && mayYield && session != null && isRepairReplayBudgetSpent(scannedRows)) {
+                                        // Out of budget. This row is folded and, if it qualified,
+                                        // emitted, so the next turn re-opens at its timestamp and
+                                        // skips the rows of that group it has already seen.
+                                        // Nothing is committed or published here, so the durable
+                                        // view stays the pre-repair one until the final turn.
+                                        yielded = true;
+                                        resumeFromTs = ts;
+                                        resumeSkipRows = groupFoldedRows;
+                                        break;
+                                    }
+                                }
+                                // Boundaries the replay's cursor never crossed.
+                                //
+                                // A whole-segment replay read every row of [C, H), so a
+                                // boundary it did not cross has no row between it and the last
+                                // row read: the state the replay ends on is that boundary's
+                                // state, and so is the position.
+                                //
+                                // A keyed replay read nothing of the kind. Its cursor follows
+                                // the affected keys alone, so a boundary above the last of
+                                // their rows still has every other key's rows between it and
+                                // H - rows the merge accounts for rather than the loop. The
+                                // per-boundary drain inside the freeze is what holds each one
+                                // to the rows at or below itself, so the freeze has to run
+                                // BEFORE the rest of the merge is accounted for: draining
+                                // first leaves every uncrossed boundary carrying the whole
+                                // range up to H, which is a position no row set ever had.
+                                //
+                                // A turn that yielded owes them the rows it has not read yet,
+                                // so it freezes none.
+                                if (!yielded && timelineCapture != null) {
+                                    boundaryFreezingCursor.freezeRemaining();
+                                }
+                                if (keyedRoute && !coldKeyedRoute && !yielded) {
+                                    // The stored rows above the last boundary the freeze
+                                    // drained to. They sit inside the range the replacement
+                                    // deletes, so a repair that stopped accounting at its own
+                                    // last row would drop them.
+                                    keyedReplay.drainRemaining();
+                                    if (keyedReplay.getMergedRows() > 0) {
+                                        // The block's extremes are the two routes' together: a
+                                        // merged row can sit below the first key the replay
+                                        // followed and above the last.
+                                        final long mergedMinTs = keyedReplay.getMergedMinTs();
+                                        final long mergedMaxTs = keyedReplay.getMergedMaxTs();
+                                        if (replayMinTs == Numbers.LONG_NULL || mergedMinTs < replayMinTs) {
+                                            replayMinTs = mergedMinTs;
+                                        }
+                                        if (replayMaxTs == Numbers.LONG_NULL || mergedMaxTs > replayMaxTs) {
+                                            replayMaxTs = mergedMaxTs;
+                                        }
+                                    }
+                                }
+                                if (timelineCapture != null) {
+                                    capturedBoundaries = boundaryFreezingCursor.getCaptured();
+                                }
+                                // Capture base rows scanned before the cursor chain closes
+                                // (FilteringRecordCursor.close() resets its counter). No
+                                // filter -> scan equals the rows the window cursor produced;
+                                // a filter makes scan exceed it by the rows it dropped. A
+                                // yielding turn counts the row it stopped on, which the next
+                                // turn reads again - the only double-count, and one row wide.
+                                o3ScanRows += filter != null ? filteringCursor.getBaseRowsConsumed() : scannedRows;
+                            }
+
+                            // Every candidate root the repair owed is frozen and the runtime
+                            // disposition is fixed. The replacement commits only from here,
+                            // never before: a commit the roots do not describe leaves durable
+                            // output with no state version to recover it from. A turn that
+                            // yielded owes roots it has not read the rows for, so it parks
+                            // instead - and commits nothing, which is what leaves the durable
+                            // view as the repair found it.
+                            if (yielded) {
+                                session.suspend(
+                                        reader,
+                                        walWriter,
+                                        timelineCapture,
+                                        resumeFromTs,
+                                        resumeSkipRows,
+                                        capturedBoundaries,
+                                        appendedRows,
+                                        o3ScanRows,
+                                        replayMinTs,
+                                        replayMaxTs,
+                                        outputUniqueness
+                                );
+                                walWriterRetained = true;
+                                timelineCapture = null;
+                            } else {
+                                repairPublication.candidateReady(runtimeDisposition(primaryKept));
+                            }
+                            if (!yielded && (appendedRows > 0 || localized)) {
+                                // REPLACE_RANGE low boundary. replayMinTs alone freezes the
+                                // prefix when the base lost rows below it (DROP PARTITION /
+                                // TTL / TRUNCATE - intended). But a below-frontier dedup
+                                // replacement that drops the lowest result row via the filter
+                                // leaves the base row present, so replayMinTs jumps above it
+                                // and the stale LV row would survive. Extend down to the
+                                // trigger ts (lowest triggering DATA-commit ts, clamped to the
+                                // view's bound); removals are non-DATA and excluded from it, so
+                                // frozen prefixes stay safe. A full rebuild has no single
+                                // trigger - it recomputes the whole view - so it replaces the
+                                // entire view range to purge any stale below-frontier row.
+                                //
+                                // A localized rebuild answers all of this with R directly: it
+                                // re-emitted every qualifying row in [R, H), so anything the
+                                // LV table still holds in there is stale whatever produced it -
+                                // a dropped filter row, a dedup replacement or a base removal.
+                                // R already sits at or below the trigger ts, so the clamp above
+                                // could only raise it. The commit is unconditional here: an empty
+                                // emit range means the base no longer has a qualifying row in
+                                // [R, H), and the rows the LV table still holds there are ghosts
+                                // that the truncating replacement has to clear.
+                                final long replaceLowTs = localized
+                                        ? emitLowTs
+                                        : fullRebuild
+                                          ? viewLowerBoundTimestamp
+                                          : triggerLowTs != Numbers.LONG_NULL
+                                            ? Math.min(replayMinTs, triggerLowTs)
+                                            : replayMinTs;
+                                // The replacement's high bound is the same H the scan stopped at,
+                                // so what the replay did not re-evaluate it also does not delete.
+                                // Positive infinity otherwise, which is the truncating
+                                // replacement every rebuild issued before the bound existed -
+                                // and the same normalization the timeline consumers take.
+                                final long replaceHighTs = timelineHighTsExclusive;
+                                // Before the commit, which is where the check has to finish:
+                                // the publication chosen below stands on the pair, and a
+                                // duplicate admitted to a sparse commit is collapsed silently.
+                                reportOutputUniqueness(
+                                        viewName,
+                                        keyedRoute || localized && finiteHighBound,
+                                        keyedRoute
+                                );
+                                // The verdict, acted on. A sparse attempt publishes only the
+                                // rows the replay recomputed, upserted onto the view's dedup
+                                // keys, and leaves every other stored row where it stands -
+                                // but only when the pair it upserts on names each of those
+                                // rows once. A repeat, or a replay that recomputed nothing at
+                                // all, abandons the attempt: the merge writes the rows it had
+                                // only counted and the repair publishes its whole range with
+                                // the replacement, which collapses nothing.
+                                final boolean sparse = keyedReplay.isSparse()
+                                        && appendedRows > 0
+                                        && outputUniqueness.isUnique();
+                                if (!sparse && (coldKeyedRoute
+                                        ? keyedReplay.materializeUnaccountedMerge()
+                                        : keyedReplay.materializeMerge())) {
+                                    sparsePublicationFallbackCount++;
+                                    LOG.info().$("live view keyed repair abandoned its sparse publication [view=")
+                                            .$(viewName)
+                                            .$(", replayedRows=").$(appendedRows)
+                                            .$(", mergedRows=").$(keyedReplay.getMergedRows())
+                                            .$(", duplicateRows=").$(outputUniqueness.getDuplicateRows())
+                                            .$(", firstDuplicateTs=").$ts(outputUniqueness.getFirstDuplicateTs())
+                                            .I$();
+                                }
+                                if (sparse) {
+                                    sparsePublicationCount++;
+                                    final long supersededRows = coldKeyedRoute
+                                            ? Math.max(0, appendedRows - insertedRowDelta)
+                                            : keyedReplay.getSupersededRows();
+                                    final long rowsKept = coldKeyedRoute
+                                            ? Math.max(0, durableRowsReplaced - supersededRows)
+                                            : keyedReplay.getMergedRows();
+                                    sparsePublicationRowsKept += rowsKept;
+                                    LOG.info().$("live view keyed repair published sparsely [view=").$(viewName)
+                                            .$(", origin=").$(coldKeyedRoute ? "segment start" : "closed segment")
+                                            .$(", replayedRows=").$(appendedRows)
+                                            .$(", supersededRows=").$(supersededRows)
+                                            .$(", rowsKept=").$(rowsKept)
+                                            .$(", outputLowTs=").$ts(emitLowTs)
+                                            .$(", highTsExclusive=").$ts(timelineHighTsExclusive).I$();
+                                    commitLiveViewWithUpsertFenced(instance, walWriter, effectiveSeqTxn);
+                                } else {
+                                    commitLiveViewWithReplaceRangeFenced(instance, walWriter,
+                                            effectiveSeqTxn,
+                                            replaceLowTs,
+                                            replaceHighTs
+                                    );
+                                }
+                                repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
+                            }
+                        }
+                    } finally {
+                        if (!walWriterRetained) {
+                            // Not parked, so nothing else owns the writer. Closing it rolls
+                            // back anything the commit above did not take, which is what an
+                            // unwinding turn wants.
+                            walWriter.close();
                         }
                     }
-                } finally {
-                    if (!walWriterRetained) {
-                        // Not parked, so nothing else owns the writer. Closing it rolls
-                        // back anything the commit above did not take, which is what an
-                        // unwinding turn wants.
-                        walWriter.close();
+                } else if (fullRebuild || triggerLowTs != Numbers.LONG_NULL) {
+                    // The probe found no surviving row, but the view must still be cleared:
+                    //  - a convergent DATA trigger (a dedup/replacement whose lowest touched ts
+                    //    is triggerLowTs) genuinely empties the view from triggerLowTs upward; or
+                    //  - a full rebuild recomputed the whole view to empty, so every on-disk row
+                    //    is stale and the whole range [viewLowerBoundTimestamp, +inf) must go.
+                    // Leaving the block a no-op strands the pre-O3 output rows on disk as ghosts -
+                    // size() over-reports and reads return stale rows while the watermark advances
+                    // past the commit that removed their base rows. Reset the window accumulators to
+                    // identity (matching the from-scratch empty recompute) and emit a pure-delete
+                    // REPLACE_RANGE over [deleteLowTs, +inf) so the on-disk range is cleared. For the
+                    // DATA trigger, rows below triggerLowTs stay frozen, exactly as the surviving-row
+                    // boundary above treats them.
+                    //
+                    // A non-DATA / recovery trigger (lateRowTs == LONG_NULL) that is NOT a full
+                    // rebuild keeps the no-op: without a convergent trigger ts the emptiness is a
+                    // frozen prefix (DROP PARTITION / TTL / TRUNCATE), not a deletion to propagate,
+                    // and the pre-O3 accumulator state must survive.
+                    final long deleteLowTs = fullRebuild ? viewLowerBoundTimestamp : triggerLowTs;
+                    clearWindowState(windowFactory, anchorWindow);
+                    markWindowStateDirty(instance);
+                    // The primary runtime IS the identity state now, whatever the replay was
+                    // going to run in. A localized repair never reaches here - it skips the
+                    // probe and always has a replay row - so this retracts nothing an isolated
+                    // replay established; it is stated rather than assumed.
+                    primaryKept = false;
+                    repairPublication.candidateReady(runtimeDisposition(primaryKept));
+                    try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
+                        commitLiveViewWithReplaceRangeFenced(instance, walWriter,
+                                effectiveSeqTxn,
+                                deleteLowTs,
+                                Long.MAX_VALUE
+                        );
+                        repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
+                    }
+                    LOG.info().$("live view O3 head-miss replay cleared emptied range [view=")
+                            .$(viewName)
+                            .$(", deleteLowTs=").$(deleteLowTs)
+                            .$(", effectiveSeqTxn=").$(effectiveSeqTxn).I$();
+                }
+                if (!yielded && !repairPublication.isAtOrAfter(RepairPublicationStage.CANDIDATE_ROOTS_AND_RUNTIME_READY)) {
+                    // A rebuild that replaced nothing: the probe found no surviving row and
+                    // the trigger authorised no deletion, so the empty candidate set is
+                    // still this repair's candidate set and the runtime still has to be
+                    // settled below.
+                    repairPublication.candidateReady(runtimeDisposition(primaryKept));
+                }
+                replayCompleted = true;
+            } finally {
+                // Drops the boundary schedule, the capture and the runtime this turn
+                // handed the freeze cursor. Its freeze counter is already read back
+                // into capturedBoundaries, and a resumed turn re-arms it from there.
+                boundaryFreezingCursor.clear();
+                // The view's own rows the merge read, and the writer it appended them
+                // through. The counts survive - the publication above reads them - and the
+                // caller disarms the key domain once the repair it armed returns.
+                //
+                // Attributed to whichever publication the repair reached: a replacement
+                // rewrote every row the merge accounted for and this counts them, while a
+                // sparse upsert wrote none of them and the commit site above counted what it
+                // kept. Rolling the two together would report a copy-forward cost the sparse
+                // route does not pay.
+                if (!keyedReplay.isSparse()) {
+                    keyedReplayMergedRows += keyedReplay.getMergedRows();
+                }
+                keyedReplay.releaseMergeState();
+                Misc.free(storedRowCursor);
+                if (isolated && !yielded && (!coldKeyedRoute || !replayCompleted)) {
+                    // The repair is over - published, empty or unwinding - so the keys its
+                    // replay folded into the isolated runtime describe nothing any more.
+                    // Rewinding here rather than only before the next replay is what keeps an
+                    // idle view from holding a repaired segment's key domain indefinitely; a
+                    // parked repair is the one case that keeps it, because its next turn
+                    // continues in exactly that state.
+                    repairRuntime.reset();
+                }
+                if (readerAttached) {
+                    executionContext.clearReader();
+                    engine.attachReader(reader);
+                }
+                if (!yielded
+                        && timelineCapture != null
+                        && (!replayCompleted || capturedBoundaries < repairBoundaries.size())) {
+                    // The replay is unwinding, or stopped short of a boundary it owed a
+                    // root version, so the splice below never publishes.
+                    //
+                    // A parked repair owes those boundaries by design and has handed the
+                    // capture to its session, so it keeps the timeline it is going to
+                    // splice into.
+                    timelineCapture = Misc.free(timelineCapture);
+                    session.discardDescriptor();
+                    repairBoundaries.clear();
+                    if (repairPublication.hasCommittedReplacement()) {
+                        // The durable output has moved under every root and no splice
+                        // corrected them, so the retire this repair displaced on its first
+                        // turn has to happen after all: a timeline nothing corrects must not
+                        // outlive the output it describes.
+                        retireCheckpointTimeline(instance);
+                    }
+                    // Otherwise the candidate is discarded having changed nothing durable -
+                    // a cancelled turn is the ordinary case - and the generation the capture
+                    // pinned still describes exactly the output on disk: it was never
+                    // advanced, the replacement never committed, and the watermarks the
+                    // publication tail moves are untouched, so the change stays unconsumed
+                    // and a later turn replans it. Retiring here instead would delete every
+                    // historical root and leave that replan with no anchor below the
+                    // correction, which is the age-unbounded rebuild the timeline exists to
+                    // avoid.
+                }
+                if (!replayCompleted) {
+                    // The turn is unwinding, so the publication tail below never runs and
+                    // nothing else would end the repair. Release the session here instead,
+                    // which also unblocks refresh for the view: a resumed turn that failed
+                    // must not leave the instance pointing at a candidate whose resources
+                    // the unwind has already taken apart.
+                    endRepairSession(instance, session);
+                }
+            }
+
+            if (yielded) {
+                // Parked with the pinned reader, the uncommitted replacement and the
+                // staged roots in the session, and the runtime standing where the replay
+                // left it. Refresh for this view is blocked until a later turn on this
+                // worker finishes the repair.
+                instance.setSuspendedRepair(session);
+                if (suspendedRepairViews.indexOf(instance) < 0) {
+                    suspendedRepairViews.add(instance);
+                }
+                LOG.info().$("live view O3 repair yielded on its turn budget [view=")
+                        .$(viewName)
+                        .$(", turns=").$(session.getTurns())
+                        .$(", resumeFromTs=").$(resumeFromTs)
+                        .$(", highTsExclusive=").$(plan.getHighTsExclusive())
+                        .$(", rootsVersioned=").$(capturedBoundaries)
+                        .$(", rootsOwed=").$(repairBoundaries.size() - capturedBoundaries)
+                        .$(", rowsScanned=").$(o3ScanRows)
+                        .$(", rowsEmitted=").$(appendedRows).I$();
+                return true;
+            }
+
+            try {
+                if (repairPublication.hasCommittedReplacement()) {
+                    // Post-commit reconciliation. The replacement is durable in the live
+                    // view's own WAL, but every coordinate the rest of this method derives -
+                    // the repaired roots' positions, the suffix range-add, the head seal's
+                    // lvRowPosition - is read off the materialised table, and the consumed
+                    // watermark declares base transactions the table is meant to hold. So
+                    // the repair finds out whether the block landed before it commits to any
+                    // of them, rather than reading a table that does not have the output yet.
+                    if (reconcileLiveViewReplacement(instance, repairPublication.getCommittedLvSeqTxn())) {
+                        repairPublication.replacementApplied();
+                    }
+                    // Re-read the on-disk row count: the REPLACE_RANGE only rewrites the
+                    // band at or above its low boundary and may have preserved a frozen
+                    // prefix below it (or, on the pure-delete path, cleared the band
+                    // outright), so the head-miss output is no longer a pure
+                    // from-scratch rebuild. Sourcing the lifetime counter from the table
+                    // keeps the head checkpoint's lvRowPosition (written below)
+                    // consistent in both the intact-base and base-data-removed cases.
+                    try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                        instance.setLvRowsTotal(lvReader.size());
                     }
                 }
-            } else if (fullRebuild || triggerLowTs != Numbers.LONG_NULL) {
-                // The probe found no surviving row, but the view must still be cleared:
-                //  - a convergent DATA trigger (a dedup/replacement whose lowest touched ts
-                //    is triggerLowTs) genuinely empties the view from triggerLowTs upward; or
-                //  - a full rebuild recomputed the whole view to empty, so every on-disk row
-                //    is stale and the whole range [viewLowerBoundTimestamp, +inf) must go.
-                // Leaving the block a no-op strands the pre-O3 output rows on disk as ghosts -
-                // size() over-reports and reads return stale rows while the watermark advances
-                // past the commit that removed their base rows. Reset the window accumulators to
-                // identity (matching the from-scratch empty recompute) and emit a pure-delete
-                // REPLACE_RANGE over [deleteLowTs, +inf) so the on-disk range is cleared. For the
-                // DATA trigger, rows below triggerLowTs stay frozen, exactly as the surviving-row
-                // boundary above treats them.
-                //
-                // A non-DATA / recovery trigger (lateRowTs == LONG_NULL) that is NOT a full
-                // rebuild keeps the no-op: without a convergent trigger ts the emptiness is a
-                // frozen prefix (DROP PARTITION / TTL / TRUNCATE), not a deletion to propagate,
-                // and the pre-O3 accumulator state must survive.
-                final long deleteLowTs = fullRebuild ? viewLowerBoundTimestamp : triggerLowTs;
-                clearWindowState(windowFactory, anchorWindow);
-                markWindowStateDirty(instance);
-                // The primary runtime IS the identity state now, whatever the replay was
-                // going to run in. A localized repair never reaches here - it skips the
-                // probe and always has a replay row - so this retracts nothing an isolated
-                // replay established; it is stated rather than assumed.
-                primaryKept = false;
-                repairPublication.candidateReady(runtimeDisposition(primaryKept));
-                try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
-                    commitLiveViewWithReplaceRangeFenced(instance, walWriter,
-                            effectiveSeqTxn,
-                            deleteLowTs,
-                            Long.MAX_VALUE
-                    );
-                    repairPublication.replacementCommitted(walWriter.getLastSeqTxn());
+                final boolean replacementReconciled = repairPublication.isReplacementReconciled();
+                if (timelineCapture != null && replacementReconciled) {
+                    // The replacement is applied, so the repaired roots now describe real
+                    // output and the splice can commit.
+                    //
+                    // Every row that moved moved inside [R, H), so the table's total change
+                    // IS the shift every suffix root's cumulative position owes. Proving
+                    // that against the two counts read from the pre-repair table is what
+                    // makes the repaired positions - anchored on the same prefix count -
+                    // trustworthy: a mismatch means the durable table did not change the way
+                    // the replacement says, and a wrong lvRowPosition is not something a
+                    // later restart can detect, only fail on.
+                    final long durableRowsAfterRepair = instance.getLvRowsTotal();
+                    final long suffixRowDelta = durableRowsAfterRepair - durableRowsBeforeRepair;
+                    // A replacement carries the keyed replay plus the unaffected stored rows
+                    // it merged. A sparse cold repair carries only the keyed output and leaves
+                    // every unaffected stored row in place, so its durable proof is the
+                    // pre-repair count plus the exact insert delta.
+                    final long emittedRows = appendedRows + keyedReplay.getMergedRows();
+                    final long expectedRowsAfterRepair;
+                    try {
+                        expectedRowsAfterRepair = coldKeyedRoute
+                                ? Math.addExact(durableRowsBeforeRepair, insertedRowDelta)
+                                : Math.addExact(
+                                Math.subtractExact(durableRowsBeforeRepair, durableRowsReplaced),
+                                emittedRows
+                        );
+                    } catch (ArithmeticException e) {
+                        throw CairoException.critical(0).put("live view replacement row count overflow");
+                    }
+                    if (expectedRowsAfterRepair != durableRowsAfterRepair) {
+                        LOG.critical().$("live view replacement row count does not match the repair plan [view=")
+                                .$(viewName)
+                                .$(", rowsBefore=").$(durableRowsBeforeRepair)
+                                .$(", rowsReplaced=").$(durableRowsReplaced)
+                                .$(", rowsEmitted=").$(emittedRows)
+                                .$(", insertedRowDelta=").$(insertedRowDelta)
+                                .$(", expectedRows=").$(expectedRowsAfterRepair)
+                                .$(", rowsAfter=").$(durableRowsAfterRepair).I$();
+                    } else {
+                        timelineSplice = publishCheckpointTimelineRepair(
+                                instance,
+                                timelineCapture,
+                                effectiveSeqTxn,
+                                timelineHighTsExclusive,
+                                // The delta corrects the cumulative position of every root the
+                                // splice left standing above H, and a repair that ran to the
+                                // end of the base table left none: every root above C is one
+                                // this capture re-versioned, each carrying the position its own
+                                // freeze derived. So it owes no correction, exactly as the
+                                // resume path owes none over the same unbounded interval. The
+                                // arithmetic above still runs - it is what proves the
+                                // replacement moved the rows the repaired positions were
+                                // anchored on.
+                                finiteHighBound ? suffixRowDelta : 0
+                        );
+                        if (timelineSplice != null) {
+                            repairPublication.timelinePublished();
+                        }
+                    }
                 }
-                LOG.info().$("live view O3 head-miss replay cleared emptied range [view=")
-                        .$(viewName)
-                        .$(", deleteLowTs=").$(deleteLowTs)
-                        .$(", effectiveSeqTxn=").$(effectiveSeqTxn).I$();
-            }
-            if (!yielded && !repairPublication.isAtOrAfter(RepairPublicationStage.CANDIDATE_ROOTS_AND_RUNTIME_READY)) {
-                // A rebuild that replaced nothing: the probe found no surviving row and
-                // the trigger authorised no deletion, so the empty candidate set is
-                // still this repair's candidate set and the runtime still has to be
-                // settled below.
-                repairPublication.candidateReady(runtimeDisposition(primaryKept));
-            }
-            replayCompleted = true;
-        } finally {
-            // Drops the boundary schedule, the capture and the runtime this turn
-            // handed the freeze cursor. Its freeze counter is already read back
-            // into capturedBoundaries, and a resumed turn re-arms it from there.
-            boundaryFreezingCursor.clear();
-            // The view's own rows the merge read, and the writer it appended them
-            // through. The counts survive - the publication above reads them - and the
-            // caller disarms the key domain once the repair it armed returns.
-            //
-            // Attributed to whichever publication the repair reached: a replacement
-            // rewrote every row the merge accounted for and this counts them, while a
-            // sparse upsert wrote none of them and the commit site above counted what it
-            // kept. Rolling the two together would report a copy-forward cost the sparse
-            // route does not pay.
-            if (!keyedReplay.isSparse()) {
-                keyedReplayMergedRows += keyedReplay.getMergedRows();
-            }
-            keyedReplay.releaseMergeState();
-            Misc.free(storedRowCursor);
-            if (isolated && !yielded && (!coldKeyedRoute || !replayCompleted)) {
-                // The repair is over - published, empty or unwinding - so the keys its
-                // replay folded into the isolated runtime describe nothing any more.
-                // Rewinding here rather than only before the next replay is what keeps an
-                // idle view from holding a repaired segment's key domain indefinitely; a
-                // parked repair is the one case that keeps it, because its next turn
-                // continues in exactly that state.
-                repairRuntime.reset();
-            }
-            if (readerAttached) {
-                executionContext.clearReader();
-                engine.attachReader(reader);
-            }
-            if (!yielded
-                    && timelineCapture != null
-                    && (!replayCompleted || capturedBoundaries < repairBoundaries.size())) {
-                // The replay is unwinding, or stopped short of a boundary it owed a
-                // root version, so the splice below never publishes.
-                //
-                // A parked repair owes those boundaries by design and has handed the
-                // capture to its session, so it keeps the timeline it is going to
-                // splice into.
-                timelineCapture = Misc.free(timelineCapture);
-                session.discardDescriptor();
-                repairBoundaries.clear();
-                if (repairPublication.hasCommittedReplacement()) {
-                    // The durable output has moved under every root and no splice
-                    // corrected them, so the retire this repair displaced on its first
-                    // turn has to happen after all: a timeline nothing corrects must not
-                    // outlive the output it describes.
+                // The one runtime exchange, and the first point at which it is safe: the
+                // generation that describes the state the primary is about to hold is
+                // already published, so a crash from here on restores that generation
+                // rather than a runtime nothing recorded.
+                if (coldKeyedRoute && replacementReconciled) {
+                    // The repair publication is durable, but the replay ran beside the primary
+                    // and followed only Q. Hand those finished accumulators back before
+                    // the head seal images the primary. A partial failure leaves durable output
+                    // correct but runtime state ambiguous, so force the next cycle to rebuild it.
+                    try {
+                        final int transplantedKeys = transplantKeyedRepairState(instance, replayAnchorWindow);
+                        LOG.info().$("live view cold keyed repair handed its keys back [view=")
+                                .$(viewName).$(", keys=").$(transplantedKeys).I$();
+                    } catch (Throwable t) {
+                        markWindowStateDirty(instance);
+                        LOG.critical().$("live view cold keyed repair could not hand its keys back [view=")
+                                .$(viewName).$(", error=").$(t).I$();
+                    }
+                }
+                settleRepairRuntime(
+                        instance,
+                        session,
+                        windowFactory,
+                        anchorWindow,
+                        carriedSealBaselineGeneration(timelineHighTsExclusive, timelineSplice)
+                );
+                if (!replacementReconciled) {
+                    // The replacement is in the live view's WAL but not in its table. No
+                    // watermark may walk past output the table does not hold, so this turn
+                    // stops short and leaves the repair to be repeated: the base range stays
+                    // unconsumed, the retire below leaves nothing describing superseded
+                    // output, and the next turn blocks on this same seqTxn until the block
+                    // lands.
+                    instance.setPendingReplacementLvSeqTxn(repairPublication.getCommittedLvSeqTxn());
+                    LOG.critical().$("live view O3 replacement committed but did not apply, deferring repair [view=")
+                            .$(viewName)
+                            .$(", lvSeqTxn=").$(repairPublication.getCommittedLvSeqTxn())
+                            .$(", advanceTo=").$(effectiveSeqTxn).I$();
+                } else {
+                    instance.setLastProcessedSeqTxn(effectiveSeqTxn);
+                    instance.setAppliedWatermark(effectiveSeqTxn);
+                    boolean lvConsumedPersisted = false;
+                    boolean headSealed = false;
+                    try {
+                        engine.advanceLiveViewConsumedSeqTxn(
+                                instance.getLiveViewToken(),
+                                effectiveSeqTxn,
+                                blockFileWriter,
+                                path
+                        );
+                        lvConsumedPersisted = true;
+                    } catch (CairoException e) {
+                        LOG.critical().$("could not advance live view consumed seqTxn after O3 replay [view=")
+                                .$(viewName)
+                                .$(", advanceTo=").$(effectiveSeqTxn)
+                                .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                        persistState(instance);
+                    }
+                    repairPublication.watermarkAdvanced();
+                    if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
+                        // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
+                        // above, so force seals a fresh boundary reflecting the post-replay state
+                        // (firstCp is already true here; force keeps the intent explicit). A
+                        // subsequent O3 above it resumes from there instead of rebuilding in full.
+                        //
+                        // The head's maxTs has to describe the state the checkpoint is about to
+                        // serialise: replayMaxTs for a rebuild that ran to the end of the base
+                        // table, but the runtime frontier for one that stopped at a finite H and
+                        // put its own state back - the restore just rewound the functions past
+                        // replayMaxTs, so sealing them under it would claim a boundary the state
+                        // does not sit at, and the next O3 would resume from it and re-read rows
+                        // the state already holds. The frontier is a real timestamp whenever the
+                        // plan tagged a finite H (it had to be at or above H to do so), so this
+                        // seals even when the replacement emitted nothing at all - the retire
+                        // dropped every boundary, and a view left with none rebuilds from scratch
+                        // on the next restart.
+                        //
+                        // Pass 0 appendedRows: lvRowsTotal already includes them (sourced from the
+                        // on-disk size above), so adding them again would double-count
+                        // lvRowPosition. Mirrors the seed-completion path.
+                        //
+                        // A published splice already IS this repair's timeline publication and
+                        // appended no root, which is enough only while the newest root it kept
+                        // still sits at the frontier: the splice moved the generation's
+                        // normalizedBaseSeqTxn up to E, and restart replays (E, durableBase]
+                        // alone, so any row above that root came from a base transaction the
+                        // replay will not walk and the restored state would never see it. Seal
+                        // the frontier as a root of its own whenever it has run past the splice's
+                        // head key - the convergence that let the repair keep the primary runtime
+                        // is exactly what makes that runtime the correct state there - and leave
+                        // the seal to re-stamp the head metadata alone when the two agree.
+                        final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
+                                ? instance.getLatestSeenTs()
+                                : replayMaxTs;
+                        // Take the seal's own answer: it swallows every Throwable and also declines a
+                        // boundary that does not clear the head, so assuming success would clear the
+                        // durable repair marker over a head that was never written.
+                        headSealed = maybeWriteHeadCheckpoint(
+                                instance,
+                                windowFactory,
+                                effectiveSeqTxn,
+                                headMaxTs,
+                                0L,
+                                true,
+                                timelineSplice == null || headMaxTs > timelineSplice.getHeadRootMaxTimestamp()
+                        );
+                    }
+                    if (prefixMarkerLive) {
+                        // Resolve the repair's live marker, which the two timeline-keeping
+                        // routes reach from opposite sides.
+                        //
+                        // A published splice is consistent on its own: it left every root
+                        // addressable and corrected the ones the replacement moved under, so
+                        // its newest root may already sit at the frontier and need no seal
+                        // above it. Drop the marker.
+                        //
+                        // A truncate is not. It left the timeline headless, so a fresh head
+                        // is what makes the preserved prefix restorable; without one the
+                        // repair emitted nothing to seal (a pure delete to EOF) and the
+                        // truncated timeline has to be retired - which removes the marker -
+                        // and left to a restart.
+                        //
+                        // A splice that never published falls to neither. The exit path below
+                        // retires the timeline for it, and that takes the marker with it, so
+                        // this must not clear one on the strength of a seal alone.
+                        if (timelineSplice != null || (timelineCapture == null && headSealed)) {
+                            clearCheckpointRepairMarker(instance);
+                            if (session != null) {
+                                session.setRepairMarkerLive(false);
+                            }
+                        } else if (timelineCapture == null) {
+                            retireCheckpointTimeline(instance);
+                            if (session != null) {
+                                session.setRepairMarkerLive(false);
+                            }
+                        }
+                    }
+                }
+            } finally {
+                if (!repairPublication.isRuntimeSettled()) {
+                    // The block above unwound before the exchange. Settle anyway: the
+                    // disposition was fixed before the replacement committed, and a runtime
+                    // left half in the replay's state and half in the pre-repair state is
+                    // worse than either. A settle that fails here has already marked the
+                    // window state for rebuild, so let the original failure propagate.
+                    try {
+                        // LONG_NULL: this arm is reached only when the block above unwound, so
+                        // nothing published a generation the carried baselines could name.
+                        settleRepairRuntime(instance, session, windowFactory, anchorWindow, Numbers.LONG_NULL);
+                    } catch (Throwable t) {
+                        LOG.critical().$("could not settle live view repair runtime [view=")
+                                .$(viewName)
+                                .$(", error=").$(t).I$();
+                    }
+                }
+                if (timelineCapture != null && timelineSplice == null) {
+                    // Either the splice could not publish, or it was never allowed to try
+                    // because the replacement has not applied. The output the timeline's
+                    // roots describe has moved either way, so it must not survive them.
                     retireCheckpointTimeline(instance);
                 }
-                // Otherwise the candidate is discarded having changed nothing durable -
-                // a cancelled turn is the ordinary case - and the generation the capture
-                // pinned still describes exactly the output on disk: it was never
-                // advanced, the replacement never committed, and the watermarks the
-                // publication tail moves are untouched, so the change stays unconsumed
-                // and a later turn replans it. Retiring here instead would delete every
-                // historical root and leave that replan with no anchor below the
-                // correction, which is the age-unbounded rebuild the timeline exists to
-                // avoid.
+                Misc.free(timelineCapture);
+                // The candidate is either published - its segments reachable from the new
+                // generation - or gone. Either way nothing is left for a startup sweep to
+                // discard, so the descriptor's ownership claim retires with it, together
+                // with the session that carried the repair across its turns.
+                if (coldKeyedRoute) {
+                    repairRuntime.reset();
+                    keyedReplay.clear();
+                }
+
+                endRepairSession(instance, session);
             }
-            if (!replayCompleted) {
-                // The turn is unwinding, so the publication tail below never runs and
-                // nothing else would end the repair. Release the session here instead,
-                // which also unblocks refresh for the view: a resumed turn that failed
-                // must not leave the instance pointing at a candidate whose resources
-                // the unwind has already taken apart.
+            // The boundary rebuild is the residual O(view age) fallback (late row below
+            // every logical boundary, or a deep / unresumable apply-ahead range). Counted
+            // separately from the resume path so a growing value in live_views() flags a
+            // view the timeline is failing to bound. A localized rebuild is bounded by the
+            // dependency floor instead, so it is not that residual - but it is still the
+            // same executor and still counted here.
+            instance.bumpO3BoundaryReplayRows(appendedRows);
+            // Baseline scan-cost signal: base rows this boundary rebuild pulled (>= emit).
+            instance.bumpO3ReplayScanRows(o3ScanRows);
+            // And only now the disposition planning settled on, so live_views() never names
+            // an executor whose rows the counters above do not carry yet. A replay that
+            // parked returned above and publishes on the turn that finishes it.
+            instance.publishCheckpointRepairOutcome();
+            // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
+            // (effectiveSeqTxn - advanceTo); a wide gap is what forces the rebuild when no
+            // sealed anchor sits below the ahead range's minimum in-view ts. scanLowTs /
+            // emitLowTs are L and R: equal to the view boundary on an unlocalized rebuild,
+            // and the proof of what a localized one did not read when they are not.
+            // highTsExclusive is H, LONG_NULL when the rebuild ran to the end of the base
+            // table; runtimeStatePreserved says whether the primary runtime kept the state
+            // it entered with rather than the state the replay produced.
+            LOG.info().$("live view O3 head-miss replay completed [view=")
+                    .$(viewName)
+                    .$(", advanceTo=").$(effectiveSeqTxn)
+                    .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
+                    .$(", localized=").$(localized)
+                    .$(", scanLowTs=").$(scanLowTs)
+                    .$(", coldKeyed=").$(coldKeyedRoute)
+                    .$(", emitLowTs=").$(emitLowTs)
+                    .$(", highTsExclusive=").$(finiteHighBound ? plan.getHighTsExclusive() : Numbers.LONG_NULL)
+                    .$(", runtimeStatePreserved=").$(repairPublication.isKeepPrimaryRuntime())
+                    .$(", replacementApplied=").$(repairPublication.isReplacementReconciled())
+                    .$(", turns=").$(session != null ? session.getTurns() + 1 : 1)
+                    .$(", rowsScanned=").$(o3ScanRows)
+                    .$(", rowsEmitted=").$(appendedRows).I$();
+            return false;
+        } finally {
+            if (!replayEntered) {
+                // The prologue unwound, so the replay's finally never ran and everything the
+                // prologue acquired is still ours. The refresh's own catch releases none of
+                // it: a view that keeps faulting here drains the reader pool a tenant per
+                // fault and strands a repair descriptor per fault for a startup sweep to
+                // find. The merge's hold on the cursor goes with the cursor - a bind left
+                // pointing at a freed cursor would turn the leak into a use-after-free - and
+                // the session goes out the same way the replay's own unwind ends it.
+                Misc.free(storedRowCursor);
+                keyedReplay.clear();
+                Misc.free(timelineCapture);
                 endRepairSession(instance, session);
             }
         }
-
-        if (yielded) {
-            // Parked with the pinned reader, the uncommitted replacement and the
-            // staged roots in the session, and the runtime standing where the replay
-            // left it. Refresh for this view is blocked until a later turn on this
-            // worker finishes the repair.
-            instance.setSuspendedRepair(session);
-            if (suspendedRepairViews.indexOf(instance) < 0) {
-                suspendedRepairViews.add(instance);
-            }
-            LOG.info().$("live view O3 repair yielded on its turn budget [view=")
-                    .$(viewName)
-                    .$(", turns=").$(session.getTurns())
-                    .$(", resumeFromTs=").$(resumeFromTs)
-                    .$(", highTsExclusive=").$(plan.getHighTsExclusive())
-                    .$(", rootsVersioned=").$(capturedBoundaries)
-                    .$(", rootsOwed=").$(repairBoundaries.size() - capturedBoundaries)
-                    .$(", rowsScanned=").$(o3ScanRows)
-                    .$(", rowsEmitted=").$(appendedRows).I$();
-            return true;
-        }
-
-        try {
-            if (repairPublication.hasCommittedReplacement()) {
-                // Post-commit reconciliation. The replacement is durable in the live
-                // view's own WAL, but every coordinate the rest of this method derives -
-                // the repaired roots' positions, the suffix range-add, the head seal's
-                // lvRowPosition - is read off the materialised table, and the consumed
-                // watermark declares base transactions the table is meant to hold. So
-                // the repair finds out whether the block landed before it commits to any
-                // of them, rather than reading a table that does not have the output yet.
-                if (reconcileLiveViewReplacement(instance, repairPublication.getCommittedLvSeqTxn())) {
-                    repairPublication.replacementApplied();
-                }
-                // Re-read the on-disk row count: the REPLACE_RANGE only rewrites the
-                // band at or above its low boundary and may have preserved a frozen
-                // prefix below it (or, on the pure-delete path, cleared the band
-                // outright), so the head-miss output is no longer a pure
-                // from-scratch rebuild. Sourcing the lifetime counter from the table
-                // keeps the head checkpoint's lvRowPosition (written below)
-                // consistent in both the intact-base and base-data-removed cases.
-                try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                    instance.setLvRowsTotal(lvReader.size());
-                }
-            }
-            final boolean replacementReconciled = repairPublication.isReplacementReconciled();
-            if (timelineCapture != null && replacementReconciled) {
-                // The replacement is applied, so the repaired roots now describe real
-                // output and the splice can commit.
-                //
-                // Every row that moved moved inside [R, H), so the table's total change
-                // IS the shift every suffix root's cumulative position owes. Proving
-                // that against the two counts read from the pre-repair table is what
-                // makes the repaired positions - anchored on the same prefix count -
-                // trustworthy: a mismatch means the durable table did not change the way
-                // the replacement says, and a wrong lvRowPosition is not something a
-                // later restart can detect, only fail on.
-                final long durableRowsAfterRepair = instance.getLvRowsTotal();
-                final long suffixRowDelta = durableRowsAfterRepair - durableRowsBeforeRepair;
-                // A replacement carries the keyed replay plus the unaffected stored rows
-                // it merged. A sparse cold repair carries only the keyed output and leaves
-                // every unaffected stored row in place, so its durable proof is the
-                // pre-repair count plus the exact insert delta.
-                final long emittedRows = appendedRows + keyedReplay.getMergedRows();
-                final long expectedRowsAfterRepair;
-                try {
-                    expectedRowsAfterRepair = coldKeyedRoute
-                            ? Math.addExact(durableRowsBeforeRepair, insertedRowDelta)
-                            : Math.addExact(
-                            Math.subtractExact(durableRowsBeforeRepair, durableRowsReplaced),
-                            emittedRows
-                    );
-                } catch (ArithmeticException e) {
-                    throw CairoException.critical(0).put("live view replacement row count overflow");
-                }
-                if (expectedRowsAfterRepair != durableRowsAfterRepair) {
-                    LOG.critical().$("live view replacement row count does not match the repair plan [view=")
-                            .$(viewName)
-                            .$(", rowsBefore=").$(durableRowsBeforeRepair)
-                            .$(", rowsReplaced=").$(durableRowsReplaced)
-                            .$(", rowsEmitted=").$(emittedRows)
-                            .$(", insertedRowDelta=").$(insertedRowDelta)
-                            .$(", expectedRows=").$(expectedRowsAfterRepair)
-                            .$(", rowsAfter=").$(durableRowsAfterRepair).I$();
-                } else {
-                    timelineSplice = publishCheckpointTimelineRepair(
-                            instance,
-                            timelineCapture,
-                            effectiveSeqTxn,
-                            timelineHighTsExclusive,
-                            // The delta corrects the cumulative position of every root the
-                            // splice left standing above H, and a repair that ran to the
-                            // end of the base table left none: every root above C is one
-                            // this capture re-versioned, each carrying the position its own
-                            // freeze derived. So it owes no correction, exactly as the
-                            // resume path owes none over the same unbounded interval. The
-                            // arithmetic above still runs - it is what proves the
-                            // replacement moved the rows the repaired positions were
-                            // anchored on.
-                            finiteHighBound ? suffixRowDelta : 0
-                    );
-                    if (timelineSplice != null) {
-                        repairPublication.timelinePublished();
-                    }
-                }
-            }
-            // The one runtime exchange, and the first point at which it is safe: the
-            // generation that describes the state the primary is about to hold is
-            // already published, so a crash from here on restores that generation
-            // rather than a runtime nothing recorded.
-            if (coldKeyedRoute && replacementReconciled) {
-                // The repair publication is durable, but the replay ran beside the primary
-                // and followed only Q. Hand those finished accumulators back before
-                // the head seal images the primary. A partial failure leaves durable output
-                // correct but runtime state ambiguous, so force the next cycle to rebuild it.
-                try {
-                    final int transplantedKeys = transplantKeyedRepairState(instance, replayAnchorWindow);
-                    LOG.info().$("live view cold keyed repair handed its keys back [view=")
-                            .$(viewName).$(", keys=").$(transplantedKeys).I$();
-                } catch (Throwable t) {
-                    markWindowStateDirty(instance);
-                    LOG.critical().$("live view cold keyed repair could not hand its keys back [view=")
-                            .$(viewName).$(", error=").$(t).I$();
-                }
-            }
-            settleRepairRuntime(
-                    instance,
-                    session,
-                    windowFactory,
-                    anchorWindow,
-                    carriedSealBaselineGeneration(timelineHighTsExclusive, timelineSplice)
-            );
-            if (!replacementReconciled) {
-                // The replacement is in the live view's WAL but not in its table. No
-                // watermark may walk past output the table does not hold, so this turn
-                // stops short and leaves the repair to be repeated: the base range stays
-                // unconsumed, the retire below leaves nothing describing superseded
-                // output, and the next turn blocks on this same seqTxn until the block
-                // lands.
-                instance.setPendingReplacementLvSeqTxn(repairPublication.getCommittedLvSeqTxn());
-                LOG.critical().$("live view O3 replacement committed but did not apply, deferring repair [view=")
-                        .$(viewName)
-                        .$(", lvSeqTxn=").$(repairPublication.getCommittedLvSeqTxn())
-                        .$(", advanceTo=").$(effectiveSeqTxn).I$();
-            } else {
-                instance.setLastProcessedSeqTxn(effectiveSeqTxn);
-                instance.setAppliedWatermark(effectiveSeqTxn);
-                boolean lvConsumedPersisted = false;
-                boolean headSealed = false;
-                try {
-                    engine.advanceLiveViewConsumedSeqTxn(
-                            instance.getLiveViewToken(),
-                            effectiveSeqTxn,
-                            blockFileWriter,
-                            path
-                    );
-                    lvConsumedPersisted = true;
-                } catch (CairoException e) {
-                    LOG.critical().$("could not advance live view consumed seqTxn after O3 replay [view=")
-                            .$(viewName)
-                            .$(", advanceTo=").$(effectiveSeqTxn)
-                            .$(", error=").$safe(e.getFlyweightMessage()).I$();
-                    persistState(instance);
-                }
-                repairPublication.watermarkAdvanced();
-                if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
-                    // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
-                    // above, so force seals a fresh boundary reflecting the post-replay state
-                    // (firstCp is already true here; force keeps the intent explicit). A
-                    // subsequent O3 above it resumes from there instead of rebuilding in full.
-                    //
-                    // The head's maxTs has to describe the state the checkpoint is about to
-                    // serialise: replayMaxTs for a rebuild that ran to the end of the base
-                    // table, but the runtime frontier for one that stopped at a finite H and
-                    // put its own state back - the restore just rewound the functions past
-                    // replayMaxTs, so sealing them under it would claim a boundary the state
-                    // does not sit at, and the next O3 would resume from it and re-read rows
-                    // the state already holds. The frontier is a real timestamp whenever the
-                    // plan tagged a finite H (it had to be at or above H to do so), so this
-                    // seals even when the replacement emitted nothing at all - the retire
-                    // dropped every boundary, and a view left with none rebuilds from scratch
-                    // on the next restart.
-                    //
-                    // Pass 0 appendedRows: lvRowsTotal already includes them (sourced from the
-                    // on-disk size above), so adding them again would double-count
-                    // lvRowPosition. Mirrors the seed-completion path.
-                    //
-                    // A published splice already IS this repair's timeline publication and
-                    // appended no root, which is enough only while the newest root it kept
-                    // still sits at the frontier: the splice moved the generation's
-                    // normalizedBaseSeqTxn up to E, and restart replays (E, durableBase]
-                    // alone, so any row above that root came from a base transaction the
-                    // replay will not walk and the restored state would never see it. Seal
-                    // the frontier as a root of its own whenever it has run past the splice's
-                    // head key - the convergence that let the repair keep the primary runtime
-                    // is exactly what makes that runtime the correct state there - and leave
-                    // the seal to re-stamp the head metadata alone when the two agree.
-                    final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
-                            ? instance.getLatestSeenTs()
-                            : replayMaxTs;
-                    // Take the seal's own answer: it swallows every Throwable and also declines a
-                    // boundary that does not clear the head, so assuming success would clear the
-                    // durable repair marker over a head that was never written.
-                    headSealed = maybeWriteHeadCheckpoint(
-                            instance,
-                            windowFactory,
-                            effectiveSeqTxn,
-                            headMaxTs,
-                            0L,
-                            true,
-                            timelineSplice == null || headMaxTs > timelineSplice.getHeadRootMaxTimestamp()
-                    );
-                }
-                if (prefixMarkerLive) {
-                    // Resolve the repair's live marker, which the two timeline-keeping
-                    // routes reach from opposite sides.
-                    //
-                    // A published splice is consistent on its own: it left every root
-                    // addressable and corrected the ones the replacement moved under, so
-                    // its newest root may already sit at the frontier and need no seal
-                    // above it. Drop the marker.
-                    //
-                    // A truncate is not. It left the timeline headless, so a fresh head
-                    // is what makes the preserved prefix restorable; without one the
-                    // repair emitted nothing to seal (a pure delete to EOF) and the
-                    // truncated timeline has to be retired - which removes the marker -
-                    // and left to a restart.
-                    //
-                    // A splice that never published falls to neither. The exit path below
-                    // retires the timeline for it, and that takes the marker with it, so
-                    // this must not clear one on the strength of a seal alone.
-                    if (timelineSplice != null || (timelineCapture == null && headSealed)) {
-                        clearCheckpointRepairMarker(instance);
-                        if (session != null) {
-                            session.setRepairMarkerLive(false);
-                        }
-                    } else if (timelineCapture == null) {
-                        retireCheckpointTimeline(instance);
-                        if (session != null) {
-                            session.setRepairMarkerLive(false);
-                        }
-                    }
-                }
-            }
-        } finally {
-            if (!repairPublication.isRuntimeSettled()) {
-                // The block above unwound before the exchange. Settle anyway: the
-                // disposition was fixed before the replacement committed, and a runtime
-                // left half in the replay's state and half in the pre-repair state is
-                // worse than either. A settle that fails here has already marked the
-                // window state for rebuild, so let the original failure propagate.
-                try {
-                    // LONG_NULL: this arm is reached only when the block above unwound, so
-                    // nothing published a generation the carried baselines could name.
-                    settleRepairRuntime(instance, session, windowFactory, anchorWindow, Numbers.LONG_NULL);
-                } catch (Throwable t) {
-                    LOG.critical().$("could not settle live view repair runtime [view=")
-                            .$(viewName)
-                            .$(", error=").$(t).I$();
-                }
-            }
-            if (timelineCapture != null && timelineSplice == null) {
-                // Either the splice could not publish, or it was never allowed to try
-                // because the replacement has not applied. The output the timeline's
-                // roots describe has moved either way, so it must not survive them.
-                retireCheckpointTimeline(instance);
-            }
-            Misc.free(timelineCapture);
-            // The candidate is either published - its segments reachable from the new
-            // generation - or gone. Either way nothing is left for a startup sweep to
-            // discard, so the descriptor's ownership claim retires with it, together
-            // with the session that carried the repair across its turns.
-            if (coldKeyedRoute) {
-                repairRuntime.reset();
-                keyedReplay.clear();
-            }
-
-            endRepairSession(instance, session);
-        }
-        // The boundary rebuild is the residual O(view age) fallback (late row below
-        // every logical boundary, or a deep / unresumable apply-ahead range). Counted
-        // separately from the resume path so a growing value in live_views() flags a
-        // view the timeline is failing to bound. A localized rebuild is bounded by the
-        // dependency floor instead, so it is not that residual - but it is still the
-        // same executor and still counted here.
-        instance.bumpO3BoundaryReplayRows(appendedRows);
-        // Baseline scan-cost signal: base rows this boundary rebuild pulled (>= emit).
-        instance.bumpO3ReplayScanRows(o3ScanRows);
-        // And only now the disposition planning settled on, so live_views() never names
-        // an executor whose rows the counters above do not carry yet. A replay that
-        // parked returned above and publishes on the turn that finishes it.
-        instance.publishCheckpointRepairOutcome();
-        // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
-        // (effectiveSeqTxn - advanceTo); a wide gap is what forces the rebuild when no
-        // sealed anchor sits below the ahead range's minimum in-view ts. scanLowTs /
-        // emitLowTs are L and R: equal to the view boundary on an unlocalized rebuild,
-        // and the proof of what a localized one did not read when they are not.
-        // highTsExclusive is H, LONG_NULL when the rebuild ran to the end of the base
-        // table; runtimeStatePreserved says whether the primary runtime kept the state
-        // it entered with rather than the state the replay produced.
-        LOG.info().$("live view O3 head-miss replay completed [view=")
-                .$(viewName)
-                .$(", advanceTo=").$(effectiveSeqTxn)
-                .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
-                .$(", localized=").$(localized)
-                .$(", scanLowTs=").$(scanLowTs)
-                .$(", coldKeyed=").$(coldKeyedRoute)
-                .$(", emitLowTs=").$(emitLowTs)
-                .$(", highTsExclusive=").$(finiteHighBound ? plan.getHighTsExclusive() : Numbers.LONG_NULL)
-                .$(", runtimeStatePreserved=").$(repairPublication.isKeepPrimaryRuntime())
-                .$(", replacementApplied=").$(repairPublication.isReplacementReconciled())
-                .$(", turns=").$(session != null ? session.getTurns() + 1 : 1)
-                .$(", rowsScanned=").$(o3ScanRows)
-                .$(", rowsEmitted=").$(appendedRows).I$();
-        return false;
     }
 
     /**
