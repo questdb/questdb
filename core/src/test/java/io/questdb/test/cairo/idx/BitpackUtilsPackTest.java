@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.idx;
 
 import io.questdb.cairo.idx.BitpackUtils;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
@@ -40,6 +41,75 @@ import org.junit.Test;
  * is the only assertion that catches it.
  */
 public class BitpackUtilsPackTest extends AbstractCairoTest {
+
+    /**
+     * The flat blob must be decodable by the field offsets
+     * {@code AbstractPostingIndexReader} reads, because the whole point of
+     * reusing the native layout is that the existing decoder understands it. So
+     * this decodes with those constants directly rather than with a helper that
+     * could share a bug with the encoder.
+     */
+    @Test
+    public void testFlatBlobDecodesAtTheOffsetsTheReaderUses() throws Exception {
+        assertMemoryLeak(() -> {
+            final int keys = 5;
+            final int[] perKey = {3, 0, 7, 1, 4}; // one key deliberately empty
+            int total = 0;
+            for (int c : perKey) {
+                total += c;
+            }
+            final long baseValue = 1_000_000L;
+            final long[] rowIds = new long[total];
+            for (int i = 0; i < total; i++) {
+                rowIds[i] = baseValue + (long) i * 7 + 3;
+            }
+            final int bitWidth = BitpackUtils.bitsNeeded(rowIds[total - 1] - baseValue);
+
+            final long srcSize = (long) total * Long.BYTES;
+            final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+            final long prefixSize = (long) (keys + 1) * Integer.BYTES;
+            final long prefix = Unsafe.malloc(prefixSize, MemoryTag.NATIVE_DEFAULT);
+            final int blobSize = PostingIndexUtils.flatBlobSize(keys, total, bitWidth);
+            final long blob = Unsafe.calloc(blobSize, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int i = 0; i < total; i++) {
+                    Unsafe.getUnsafe().putLong(src + ((long) i << 3), rowIds[i]);
+                }
+                int running = 0;
+                for (int k = 0; k < keys; k++) {
+                    Unsafe.getUnsafe().putInt(prefix + (long) k * Integer.BYTES, running);
+                    running += perKey[k];
+                }
+                Unsafe.getUnsafe().putInt(prefix + (long) keys * Integer.BYTES, running);
+
+                PostingIndexUtils.encodeFlatBlob(blob, src, total, keys, prefix, baseValue, bitWidth);
+
+                Assert.assertEquals("mode", PostingIndexUtils.STRIDE_MODE_FLAT, Unsafe.getUnsafe().getByte(blob));
+                Assert.assertEquals("bitWidth", bitWidth, Unsafe.getUnsafe().getByte(blob + 1) & 0xFF);
+                Assert.assertEquals("baseValue", baseValue,
+                        Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET));
+
+                final long prefixAddr = blob + PostingIndexUtils.STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+                final long dataAddr = blob + PostingIndexUtils.strideFlatHeaderSize(keys);
+                for (int k = 0; k < keys; k++) {
+                    final int start = Unsafe.getUnsafe().getInt(prefixAddr + (long) k * Integer.BYTES);
+                    final int end = Unsafe.getUnsafe().getInt(prefixAddr + (long) (k + 1) * Integer.BYTES);
+                    Assert.assertEquals("count for key " + k, perKey[k], end - start);
+                    for (int j = start; j < end; j++) {
+                        Assert.assertEquals(
+                                "row id [key=" + k + ", j=" + j + ']',
+                                rowIds[j],
+                                BitpackUtils.unpackValue(dataAddr, j, bitWidth, baseValue)
+                        );
+                    }
+                }
+            } finally {
+                Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(prefix, prefixSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(blob, blobSize, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
 
     @Test
     public void testPackRoundTripsThroughEveryUnpacker() throws Exception {

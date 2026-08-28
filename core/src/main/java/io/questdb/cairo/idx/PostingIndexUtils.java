@@ -1556,6 +1556,65 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * Total size of a flat-mode blob holding {@code valueCount} row ids for
+     * {@code keysInStride} keys at {@code bitWidth} bits each.
+     */
+    public static int flatBlobSize(int keysInStride, int valueCount, int bitWidth) {
+        return strideFlatHeaderSize(keysInStride) + BitpackUtils.packedDataSize(valueCount, bitWidth);
+    }
+
+    /**
+     * Writes a flat-mode stride blob: the layout
+     * {@code AbstractPostingIndexReader} already decodes, produced outside the
+     * native writer so the parquet-form seal can emit the same bytes.
+     * <p>
+     * Byte for byte: mode at 0, bitWidth at 1, {@code baseValue} at
+     * {@link #STRIDE_FLAT_BASE_OFFSET}, then {@code keysInStride + 1} prefix
+     * counts at {@link #STRIDE_FLAT_PREFIX_COUNTS_OFFSET}, then the packed
+     * values. The prefix array is cumulative and its last entry is the total, so
+     * key {@code k} owns {@code [prefix[k], prefix[k+1])}.
+     * <p>
+     * {@code rowIdsAddr} must hold the stride's row ids ALREADY GROUPED BY KEY in
+     * the order {@code prefixCounts} describes, and ascending within each key --
+     * the order the seal's key-major sort produces. Nothing here re-sorts, and a
+     * caller that passes them unsorted gets a blob that decodes without error and
+     * returns row ids in the wrong order.
+     *
+     * @param destAddr    destination, at least {@link #flatBlobSize} bytes, ZERO-FILLED
+     * @param rowIdsAddr  source row ids, {@code valueCount} longs, key-major
+     * @param prefixCounts cumulative per-key counts, {@code keysInStride + 1} ints
+     * @param baseValue   value subtracted from every row id before packing
+     * @param bitWidth    bits per packed value, from {@link BitpackUtils#bitsNeeded}
+     */
+    public static void encodeFlatBlob(
+            long destAddr,
+            long rowIdsAddr,
+            int valueCount,
+            int keysInStride,
+            long prefixCountsAddr,
+            long baseValue,
+            int bitWidth
+    ) {
+        Unsafe.getUnsafe().putByte(destAddr, STRIDE_MODE_FLAT);
+        Unsafe.getUnsafe().putByte(destAddr + 1, (byte) bitWidth);
+        Unsafe.getUnsafe().putLong(destAddr + STRIDE_FLAT_BASE_OFFSET, baseValue);
+        final long prefixDest = destAddr + STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+        for (int k = 0; k <= keysInStride; k++) {
+            Unsafe.getUnsafe().putInt(
+                    prefixDest + (long) k * Integer.BYTES,
+                    Unsafe.getUnsafe().getInt(prefixCountsAddr + (long) k * Integer.BYTES)
+            );
+        }
+        BitpackUtils.packAllValues(
+                rowIdsAddr,
+                valueCount,
+                bitWidth,
+                baseValue,
+                destAddr + strideFlatHeaderSize(keysInStride)
+        );
+    }
+
+    /**
      * Size of a flat-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
      */
     public static int strideFlatHeaderSize(int keysInStride) {
