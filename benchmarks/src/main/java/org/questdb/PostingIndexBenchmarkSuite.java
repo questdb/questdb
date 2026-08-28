@@ -189,7 +189,13 @@ public class PostingIndexBenchmarkSuite {
                 // Same exports as the branch below. This branch forked already,
                 // so it needed them just as much; the two only differ in
                 // iteration counts.
-                builder.forks(1)
+                // -Dquestdb.suite.bench.forks=0 runs IN-PROCESS. The only
+                // legitimate use is attaching a profiler: an -agentpath on the
+                // launcher does not reach a forked JVM, so a forked profile
+                // silently collects ZERO samples from the benchmark. Numbers
+                // from an unforked run are NOT comparable -- benchmarks
+                // contaminate each other, which is why forking is the default.
+                builder.forks(Integer.getInteger("questdb.suite.bench.forks", 1))
                         .jvmArgsAppend(JVM_EXPORTS)
                         .warmupIterations(1)
                         .measurementIterations(2);
