@@ -230,6 +230,42 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * {@link #seekFirstAtLeast} against PACKED values, so a window can be
+     * narrowed before anything is widened.
+     * <p>
+     * Widening first and narrowing after is what the packed cursors did
+     * originally, and it makes a windowed read widen a whole key run to throw
+     * most of it away -- at 2,000 keys over 2M rows that is 1,000 values
+     * widened per key however few the window admits. The native chain does not:
+     * it binary searches the packed data with single-value unpacks and only
+     * then widens the range it settled on. This is that search.
+     */
+    protected static long packedSeekFirstAtLeast(long dataAddr, long lo, long hi, int bitWidth, long base, long value) {
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (BitpackUtils.unpackValue(dataAddr, (int) mid, bitWidth, base) < value) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /** {@link #seekFirstAbove} against PACKED values. See {@link #packedSeekFirstAtLeast}. */
+    protected static long packedSeekFirstAbove(long dataAddr, long lo, long hi, int bitWidth, long base, long value) {
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (BitpackUtils.unpackValue(dataAddr, (int) mid, bitWidth, base) <= value) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /**
      * Offset of {@code row_id}'s values in {@code rowGroup}, or -1 when the
      * chunk is not a single uncompressed PLAIN page and so has to be decoded.
      */
@@ -623,6 +659,17 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // cheap.
                 return hi - lo;
             }
+            if (packedPayload) {
+                // The run ascends, so the rows inside the window are a
+                // contiguous slice of it and its LENGTH is the answer. Two
+                // binary searches in the packed domain, and nothing is widened
+                // at all -- against widening the whole run and counting it.
+                final long addr = packedDataAddr(rowGroup);
+                final int bitWidth = packedBitWidth(rowGroup);
+                final long base = packedBase(rowGroup);
+                final long from = packedSeekFirstAtLeast(addr, lo, hi, bitWidth, base, minValue);
+                return packedSeekFirstAbove(addr, from, hi, bitWidth, base, maxValue) - from;
+            }
             // Only the key's own rows, and only row_id: the run is the key's by
             // construction, so nothing here needs key_id to filter on.
             final long rowIdPtr = decodeRowIdRange(rowGroup, lo, hi);
@@ -643,6 +690,18 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             }
             final long lo = Numbers.decodeLowInt(range);
             final long hi = Numbers.decodeHighInt(range);
+            if (packedPayload) {
+                // The matching rows are a contiguous ascending slice, so the
+                // j-th of them is one indexed read at from + j. No scan, and
+                // nothing widened but the single value returned.
+                final long addr = packedDataAddr(rowGroup);
+                final int bitWidth = packedBitWidth(rowGroup);
+                final long base = packedBase(rowGroup);
+                final long from = packedSeekFirstAtLeast(addr, lo, hi, bitWidth, base, minValue);
+                final long to = packedSeekFirstAbove(addr, from, hi, bitWidth, base, maxValue);
+                final long at = from + j;
+                return at < to ? BitpackUtils.unpackValue(addr, (int) at, bitWidth, base) : Numbers.LONG_NULL;
+            }
             final long rowIdPtr = decodeRowIdRange(rowGroup, lo, hi);
             long seen = 0;
             for (long i = 0, count = hi - lo; i < count; i++) {

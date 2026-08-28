@@ -158,6 +158,14 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         // holding only the key's rows; rowLo when reading the group's row_id
         // column in place, where the key's run sits at an offset.
         private long rowFloor;
+        /**
+         * Exclusive TOP of the current key's narrowed run still to be widened.
+         * This cursor descends, so batches are taken from the top down and this
+         * moves toward packedLo.
+         */
+        private long packedNext;
+        /** Inclusive bottom of that run. See refillPackedBatch. */
+        private long packedLo;
         private int cachedRowGroup = -1;
         private int[] cachedCovers;
         private int lastTouchedRowGroup = -1;
@@ -226,10 +234,16 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     hasNext = true;
                     return true;
                 }
+                if (packedPayload && refillPackedBatch()) {
+                    // More of this key's run left to widen. Not a new group.
+                    continue;
+                }
                 // Group exhausted; force a decode of the previous one.
                 rg--;
                 decodedGroup = false;
             }
+
+
             if (nullPos > minValue) {
                 // The implicit-null prefix, emitted LAST here rather than first:
                 // it is the lowest run of row ids, and this cursor descends.
@@ -241,6 +255,29 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 return true;
             }
             return false;
+        }
+
+        /**
+         * Widens the next batch of the current key's narrowed run, taken from
+         * the TOP down because this cursor descends, or false when spent.
+         * <p>
+         * Batched at the native chain's size for the reason given in the
+         * forward reader: materialising a whole run and reading it back is two
+         * passes over memory that does not fit in L1, and it measured slower
+         * than native despite a faster inner loop.
+         */
+        private boolean refillPackedBatch() {
+            if (packedNext <= packedLo) {
+                return false;
+            }
+            final int batch = (int) Math.min(packedNext - packedLo, PostingIndexUtils.PACKED_BATCH_SIZE);
+            packedNext -= batch;
+            rowIdPtr = unpackRowIds(rg, (int) packedNext, batch);
+            // The batch is ascending in the buffer; the countdown walks it from
+            // its top, so the next step down continues the descending order.
+            rowFloor = 0;
+            rowInGroup = batch;
+            return true;
         }
 
         /**
@@ -309,19 +346,27 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     clearCoverOrdinals();
                     cachedRowGroup = -1;
                     cachedCovers = null;
-                    rowIdPtr = unpackRowIds(rg, (int) rowLo, (int) (rowHi - rowLo));
-                    // Ordinals are relative to the widened run, so both bounds
-                    // restart at 0. The run still ascends, so this descending
-                    // cursor walks it from the top exactly as before.
-                    rowFloor = seekFirstAtLeast(rowIdPtr, 0, rowHi - rowLo, minValue);
-                    rowInGroup = seekFirstAbove(rowIdPtr, rowFloor, rowHi - rowLo, maxValue);
-                    if (rowInGroup <= rowFloor) {
+                    // Narrow in the PACKED domain before widening anything, for
+                    // the reason given in the forward reader: widening the whole
+                    // run and seeking inside it widens rows the window throws
+                    // away.
+                    final long packedAddr = packedDataAddr(rg);
+                    final int bitWidth = packedBitWidth(rg);
+                    final long base = packedBase(rg);
+                    final long from = packedSeekFirstAtLeast(packedAddr, rowLo, rowHi, bitWidth, base, minValue);
+                    final long to = packedSeekFirstAbove(packedAddr, from, rowHi, bitWidth, base, maxValue);
+                    lastTouchedRowGroup = rg;
+                    if (from >= to) {
                         rg--;
                         continue;
                     }
                     windowNarrowed = true;
                     decodedGroup = true;
-                    lastTouchedRowGroup = rg;
+                    // Widened one L1-sized batch at a time, from the top down,
+                    // rather than the whole run at once. See refillPackedBatch.
+                    packedLo = from;
+                    packedNext = to;
+                    refillPackedBatch();
                     return true;
                 }
                 // Fastest path, and the forward reader has had it all along:
@@ -429,6 +474,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             this.rowIdPtr = 0;
             this.rowInGroup = 0;
             this.rowFloor = 0;
+            this.packedNext = 0;
+            this.packedLo = 0;
             this.windowNarrowed = false;
             this.groupRows = 0;
             setEmittedRow(-1);

@@ -309,6 +309,40 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    /**
+     * The same keys as {@link #indexKeyLookup}, taking only the FIRST row of
+     * each instead of draining it.
+     * <p>
+     * A diagnostic, not a workload: it exists to split a lookup's cost into the
+     * part paid once per key -- binding the cursor, resolving the row group,
+     * reading the directory -- and the part paid per row. With N rows a key,
+     * {@code drain = bind + N x traverse} and {@code firstRow = bind + traverse},
+     * so running both solves for each. Attributing a gap to "bind cost" without
+     * this is reasoning, not measurement.
+     * <p>
+     * It also exposes something the packed arm does and the others do not: the
+     * packed cursor widens a key's WHOLE run at bind, so it pays for 1,000 row
+     * ids to hand back one. Here that shows up as a cost the other two arms do
+     * not have.
+     */
+    @Benchmark
+    public void indexKeyFirstRow(IndexState s) {
+        try (Path path = new Path().of(s.dir)) {
+            IndexReader reader = openReader(s, path);
+            try {
+                for (int key : s.pointKeys) {
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        if (c.hasNext()) {
+                            c.next();
+                        }
+                    }
+                }
+            } finally {
+                Misc.free(reader);
+            }
+        }
+    }
+
     // ==================================================================================
     // Section 1: Index Comparison — Legacy vs Posting, all 7 scenarios
     // ==================================================================================
@@ -1764,7 +1798,24 @@ public class PostingIndexBenchmarkSuite {
         S6(200_000, 1_200_000, 1_200_000, Dist.SHUFFLED, 0L),
         S7(1_000_000, 2_000_000, 2_000_000, Dist.SHUFFLED, 0L),
         S8(5_000, 1_000_000, 1_000_000, Dist.ROUND_ROBIN, 1_000_000_000L),
-        P400K(16, 400_000, 400_000, Dist.ROUND_ROBIN, 0L);
+        P400K(16, 400_000, 400_000, Dist.ROUND_ROBIN, 0L),
+        /**
+         * The only rung whose index does NOT fit in cache, and the only one that
+         * can say anything about row-id WIDTH.
+         * <p>
+         * Every other rung tops out at 2,000,000 postings: 16 MB stored PLAIN as
+         * int64, against 32 MB of L3 per CCD on the machine this ladder was tuned
+         * on. Halving the bytes of a read that already hits L3 buys almost
+         * nothing, so a packed payload can only lose there -- it pays a widen for
+         * a saving the cache has already made. Measuring a width hypothesis on
+         * those rungs and concluding anything is measuring the wrong thing.
+         * <p>
+         * 16,000,000 postings is 128 MB PLAIN and 64 MB packed at a byte-aligned
+         * 32 bits, so the per-posting arm is 4x L3 and the packed arm 2x. Same
+         * shape as S4 -- ROUND_ROBIN, 1,000 rows a key -- so the two differ in
+         * size and nothing else.
+         */
+        S10(16_000, 16_000_000, 16_000_000, Dist.ROUND_ROBIN, 0L);
 
         private final int commitInterval;
         private final Dist dist;

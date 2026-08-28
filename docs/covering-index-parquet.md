@@ -250,38 +250,60 @@ a 6% move. The 1M range read improved (4.68x to 4.07x). Low cardinality does not
 regress. High-cardinality SCANS get worse: the per-posting arm beats native there
 (1.43F/1.52F) and packing gives part of that back (1.27F/1.29F).
 
-**What this falsifies.** The design argued the 2,000-key gap was width, on the
-strength of a control whose only distinguishing feature was a wider row-id base.
-It is not. Quartering the bytes on the wire moved that cell by 6%; if width were
-the mechanism it would have moved far more. Both arms sit at 3.3-3.5x there, so
-what dominates is the per-cursor bind cost -- which the design explicitly placed
-out of scope. The S8 control was consistent with the width story but did not
-establish it, and building the fix is what settled it.
+**What this establishes, and what it took to establish it.**
 
-**Byte-aligned widths are not optional.** The packed width is rounded up to 8, 16,
-32 or 64, which costs bytes -- a 2M-row partition needs 17 bits and is given 32 --
-and buys more than it costs, because the AVX2 unpack has dedicated widen paths at
-those three widths and every other width falls to a per-value shift. Every
-scenario in the ladder happens to need 17. At the natural width the arm was a
-clear LOSS: the 16-key point read went 1.56x slower than native against the
-per-posting arm's 1.18x, and the 16-key range read 2.09x against 1.31x. Aligning
-wins 10 of 12 cells and is what removes that regression:
+The design argued the 2,000-key gap was width, on the strength of a control whose
+only distinguishing feature was a wider row-id base. Building the packed arm did
+not settle that, and the first attempt to say it did was wrong twice over:
+byte-aligned 32 bits HALVES the row-id bytes rather than quartering them, and the
+packed arm changes two things at once -- fewer bytes read AND a widen pass that
+turns them back into int64 -- so a small net result is equally consistent with
+"width does not matter" and "width matters but the widen eats it".
 
-| cell | packed @17 bits | packed byte-aligned |
-| --- | --- | --- |
-| 16-key point read | 2,351 (1.56S) | 3,107 (1.19S) |
-| 16-key range read | 3,354 (2.09S) | 5,019 (1.39S) |
-| 1M-key scan | 29 (~) | 38 (1.29F) |
-| 200k-key range | 4,010 (2.27S) | 3,674 (2.54S) |
+Worse, none of the ladder can test it. L3 on the machine these figures come from
+is 64 MiB, 32 MiB per CCD, and the largest rung is 2,000,000 postings: **16 MB
+stored PLAIN**. Every scenario is cache-resident. Halving the bytes of a read that
+already hits L3 buys close to nothing while the widen is pure added work, so a
+packed payload can only lose there whatever the truth about width.
 
-The last row is the one real loss and is why the trade is recorded rather than
-assumed.
+`S10` exists for this: 16,000,000 postings, **128 MB plain (4x L3) against 64 MB
+packed (2x L3)**, same ROUND_ROBIN shape as S4 so size is the only difference.
 
-**Why the widen is not free.** The arm reads fewer bytes from the mapping and
-then writes and re-reads them as int64 through a per-cursor buffer. That
-materialisation is a pure ADD wherever the mapping read already hits cache, which
-is most of a sequential scan -- hence the scan regression. It pays only where the
-mapping read dominates, which is what the range reads at high cardinality are.
+| benchmark | native | per-posting | packed |
+| --- | --- | --- | --- |
+| point read | 263.0 | 51.8 +/- 6.3 | 52.5 +/- 4.2 |
+| scan | 86.4 | 21.6 +/- 2.4 | 21.4 +/- 0.6 |
+
+**Halving the row-id width changes throughput by nothing, out of cache as well as
+in it.** The intervals overlap almost completely, on both benchmarks. That is the
+answer, and it rests on the one fixture capable of giving it.
+
+Two further facts fall out. The parquet form is **5.1x** off the native chain at
+S10 against 3.5x at S4, so it degrades with size FASTER than native -- and packing
+does not touch that, so whatever dominates is shared by both parquet arms and is
+not the row-id column. A per-key decomposition at S10 would say where, but those
+cells carry +/-80% error and are not worth quoting; at P400K, where the same
+decomposition is tight, the per-posting arm's per-row traversal matches native
+(0.641 against 0.654 ns/row) and its bind is 5x native's.
+
+**Two defects the arm shipped with, found by decomposing rather than by staring.**
+Measuring bind separately from traversal (`indexKeyFirstRow` against
+`indexKeyLookup`) showed the packed cursor paying 11.4 us per key at P400K where
+native paid 0.74. That was not bind:
+
+- it **widened before narrowing**, so a windowed read widened a whole key run and
+  then threw most of it away. It now binary searches the PACKED values and widens
+  only what survives.
+- it **materialised whole runs**. The native chain never holds more than
+  `PACKED_BATCH_SIZE` (64) widened values at a time, so its widen and its walk
+  fuse into one pass over data that stays in L1; widening 25,000 values into a
+  200 KB buffer and reading it back is two passes over memory that does not fit.
+  It now refills 64 at a time.
+
+Together those took the first-row cost from 5,498 to 22,301 ops/s at P400K, 4.1x,
+and made the packed bind cheaper than the per-posting arm's. Full-drain throughput
+barely moved, because the widen relocated from bind into traversal rather than
+disappearing -- which is the same finding as above, seen from another angle.
 
 Two design decisions worth carrying forward:
 

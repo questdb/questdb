@@ -183,6 +183,10 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private int rgHi;
         private long rowHi;
         private long rowIdPtr;
+        /** Next ordinal of the current key's narrowed run still to be widened. */
+        private long packedNext;
+        /** Exclusive end of that run. See refillPackedBatch. */
+        private long packedEnd;
         private long rowLo;
         private boolean detached;
         private boolean pooled;
@@ -230,6 +234,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             directRowIds = false;
             windowNarrowed = false;
             rowIdPtr = 0;
+            packedNext = 0;
+            packedEnd = 0;
             hasNext = false;
         }
 
@@ -294,11 +300,40 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     hasNext = true;
                     return true;
                 }
+                if (packedPayload && refillPackedBatch()) {
+                    // More of this key's run left to widen. Not a new group.
+                    continue;
+                }
                 // Group exhausted; force a decode of the next one.
                 rg++;
                 decodedGroup = false;
             }
             return false;
+        }
+
+        /**
+         * Widens the next batch of the current key's narrowed run, or returns
+         * false when it is spent.
+         * <p>
+         * Batched, and at the size the native chain uses, because the batch is
+         * the point. Widening a whole run into one buffer and reading it back
+         * is two passes over memory that does not fit in L1 -- at 25,000 rows a
+         * key that is 200 KB written and re-read -- and it measured 1.06 ns/row
+         * against the native chain's 0.676 despite a FASTER inner loop. Native
+         * is quicker because it never materialises more than
+         * {@link PostingIndexUtils#PACKED_BATCH_SIZE} values at a time, so the
+         * widen and the walk fuse into one pass over data that stays in cache.
+         */
+        private boolean refillPackedBatch() {
+            if (packedNext >= packedEnd) {
+                return false;
+            }
+            final int batch = (int) Math.min(packedEnd - packedNext, PostingIndexUtils.PACKED_BATCH_SIZE);
+            rowIdPtr = unpackRowIds(rg, (int) packedNext, batch);
+            packedNext += batch;
+            rowInGroup = 0;
+            groupRows = batch;
+            return true;
         }
 
         /**
@@ -392,21 +427,32 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     clearCoverOrdinals();
                     cachedRowGroup = -1;
                     cachedCovers = null;
-                    decodedGroup = true;
                     directRowIds = false;
-                    rowIdPtr = unpackRowIds(rg, (int) rowLo, (int) (rowHi - rowLo));
-                    // Ordinals are relative to the widened run now, not to the
-                    // group, so the window seek and the traversal bounds both
-                    // start at 0.
-                    rowInGroup = seekFirstAtLeast(rowIdPtr, 0, rowHi - rowLo, minValue);
-                    groupRows = seekFirstAbove(rowIdPtr, rowInGroup, rowHi - rowLo, maxValue);
-                    windowNarrowed = true;
+                    // Narrow in the PACKED domain, then widen only what
+                    // survives. The reverse -- widen the key's whole run, then
+                    // seek within it -- widens rows the window discards, which
+                    // at 2,000 keys over 2M rows is 1,000 values a key however
+                    // few the window admits.
+                    final long packedAddr = packedDataAddr(rg);
+                    final int bitWidth = packedBitWidth(rg);
+                    final long base = packedBase(rg);
+                    final long from = packedSeekFirstAtLeast(packedAddr, rowLo, rowHi, bitWidth, base, minValue);
+                    final long to = packedSeekFirstAbove(packedAddr, from, rowHi, bitWidth, base, maxValue);
                     lastTouchedRowGroup = rg;
-                    if (rowInGroup >= groupRows) {
+                    if (from >= to) {
+                        // The window excludes this key's run entirely, and
+                        // nothing was widened to find that out.
                         rg++;
                         decodedGroup = false;
                         continue;
                     }
+                    decodedGroup = true;
+                    windowNarrowed = true;
+                    // Widened one L1-sized batch at a time as the cursor walks,
+                    // not all at once. See refillPackedBatch.
+                    packedNext = from;
+                    packedEnd = to;
+                    refillPackedBatch();
                     return true;
                 }
                 if (requiredCoverColumns == null || requiredCoverColumns.length == 0) {
