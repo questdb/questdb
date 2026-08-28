@@ -57,6 +57,7 @@ pub fn encode_fixed_len_bytes<const N: usize>(
     reverse: bool,
     bloom_set: Option<Arc<Mutex<HashSet<u64>>>>,
 ) -> ParquetResult<Vec<Page>> {
+    let not_null_hint = columns.iter().all(|column| column.not_null_hint);
     let num_partitions = columns.len();
     let total_rows = column_chunk_row_count(columns, first_partition_start, last_partition_end);
     if total_rows == 0 {
@@ -88,7 +89,7 @@ pub fn encode_fixed_len_bytes<const N: usize>(
         state.extend_optional_nulls(chunk.adjusted_column_top)?;
 
         for &value in slice {
-            if value == null_value {
+            if !not_null_hint && value == null_value {
                 state.push_optional_null()?;
             } else {
                 let stored = if reverse {

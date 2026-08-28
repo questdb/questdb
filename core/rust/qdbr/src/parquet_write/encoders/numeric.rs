@@ -995,14 +995,8 @@ mod tests {
     fn slice_to_page_simd_notnull_preserves_sentinel() {
         let data: Vec<i64> = vec![i64::MIN, 4];
         let pt = optional_type_for(ColumnTypeTag::Long);
-        let page = slice_to_page_simd_notnull(
-            &data,
-            write_options(),
-            pt,
-            Encoding::Plain,
-            None,
-        )
-        .expect("encode");
+        let page = slice_to_page_simd_notnull(&data, write_options(), pt, Encoding::Plain, None)
+            .expect("encode");
         let (num_values, num_nulls, _) = v2_header(&page);
         assert_eq!(num_values, 2);
         assert_eq!(num_nulls, 0);

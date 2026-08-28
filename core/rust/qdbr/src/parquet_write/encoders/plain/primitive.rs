@@ -768,6 +768,7 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Debug + 'static,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
+    let not_null_hint = columns.iter().all(|column| column.not_null_hint);
     if primitive_type.field_info.repetition != Repetition::Optional {
         return Err(fmt_err!(
             InvalidLayout,
@@ -792,7 +793,7 @@ where
             validity.push_null();
         }
         for &value in view.slice {
-            if value.is_null() {
+            if !not_null_hint && value.is_null() {
                 validity.push_null();
             } else {
                 validity.push_present();
@@ -814,7 +815,7 @@ where
     };
     for view in views_pass2 {
         for &value in view.slice {
-            if !value.is_null() {
+            if not_null_hint || !value.is_null() {
                 let pv: P = value.as_();
                 if options.write_statistics {
                     statistics.update_stats(pv);
