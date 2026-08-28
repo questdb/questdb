@@ -666,7 +666,24 @@ public class PostingIndexBenchmarkSuite {
     }
 
     private static DefaultCairoConfiguration benchConfig(String root) {
+        return benchConfig(root, false);
+    }
+
+    /**
+     * @param packedPayload seal the index parquet with the packed payload arm
+     *                      (PAYLOAD_KIND 1). Only takes effect for an index that
+     *                      covers nothing under an uncompressed codec -- the seal
+     *                      silently falls back otherwise, which is why the arm is
+     *                      asserted through {@code isPackedPayload()} rather than
+     *                      assumed from this flag.
+     */
+    private static DefaultCairoConfiguration benchConfig(String root, boolean packedPayload) {
         return new DefaultCairoConfiguration(root) {
+            @Override
+            public boolean isPostingIndexParquetPackedPayload() {
+                return packedPayload;
+            }
+
             @Override
             public int getPostingIndexParquetCompressionCodec() {
                 // -Dquestdb.idx.codec=<parquet codec ordinal>, so a sweep can
@@ -888,6 +905,17 @@ public class PostingIndexBenchmarkSuite {
                     s.config, path, "test", COL_TXN, PARQUET_PARTITION_TXN, 0,
                     s.parquetMetadata, s.parquetCvr, 0, PARQUET_INDEX_TXN, s.imFileSize);
             assertDirection(reader, backward, s);
+            // The arm the fixture asked for is not the arm it necessarily got:
+            // the seal silently falls back to the per-posting payload for a
+            // covering index or a compressing codec. Without this the packed
+            // arm would quietly measure the per-posting one and report parity
+            // with itself -- the same failure mode that had latest_on measured
+            // for weeks without touching the index at all.
+            if (reader.isPackedPayload() != s.isPackedPayload) {
+                throw new IllegalStateException(
+                        "the " + s.format + " arm bound a payload it did not ask for [packed="
+                                + reader.isPackedPayload() + ", scenario=" + s.scenario + ']');
+            }
             return reader;
         } catch (Throwable th) {
             Misc.free(reader);
@@ -1267,14 +1295,22 @@ public class PostingIndexBenchmarkSuite {
         for (String bench : new String[]{"indexKeyLookup", "indexScanRead", "indexRangeRead"}) {
             for (String dir : new String[]{"FORWARD", "BACKWARD"}) {
                 out.printf("%n  %s (%s):%n", bench, dir);
-                out.printf("  %-12s %12s %12s %8s%n", "keys", "native", "parquet", "verdict");
+                out.printf("  %-12s %12s %12s %12s %10s %10s%n",
+                        "keys", "native", "pq-plain", "pq-packed", "v-plain", "v-packed");
                 for (int i = 0; i < rungs.length; i++) {
                     double[] nat = cell(cells, bench, "POSTING", rungs[i], dir);
                     double[] pq = cell(cells, bench, "POSTING_PARQUET", rungs[i], dir);
+                    double[] pk = cell(cells, bench, "POSTING_PARQUET_PACKED", rungs[i], dir);
                     if (nat == null || pq == null) {
                         continue;
                     }
-                    out.printf("  %-12s %,12.0f %,12.0f %8s%n", keyLabels[i], nat[0], pq[0], ratio(nat, pq));
+                    // Both verdicts are against NATIVE, so the two columns are
+                    // comparable to each other and to every earlier run of this
+                    // suite. Packed against plain is their quotient and is not
+                    // printed as a third number nobody asked for.
+                    out.printf("  %-12s %,12.0f %,12.0f %,12.0f %10s %10s%n",
+                            keyLabels[i], nat[0], pq[0], pk == null ? 0.0 : pk[0],
+                            ratio(nat, pq), pk == null ? "-" : ratio(nat, pk));
                 }
             }
         }
@@ -1786,12 +1822,17 @@ public class PostingIndexBenchmarkSuite {
         String direction;
         // LEGACY (the old bitmap index) stays selectable but is not a default.
         // The question this suite answers is what converting a partition to
-        // parquet costs, which is POSTING against POSTING_PARQUET; a third
-        // default arm spends a third of the runtime on a different question.
-        @Param({"POSTING", "POSTING_PARQUET"})
+        // parquet costs, which is POSTING against the two parquet arms.
+        // POSTING_PARQUET_PACKED is the same parquet form with the row ids
+        // bit-packed into one blob per row group instead of stored PLAIN at 8
+        // bytes a posting; comparing the two isolates the WIDTH from everything
+        // else the parquet form changes.
+        @Param({"POSTING", "POSTING_PARQUET", "POSTING_PARQUET_PACKED"})
         String format;
         long imFileSize;
         boolean isParquet;
+        /** True for the packed payload arm, which is a second PARQUET arm, not a third form. */
+        boolean isPackedPayload;
         boolean isPosting;
         int keyCount;
         long maxRow;
@@ -1810,8 +1851,9 @@ public class PostingIndexBenchmarkSuite {
         @Setup(Level.Trial)
         public void setup() {
             String tmpDir = System.getProperty("java.io.tmpdir");
-            config = benchConfig(tmpDir);
-            isParquet = "POSTING_PARQUET".equals(format);
+            isPackedPayload = "POSTING_PARQUET_PACKED".equals(format);
+            config = benchConfig(tmpDir, isPackedPayload);
+            isParquet = isPackedPayload || "POSTING_PARQUET".equals(format);
             isPosting = "POSTING".equals(format);
 
             // Scaled data sizes: preserve distribution, ~1-2M rows for speed
