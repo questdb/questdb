@@ -120,7 +120,34 @@ is NOT monotonic, which is why a single threshold does not capture it:
 | --- | --- | --- | --- | --- | --- | --- |
 | key lookup | 1.05x | 2.98x | 3.43x | 1.13x | 1.63x | 2.28x |
 
-The band around 1,000-2,000 rows per key is **not explained**. Ruled out:
+**The band is memory traffic, not decode.** Instrumenting the reader's decode
+counters shows `decodedRowGroups/op = 0.0` at S4 -- the direct-read path fires
+perfectly and nothing is decoded. What differs is the WIDTH of a row id. The
+native chain stores `packed_value[i] = (row_id[i] - baseValue)` at `bitWidth`
+bits each and unpacks with AVX2; the parquet form stores `row_id` PLAIN, at 64
+bits. Walking S4's two million row ids therefore moves roughly 16 MB on the
+parquet side against roughly 5 MB on the native side.
+
+That predicts the whole curve, including its outlier:
+
+| scenario | row ids walked / op | ratio | |
+| --- | --- | --- | --- |
+| P400K | 400k | 1.05x | small enough to stay in cache |
+| S2 | 1.02M | 2.98x | |
+| S4 | 2.0M | 3.43x | worst |
+| **S8** | **1.0M** | **1.49x** | `rowIdBase = 1e9` forces 30-bit NATIVE row ids, so native's packing advantage shrinks and so does the gap |
+| S6 / S1 / S7 | 10-30k | 1.13-2.28x | too few rows for bandwidth to matter; `_im` directory misses dominate instead |
+
+S8 is the control: same row count as S2, half the ratio, and the only difference
+is that its native row ids are deliberately wider.
+
+Narrowing `row_id` is NOT the fix -- that was tried and made things worse (see
+"Mechanisms tried and rejected"): the width branch lands in the `hasNext` fast
+path. A fix would have to keep a single width while moving fewer bytes, which
+parquet's PLAIN encoding does not offer and its packed encodings do not survive
+random access.
+
+Ruled out before landing on the above:
 row-group planning (`TARGET_ROW_GROUP_ROWS` gives every fixture 100k-row groups,
 one PLAIN page, direct read available), `questdb.idx.rgkeys` (inert, groups close
 on the target first), `questdb.idx.rgminrows` and `questdb.idx.page` (both make
