@@ -76,12 +76,12 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
 
             final QueryTrace firstTrace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(firstTrace));
-            Assert.assertEquals(300_000L, firstTrace.waitNanos);
+            Assert.assertEquals(300_000L, firstTrace.clientWaitNanos);
             Assert.assertEquals(200_000L, firstTrace.firstRowNanos);
 
             final QueryTrace secondTrace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(secondTrace));
-            Assert.assertEquals(0, secondTrace.waitNanos);
+            Assert.assertEquals(0, secondTrace.clientWaitNanos);
             Assert.assertEquals(100_000L, secondTrace.firstRowNanos);
             Assert.assertFalse(queue.tryDequeue(new QueryTrace()));
         });
@@ -102,7 +102,7 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             final QueryTrace trace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(trace));
             Assert.assertEquals(-1, trace.firstRowNanos);
-            Assert.assertEquals(0, trace.waitNanos);
+            Assert.assertEquals(0, trace.clientWaitNanos);
         });
     }
 
@@ -315,7 +315,7 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             }
             final QueryTrace trace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(trace));
-            Assert.assertEquals(300_000L, trace.waitNanos);
+            Assert.assertEquals(300_000L, trace.clientWaitNanos);
         });
     }
 
@@ -338,7 +338,7 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             }
             final QueryTrace trace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(trace));
-            Assert.assertEquals(500_000L, trace.waitNanos);
+            Assert.assertEquals(500_000L, trace.clientWaitNanos);
             Assert.assertEquals(1_000_000L, trace.executionNanos);
         });
     }
@@ -367,7 +367,7 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             final QueryTrace trace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(trace));
             Assert.assertEquals(1_000_000L, trace.executionNanos);
-            Assert.assertEquals(300_000L, trace.waitNanos);
+            Assert.assertEquals(300_000L, trace.clientWaitNanos);
             Assert.assertEquals(500_000L, trace.firstRowNanos);
         });
     }

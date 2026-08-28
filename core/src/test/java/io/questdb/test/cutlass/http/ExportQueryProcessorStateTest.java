@@ -24,17 +24,23 @@
 
 package io.questdb.test.cutlass.http;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cutlass.http.processors.ExportQueryProcessorState;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.metrics.QueryTrace;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
@@ -42,6 +48,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
@@ -49,6 +56,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 public class ExportQueryProcessorStateTest extends AbstractCairoTest {
+
+    @Before
+    public void enableQueryTracing() {
+        node1.getConfigurationOverrides().setProperty(PropertyKey.QUERY_TRACING_ENABLED, true);
+    }
 
     @Test
     public void testClearClosesAndUnregistersCursorAfterTaskCleanupFailure() throws Exception {
@@ -185,6 +197,37 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDirectPageFrameCursorTimerNotificationsAreForwarded() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE direct_page_frame_timer AS (SELECT x FROM long_sequence(1))");
+            final ConcurrentQueue<QueryTrace> queue = engine.getMessageBus().getQueryTraceQueue();
+            drain(queue);
+            setCurrentMicros(1_000);
+            try (
+                    RecordCursorFactory factory = select("direct_page_frame_timer");
+                    ExportQueryProcessorState state = new ExportQueryProcessorState(null, null)
+            ) {
+                PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                setPrivateField(state, "pageFrameCursor", cursor);
+                setPrivateField(state, "parquetExportMode", ParquetExportMode.DIRECT_PAGE_FRAME);
+
+                setCurrentMicros(1_100);
+                state.suspendCursorTimer();
+                setCurrentMicros(1_300);
+                state.resumeCursorTimer();
+                setCurrentMicros(1_500);
+            }
+
+            final QueryTrace trace = new QueryTrace();
+            Assert.assertTrue(queue.tryDequeue(trace));
+            Assert.assertEquals("direct_page_frame_timer", trace.queryText);
+            Assert.assertEquals(500_000L, trace.executionNanos);
+            Assert.assertEquals(200_000L, trace.clientWaitNanos);
+            Assert.assertFalse(queue.tryDequeue(new QueryTrace()));
+        });
+    }
+
+    @Test
     public void testReleaseEntryFailureDoesNotRetainCopyId() throws Exception {
         assertMemoryLeak(() -> {
             final RuntimeException releaseFailure = new RuntimeException("expected release failure");
@@ -205,6 +248,12 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
         });
     }
 
+    private static void drain(ConcurrentQueue<QueryTrace> queue) {
+        final QueryTrace trace = new QueryTrace();
+        while (queue.tryDequeue(trace)) {
+        }
+    }
+
     private static void recordTrackerOwnerState(
             CopyExportRequestTask task,
             MemoryTracker tracker,
@@ -223,6 +272,12 @@ public class ExportQueryProcessorStateTest extends AbstractCairoTest {
         final AutoCloseable current = (AutoCloseable) field.get(target);
         current.close();
         field.set(target, replacement);
+    }
+
+    private static void setPrivateField(Object target, String fieldName, Object value) throws Exception {
+        final Field field = target.getClass().getDeclaredField(fieldName);
+        field.setAccessible(true);
+        field.set(target, value);
     }
 
     private static final class ThrowingCopyExportContext extends CopyExportContext {

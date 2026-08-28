@@ -82,9 +82,9 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     // which may run after executionContext is nulled.
     private NanosecondClock clock;
     private long firstRowNanos;
-    private long waitAccumNanos;
+    private long clientWaitAccumNanos;
     // -1 when the timer is running (not suspended); doubles as the flag.
-    private long waitStartNanos;
+    private long clientWaitStartNanos;
     private SqlExecutionContext executionContext;
     private long sqlId;
 
@@ -146,7 +146,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
             if (queryTrace != null) {
-                log.$(", wait=").$(queryTrace.waitNanos)
+                log.$(", client_wait=").$(queryTrace.clientWaitNanos)
                         .$(", ttfr=").$(queryTrace.firstRowNanos);
             }
 
@@ -305,8 +305,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             sqlId = registry.register(sqlText, executionContext);
             clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
             beginNanos = clock.getTicks();
-            waitAccumNanos = 0;
-            waitStartNanos = -1;
+            clientWaitAccumNanos = 0;
+            clientWaitStartNanos = -1;
             firstRowNanos = -1;
             logStart(sqlId, sqlText, executionContext, jit);
             final ExecutionState executionState = executionContext.getExecutionState();
@@ -367,8 +367,8 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             sqlId = registry.register(sqlText, executionContext);
             clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
             beginNanos = clock.getTicks();
-            waitAccumNanos = 0;
-            waitStartNanos = -1;
+            clientWaitAccumNanos = 0;
+            clientWaitStartNanos = -1;
             firstRowNanos = -1;
             logStart(sqlId, sqlText, executionContext, jit);
             final ExecutionState executionState = executionContext.getExecutionState();
@@ -484,15 +484,15 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     }
 
     private void onConsumerResume() {
-        if (waitStartNanos != -1) {
-            waitAccumNanos += clock.getTicks() - waitStartNanos;
-            waitStartNanos = -1;
+        if (clientWaitStartNanos != -1) {
+            clientWaitAccumNanos += clock.getTicks() - clientWaitStartNanos;
+            clientWaitStartNanos = -1;
         }
     }
 
     private void onConsumerSuspend() {
-        if (waitStartNanos == -1 && executionContext != null) {
-            waitStartNanos = clock.getTicks();
+        if (clientWaitStartNanos == -1 && executionContext != null) {
+            clientWaitStartNanos = clock.getTicks();
         }
     }
 
@@ -505,7 +505,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                 // A close during suspension (client disconnect, abandoned portal) ends
                 // the terminal wait interval here so it is counted.
                 onConsumerResume();
-                queryTrace.waitNanos = waitAccumNanos;
+                queryTrace.clientWaitNanos = clientWaitAccumNanos;
                 queryTrace.firstRowNanos = firstRowNanos;
                 String sqlText = queryTrace.queryText;
                 if (th == null) {

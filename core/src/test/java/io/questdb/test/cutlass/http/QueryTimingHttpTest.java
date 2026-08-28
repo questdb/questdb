@@ -25,6 +25,9 @@
 package io.questdb.test.cutlass.http;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cutlass.parquet.ParquetExportMode;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.test.AbstractBootstrapTest;
@@ -63,6 +66,11 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testSlowDirectPageFrameParquetExportClientCountsAsWait() throws Exception {
+        assertSlowClientTiming("/exp?fmt=parquet", "SELECT * FROM timing_tab", ParquetExportMode.DIRECT_PAGE_FRAME);
+    }
+
+    @Test
     public void testSlowPageFrameBackedParquetExportClientCountsAsWait() throws Exception {
         assertSlowClientTiming("/exp?fmt=parquet", "SELECT x + 1 AS computed_x, s FROM timing_tab");
     }
@@ -75,8 +83,8 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
                 serverMain.assertSql(
                         "SELECT count() FROM _query_trace "
                                 + "WHERE query_text = '" + query.replace("'", "''") + "' "
-                                + "AND wait_micros > 0 "
-                                + "AND wait_micros <= execution_micros "
+                                + "AND client_wait_micros > 0 "
+                                + "AND client_wait_micros <= execution_micros "
                                 + "AND first_row_micros IS NOT NULL "
                                 + "AND first_row_micros >= 0 "
                                 + "AND first_row_micros <= execution_micros",
@@ -92,7 +100,27 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
         }
     }
 
+    private static void assertParquetExportMode(TestServerMain serverMain, String query, ParquetExportMode expectedExportMode) throws Exception {
+        try (
+                SqlCompiler compiler = serverMain.getEngine().getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(query, serverMain.getSqlExecutionContext()).getRecordCursorFactory()
+        ) {
+            Assert.assertEquals(
+                    expectedExportMode,
+                    ParquetExportMode.determineExportMode(
+                            factory,
+                            factory.getScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD,
+                            serverMain.getSqlExecutionContext()
+                    )
+            );
+        }
+    }
+
     private static void assertSlowClientTiming(String path, String query) throws Exception {
+        assertSlowClientTiming(path, query, null);
+    }
+
+    private static void assertSlowClientTiming(String path, String query, ParquetExportMode expectedExportMode) throws Exception {
         assertMemoryLeak(() -> {
             try (TestServerMain serverMain = startWithEnvVariables(
                     PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:0",
@@ -103,6 +131,9 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
                     PropertyKey.HTTP_SEND_BUFFER_SIZE.getEnvVarName(), "1024"
             )) {
                 serverMain.execute(TABLE_DDL);
+                if (expectedExportMode != null) {
+                    assertParquetExportMode(serverMain, query, expectedExportMode);
+                }
                 int responseSize = executeSlowGet(serverMain.getHttpServerPort(), path, query);
                 LOG.info().$("slow client response [path=").$(path).$(", bytes=").$(responseSize).I$();
                 Assert.assertTrue("response must exceed kernel buffering [bytes=" + responseSize + ']', responseSize > MIN_RESPONSE_SIZE);

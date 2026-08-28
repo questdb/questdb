@@ -39,7 +39,7 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
     public String principal;
     public String queryText;
     public long timestamp;
-    public long waitNanos;
+    public long clientWaitNanos;
 
     @Override
     public void clear() {
@@ -49,7 +49,7 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
         principal = null;
         queryText = null;
         timestamp = 0;
-        waitNanos = 0;
+        clientWaitNanos = 0;
     }
 
     @Override
@@ -60,6 +60,6 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
         dest.principal = principal;
         dest.queryText = queryText;
         dest.timestamp = timestamp;
-        dest.waitNanos = waitNanos;
+        dest.clientWaitNanos = clientWaitNanos;
     }
 }

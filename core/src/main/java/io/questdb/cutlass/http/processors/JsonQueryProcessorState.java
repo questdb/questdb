@@ -123,9 +123,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
-    private long waitAccumNanos;
+    private long clientWaitAccumNanos;
     // -1 when not parked; doubles as the isParked flag.
-    private long waitStartNanos = -1;
+    private long clientWaitStartNanos = -1;
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
@@ -212,8 +212,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         containsSecret = false;
         errorMessage.clear();
         updateRecords = 0;
-        waitAccumNanos = 0;
-        waitStartNanos = -1;
+        clientWaitAccumNanos = 0;
+        clientWaitStartNanos = -1;
     }
 
     public void clearFactory() {
@@ -371,9 +371,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     }
 
     public void resumeExecutionTimer() {
-        if (waitStartNanos != -1) {
-            waitAccumNanos += nanosecondClock.getTicks() - waitStartNanos;
-            waitStartNanos = -1;
+        if (clientWaitStartNanos != -1) {
+            clientWaitAccumNanos += nanosecondClock.getTicks() - clientWaitStartNanos;
+            clientWaitStartNanos = -1;
         }
         if (cursor != null) {
             cursor.resumeTimer();
@@ -414,13 +414,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
-        waitAccumNanos = 0;
-        waitStartNanos = -1;
+        clientWaitAccumNanos = 0;
+        clientWaitStartNanos = -1;
     }
 
     public void suspendExecutionTimer() {
-        if (waitStartNanos == -1) {
-            waitStartNanos = nanosecondClock.getTicks();
+        if (clientWaitStartNanos == -1) {
+            clientWaitStartNanos = nanosecondClock.getTicks();
         }
         if (cursor != null) {
             cursor.suspendTimer();
@@ -1311,7 +1311,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
                         .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
                         .putAsciiQuoted("count").putAscii(':').put(recordCountNanos).putAscii(',')
-                        .putAsciiQuoted("wait").putAscii(':').put(waitAccumNanos)
+                        .putAsciiQuoted("clientWait").putAscii(':').put(clientWaitAccumNanos)
                         .putAscii('}');
             }
             if (explain) {

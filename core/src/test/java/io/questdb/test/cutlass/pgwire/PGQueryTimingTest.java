@@ -141,13 +141,13 @@ public class PGQueryTimingTest extends BasePGTest {
         Assert.assertEquals(POST_RESUME_CALLBACK_COUNT, TestLatchedCounterFunctionFactory.getCount());
         final QueryTrace trace = pollTraceFor(queue, query);
         Assert.assertTrue(
-                "expected socket wait >= " + CLOCK_TICK_NANOS + ", got " + trace.waitNanos,
-                trace.waitNanos >= CLOCK_TICK_NANOS
+                "expected socket wait >= " + CLOCK_TICK_NANOS + ", got " + trace.clientWaitNanos,
+                trace.clientWaitNanos >= CLOCK_TICK_NANOS
         );
         Assert.assertTrue(
                 "expected post-resume active time >= " + POST_RESUME_ACTIVE_NANOS
-                        + " [executionNanos=" + trace.executionNanos + ", waitNanos=" + trace.waitNanos + ']',
-                trace.executionNanos - trace.waitNanos >= POST_RESUME_ACTIVE_NANOS
+                        + " [executionNanos=" + trace.executionNanos + ", clientWaitNanos=" + trace.clientWaitNanos + ']',
+                trace.executionNanos - trace.clientWaitNanos >= POST_RESUME_ACTIVE_NANOS
         );
         Assert.assertTrue(trace.firstRowNanos >= 0);
         Assert.assertTrue(trace.firstRowNanos <= trace.executionNanos);
@@ -174,13 +174,13 @@ public class PGQueryTimingTest extends BasePGTest {
         Assert.assertEquals(rowCount, TestLatchedCounterFunctionFactory.getCount());
         final QueryTrace trace = pollTraceFor(queue, query);
         Assert.assertTrue(
-                "expected controlled portal wait >= " + CLOCK_TICK_NANOS + ", got " + trace.waitNanos,
-                trace.waitNanos >= CLOCK_TICK_NANOS
+                "expected controlled portal wait >= " + CLOCK_TICK_NANOS + ", got " + trace.clientWaitNanos,
+                trace.clientWaitNanos >= CLOCK_TICK_NANOS
         );
         Assert.assertTrue(
                 "expected post-resume active time >= " + POST_RESUME_ACTIVE_NANOS
-                        + " [executionNanos=" + trace.executionNanos + ", waitNanos=" + trace.waitNanos + ']',
-                trace.executionNanos - trace.waitNanos >= POST_RESUME_ACTIVE_NANOS
+                        + " [executionNanos=" + trace.executionNanos + ", clientWaitNanos=" + trace.clientWaitNanos + ']',
+                trace.executionNanos - trace.clientWaitNanos >= POST_RESUME_ACTIVE_NANOS
         );
         Assert.assertTrue(trace.firstRowNanos >= 0);
         Assert.assertTrue(trace.firstRowNanos <= trace.executionNanos);
@@ -206,9 +206,9 @@ public class PGQueryTimingTest extends BasePGTest {
         }
         connection.commit();
         final QueryTrace trace = pollTraceFor(queue, query);
-        Assert.assertTrue("expected wait > 0, got " + trace.waitNanos, trace.waitNanos > 0);
-        Assert.assertTrue("expected portal wait >= 100000000, got " + trace.waitNanos, trace.waitNanos >= 100_000_000L);
-        Assert.assertTrue(trace.waitNanos <= trace.executionNanos);
+        Assert.assertTrue("expected wait > 0, got " + trace.clientWaitNanos, trace.clientWaitNanos > 0);
+        Assert.assertTrue("expected portal wait >= 100000000, got " + trace.clientWaitNanos, trace.clientWaitNanos >= 100_000_000L);
+        Assert.assertTrue(trace.clientWaitNanos <= trace.executionNanos);
         Assert.assertTrue(trace.firstRowNanos >= 0);
         Assert.assertTrue(trace.firstRowNanos <= trace.executionNanos);
     }

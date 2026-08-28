@@ -73,18 +73,18 @@ ignores the calls.
 New instance state on `QueryProgress`, reset on every cursor open (the
 factory is cached and reused across executions):
 
-- `long waitAccumNanos` -- accumulated wait.
-- `long waitStartNanos` -- start of the in-flight wait; -1 when not
+- `long clientWaitAccumNanos` -- accumulated wait.
+- `long clientWaitStartNanos` -- start of the in-flight wait; -1 when not
   suspended (doubles as the isSuspended flag).
 - `long firstRowNanos` -- elapsed nanos to first row, or -1 (sentinel for
   "no row seen yet"; distinct from an actual measurement of 0).
 
 Behavior:
 
-- `suspendTimer()`: if not already suspended, record `waitStartNanos`.
+- `suspendTimer()`: if not already suspended, record `clientWaitStartNanos`.
   Idempotent -- a second call before `resumeTimer()` is a no-op.
-- `resumeTimer()`: if suspended, add `now - waitStartNanos` to
-  `waitAccumNanos` and clear the flag. Idempotent when not suspended.
+- `resumeTimer()`: if suspended, add `now - clientWaitStartNanos` to
+  `clientWaitAccumNanos` and clear the flag. Idempotent when not suspended.
 - Cursor close while suspended (client disconnect, portal closed without
   re-execute): the close path performs an implicit `resumeTimer()` before
   computing the trace record, so the terminal wait interval is counted.
@@ -93,7 +93,7 @@ Behavior:
   per query). `RegisteredPageFrameCursor.next()` does the same on the
   first non-null frame.
 
-`unregisterAndCleanup()` copies `waitAccumNanos` and `firstRowNanos` into
+`unregisterAndCleanup()` copies `clientWaitAccumNanos` and `firstRowNanos` into
 the `QueryTrace` before calling `logEnd`, alongside the existing fields.
 
 The clock is the configuration's existing `NanosecondClock`, same as
@@ -146,24 +146,24 @@ suspend/resume sites get the same two calls on the page frame cursor.
 
 ### 4. QueryTrace and \_query\_trace schema
 
-`QueryTrace` gains `long waitNanos` and `long firstRowNanos` (propagated
+`QueryTrace` gains `long clientWaitNanos` and `long firstRowNanos` (propagated
 through `clear()` and `copyTo()`).
 
 `_query_trace` gains two columns:
 
 ```
-wait_micros LONG        -- accumulated client/network wait
+client_wait_micros LONG        -- accumulated client/network wait
 first_row_micros LONG   -- elapsed to first row; NULL when no rows
 ```
 
 `execution_micros` keeps its current meaning (wall). Active time is
-`execution_micros - wait_micros` in SQL. Storing wall+wait rather than
+`execution_micros - client_wait_micros` in SQL. Storing wall+wait rather than
 wall+active preserves the existing column's semantics for anything already
 reading it.
 
 NULL semantics (per project convention, sentinel vs. real value):
 
-- `wait_micros` = 0 is a genuine measurement ("never suspended"), so 0 is
+- `client_wait_micros` = 0 is a genuine measurement ("never suspended"), so 0 is
   stored, never NULL.
 - `first_row_micros` uses `Numbers.LONG_NULL` when the cursor never
   produced a row -- a zero-row query has no time-to-first-row; writing 0
@@ -178,19 +178,19 @@ indices resolved once from writer metadata at startup.
 
 ### 5. Log line
 
-`logEnd` appends `, wait=<nanos>, ttfr=<nanos>` to the `fin` line when a
+`logEnd` appends `, client_wait=<nanos>, ttfr=<nanos>` to the `fin` line when a
 `QueryTrace` is present (the 6-arg overload; the 4-arg non-SELECT paths are
 unchanged). `ttfr=-1` when no row was produced. ASCII only, per logging
 convention.
 
 ### 6. HTTP /exec timings (additive, small)
 
-The `timings` JSON object gains one key: `"wait"` (nanos, same units as
+The `timings` JSON object gains one key: `"clientWait"` (nanos, same units as
 the existing keys). The existing `execute` key keeps its current
 definition -- changing its meaning could break existing consumers,
-including the web console's subtraction. Consumers that know about `wait`
-can now compute honest execute/network numbers even for streamed
-responses. Console UI changes are out of scope (separate repo).
+including the web console's subtraction. Consumers that know about
+`clientWait` can now compute honest execute/network numbers even for
+streamed responses. Console UI changes are out of scope (separate repo).
 
 ## Overhead
 
@@ -217,7 +217,7 @@ per-query bookkeeping.
   the HTTP select cache polls a factory out while in use, and PGWire
   pipeline entries own their factories, so a `QueryProgress` instance is
   not driven concurrently.
-- Double pause / double resume: idempotent by the `waitStartNanos` flag.
+- Double pause / double resume: idempotent by the `clientWaitStartNanos` flag.
 - Client disconnect mid-suspension: cursor close performs the implicit
   resume; the record shows large wait, small active -- correct.
 - `toTop()` / count second pass (HTTP `count=true`): inside the same
@@ -230,8 +230,8 @@ per-query bookkeeping.
 Per project convention: `assertMemoryLeak()` everywhere, resource cleanup
 asserted on error paths, `.returns(...)` for query assertions. Timing
 tests assert invariants, not absolute durations, to stay flake-free:
-`wait_micros <= execution_micros`, `first_row_micros <= execution_micros`,
-`wait_micros = 0` for fully-buffered responses, NULL `first_row_micros`
+`client_wait_micros <= execution_micros`, `first_row_micros <= execution_micros`,
+`client_wait_micros = 0` for fully-buffered responses, NULL `first_row_micros`
 for zero-row queries.
 
 - Unit: `QueryProgress` accounting against a controllable
@@ -239,7 +239,7 @@ for zero-row queries.
   idempotency, implicit resume on close, first-row sentinel.
 - HTTP backpressure: small send buffer forcing
   `PeerIsSlowToReadException` mid-stream with a deliberately slow reader;
-  assert `wait_micros > 0` and active time well below wall. Transport
+  assert `client_wait_micros > 0` and active time well below wall. Transport
   fault injection with a mock socket is the sanctioned use of fakes
   (partial sends), per testing rules.
 - PGWire portal: JDBC client with `setFetchSize()` and autocommit off to
@@ -249,8 +249,8 @@ for zero-row queries.
   NULL `first_row_micros`; error path leaks nothing.
 - Migration: start engine against a pre-existing 4-column
   `_query_trace`; assert columns are added and rows land correctly.
-- `/exec` timings: `timings=true` response contains `wait`; existing keys
-  unchanged.
+- `/exec` timings: `timings=true` response contains `clientWait`; existing
+  keys remain unchanged.
 - QWP egress: the pinned `QwpQueryClient` with one-byte initial credit
   holds batch callbacks long enough to prove a nonzero traced wait;
   transport-fault coverage proves a deferred socket flush re-park does not

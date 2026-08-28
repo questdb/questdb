@@ -6848,115 +6848,23 @@ public class IODispatcherTest extends AbstractTest {
     }
 
     @Test
+    public void testBlockedPendingExportResponseFlushResumesActiveTimings() throws Exception {
+        assertBlockedPendingResponseFlushResumesActiveTimings(
+                "/exp",
+                "(?s)\"x\"\\r\\n1\\r\\n.*1000\\r\\n",
+                null
+        );
+    }
+
+    @Test
     public void testBlockedPendingResponseFlushStaysInWaitTimings() throws Exception {
-        final long activeNanos = 2_000_000L;
-        final long waitNanos = 1_000_000L;
-        final AtomicBoolean hasAddedActiveRowProcessingTime = new AtomicBoolean();
-        final AtomicInteger blockedResponseSendCount = new AtomicInteger();
-        final AtomicBoolean hasFlushedPendingResponse = new AtomicBoolean();
-        final AtomicInteger responseSendCount = new AtomicInteger();
-        final AtomicLong serverFd = new AtomicLong(-1);
-        final AtomicLong ticks = new AtomicLong();
-        final NanosecondClock clock = ticks::get;
-        final NetworkFacade nf = new NetworkFacadeImpl() {
-            @Override
-            public long accept(long listenerFd) {
-                final long connectionFd = super.accept(listenerFd);
-                if (connectionFd >= 0) {
-                    serverFd.set(connectionFd);
-                }
-                return connectionFd;
-            }
-
-            @Override
-            public int sendRaw(long fd, long buffer, int bufferLen) {
-                if (fd == serverFd.get()) {
-                    switch (responseSendCount.incrementAndGet()) {
-                        case 2 -> {
-                            blockedResponseSendCount.incrementAndGet();
-                            return 0;
-                        }
-                        case 3 -> {
-                            blockedResponseSendCount.incrementAndGet();
-                            ticks.addAndGet(waitNanos);
-                            return 0;
-                        }
-                        default -> {
-                            final int bytesSent = super.sendRaw(fd, buffer, bufferLen);
-                            if (blockedResponseSendCount.get() == 2
-                                    && bytesSent == bufferLen
-                                    && hasFlushedPendingResponse.compareAndSet(false, true)) {
-                                // The pending response has flushed; the next SQL row evaluation must be active.
-                            } else if (hasFlushedPendingResponse.get()) {
-                                Assert.assertTrue(hasAddedActiveRowProcessingTime.get());
-                            }
-                            return bytesSent;
-                        }
-                    }
-                }
-                return super.sendRaw(fd, buffer, bufferLen);
-            }
-        };
-
-        final CairoConfiguration tracingConfiguration = new DefaultTestCairoConfiguration(root) {
-            @Override
-            public NanosecondClock getNanosecondClock() {
-                return clock;
-            }
-
-            @Override
-            public boolean isQueryTracingEnabled() {
-                return true;
-            }
-        };
-        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
-            @Override
-            public boolean onGet(Record rec, int count) {
-                if (hasFlushedPendingResponse.get() && hasAddedActiveRowProcessingTime.compareAndSet(false, true)) {
-                    ticks.addAndGet(activeNanos);
-                }
-                return true;
-            }
-        });
-        try {
-            new HttpQueryTestBuilder()
-                    .withTempFolder(root)
-                    .withWorkerCount(2)
-                    .withNanosClock(clock)
-                    .withHttpServerConfigBuilder(
-                            new HttpServerConfigurationBuilder()
-                                    .withNetwork(nf)
-                                    .withSendBufferSize(1024)
-                    )
-                    .run(tracingConfiguration, (engine, _) -> {
-                        final ConcurrentQueue<QueryTrace> traces = engine.getMessageBus().getQueryTraceQueue();
-                        final QueryTrace trace = new QueryTrace();
-                        while (traces.tryDequeue(trace)) {
-                        }
-
-                        final CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
-                        queryParams.put("timings", "true");
-                        testHttpClient.assertGetRegexp(
-                                "/exec",
-                                ".*\\\"wait\\\":" + waitNanos + "}}",
-                                "SELECT x FROM long_sequence(1_000) WHERE test_latched_counter()",
-                                null,
-                                null,
-                                null,
-                                queryParams,
-                                "200"
-                        );
-
-                        Assert.assertTrue(hasFlushedPendingResponse.get());
-                        Assert.assertTrue(hasAddedActiveRowProcessingTime.get());
-                        Assert.assertEquals(2, blockedResponseSendCount.get());
-                        Assert.assertTrue(traces.tryDequeue(trace));
-                        Assert.assertEquals(waitNanos, trace.waitNanos);
-                        Assert.assertEquals(activeNanos, trace.executionNanos - trace.waitNanos);
-                    });
-        } finally {
-            TestLatchedCounterFunctionFactory.reset(null);
-        }
+        final CharSequenceObjHashMap<String> queryParams = new CharSequenceObjHashMap<>();
+        queryParams.put("timings", "true");
+        assertBlockedPendingResponseFlushResumesActiveTimings(
+                "/exec",
+                ".*\\\"clientWait\\\":" + 1_000_000L + "}}",
+                queryParams
+        );
     }
 
     @Test
@@ -6981,8 +6889,8 @@ public class IODispatcherTest extends AbstractTest {
                 Content-Type: application/json; charset=utf-8\r
                 Keep-Alive: timeout=5, max=10000\r
                 \r
-                02fb\r
-                {"query":"x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"},{"name":"o","type":"DECIMAL(2,0)"},{"name":"p","type":"DECIMAL(4,0)"},{"name":"q","type":"DECIMAL(9,0)"},{"name":"r","type":"DECIMAL(18,0)"},{"name":"s","type":"DECIMAL(38,0)"},{"name":"t","type":"DECIMAL(76,0)"}],"timestamp":-1,"dataset":[],"count":0,"timings":{"authentication":0,"compiler":0,"execute":0,"count":0,"wait":0}}\r
+                0301\r
+                {"query":"x where i = 'A'","columns":[{"name":"a","type":"BYTE"},{"name":"b","type":"SHORT"},{"name":"c","type":"INT"},{"name":"d","type":"LONG"},{"name":"e","type":"DATE"},{"name":"f","type":"TIMESTAMP"},{"name":"g","type":"FLOAT"},{"name":"h","type":"DOUBLE"},{"name":"i","type":"STRING"},{"name":"j","type":"SYMBOL"},{"name":"k","type":"BOOLEAN"},{"name":"l","type":"BINARY"},{"name":"m","type":"UUID"},{"name":"n","type":"VARCHAR"},{"name":"o","type":"DECIMAL(2,0)"},{"name":"p","type":"DECIMAL(4,0)"},{"name":"q","type":"DECIMAL(9,0)"},{"name":"r","type":"DECIMAL(18,0)"},{"name":"s","type":"DECIMAL(38,0)"},{"name":"t","type":"DECIMAL(76,0)"}],"timestamp":-1,"dataset":[],"count":0,"timings":{"authentication":0,"compiler":0,"execute":0,"count":0,"clientWait":0}}\r
                 00\r
                 \r
                 """);
@@ -7540,6 +7448,119 @@ public class IODispatcherTest extends AbstractTest {
         final int requestLen = request.length();
         Utf8s.strCpyAscii(request, requestLen, buffer);
         Assert.assertEquals(requestLen, Net.send(fd, buffer, requestLen));
+    }
+
+    private void assertBlockedPendingResponseFlushResumesActiveTimings(
+            String path,
+            String expectedResponseRegexp,
+            CharSequenceObjHashMap<String> queryParams
+    ) throws Exception {
+        final long activeNanos = 2_000_000L;
+        final long clientWaitNanos = 1_000_000L;
+        final AtomicBoolean hasAddedActiveRowProcessingTime = new AtomicBoolean();
+        final AtomicInteger blockedResponseSendCount = new AtomicInteger();
+        final AtomicBoolean hasFlushedPendingResponse = new AtomicBoolean();
+        final AtomicInteger responseSendCount = new AtomicInteger();
+        final AtomicLong serverFd = new AtomicLong(-1);
+        final AtomicLong ticks = new AtomicLong();
+        final NanosecondClock clock = ticks::get;
+        final NetworkFacade nf = new NetworkFacadeImpl() {
+            @Override
+            public long accept(long listenerFd) {
+                final long connectionFd = super.accept(listenerFd);
+                if (connectionFd >= 0) {
+                    serverFd.set(connectionFd);
+                }
+                return connectionFd;
+            }
+
+            @Override
+            public int sendRaw(long fd, long buffer, int bufferLen) {
+                if (fd == serverFd.get()) {
+                    switch (responseSendCount.incrementAndGet()) {
+                        case 2 -> {
+                            blockedResponseSendCount.incrementAndGet();
+                            return 0;
+                        }
+                        case 3 -> {
+                            blockedResponseSendCount.incrementAndGet();
+                            ticks.addAndGet(clientWaitNanos);
+                            return 0;
+                        }
+                        default -> {
+                            final int bytesSent = super.sendRaw(fd, buffer, bufferLen);
+                            if (blockedResponseSendCount.get() == 2
+                                    && bytesSent == bufferLen
+                                    && hasFlushedPendingResponse.compareAndSet(false, true)) {
+                                // The pending response has flushed; the next SQL row evaluation must be active.
+                            } else if (hasFlushedPendingResponse.get()) {
+                                Assert.assertTrue(hasAddedActiveRowProcessingTime.get());
+                            }
+                            return bytesSent;
+                        }
+                    }
+                }
+                return super.sendRaw(fd, buffer, bufferLen);
+            }
+        };
+
+        final CairoConfiguration tracingConfiguration = new DefaultTestCairoConfiguration(root) {
+            @Override
+            public NanosecondClock getNanosecondClock() {
+                return clock;
+            }
+
+            @Override
+            public boolean isQueryTracingEnabled() {
+                return true;
+            }
+        };
+        TestLatchedCounterFunctionFactory.reset(new TestLatchedCounterFunctionFactory.Callback() {
+            @Override
+            public boolean onGet(Record rec, int count) {
+                if (hasFlushedPendingResponse.get() && hasAddedActiveRowProcessingTime.compareAndSet(false, true)) {
+                    ticks.addAndGet(activeNanos);
+                }
+                return true;
+            }
+        });
+        try {
+            new HttpQueryTestBuilder()
+                    .withTempFolder(root)
+                    .withWorkerCount(2)
+                    .withNanosClock(clock)
+                    .withHttpServerConfigBuilder(
+                            new HttpServerConfigurationBuilder()
+                                    .withNetwork(nf)
+                                    .withSendBufferSize(1024)
+                    )
+                    .run(tracingConfiguration, (engine, _) -> {
+                        final ConcurrentQueue<QueryTrace> traces = engine.getMessageBus().getQueryTraceQueue();
+                        final QueryTrace trace = new QueryTrace();
+                        while (traces.tryDequeue(trace)) {
+                        }
+
+                        testHttpClient.assertGetRegexp(
+                                path,
+                                expectedResponseRegexp,
+                                "SELECT x FROM long_sequence(1_000) WHERE test_latched_counter()",
+                                null,
+                                null,
+                                null,
+                                queryParams,
+                                "200"
+                        );
+
+                        Assert.assertTrue(hasFlushedPendingResponse.get());
+                        Assert.assertTrue(hasAddedActiveRowProcessingTime.get());
+                        Assert.assertEquals(2, blockedResponseSendCount.get());
+                        Assert.assertTrue(traces.tryDequeue(trace));
+                        Assert.assertEquals(clientWaitNanos, trace.clientWaitNanos);
+                        Assert.assertEquals(activeNanos, trace.executionNanos - trace.clientWaitNanos);
+                    });
+        } finally {
+            TestLatchedCounterFunctionFactory.reset(null);
+        }
     }
 
     private void assertMetadataAndData(String tableName, long expectedO3MaxLag, int expectedMaxUncommittedRows, int expectedImportedRows, String expectedData, boolean mangleTableDirNames) {

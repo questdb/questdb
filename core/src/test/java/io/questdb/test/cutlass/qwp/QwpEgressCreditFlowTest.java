@@ -176,7 +176,7 @@ public class QwpEgressCreditFlowTest extends AbstractQwpBootstrapTest {
                 Assert.assertTrue("expected multiple credit cycles", batches[0] > 3);
                 TestUtils.assertEventually(() -> serverMain.assertSql(
                         "SELECT count() FROM _query_trace WHERE query_text = '" + query + "' "
-                                + "AND wait_micros >= 200_000",
+                                + "AND client_wait_micros >= 200_000",
                         "count\n1\n"
                 ), 20);
             }

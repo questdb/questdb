@@ -111,7 +111,7 @@ public class QwpEgressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
                             QueryTrace trace = new QueryTrace();
                             Assert.assertTrue(queue.tryDequeue(trace));
                             Assert.assertEquals(query, trace.queryText);
-                            Assert.assertEquals(1_000_000L, trace.waitNanos);
+                            Assert.assertEquals(1_000_000L, trace.clientWaitNanos);
                             Assert.assertEquals(1_000_000L, trace.executionNanos);
                         }
                     } finally {

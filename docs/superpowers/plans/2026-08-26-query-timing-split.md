@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Record accurate per-query timing in `_query_trace`: accumulated client/network wait (`wait_micros`) and time-to-first-row (`first_row_micros`) alongside the existing open-to-close wall time (`execution_micros`).
+**Goal:** Record accurate per-query timing in `_query_trace`: accumulated client/network wait (`client_wait_micros`) and time-to-first-row (`first_row_micros`) alongside the existing open-to-close wall time (`execution_micros`).
 
-**Architecture:** `RecordCursor`/`PageFrameCursor` gain default no-op `suspendTimer()`/`resumeTimer()` methods. Only `QueryProgress`'s wrapper cursors override them, accumulating wait time and stamping time-to-first-row. The HTTP `/exec`, HTTP `/exp` export, PGWire, and QWP egress layers call the two methods at their existing suspend/resume seams (socket backpressure everywhere, plus PGWire portal suspension and QWP credit suspension). Results flow into two new `_query_trace` columns, the `fin` log line, and a new `wait` key in the `/exec` `timings` JSON.
+**Architecture:** `RecordCursor`/`PageFrameCursor` gain default no-op `suspendTimer()`/`resumeTimer()` methods. Only `QueryProgress`'s wrapper cursors override them, accumulating wait time and stamping time-to-first-row. The HTTP `/exec`, HTTP `/exp` export, PGWire, and QWP egress layers call the two methods at their existing suspend/resume seams (socket backpressure everywhere, plus PGWire portal suspension and QWP credit suspension). Results flow into two new `_query_trace` columns, the `fin` log line, and a new `clientWait` key in the `/exec` `timings` JSON.
 
 **Tech Stack:** Java 17 (core module), Maven, JUnit 4 with QuestDB's `AbstractCairoTest`/`BasePGTest`/`HttpQueryTestBuilder`/`AbstractBootstrapTest` infrastructure.
 
@@ -17,8 +17,8 @@
 - Boolean names use `is`/`has` prefixes.
 - All timing tests assert invariants (`wait <= wall`, `ttfr <= wall`, `> 0`, `= 0`, NULL-ness), never absolute durations.
 - Tests use `assertMemoryLeak()`; query assertions use the `assertQuery(sql).returns(...)` builder; DDL via `execute()`.
-- `_query_trace` sentinel convention: `QueryTrace.firstRowNanos == -1` means "no row produced" and is stored as SQL NULL (`Numbers.LONG_NULL`); `waitNanos == 0` is a genuine measurement, stored as 0.
-- `QueryProgress.waitStartNanos == -1` means "not suspended" (doubles as the isSuspended flag).
+- `_query_trace` sentinel convention: `QueryTrace.firstRowNanos == -1` means "no row produced" and is stored as SQL NULL (`Numbers.LONG_NULL`); `clientWaitNanos == 0` is a genuine measurement, stored as 0.
+- `QueryProgress.clientWaitStartNanos == -1` means "not suspended" (doubles as the isSuspended flag).
 - Commit titles: short plain English, no Conventional Commits prefix, active-voice body wrapped at 72 chars.
 - Line numbers below refer to the branch base, origin/master commit `2d9244fec3`. Verify with the quoted signatures before editing; nearby code may have shifted.
 - Run `mvn` from the repo root of this worktree. Do not run multiple `mvn test` commands in parallel.
@@ -29,10 +29,10 @@
 |---|---|
 | `core/src/main/java/io/questdb/cairo/sql/RecordCursor.java` | Add default `suspendTimer()`/`resumeTimer()` |
 | `core/src/main/java/io/questdb/cairo/sql/PageFrameCursor.java` | Add default `suspendTimer()`/`resumeTimer()` |
-| `core/src/main/java/io/questdb/metrics/QueryTrace.java` | Add `waitNanos`, `firstRowNanos` |
+| `core/src/main/java/io/questdb/metrics/QueryTrace.java` | Add `clientWaitNanos`, `firstRowNanos` |
 | `core/src/main/java/io/questdb/griffin/engine/QueryProgress.java` | Wait accounting, first-row stamp, fin-line fields |
 | `core/src/main/java/io/questdb/metrics/QueryTracingJob.java` | Two new columns, startup migration, metadata-resolved write indices |
-| `core/src/main/java/io/questdb/cutlass/http/processors/JsonQueryProcessorState.java` | State-level wait accounting, cursor forwarding, `wait` timings key |
+| `core/src/main/java/io/questdb/cutlass/http/processors/JsonQueryProcessorState.java` | State-level client-wait accounting, cursor forwarding, `clientWait` timings key |
 | `core/src/main/java/io/questdb/cutlass/http/processors/JsonQueryProcessor.java` | Wire park/resume to state accounting |
 | `core/src/main/java/io/questdb/cutlass/pgwire/PGPipelineEntry.java` | `suspendCursorTimer()`/`resumeCursorTimer()`, portal resume hook |
 | `core/src/main/java/io/questdb/cutlass/pgwire/PGConnectionContext.java` | Backpressure + portal-retention hooks |
@@ -42,7 +42,7 @@
 | `core/src/test/java/io/questdb/test/griffin/engine/QueryProgressTimingTest.java` | New: accounting unit tests |
 | `core/src/test/java/io/questdb/test/metrics/QueryTracingTest.java` | Extend: columns, NULL semantics, migration |
 | `core/src/test/java/io/questdb/test/cutlass/pgwire/PGQueryTimingTest.java` | New: portal-suspension wait |
-| `core/src/test/java/io/questdb/test/cutlass/http/IODispatcherTest.java` (or the file holding the existing timings assertions) | Extend: `wait` key in timings JSON |
+| `core/src/test/java/io/questdb/test/cutlass/http/IODispatcherTest.java` (or the file holding the existing timings assertions) | Extend: `clientWait` key in timings JSON |
 | `core/src/test/java/io/questdb/test/cutlass/http/QueryTimingHttpTest.java` | New: end-to-end slow-client test for `/exec` and `/exp` |
 | `core/src/test/java/io/questdb/test/cutlass/qwp/QwpEgressCreditFlowTest.java` | Pinned-client CREDIT suspension trace assertion |
 | `core/src/test/java/io/questdb/test/cutlass/websocket/QwpEgressUpgradeProcessorResumeRecvTest.java` | Matching-CREDIT re-entry transport re-park coverage |
@@ -61,7 +61,7 @@
 
 **Interfaces:**
 - Consumes: existing `QueryProgress` structure — `beginNanos` set at cursor open (`getCursor()` line 291, `getPageFrameCursor()` line 341), `unregisterAndCleanup(Throwable)` line 455 calling the 6-arg `logEnd` at line 463, the pooled `queryTrace` field.
-- Produces: `RecordCursor.suspendTimer()` / `RecordCursor.resumeTimer()` and identical methods on `PageFrameCursor` (default no-ops, overridden by `QueryProgress`'s inner cursors); `QueryTrace.waitNanos` (long, 0 = never suspended) and `QueryTrace.firstRowNanos` (long, -1 = no row produced), populated by the time `logEnd` enqueues the trace. Tasks 3–5 call the cursor methods; Task 2 reads the two `QueryTrace` fields.
+- Produces: `RecordCursor.suspendTimer()` / `RecordCursor.resumeTimer()` and identical methods on `PageFrameCursor` (default no-ops, overridden by `QueryProgress`'s inner cursors); `QueryTrace.clientWaitNanos` (long, 0 = never suspended) and `QueryTrace.firstRowNanos` (long, -1 = no row produced), populated by the time `logEnd` enqueues the trace. Tasks 3–5 call the cursor methods; Task 2 reads the two `QueryTrace` fields.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -102,7 +102,7 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             final QueryTrace trace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(trace));
             Assert.assertEquals(-1, trace.firstRowNanos);
-            Assert.assertEquals(0, trace.waitNanos);
+            Assert.assertEquals(0, trace.clientWaitNanos);
         });
     }
 
@@ -131,7 +131,7 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             }
             final QueryTrace trace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(trace));
-            Assert.assertEquals(300_000L, trace.waitNanos);
+            Assert.assertEquals(300_000L, trace.clientWaitNanos);
         });
     }
 
@@ -154,7 +154,7 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             }
             final QueryTrace trace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(trace));
-            Assert.assertEquals(500_000L, trace.waitNanos);
+            Assert.assertEquals(500_000L, trace.clientWaitNanos);
             Assert.assertEquals(1_000_000L, trace.executionNanos);
         });
     }
@@ -183,7 +183,7 @@ public class QueryProgressTimingTest extends AbstractCairoTest {
             final QueryTrace trace = new QueryTrace();
             Assert.assertTrue(queue.tryDequeue(trace));
             Assert.assertEquals(1_000_000L, trace.executionNanos);
-            Assert.assertEquals(300_000L, trace.waitNanos);
+            Assert.assertEquals(300_000L, trace.clientWaitNanos);
             Assert.assertEquals(500_000L, trace.firstRowNanos);
         });
     }
@@ -204,7 +204,7 @@ Notes for the implementer:
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `mvn -pl core test -Dtest=QueryProgressTimingTest -DfailIfNoTests=false`
-Expected: COMPILE ERROR — `QueryTrace` has no `firstRowNanos`/`waitNanos`, `RecordCursor` has no `suspendTimer()`. That compile failure is this step's "red".
+Expected: COMPILE ERROR — `QueryTrace` has no `firstRowNanos`/`clientWaitNanos`, `RecordCursor` has no `suspendTimer()`. That compile failure is this step's "red".
 
 - [ ] **Step 3: Add the default interface methods**
 
@@ -245,10 +245,10 @@ public boolean isJit;
 public String principal;
 public String queryText;
 public long timestamp;
-public long waitNanos;
+public long clientWaitNanos;
 ```
 
-Update `clear()` (add `firstRowNanos = -1; waitNanos = 0;`) and `copyTo()` (copy both).
+Update `clear()` (add `firstRowNanos = -1; clientWaitNanos = 0;`) and `copyTo()` (copy both).
 
 - [ ] **Step 5: Implement accounting in QueryProgress**
 
@@ -262,9 +262,9 @@ private long beginNanos;
 // which may run after executionContext is nulled.
 private NanosecondClock clock;
 private long firstRowNanos;
-private long waitAccumNanos;
+private long clientWaitAccumNanos;
 // -1 when the timer is running (not suspended); doubles as the flag.
-private long waitStartNanos;
+private long clientWaitStartNanos;
 ```
 
 (`io.questdb.std.datetime.nanotime.NanosecondClock` — match the type `CairoConfiguration.getNanosecondClock()` returns; adjust the import to whatever the getter declares.)
@@ -274,8 +274,8 @@ b. In both open blocks — `getCursor()` (after the `beginNanos = ...` assignmen
 ```java
 clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
 beginNanos = clock.getTicks();
-waitAccumNanos = 0;
-waitStartNanos = -1;
+clientWaitAccumNanos = 0;
+clientWaitStartNanos = -1;
 firstRowNanos = -1;
 ```
 
@@ -285,15 +285,15 @@ c. Private accounting methods on `QueryProgress`:
 
 ```java
 private void onConsumerResume() {
-    if (waitStartNanos != -1) {
-        waitAccumNanos += clock.getTicks() - waitStartNanos;
-        waitStartNanos = -1;
+    if (clientWaitStartNanos != -1) {
+        clientWaitAccumNanos += clock.getTicks() - clientWaitStartNanos;
+        clientWaitStartNanos = -1;
     }
 }
 
 private void onConsumerSuspend() {
-    if (waitStartNanos == -1 && executionContext != null) {
-        waitStartNanos = clock.getTicks();
+    if (clientWaitStartNanos == -1 && executionContext != null) {
+        clientWaitStartNanos = clock.getTicks();
     }
 }
 ```
@@ -351,7 +351,7 @@ f. In `unregisterAndCleanup(Throwable th)` (line 455), before the `logEnd`/`logE
 // A close during suspension (client disconnect, abandoned portal) ends
 // the terminal wait interval here so it is counted.
 onConsumerResume();
-queryTrace.waitNanos = waitAccumNanos;
+queryTrace.clientWaitNanos = clientWaitAccumNanos;
 queryTrace.firstRowNanos = firstRowNanos;
 ```
 
@@ -359,7 +359,7 @@ g. Fin-line fields. In the 6-arg `logEnd`, after `.$(", time=").$(durationNanos)
 
 ```java
 if (queryTrace != null) {
-    log.$(", wait=").$(queryTrace.waitNanos)
+    log.$(", client_wait=").$(queryTrace.clientWaitNanos)
             .$(", ttfr=").$(queryTrace.firstRowNanos);
 }
 ```
@@ -390,7 +390,7 @@ QueryProgress accumulates consumer wait time between new
 RecordCursor/PageFrameCursor suspendTimer()/resumeTimer() default
 methods and stamps the elapsed time to the first row. The wrapper
 copies both values into QueryTrace before logEnd, and the fin log
-line prints them as wait= and ttfr=. Protocol layers do not call
+line prints them as client_wait= and ttfr=. Protocol layers do not call
 the new methods yet, so behavior is unchanged outside tests."
 ```
 
@@ -403,8 +403,8 @@ the new methods yet, so behavior is unchanged outside tests."
 - Modify: `core/src/test/java/io/questdb/test/metrics/QueryTracingTest.java`
 
 **Interfaces:**
-- Consumes: `QueryTrace.waitNanos` (0 default) and `QueryTrace.firstRowNanos` (-1 sentinel) from Task 1.
-- Produces: `_query_trace` columns `wait_micros LONG` and `first_row_micros LONG` (appended after `principal`); constants `QueryTracingJob.COLUMN_WAIT_MICROS = "wait_micros"` and `QueryTracingJob.COLUMN_FIRST_ROW_MICROS = "first_row_micros"`. `first_row_micros` is SQL NULL when `firstRowNanos == -1`.
+- Consumes: `QueryTrace.clientWaitNanos` (0 default) and `QueryTrace.firstRowNanos` (-1 sentinel) from Task 1.
+- Produces: `_query_trace` columns `client_wait_micros LONG` and `first_row_micros LONG` (appended after `principal`); constants `QueryTracingJob.COLUMN_CLIENT_WAIT_MICROS = "client_wait_micros"` and `QueryTracingJob.COLUMN_FIRST_ROW_MICROS = "first_row_micros"`. `first_row_micros` is SQL NULL when `firstRowNanos == -1`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -421,8 +421,8 @@ public void testMigrationAddsTimingColumns() throws Exception {
                         ") TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
         );
         try (QueryTracingJob ignore = new QueryTracingJob(engine)) {
-            assertQuery("SELECT column_name FROM (SHOW COLUMNS FROM '_query_trace') WHERE column_name IN ('wait_micros', 'first_row_micros')")
-                    .returns("column_name\nwait_micros\nfirst_row_micros\n");
+            assertQuery("SELECT column_name FROM (SHOW COLUMNS FROM '_query_trace') WHERE column_name IN ('client_wait_micros', 'first_row_micros')")
+                    .returns("column_name\nclient_wait_micros\nfirst_row_micros\n");
         }
     });
 }
@@ -436,7 +436,7 @@ public void testTraceRowCarriesTimingColumns() throws Exception {
         // then poll (same backoff loop) until this returns count=1:
         // SELECT count() FROM _query_trace
         // WHERE query_text = '<query>'
-        //   AND wait_micros = 0
+        //   AND client_wait_micros = 0
         //   AND first_row_micros >= 0
         //   AND first_row_micros <= execution_micros
     });
@@ -446,7 +446,7 @@ public void testTraceRowCarriesTimingColumns() throws Exception {
 public void testZeroRowQueryHasNullFirstRow() throws Exception {
     // Same scaffold; the traced query returns no rows, then poll until:
     // SELECT count() FROM _query_trace
-    // WHERE query_text = '<query>' AND first_row_micros IS NULL AND wait_micros = 0
+    // WHERE query_text = '<query>' AND first_row_micros IS NULL AND client_wait_micros = 0
     // returns 1.
 }
 ```
@@ -468,14 +468,14 @@ a. Constants (alongside the existing `COLUMN_*`):
 
 ```java
 public static final String COLUMN_FIRST_ROW_MICROS = "first_row_micros";
-public static final String COLUMN_WAIT_MICROS = "wait_micros";
+public static final String COLUMN_CLIENT_WAIT_MICROS = "client_wait_micros";
 ```
 
 b. Extend the CREATE DDL in `acquireTableWriter()` (line 88-96) so a fresh table has six columns:
 
 ```java
 .$(COLUMN_PRINCIPAL).$(" VARCHAR, ")
-.$(COLUMN_WAIT_MICROS).$(" LONG, ")
+.$(COLUMN_CLIENT_WAIT_MICROS).$(" LONG, ")
 .$(COLUMN_FIRST_ROW_MICROS).$(" LONG")
 ```
 
@@ -484,8 +484,8 @@ c. Migrate pre-existing tables. After `engine.getWriter(tableToken, WRITER_LOCK_
 ```java
 final TableWriter writer = engine.getWriter(tableToken, WRITER_LOCK_REASON);
 try {
-    if (writer.getMetadata().getColumnIndexQuiet(COLUMN_WAIT_MICROS) < 0) {
-        writer.addColumn(COLUMN_WAIT_MICROS, ColumnType.LONG);
+    if (writer.getMetadata().getColumnIndexQuiet(COLUMN_CLIENT_WAIT_MICROS) < 0) {
+        writer.addColumn(COLUMN_CLIENT_WAIT_MICROS, ColumnType.LONG);
     }
     if (writer.getMetadata().getColumnIndexQuiet(COLUMN_FIRST_ROW_MICROS) < 0) {
         writer.addColumn(COLUMN_FIRST_ROW_MICROS, ColumnType.LONG);
@@ -506,7 +506,7 @@ private final int executionMicrosColumnIndex;
 private final int firstRowMicrosColumnIndex;
 private final int principalColumnIndex;
 private final int queryTextColumnIndex;
-private final int waitMicrosColumnIndex;
+private final int clientWaitMicrosColumnIndex;
 ```
 
 ```java
@@ -514,7 +514,7 @@ final TableRecordMetadata metadata = tableWriter.getMetadata();
 queryTextColumnIndex = metadata.getColumnIndex(COLUMN_QUERY_TEXT);
 executionMicrosColumnIndex = metadata.getColumnIndex(COLUMN_EXECUTION_MICROS);
 principalColumnIndex = metadata.getColumnIndex(COLUMN_PRINCIPAL);
-waitMicrosColumnIndex = metadata.getColumnIndex(COLUMN_WAIT_MICROS);
+clientWaitMicrosColumnIndex = metadata.getColumnIndex(COLUMN_CLIENT_WAIT_MICROS);
 firstRowMicrosColumnIndex = metadata.getColumnIndex(COLUMN_FIRST_ROW_MICROS);
 ```
 
@@ -525,7 +525,7 @@ final TableWriter.Row row = tableWriter.newRow(trace.timestamp);
 putVarchar(row, queryTextColumnIndex, trace.queryText);
 row.putLong(executionMicrosColumnIndex, trace.executionNanos / Micros.MICRO_NANOS);
 putVarchar(row, principalColumnIndex, trace.principal);
-row.putLong(waitMicrosColumnIndex, trace.waitNanos / Micros.MICRO_NANOS);
+row.putLong(clientWaitMicrosColumnIndex, trace.clientWaitNanos / Micros.MICRO_NANOS);
 row.putLong(
         firstRowMicrosColumnIndex,
         trace.firstRowNanos < 0 ? Numbers.LONG_NULL : trace.firstRowNanos / Micros.MICRO_NANOS
@@ -543,20 +543,20 @@ Expected: PASS, including the pre-existing `testQueryTracing`.
 ```bash
 git add core/src/main/java/io/questdb/metrics/QueryTracingJob.java \
         core/src/test/java/io/questdb/test/metrics/QueryTracingTest.java
-git commit -m "Add wait_micros and first_row_micros to _query_trace
+git commit -m "Add client_wait_micros and first_row_micros to _query_trace
 
 QueryTracingJob creates the trace table with two extra LONG columns
 and, on startup against a pre-upgrade 4-column table, adds them via
 TableWriter.addColumn while holding the permanent writer. The write
 path resolves column indices from writer metadata instead of
 hard-coded positions. first_row_micros stores SQL NULL when the
-query produced no rows; wait_micros stores 0 when the query never
+query produced no rows; client_wait_micros stores 0 when the query never
 suspended, which is a genuine measurement rather than a sentinel."
 ```
 
 ---
 
-### Task 3: HTTP /exec hooks and timings wait key
+### Task 3: HTTP /exec hooks and timings clientWait key
 
 **Files:**
 - Modify: `core/src/main/java/io/questdb/cutlass/http/processors/JsonQueryProcessorState.java`
@@ -565,7 +565,7 @@ suspended, which is a genuine measurement rather than a sentinel."
 
 **Interfaces:**
 - Consumes: `RecordCursor.suspendTimer()`/`resumeTimer()` from Task 1; existing state fields `cursor` (line 121), `nanosecondClock` (line 107), `executeStartNanos` (line 124); seams `JsonQueryProcessor.parkRequest(HttpConnectionContext, boolean)` (line 307), `resumeSend(HttpConnectionContext)` (line 328), `onRequestRetry(HttpConnectionContext)` (line 301), `startExecutionTimer()` (state line 400).
-- Produces: `JsonQueryProcessorState.suspendExecutionTimer()` and `resumeExecutionTimer()` (public, idempotent); a `"wait"` key (nanos) appended to the `timings` JSON object.
+- Produces: `JsonQueryProcessorState.suspendExecutionTimer()` and `resumeExecutionTimer()` (public, idempotent); a `"clientWait"` key (nanos) appended to the `timings` JSON object.
 
 - [ ] **Step 1: Update the existing timings-JSON expectations (the failing test)**
 
@@ -575,40 +575,40 @@ The HTTP test builder's default nano clock is `StationaryNanosClock.INSTANCE`, s
 grep -rn '"timings"' core/src/test/java/io/questdb/test/cutlass/http/
 ```
 
-In each expected-response string, extend the timings object with `,"wait":0` as its last member, e.g.
+In each expected-response string, extend the timings object with `,"clientWait":0` as its last member, e.g.
 
 ```
 "timings":{"authentication":0,"compiler":0,"execute":0,"count":0}
 ```
 becomes
 ```
-"timings":{"authentication":0,"compiler":0,"execute":0,"count":0,"wait":0}
+"timings":{"authentication":0,"compiler":0,"execute":0,"count":0,"clientWait":0}
 ```
 
-(Whatever the actual key set/order is in those fixtures — append `wait` last and mirror it exactly in Step 3. If any fixture pins a `Content-Length`, recompute it or prefer the builder variant that ignores it.) If no existing test asserts the timings JSON, add one to `IODispatcherTest` using the nearest `testJsonQuery*` as the template with `&timings=true` in the URL and the full expected response body.
+(Whatever the actual key set/order is in those fixtures — append `clientWait` last and mirror it exactly in Step 3. If any fixture pins a body or chunk length, recompute it or prefer the builder variant that ignores it.) If no existing test asserts the timings JSON, add one to `IODispatcherTest` using the nearest `testJsonQuery*` as the template with `&timings=true` in the URL and the full expected response body.
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `mvn -pl core test -Dtest=IODispatcherTest#<the timings test methods> -DfailIfNoTests=false`
-Expected: FAIL — response lacks the `wait` key.
+Expected: FAIL — response lacks the `clientWait` key.
 
 - [ ] **Step 3: Implement state accounting and wire the seams**
 
 a. `JsonQueryProcessorState` — new fields next to `executeStartNanos`:
 
 ```java
-private long waitAccumNanos;
+private long clientWaitAccumNanos;
 // -1 when not parked; doubles as the isParked flag.
-private long waitStartNanos = -1;
+private long clientWaitStartNanos = -1;
 ```
 
 b. New public methods (grouped with the other publics):
 
 ```java
 public void resumeExecutionTimer() {
-    if (waitStartNanos != -1) {
-        waitAccumNanos += nanosecondClock.getTicks() - waitStartNanos;
-        waitStartNanos = -1;
+    if (clientWaitStartNanos != -1) {
+        clientWaitAccumNanos += nanosecondClock.getTicks() - clientWaitStartNanos;
+        clientWaitStartNanos = -1;
     }
     if (cursor != null) {
         cursor.resumeTimer();
@@ -616,8 +616,8 @@ public void resumeExecutionTimer() {
 }
 
 public void suspendExecutionTimer() {
-    if (waitStartNanos == -1) {
-        waitStartNanos = nanosecondClock.getTicks();
+    if (clientWaitStartNanos == -1) {
+        clientWaitStartNanos = nanosecondClock.getTicks();
     }
     if (cursor != null) {
         cursor.suspendTimer();
@@ -628,17 +628,17 @@ public void suspendExecutionTimer() {
 c. Reset in `startExecutionTimer()` (line 400) and in the request-scoped `clear()`:
 
 ```java
-waitAccumNanos = 0;
-waitStartNanos = -1;
+clientWaitAccumNanos = 0;
+clientWaitStartNanos = -1;
 ```
 
-d. Timings JSON (lines 1281-1289): append the `wait` member last, matching Step 1's fixtures:
+d. Timings JSON (lines 1281-1289): append the `clientWait` member last, matching Step 1's fixtures:
 
 ```java
-.putAscii(',').putAsciiQuoted("wait").putAscii(':').put(waitAccumNanos)
+.putAscii(',').putAsciiQuoted("clientWait").putAscii(':').put(clientWaitAccumNanos)
 ```
 
-(If a suspension is in flight when the suffix serializes, `waitAccumNanos` holds the wait so far; the remainder is unobservable in that response and lands only in `_query_trace`. This is best-effort by design.)
+(If a suspension is in flight when the suffix serializes, `clientWaitAccumNanos` holds the wait so far; the remainder is unobservable in that response and lands only in `_query_trace`. This is best-effort by design.)
 
 e. `JsonQueryProcessor` seams:
 - `parkRequest(...)` (line 307): first statement inside the existing state null-check: `state.suspendExecutionTimer();`
@@ -663,8 +663,8 @@ git commit -m "Report wait time in /exec timings and HTTP query traces
 JsonQueryProcessor forwards its park/resume seams into the open
 query cursor, so _query_trace excludes socket backpressure from a
 query's active time on the /exec path. The state keeps its own
-wait accumulator over the same seams and the timings JSON gains a
-wait key carrying it; existing timings keys keep their meaning."
+client-wait accumulator over the same seams and the timings JSON gains a
+clientWait key carrying it; existing timings keys keep their meaning."
 ```
 
 ---
@@ -677,7 +677,7 @@ wait key carrying it; existing timings keys keep their meaning."
 - Create: `core/src/test/java/io/questdb/test/cutlass/pgwire/PGQueryTimingTest.java`
 
 **Interfaces:**
-- Consumes: `RecordCursor.suspendTimer()`/`resumeTimer()` from Task 1; `QueryTrace.waitNanos`/`firstRowNanos` from Task 1; PGWire seams — backpressure throw in `doSendWithRetries` (`PGConnectionContext.java:542`), resume via `resumeCallback` (`handleClientOperation`, lines 412-414), portal retention in `syncPipeline()` (lines 1470-1477), retained-cursor re-execute in `PGPipelineEntry.msgExecuteSelect` (guard `if (cursor == null)` at line 1688), cursor field `PGPipelineEntry.cursor` (line 182).
+- Consumes: `RecordCursor.suspendTimer()`/`resumeTimer()` from Task 1; `QueryTrace.clientWaitNanos`/`firstRowNanos` from Task 1; PGWire seams — backpressure throw in `doSendWithRetries` (`PGConnectionContext.java:542`), resume via `resumeCallback` (`handleClientOperation`, lines 412-414), portal retention in `syncPipeline()` (lines 1470-1477), retained-cursor re-execute in `PGPipelineEntry.msgExecuteSelect` (guard `if (cursor == null)` at line 1688), cursor field `PGPipelineEntry.cursor` (line 182).
 - Produces: `PGPipelineEntry.suspendCursorTimer()` and `resumeCursorTimer()` (public, null-safe).
 
 - [ ] **Step 1: Write the failing test**
@@ -729,8 +729,8 @@ public class PGQueryTimingTest extends BasePGTest {
             }
             connection.commit();
             final QueryTrace trace = pollTraceFor(queue, query);
-            Assert.assertTrue("expected wait > 0, got " + trace.waitNanos, trace.waitNanos > 0);
-            Assert.assertTrue(trace.waitNanos <= trace.executionNanos);
+            Assert.assertTrue("expected wait > 0, got " + trace.clientWaitNanos, trace.clientWaitNanos > 0);
+            Assert.assertTrue(trace.clientWaitNanos <= trace.executionNanos);
             Assert.assertTrue(trace.firstRowNanos >= 0);
             Assert.assertTrue(trace.firstRowNanos <= trace.executionNanos);
         });
@@ -763,12 +763,12 @@ Notes for the implementer:
 - `BasePGTest.assertWithPgServer(CONN_AWARE_EXTENDED, ...)` — mirror the exact functional-interface shape used by neighboring tests in `PGJobContextTest` (the lambda arity varies between checkouts). `CONN_AWARE_EXTENDED` restricts to the extended protocol, which is what portal suspension requires; if the constant set differs, pick the extended-protocol-only mode used by the `testBasicFetch` tests.
 - The trace enqueues when the portal's cursor closes (data exhausted at the 10th fetch), inside the server, possibly after the client's last `next()` returns — hence the polling.
 - `System.currentTimeMillis()` in test polling is fine; production code uses the injected clocks.
-- No frozen clock here: `BasePGTest` randomizes buffer sizes per run, so assert only invariants. The 20 ms sleeps make `waitNanos > 0` robust — each sits between two portal fetches while the cursor is suspended.
+- No frozen clock here: `BasePGTest` randomizes buffer sizes per run, so assert only invariants. The 20 ms sleeps make `clientWaitNanos > 0` robust — each sits between two portal fetches while the cursor is suspended.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `mvn -pl core test -Dtest=PGQueryTimingTest -DfailIfNoTests=false`
-Expected: FAIL on `waitNanos > 0` (PGWire never calls the timer hooks yet; wait stays 0).
+Expected: FAIL on `clientWaitNanos > 0` (PGWire never calls the timer hooks yet; wait stays 0).
 
 - [ ] **Step 3: Implement the hooks**
 
@@ -915,8 +915,8 @@ public class QueryTimingHttpTest extends AbstractBootstrapTest {
             assertEventually(() -> serverMain.assertSql(
                     "SELECT count() FROM _query_trace"
                             + " WHERE query_text = 'SELECT * FROM tab'"
-                            + " AND wait_micros > 0"
-                            + " AND wait_micros <= execution_micros"
+                            + " AND client_wait_micros > 0"
+                            + " AND client_wait_micros <= execution_micros"
                             + " AND first_row_micros IS NOT NULL",
                     "count\n1\n"
             ));
@@ -940,7 +940,7 @@ Implementer notes (this scaffold intentionally names the intent; bind it to the 
 - [ ] **Step 2: Run tests to verify the expected failure mode**
 
 Run: `mvn -pl core test -Dtest=QueryTimingHttpTest -DfailIfNoTests=false`
-Expected: `testSlowExecClientCountsAsWait` PASSES already (Task 3 wired `/exec`) — it validates the whole pipeline end to end. `testSlowExpClientCountsAsWait` FAILS on `wait_micros > 0`. If the `/exec` test does not pass here, stop and debug Tasks 1-3 before touching the export processor.
+Expected: `testSlowExecClientCountsAsWait` PASSES already (Task 3 wired `/exec`) — it validates the whole pipeline end to end. `testSlowExpClientCountsAsWait` FAILS on `client_wait_micros > 0`. If the `/exec` test does not pass here, stop and debug Tasks 1-3 before touching the export processor.
 
 - [ ] **Step 3: Implement export forwarding**
 
@@ -994,7 +994,7 @@ record or page-frame cursor, so CSV /exp downloads paced by a slow
 client no longer inflate a query's active execution time in
 _query_trace. The new bootstrap test drives a real server with a
 1 KiB send buffer and a stalling reader over both /exec and /exp
-and asserts wait_micros lands between zero and execution_micros.
+and asserts client_wait_micros lands between zero and execution_micros.
 The parquet export task's handed-off page-frame cursor is not yet
 timed after hand-off; the CSV path and all /exec queries are."
 ```
@@ -1018,7 +1018,7 @@ timed after hand-off; the CSV path and all /exec queries are."
 
 - [ ] **Step 1: Add deterministic regressions**
 
-Use the pinned `QwpQueryClient` with one-byte credit and delayed batch release to assert `_query_trace.wait_micros` is nonzero and no greater than wall time. Use the existing transport test context only to inject deferred-flush PISR, asserting no early resume and a resume after the flush succeeds. Cover page-frame forwarding directly through the retained state.
+Use the pinned `QwpQueryClient` with one-byte credit and delayed batch release to assert `_query_trace.client_wait_micros` is nonzero and no greater than wall time. Use the existing transport test context only to inject deferred-flush PISR, asserting no early resume and a resume after the flush succeeds. Cover page-frame forwarding directly through the retained state.
 
 - [ ] **Step 2: Implement and verify hooks**
 

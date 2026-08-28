@@ -51,7 +51,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     public static final String COLUMN_PRINCIPAL = "principal";
     public static final String COLUMN_QUERY_TEXT = "query_text";
     public static final String COLUMN_TS = "ts";
-    public static final String COLUMN_WAIT_MICROS = "wait_micros";
+    public static final String COLUMN_CLIENT_WAIT_MICROS = "client_wait_micros";
     public static final String TABLE_NAME = "_query_trace";
     // Writer lock reason used when the query-tracing job acquires its own table writer.
     public static final String WRITER_LOCK_REASON = "query_tracing";
@@ -67,7 +67,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     private final ConcurrentQueue<QueryTrace> queue;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final TableWriter tableWriter;
-    private final int waitMicrosColumnIndex;
+    private final int clientWaitMicrosColumnIndex;
     private final QueryTrace trace = new QueryTrace();
     private final Utf8StringSink utf8sink = new Utf8StringSink();
 
@@ -84,8 +84,8 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
         TableWriter writer = null;
         try {
             writer = acquireTableWriter();
-            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_WAIT_MICROS) < 0) {
-                writer.addColumn(COLUMN_WAIT_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
+            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_CLIENT_WAIT_MICROS) < 0) {
+                writer.addColumn(COLUMN_CLIENT_WAIT_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
             }
             if (writer.getMetadata().getColumnIndexQuiet(COLUMN_FIRST_ROW_MICROS) < 0) {
                 writer.addColumn(COLUMN_FIRST_ROW_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
@@ -94,7 +94,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
             queryTextColumnIndex = metadata.getColumnIndex(COLUMN_QUERY_TEXT);
             executionMicrosColumnIndex = metadata.getColumnIndex(COLUMN_EXECUTION_MICROS);
             principalColumnIndex = metadata.getColumnIndex(COLUMN_PRINCIPAL);
-            waitMicrosColumnIndex = metadata.getColumnIndex(COLUMN_WAIT_MICROS);
+            clientWaitMicrosColumnIndex = metadata.getColumnIndex(COLUMN_CLIENT_WAIT_MICROS);
             firstRowMicrosColumnIndex = metadata.getColumnIndex(COLUMN_FIRST_ROW_MICROS);
         } catch (Throwable th) {
             if (writer != null) {
@@ -122,7 +122,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                         .$(COLUMN_QUERY_TEXT).$(" VARCHAR, ")
                         .$(COLUMN_EXECUTION_MICROS).$(" LONG, ")
                         .$(COLUMN_PRINCIPAL).$(" VARCHAR, ")
-                        .$(COLUMN_WAIT_MICROS).$(" LONG, ")
+                        .$(COLUMN_CLIENT_WAIT_MICROS).$(" LONG, ")
                         .$(COLUMN_FIRST_ROW_MICROS).$(" LONG")
                         .$(") TIMESTAMP(").$(COLUMN_TS).$(") PARTITION BY HOUR TTL 1 DAY BYPASS WAL")
                         .compile(sqlExecutionContext);
@@ -155,7 +155,7 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                 putVarchar(row, queryTextColumnIndex, trace.queryText);
                 row.putLong(executionMicrosColumnIndex, trace.executionNanos / Micros.MICRO_NANOS);
                 putVarchar(row, principalColumnIndex, trace.principal);
-                row.putLong(waitMicrosColumnIndex, trace.waitNanos / Micros.MICRO_NANOS);
+                row.putLong(clientWaitMicrosColumnIndex, trace.clientWaitNanos / Micros.MICRO_NANOS);
                 row.putLong(
                         firstRowMicrosColumnIndex,
                         trace.firstRowNanos < 0 ? Numbers.LONG_NULL : trace.firstRowNanos / Micros.MICRO_NANOS

@@ -74,16 +74,16 @@ public class QueryTracingTest extends AbstractCairoTest {
                             ") TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
             );
             try (QueryTracingJob ignore = new QueryTracingJob(engine)) {
-                assertQuery("SELECT \"column\" FROM (SHOW COLUMNS FROM '_query_trace') WHERE \"column\" IN ('wait_micros', 'first_row_micros')")
+                assertQuery("SELECT \"column\" FROM (SHOW COLUMNS FROM '_query_trace') WHERE \"column\" IN ('client_wait_micros', 'first_row_micros')")
                         .noLeakCheck()
                         .noRandomAccess()
-                        .returns("column\nwait_micros\nfirst_row_micros\n");
+                        .returns("column\nclient_wait_micros\nfirst_row_micros\n");
             }
 
             engine.execute("DROP TABLE '_query_trace'");
             engine.execute(
                     "CREATE TABLE '_query_trace' (" +
-                            "ts TIMESTAMP, query_text VARCHAR, execution_micros LONG, principal VARCHAR, wait_micros LONG" +
+                            "ts TIMESTAMP, query_text VARCHAR, execution_micros LONG, principal VARCHAR, client_wait_micros LONG" +
                             ") TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
             );
             try (QueryTracingJob ignore = new QueryTracingJob(engine)) {
@@ -100,10 +100,10 @@ public class QueryTracingTest extends AbstractCairoTest {
                             ") TIMESTAMP(ts) PARTITION BY HOUR TTL 1 DAY BYPASS WAL"
             );
             try (QueryTracingJob ignore = new QueryTracingJob(engine)) {
-                assertQuery("SELECT \"column\" FROM (SHOW COLUMNS FROM '_query_trace') WHERE \"column\" = 'wait_micros'")
+                assertQuery("SELECT \"column\" FROM (SHOW COLUMNS FROM '_query_trace') WHERE \"column\" = 'client_wait_micros'")
                         .noLeakCheck()
                         .noRandomAccess()
-                        .returns("column\nwait_micros\n");
+                        .returns("column\nclient_wait_micros\n");
             }
         });
     }
@@ -135,14 +135,14 @@ public class QueryTracingTest extends AbstractCairoTest {
                             query_text,
                             principal,
                             execution_micros >= 0 AS wall_nonnegative,
-                            wait_micros,
+                            client_wait_micros,
                             first_row_micros IS NOT NULL AND first_row_micros >= 0 AS ttfr_nonnegative
                         FROM _query_trace
                         WHERE query_text = 'SELECT 42 AS answer'
                         """)
                         .noLeakCheck()
                         .returns("""
-                                query_text\tprincipal\twall_nonnegative\twait_micros\tttfr_nonnegative
+                                query_text\tprincipal\twall_nonnegative\tclient_wait_micros\tttfr_nonnegative
                                 SELECT 42 AS answer\tadmin\ttrue\t0\ttrue
                                 """);
             }
@@ -207,7 +207,7 @@ public class QueryTracingTest extends AbstractCairoTest {
                     while (true) {
                         Thread.sleep(sleepMillis);
                         try {
-                            assertQuery("SELECT count() > 0 AS has_trace FROM _query_trace WHERE query_text = '" + query + "' AND wait_micros = 0 AND first_row_micros >= 0 AND first_row_micros <= execution_micros")
+                            assertQuery("SELECT count() > 0 AS has_trace FROM _query_trace WHERE query_text = '" + query + "' AND client_wait_micros = 0 AND first_row_micros >= 0 AND first_row_micros <= execution_micros")
                                     .noLeakCheck()
                                     .noRandomAccess()
                                     .expectSize()
@@ -245,7 +245,7 @@ public class QueryTracingTest extends AbstractCairoTest {
                     while (true) {
                         Thread.sleep(sleepMillis);
                         try {
-                            assertQuery("SELECT count() > 0 AS has_trace FROM _query_trace WHERE query_text = '" + query.replace("'", "''") + "' AND first_row_micros IS NULL AND wait_micros = 0")
+                            assertQuery("SELECT count() > 0 AS has_trace FROM _query_trace WHERE query_text = '" + query.replace("'", "''") + "' AND first_row_micros IS NULL AND client_wait_micros = 0")
                                     .noLeakCheck()
                                     .noRandomAccess()
                                     .expectSize()
