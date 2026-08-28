@@ -43,6 +43,54 @@ import org.junit.Test;
 public class BitpackUtilsPackTest extends AbstractCairoTest {
 
     /**
+     * {@link BitpackUtils#packValue} must lay bits down exactly where
+     * {@link BitpackUtils#unpackValue} looks for them, at every width and every
+     * bit alignment, including where a value straddles bytes.
+     * <p>
+     * Written against unpackValue rather than against packAllValues because
+     * unpackValue is what the reader uses, and a packer that agreed with the
+     * other packer but not the reader would be wrong in the way that matters.
+     * The interleaved write order is deliberate: values share their first and
+     * last bytes with their neighbours, so writing them out of order is what
+     * catches an OR that clobbers rather than accumulates.
+     */
+    @Test
+    public void testPackValueRoundTripsThroughUnpackValue() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 97; // not a multiple of anything, so alignments vary
+            for (int bitWidth = 1; bitWidth <= 64; bitWidth++) {
+                final long mask = bitWidth == 64 ? -1L : (1L << bitWidth) - 1;
+                final long[] values = new long[count];
+                for (int i = 0; i < count; i++) {
+                    // Spread across the width, and always include the extremes.
+                    values[i] = i == 0 ? 0 : i == 1 ? mask : ((long) i * 0x9E3779B97F4A7C15L) & mask;
+                }
+                final int size = BitpackUtils.packedDataSize(count, bitWidth);
+                final long addr = Unsafe.calloc(size, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    // Odd indices first, then even, so neighbours are already
+                    // present when each value is written.
+                    for (int i = 1; i < count; i += 2) {
+                        BitpackUtils.packValue(addr, i, bitWidth, values[i]);
+                    }
+                    for (int i = 0; i < count; i += 2) {
+                        BitpackUtils.packValue(addr, i, bitWidth, values[i]);
+                    }
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals(
+                                "bitWidth=" + bitWidth + " index=" + i,
+                                values[i],
+                                BitpackUtils.unpackValue(addr, i, bitWidth, 0)
+                        );
+                    }
+                } finally {
+                    Unsafe.free(addr, size, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
      * A packed-payload blob is addressed by the {@code _im} key directory, not
      * by anything inside itself, so this decodes it the way the reader will:
      * take a key's start offset from a directory held outside the blob, and

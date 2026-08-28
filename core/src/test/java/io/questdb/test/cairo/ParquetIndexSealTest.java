@@ -3086,16 +3086,22 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
     }
 
     /**
-     * With the packed payload requested but the index covering columns, the
-     * seal writes the per-posting arm instead. Silently, and deliberately: the
-     * packed arm is an encoding of the same postings, not a semantic, so
-     * refusing the seal would break covering indexes for anyone who set the
-     * property. {@code PAYLOAD_KIND} is the observable that says what ran, which
-     * is why any measurement of the arm has to assert it rather than assume the
-     * property took effect.
+     * The packed payload carries covered columns as one blob per row group, one
+     * BINARY column per cover slot.
+     * <p>
+     * It refused them until this landed, which made the arm unusable by the
+     * thing a covering index is FOR: every column of a parquet row group shares
+     * a row count, so once {@code row_id} became one blob per group the covered
+     * columns had to follow or be declined, and declining them fell back to the
+     * per-posting arm and its 8 bytes a posting.
+     * <p>
+     * The values themselves are checked against the native chain by
+     * {@code ParquetCoveringIndexOracleTest}; what this pins is the FILE -- that
+     * the packed arm was chosen despite the covers, and that each cover slot is
+     * an addressable blob column rather than a decoded one.
      */
     @Test
-    public void testSealFallsBackToPerPostingWhenTheIndexCoversColumns() throws Exception {
+    public void testSealCarriesCoveredColumnsAsBlobsUnderThePackedArm() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_MAX_KEYS_PER_ROW_GROUP, Integer.MAX_VALUE);
@@ -3109,11 +3115,11 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             drainWalQueue();
             engine.releaseInactive();
 
-            final String indexParquetPath;
             try (Path path = new Path()) {
                 final String indexParquet = onlyFileNamed(partitionPath(path, PACKED_TABLE_NAME), "sym.pidx.", ".parquet");
                 final String indexMeta = onlyFileNamed(partitionPath(path, PACKED_TABLE_NAME), "sym.pidx.", "._im");
-                indexParquetPath = partitionPath(path, PACKED_TABLE_NAME).concat(indexParquet).toString();
+                final String indexParquetPath =
+                        partitionPath(path, PACKED_TABLE_NAME).concat(indexParquet).toString();
 
                 final IndexMetaFileReader reader = new IndexMetaFileReader();
                 IndexMetaFileReader.openAndMapRO(
@@ -3122,15 +3128,50 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         reader
                 );
                 try {
-                    Assert.assertEquals("payload kind", 0, reader.getPayloadKind());
-                    Assert.assertEquals("row id blob column", -1, reader.getRowIdBlobColumn());
-                    // Byte for byte the file the property-off seal writes.
-                    assertRowGroupsArePacked(reader);
+                    Assert.assertEquals("the covers must NOT have forced the per-posting arm",
+                            1, reader.getPayloadKind());
+                    // THREE, not the two named: the designated timestamp is
+                    // covered implicitly alongside them, so the schema is
+                    // key_id, row_id_blob, price, qty, ts.
+                    final int slots = reader.getColumnCount() - reader.getFirstCoverColumn();
+                    Assert.assertEquals("cover slots", 3, slots);
+                    Assert.assertEquals("ts is covered implicitly", "ts",
+                            reader.getColumnName(reader.getColumnCount() - 1).toString());
+
+                    final FilesFacade ff = configuration.getFilesFacade();
+                    try (Path p2 = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
+                        p2.of(indexParquetPath).$();
+                        final long fd = TableUtils.openRO(ff, p2.$(), LOG);
+                        long addr = 0;
+                        long size = 0;
+                        try {
+                            size = ff.length(fd);
+                            addr = TableUtils.mapRO(ff, fd, size, MemoryTag.MMAP_DEFAULT);
+                            decoder.of(addr, size, MemoryTag.NATIVE_DEFAULT);
+                            for (int g = 0, n = reader.getIndexRowGroupCount(); g < n; g++) {
+                                for (int slot = 0; slot < slots; slot++) {
+                                    // Addressable, which is what makes a covered
+                                    // read a pointer arithmetic rather than a
+                                    // page decode. -1 here means the arm still
+                                    // works but has lost its reason to exist.
+                                    Assert.assertTrue(
+                                            "cover slot " + slot + " of row group " + g
+                                                    + " is not addressable in the mapping",
+                                            decoder.plainColumnDataOffset(g, reader.getCoverColumnIndex(slot)) >= 0
+                                    );
+                                }
+                            }
+                        } finally {
+                            if (addr != 0) {
+                                ff.munmap(addr, size, MemoryTag.MMAP_DEFAULT);
+                            }
+                            ff.close(fd);
+                        }
+                    }
                 } finally {
                     reader.close();
                 }
             }
-            assertPostingsCoverEveryRow(indexParquetPath, PACKED_ROW_COUNT);
         });
     }
 
@@ -3388,6 +3429,7 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         final FilesFacade ff = configuration.getFilesFacade();
         final int blobColumn = imReader.getRowIdBlobColumn();
         final boolean[] seen = new boolean[PACKED_ROW_COUNT];
+        int perKeyGroups = 0;
 
         try (Path path = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
             path.of(indexParquetPath).$();
@@ -3416,16 +3458,35 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     Assert.assertTrue("row group " + g + " blob runs past the file",
                             dataOffset + Integer.BYTES + blobLen <= fileSize);
 
-                    Assert.assertEquals("row group " + g + " blob mode",
-                            PostingIndexUtils.STRIDE_MODE_FLAT, Unsafe.getUnsafe().getByte(blob));
+                    // Either layout is legal; the mode byte says which, and the
+                    // seal picks whichever is smaller for the group. Both are
+                    // decoded here, and the two assertions after the loop pin
+                    // the CHOICE rather than just the decoding.
+                    final byte mode = Unsafe.getUnsafe().getByte(blob);
                     final int bitWidth = Unsafe.getUnsafe().getByte(blob + 1) & 0xFF;
-                    final long baseValue = Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
-                    final long dataAddr = blob + PostingIndexUtils.PACKED_PAYLOAD_HEADER_SIZE;
                     final int postings = (int) imReader.getRowGroupNumRows(g);
-                    Assert.assertEquals("row group " + g + " blob length",
-                            PostingIndexUtils.packedPayloadBlobSize(postings, bitWidth), blobLen);
-
                     final int firstKey = imReader.getRowGroupFirstKey(g);
+                    final long dataAddr;
+                    if (mode == PostingIndexUtils.PACKED_MODE_PER_KEY) {
+                        perKeyGroups++;
+                        final int keySpan = Unsafe.getUnsafe().getInt(blob + PostingIndexUtils.PACKED_PER_KEY_SPAN_OFFSET);
+                        dataAddr = blob + PostingIndexUtils.packedPerKeyHeaderSize(keySpan);
+                        Assert.assertEquals("row group " + g + " blob length",
+                                PostingIndexUtils.packedPerKeyBlobSize(keySpan, postings, bitWidth), blobLen);
+                    } else {
+                        Assert.assertEquals("row group " + g + " blob mode",
+                                PostingIndexUtils.STRIDE_MODE_FLAT, mode);
+                        // A group holding ONE key cannot gain from a per-key
+                        // base -- that key's extent IS the group's -- so the
+                        // table would be pure overhead and the seal must decline
+                        // it. Every per-group group in this fixture is that case.
+                        Assert.assertEquals("row group " + g + " fell back to a per-group base"
+                                        + " while holding more than one key",
+                                1, distinctKeysInGroup(imReader, g));
+                        dataAddr = blob + PostingIndexUtils.PACKED_PAYLOAD_HEADER_SIZE;
+                        Assert.assertEquals("row group " + g + " blob length",
+                                PostingIndexUtils.packedPayloadBlobSize(postings, bitWidth), blobLen);
+                    }
                     int addressed = 0;
                     for (int k = firstKey, keys = imReader.getRowGroupKeyCount(g); k < firstKey + keys; k++) {
                         final long range = imReader.getKeyRowRangeInGroup(g, k);
@@ -3434,6 +3495,9 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                         }
                         final int lo = Numbers.decodeLowInt(range);
                         final int hi = Numbers.decodeHighInt(range);
+                        final long baseValue = mode == PostingIndexUtils.PACKED_MODE_PER_KEY
+                                ? PostingIndexUtils.packedPerKeyBase(blob, firstKey, k)
+                                : Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
                         for (int j = lo; j < hi; j++) {
                             final long rowId = BitpackUtils.unpackValue(dataAddr, j, bitWidth, baseValue);
                             Assert.assertEquals(
@@ -3460,9 +3524,29 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             }
         }
 
+        // Liveness: the fixture assigns a new symbol every 500 rows, so its
+        // multi-key groups are exactly the case a per-key base exists for. If
+        // none chose it, the layout is dead code that still decodes.
+        Assert.assertTrue(
+                "no row group used the per-key frame of reference, so nothing exercised it",
+                perKeyGroups > 0
+        );
+
         for (int i = 0; i < seen.length; i++) {
             Assert.assertTrue("row id " + i + " has no posting", seen[i]);
         }
+    }
+
+    /** Keys the group's directory actually holds a row for. */
+    private static int distinctKeysInGroup(IndexMetaFileReader imReader, int rowGroup) {
+        final int firstKey = imReader.getRowGroupFirstKey(rowGroup);
+        int n = 0;
+        for (int i = 0, span = imReader.getRowGroupKeyCount(rowGroup); i < span; i++) {
+            if (imReader.getKeyRowRangeInGroup(rowGroup, firstKey + i) != IndexMetaFileReader.KEY_ABSENT) {
+                n++;
+            }
+        }
+        return n;
     }
 
     private static void assertRowGroupsArePacked(IndexMetaFileReader reader) {

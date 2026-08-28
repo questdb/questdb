@@ -189,6 +189,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private long packedEnd;
         /** Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH. */
         private int packedBatch = PACKED_WIDEN_BATCH_MIN;
+        /** Group ordinal the current widened batch starts at; 0 off the packed arm. */
+        private long coverOrdinalBase;
         private long rowLo;
         private boolean detached;
         private boolean pooled;
@@ -238,6 +240,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             rowIdPtr = 0;
             packedNext = 0;
             packedEnd = 0;
+            coverOrdinalBase = 0;
             hasNext = false;
         }
 
@@ -256,7 +259,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 final long i = rowInGroup++;
                 final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
                 if (windowNarrowed || (rowId >= minValue && rowId <= maxValue)) {
-                    setEmittedRow(i);
+                    setEmittedRow(coverOrdinalBase + i);
                     next = rowId;
                     hasNext = true;
                     return true;
@@ -297,7 +300,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     if (!windowNarrowed && (rowId < minValue || rowId > maxValue)) {
                         continue;
                     }
-                    setEmittedRow(i);
+                    setEmittedRow(coverOrdinalBase + i);
                     next = rowId;
                     hasNext = true;
                     return true;
@@ -331,7 +334,11 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 return false;
             }
             final int batch = (int) Math.min(packedEnd - packedNext, packedBatch);
-            rowIdPtr = unpackRowIds(rg, (int) packedNext, batch);
+            rowIdPtr = unpackRowIds(rg, key, (int) packedNext, batch);
+            // The widened batch has its own indices; covered values are addressed
+            // by the GROUP ordinal, so record where this batch starts.
+            coverOrdinalBase = packedNext;
+            packedRowGroup = rg;
             packedNext += batch;
             // Grow toward the cap, so a drain amortises the native call while a
             // partial read never widens more than the minimum.
@@ -440,7 +447,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     // few the window admits.
                     final long packedAddr = packedDataAddr(rg);
                     final int bitWidth = packedBitWidth(rg);
-                    final long base = packedBase(rg);
+                    final long base = packedBase(rg, key);
                     // A window that already contains the whole group needs no
                     // search: every row of the key's run is inside it. The seeks
                     // are two binary searches per key, and an unbounded scan --

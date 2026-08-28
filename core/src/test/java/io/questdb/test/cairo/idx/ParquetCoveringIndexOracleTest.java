@@ -799,10 +799,10 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
     public void testThePackedPayloadReaderMatchesTheNativeOneEverywhere() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
-            createArm("native_arm", false);
+            createArm("native_arm", true);
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
-            createArm("parquet_arm", false);
+            createArm("parquet_arm", true);
 
             assertArmsAreSealedDifferently();
 
@@ -842,20 +842,24 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                         {half, half - 1}, // empty
                 };
 
+                // The packed arm carries covered columns as one blob per row
+                // group, so the covered gather is exercised here exactly as it
+                // is for the per-posting arm -- it is the case a covering index
+                // exists for, and the arm refused it until the blobs were added.
+                final int[][] coverSets = {null, new int[]{0}, new int[]{0, 1}};
                 for (int key = 0; key < keyCount; key++) {
                     for (long[] w : windows) {
-                        // Twice, for the same reason the covered grid repeats:
-                        // a second lookup on the same group must give the same
-                        // answer as the first.
-                        for (int rep = 0; rep < 2; rep++) {
-                            assertSameSequence(
-                                    nativeReader, parquetReader, nativeCol, parquetCol,
-                                    key, w[0], w[1], null, IndexReader.DIR_FORWARD
-                            );
-                            assertSameSequence(
-                                    nativeReader, parquetReader, nativeCol, parquetCol,
-                                    key, w[0], w[1], null, IndexReader.DIR_BACKWARD
-                            );
+                        for (int[] covers : coverSets) {
+                            for (int rep = 0; rep < 2; rep++) {
+                                assertSameSequence(
+                                        nativeReader, parquetReader, nativeCol, parquetCol,
+                                        key, w[0], w[1], covers, IndexReader.DIR_FORWARD
+                                );
+                                assertSameSequence(
+                                        nativeReader, parquetReader, nativeCol, parquetCol,
+                                        key, w[0], w[1], covers, IndexReader.DIR_BACKWARD
+                                );
+                            }
                         }
                         assertSamePrimitives(
                                 (PostingIndexReader) nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD),

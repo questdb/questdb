@@ -168,6 +168,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private long packedLo;
         /** Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH. */
         private int packedBatch = PACKED_WIDEN_BATCH_MIN;
+        /** Group ordinal the current widened batch starts at; 0 off the packed arm. */
+        private long coverOrdinalBase;
         private int cachedRowGroup = -1;
         private int[] cachedCovers;
         private int lastTouchedRowGroup = -1;
@@ -231,7 +233,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     if (!windowNarrowed && (rowId < minValue || rowId > maxValue)) {
                         continue;
                     }
-                    setEmittedRow(i);
+                    setEmittedRow(coverOrdinalBase + i);
                     next = rowId;
                     hasNext = true;
                     return true;
@@ -274,9 +276,13 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             }
             final int batch = (int) Math.min(packedNext - packedLo, packedBatch);
             packedNext -= batch;
+            // See the forward reader: covered values are addressed by the GROUP
+            // ordinal, and this batch starts at the new packedNext.
+            coverOrdinalBase = packedNext;
+            packedRowGroup = rg;
             // See the forward reader: grow toward the cap.
             packedBatch = Math.min(packedBatch << 1, PACKED_WIDEN_BATCH);
-            rowIdPtr = unpackRowIds(rg, (int) packedNext, batch);
+            rowIdPtr = unpackRowIds(rg, key, (int) packedNext, batch);
             // The batch is ascending in the buffer; the countdown walks it from
             // its top, so the next step down continues the descending order.
             rowFloor = 0;
@@ -356,7 +362,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     // away.
                     final long packedAddr = packedDataAddr(rg);
                     final int bitWidth = packedBitWidth(rg);
-                    final long base = packedBase(rg);
+                    final long base = packedBase(rg, key);
                     // See the forward reader: a window covering the whole
                     // group needs no search.
                     final long from;
@@ -495,6 +501,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             this.rowFloor = 0;
             this.packedNext = 0;
             this.packedLo = 0;
+            this.coverOrdinalBase = 0;
             this.windowNarrowed = false;
             this.groupRows = 0;
             setEmittedRow(-1);

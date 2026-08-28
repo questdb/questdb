@@ -233,6 +233,43 @@ public final class BitpackUtils {
     }
 
     /**
+     * Packs one already-rebased value at {@code index}, the exact inverse of
+     * {@link #unpackValue}.
+     * <p>
+     * ORs into the destination, which must be ZERO-FILLED, because a value's
+     * bits share their first and last bytes with its neighbours. Each value
+     * contributes only its own {@code bitWidth} bits -- the mask below is what
+     * guarantees the final byte write cannot spill into the next value -- so
+     * writing every index exactly once produces the same layout
+     * {@link #packAllValues} would.
+     * <p>
+     * Exists because {@link #packAllValues} rebases a whole run against ONE
+     * minimum and writes from index 0. A per-key frame of reference needs a
+     * different base per key at ordinals it does not choose, which is a
+     * different operation.
+     *
+     * @param value value with its base ALREADY subtracted; must fit in {@code bitWidth} bits
+     */
+    public static void packValue(long destAddr, int index, int bitWidth, long value) {
+        final long mask = bitWidth == 64 ? -1L : (1L << bitWidth) - 1;
+        final long v = value & mask;
+        final long bitOffset = (long) index * bitWidth;
+        final long byteOffset = bitOffset >>> 3;
+        final int bitShift = (int) (bitOffset & 7);
+
+        long at = destAddr + byteOffset;
+        Unsafe.getUnsafe().putByte(at, (byte) (Unsafe.getByte(at) | (byte) (v << bitShift)));
+        int written = 8 - bitShift;
+        int byteIdx = 1;
+        while (written < bitWidth) {
+            at = destAddr + byteOffset + byteIdx;
+            Unsafe.getUnsafe().putByte(at, (byte) (Unsafe.getByte(at) | (byte) (v >>> written)));
+            written += 8;
+            byteIdx++;
+        }
+    }
+
+    /**
      * Unpacks a single value from bit-packed data using Unsafe.
      *
      * @param srcAddr  source memory address of packed data

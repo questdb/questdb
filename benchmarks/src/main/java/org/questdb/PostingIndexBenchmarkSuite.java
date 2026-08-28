@@ -700,7 +700,11 @@ public class PostingIndexBenchmarkSuite {
     }
 
     private static DefaultCairoConfiguration benchConfig(String root) {
-        return benchConfig(root, false);
+        // -Dquestdb.idx.packed.payload=true lets a fixture with no format param
+        // of its own -- the covering/sidecar arms -- be built on the packed
+        // payload, which is the only way to measure what a COVERING index costs
+        // under it.
+        return benchConfig(root, Boolean.getBoolean("questdb.idx.packed.payload"));
     }
 
     /**
@@ -766,6 +770,50 @@ public class PostingIndexBenchmarkSuite {
     private static int[] buildRoundRobin(int totalRows, int keyCount) {
         int[] a = new int[totalRows];
         for (int i = 0; i < totalRows; i++) a[i] = i % keyCount;
+        return a;
+    }
+
+    /**
+     * Each key arrives in BURSTS rather than being spread over the partition:
+     * the row is a run of one key, then a run of the next, with the run length
+     * jittered and the key order shuffled so nothing about it is monotone.
+     * <p>
+     * This is the shape real symbol data has -- a ticker trades in bursts, a
+     * device reports in sessions -- and the ladder had nothing like it. Every
+     * other distribution either interleaves keys perfectly (ROUND_ROBIN) or
+     * scatters them uniformly (SHUFFLED), and both make a key's postings span
+     * the whole partition, which defeats frame-of-reference completely: the
+     * seal's per-group FoR base subtracts nothing and every row id is stored at
+     * the full partition width. A packed index therefore cannot be shown to
+     * compress on any existing rung, whatever it does.
+     */
+    private static int[] buildClustered(int totalRows, int keyCount) {
+        final int[] a = new int[totalRows];
+        final Random rng = new Random(1234);
+        final int[] order = new int[keyCount];
+        for (int i = 0; i < keyCount; i++) {
+            order[i] = i;
+        }
+        for (int i = keyCount - 1; i > 0; i--) {
+            final int j = rng.nextInt(i + 1);
+            final int t = order[i];
+            order[i] = order[j];
+            order[j] = t;
+        }
+        final int avgRun = Math.max(1, totalRows / keyCount);
+        int pos = 0;
+        int k = 0;
+        while (pos < totalRows) {
+            // Jittered around the mean so runs are not a fixed stride, which
+            // would be its own artifact.
+            int run = Math.max(1, avgRun / 2 + rng.nextInt(avgRun + 1));
+            run = Math.min(run, totalRows - pos);
+            final int key = order[k % keyCount];
+            k++;
+            for (int i = 0; i < run; i++) {
+                a[pos++] = key;
+            }
+        }
         return a;
     }
 
@@ -1787,7 +1835,7 @@ public class PostingIndexBenchmarkSuite {
      * different arms would be worse than no sharing at all, which is what
      * verifyLadder() guards.
      */
-    enum Dist { SHUFFLED, ROUND_ROBIN, ZIPFIAN, STREAMING }
+    enum Dist { SHUFFLED, ROUND_ROBIN, ZIPFIAN, STREAMING, CLUSTERED }
 
     enum Ladder {
         S1(500_000, 2_000_000, 2_000_000, Dist.SHUFFLED, 0L),
@@ -1815,7 +1863,17 @@ public class PostingIndexBenchmarkSuite {
          * shape as S4 -- ROUND_ROBIN, 1,000 rows a key -- so the two differ in
          * size and nothing else.
          */
-        S10(16_000, 16_000_000, 16_000_000, Dist.ROUND_ROBIN, 0L);
+        S10(16_000, 16_000_000, 16_000_000, Dist.ROUND_ROBIN, 0L),
+        /**
+         * S4's size and cardinality, CLUSTERED instead of round robin.
+         * <p>
+         * The only rung on which frame-of-reference can do anything, and so the
+         * only one that can measure what a packed payload is for. Paired with S4
+         * deliberately: same 2,000 keys over 2,000,000 rows, so the sole
+         * difference is whether a key's postings are spread across the partition
+         * or arrive together.
+         */
+        S11(2_000, 2_000_000, 2_000_000, Dist.CLUSTERED, 0L);
 
         private final int commitInterval;
         private final Dist dist;
@@ -1923,6 +1981,7 @@ public class PostingIndexBenchmarkSuite {
                 case SHUFFLED -> buildShuffled(totalRows, keyCount);
                 case ROUND_ROBIN -> buildRoundRobin(totalRows, keyCount);
                 case ZIPFIAN -> buildZipfian(totalRows, keyCount);
+                case CLUSTERED -> buildClustered(totalRows, keyCount);
                 case STREAMING -> throw new IllegalStateException("handled above");
             };
 

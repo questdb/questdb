@@ -143,6 +143,12 @@ public final class ParquetIndexSeal {
         // still written at all.
         private long keyIdAddr;
         private long keyIdSize;
+        // Per cover slot, the BINARY aux vector and blob data carrying that
+        // column's values one blob per row group.
+        private long[] coverAuxAddrs;
+        private long[] coverAuxSizes;
+        private long[] coverDataAddrs;
+        private long[] coverDataSizes;
 
         private void free() {
             freeIfSet(dataAddr, dataSize);
@@ -151,6 +157,14 @@ public final class ParquetIndexSeal {
             auxAddr = 0;
             freeIfSet(keyIdAddr, keyIdSize);
             keyIdAddr = 0;
+            if (coverDataAddrs != null) {
+                for (int i = 0; i < coverDataAddrs.length; i++) {
+                    freeIfSet(coverDataAddrs[i], coverDataSizes[i]);
+                    coverDataAddrs[i] = 0;
+                    freeIfSet(coverAuxAddrs[i], coverAuxSizes[i]);
+                    coverAuxAddrs[i] = 0;
+                }
+            }
         }
     }
 
@@ -245,19 +259,17 @@ public final class ParquetIndexSeal {
 
         // Arm B packs the row ids into one blob per row group, which makes a
         // parquet row a GROUP rather than a posting. Every column in a row group
-        // shares one row count, so covered columns would have to become
-        // per-group blobs too -- buying nothing, since the covered gather is
-        // already at parity -- and the covered case falls back to arm N instead.
-        // PAYLOAD_KIND in the _im is what records which arm actually ran.
+        // shares one row count, so the covered columns become per-group blobs
+        // too -- one BINARY column per cover slot, each row holding that group's
+        // values. They HAVE to: a covering index is the case this feature
+        // exists for, and refusing covers left the packed arm unable to serve it.
         //
-        // Also ignored under a compressing codec, and for a sharper reason than
-        // the covered case: a compressed chunk cannot be addressed in the
-        // mapping at all, so the blob could only be reached by decompressing the
-        // page holding it -- which is the cost the arm exists to remove, and
-        // would leave a file whose only reader has no fast path. Falling back is
-        // better than sealing something nothing can serve well.
+        // Ignored under a compressing codec: a compressed chunk cannot be
+        // addressed in the mapping at all, so a blob could only be reached by
+        // decompressing the page holding it -- which is the cost the arm exists
+        // to remove, and would leave a file whose only reader has no fast path.
+        // PAYLOAD_KIND in the _im records which arm actually ran.
         final boolean packedPayload = configuration.isPostingIndexParquetPackedPayload()
-                && coverCount == 0
                 && configuration.getPostingIndexParquetCompressionCodec() == ParquetCompression.COMPRESSION_UNCOMPRESSED;
 
         final long keyIdsSize = rowCount * Integer.BYTES;
@@ -296,7 +308,9 @@ public final class ParquetIndexSeal {
                     configuration.getPostingIndexParquetMinRowsPerRowGroup()
             );
             if (packedPayload) {
-                payload = buildPackedPayload(rowIdsAddr, groupFirstKeys, groupRowCounts, groupRowIdMins, groupRowIdMaxs);
+                payload = buildPackedPayload(rowIdsAddr, groupFirstKeys, groupRowCounts,
+                        groupRowIdMins, groupRowIdMaxs, keyDirEntries, groupKeyDirCounts,
+                        coveredTypes, sortedCoverAddrs);
             }
             imFileSize = writeIndexArtifacts(
                     configuration, ff, path, plen, indexColumnName, indexTxn, keySpaceSize,
@@ -523,21 +537,116 @@ public final class ParquetIndexSeal {
      *
      * @return the built payload; the caller owns it and must {@link PackedPayload#free}
      */
+    /**
+     * Which packed mode a group will use, and the parameters it needs.
+     * <p>
+     * Chosen by SIZE, per group: whichever of the two layouts is smaller wins,
+     * and the mode byte in the blob records the answer, so the reader never has
+     * to be told. Per-key bases cost 4 bytes a directory entry and pay only when
+     * the keys are clustered enough for their own extents to be much narrower
+     * than the group's; at two postings a key over a scattered partition they
+     * are pure overhead, and the comparison below rejects them there.
+     */
+    private static final class GroupPlan {
+        private boolean perKey;
+        private int bitWidth;
+        private int keySpan;
+        private long groupBase;
+        private int blobSize;
+        private int[] keyStarts;
+        private long[] keyBases;
+    }
+
+    /**
+     * Plans one group: per-key minima and the widest per-key range, then the
+     * cheaper of the two layouts.
+     */
+    private static GroupPlan planGroup(
+            long rowIdsAddr,
+            long postingLo,
+            int rows,
+            int keySpan,
+            IntList keyDirEntries,
+            int keyDirBase,
+            LongList groupRowIdMins,
+            LongList groupRowIdMaxs,
+            int group
+    ) {
+        final GroupPlan plan = new GroupPlan();
+        plan.keySpan = keySpan;
+        plan.groupBase = groupRowIdMins.getQuick(group);
+        final int groupWidth = groupBitWidth(groupRowIdMins, groupRowIdMaxs, group);
+
+        final int[] starts = new int[keySpan + 1];
+        for (int i = 0; i <= keySpan; i++) {
+            starts[i] = keyDirEntries.getQuick(keyDirBase + i);
+        }
+        final long[] bases = new long[keySpan];
+        int widest = 1;
+        boolean deltasFit = true;
+        for (int i = 0; i < keySpan; i++) {
+            final int lo = starts[i];
+            final int hi = starts[i + 1];
+            if (lo >= hi) {
+                continue;
+            }
+            // The run is ascending, so its own extent is its first and last.
+            final long min = Unsafe.getLong(rowIdsAddr + (postingLo + lo) * Long.BYTES);
+            final long max = Unsafe.getLong(rowIdsAddr + (postingLo + hi - 1) * Long.BYTES);
+            bases[i] = min;
+            final int w = BitpackUtils.bitsNeeded(max - min);
+            if (w > widest) {
+                widest = w;
+            }
+            // The table stores the base as an unsigned 32-bit delta.
+            deltasFit &= (min - plan.groupBase) <= 0xFFFFFFFFL;
+        }
+
+        final int uniformSize = PostingIndexUtils.packedPayloadBlobSize(rows, groupWidth);
+        final int perKeySize = PostingIndexUtils.packedPerKeyBlobSize(keySpan, rows, widest);
+        if (deltasFit && perKeySize < uniformSize) {
+            plan.perKey = true;
+            plan.bitWidth = widest;
+            plan.blobSize = perKeySize;
+            plan.keyStarts = starts;
+            plan.keyBases = bases;
+        } else {
+            plan.bitWidth = groupWidth;
+            plan.blobSize = uniformSize;
+        }
+        return plan;
+    }
+
     private static PackedPayload buildPackedPayload(
             long rowIdsAddr,
             IntList groupFirstKeys,
             LongList groupRowCounts,
             LongList groupRowIdMins,
-            LongList groupRowIdMaxs
+            LongList groupRowIdMaxs,
+            IntList keyDirEntries,
+            IntList groupKeyDirCounts,
+            IntList coveredTypes,
+            LongList sortedCoverAddrs
     ) {
         final int groupCount = groupRowCounts.size();
-        // Sizing pass. The blob widths are wanted twice and are two ops each, so
-        // they are recomputed in the write pass rather than parked in a list.
+        // Planned once and kept: planning walks every key's run to find its own
+        // extent, which is too much to repeat in the write pass.
+        final GroupPlan[] plans = new GroupPlan[groupCount];
         long dataSize = 0;
+        long postingAt = 0;
+        int keyDirAt = 0;
         for (int g = 0; g < groupCount; g++) {
-            final int bitWidth = groupBitWidth(groupRowIdMins, groupRowIdMaxs, g);
-            dataSize += BINARY_HEADER_SIZE
-                    + PostingIndexUtils.packedPayloadBlobSize((int) groupRowCounts.getQuick(g), bitWidth);
+            final int rows = (int) groupRowCounts.getQuick(g);
+            // The directory holds one entry per key id in the group's span plus
+            // a terminator, so the span is one less than the count.
+            final int keySpan = groupKeyDirCounts.getQuick(g) - 1;
+            plans[g] = planGroup(
+                    rowIdsAddr, postingAt, rows, keySpan,
+                    keyDirEntries, keyDirAt, groupRowIdMins, groupRowIdMaxs, g
+            );
+            dataSize += BINARY_HEADER_SIZE + plans[g].blobSize;
+            postingAt += rows;
+            keyDirAt += groupKeyDirCounts.getQuick(g);
         }
 
         final PackedPayload payload = new PackedPayload();
@@ -556,26 +665,96 @@ public final class ParquetIndexSeal {
             for (int g = 0; g < groupCount; g++) {
                 Unsafe.getUnsafe().putInt(payload.keyIdAddr + (long) g * Integer.BYTES, groupFirstKeys.getQuick(g));
                 final int rows = (int) groupRowCounts.getQuick(g);
-                final long baseValue = groupRowIdMins.getQuick(g);
-                final int bitWidth = groupBitWidth(groupRowIdMins, groupRowIdMaxs, g);
-                final int blobSize = PostingIndexUtils.packedPayloadBlobSize(rows, bitWidth);
+                final GroupPlan plan = plans[g];
 
                 Unsafe.getUnsafe().putLong(payload.auxAddr + (long) g * Long.BYTES, dataOffset);
-                Unsafe.getUnsafe().putLong(payload.dataAddr + dataOffset, blobSize);
-                PostingIndexUtils.encodePackedPayloadBlob(
-                        payload.dataAddr + dataOffset + BINARY_HEADER_SIZE,
-                        rowIdsAddr + postingLo * Long.BYTES,
-                        rows,
-                        baseValue,
-                        bitWidth
-                );
-                dataOffset += BINARY_HEADER_SIZE + blobSize;
+                Unsafe.getUnsafe().putLong(payload.dataAddr + dataOffset, plan.blobSize);
+                final long blob = payload.dataAddr + dataOffset + BINARY_HEADER_SIZE;
+                if (plan.perKey) {
+                    PostingIndexUtils.encodePerKeyBlob(
+                            blob,
+                            rowIdsAddr + postingLo * Long.BYTES,
+                            rows,
+                            plan.keySpan,
+                            plan.keyStarts,
+                            plan.keyBases,
+                            plan.groupBase,
+                            plan.bitWidth
+                    );
+                } else {
+                    PostingIndexUtils.encodePackedPayloadBlob(
+                            blob,
+                            rowIdsAddr + postingLo * Long.BYTES,
+                            rows,
+                            plan.groupBase,
+                            plan.bitWidth
+                    );
+                }
+                dataOffset += BINARY_HEADER_SIZE + plan.blobSize;
                 postingLo += rows;
             }
+            buildCoverBlobs(payload, groupRowCounts, coveredTypes, sortedCoverAddrs);
             return payload;
         } catch (Throwable e) {
             payload.free();
             throw e;
+        }
+    }
+
+    /**
+     * Builds one BINARY column per cover slot: each row group's slice of that
+     * covered column, as a blob addressed by the same group ordinal that
+     * addresses the row id.
+     * <p>
+     * The values are already in posting order -- the seal's key-major sort
+     * gathered them alongside the row ids -- so a group's slice is a contiguous
+     * copy, and the blobs together hold exactly what the per-posting arm would
+     * have written as a column.
+     */
+    private static void buildCoverBlobs(
+            PackedPayload payload,
+            LongList groupRowCounts,
+            IntList coveredTypes,
+            LongList sortedCoverAddrs
+    ) {
+        final int coverCount = coveredTypes.size();
+        payload.coverAuxAddrs = new long[coverCount];
+        payload.coverAuxSizes = new long[coverCount];
+        payload.coverDataAddrs = new long[coverCount];
+        payload.coverDataSizes = new long[coverCount];
+        if (coverCount == 0) {
+            return;
+        }
+        final int groupCount = groupRowCounts.size();
+        for (int slot = 0; slot < coverCount; slot++) {
+            final int width = ColumnType.sizeOf(coveredTypes.getQuick(slot));
+            long dataSize = 0;
+            for (int g = 0; g < groupCount; g++) {
+                dataSize += BINARY_HEADER_SIZE
+                        + PostingIndexUtils.coverBlobSize((int) groupRowCounts.getQuick(g), width);
+            }
+            payload.coverAuxSizes[slot] = (long) groupCount * Long.BYTES;
+            payload.coverDataSizes[slot] = dataSize;
+            payload.coverAuxAddrs[slot] = Unsafe.malloc(payload.coverAuxSizes[slot], MemoryTag.NATIVE_TABLE_WRITER);
+            payload.coverDataAddrs[slot] = Unsafe.malloc(dataSize, MemoryTag.NATIVE_TABLE_WRITER);
+
+            final long src = sortedCoverAddrs.getQuick(slot);
+            long dataOffset = 0;
+            long postingLo = 0;
+            for (int g = 0; g < groupCount; g++) {
+                final int rows = (int) groupRowCounts.getQuick(g);
+                final int blobSize = PostingIndexUtils.coverBlobSize(rows, width);
+                Unsafe.getUnsafe().putLong(payload.coverAuxAddrs[slot] + (long) g * Long.BYTES, dataOffset);
+                Unsafe.getUnsafe().putLong(payload.coverDataAddrs[slot] + dataOffset, blobSize);
+                PostingIndexUtils.encodeCoverBlob(
+                        payload.coverDataAddrs[slot] + dataOffset + BINARY_HEADER_SIZE,
+                        src + postingLo * width,
+                        rows,
+                        width
+                );
+                dataOffset += BINARY_HEADER_SIZE + blobSize;
+                postingLo += rows;
+            }
         }
     }
 
@@ -873,10 +1052,34 @@ public final class ParquetIndexSeal {
                         ) | PARQUET_CONFIG_REQUIRED_FLAG);
             }
             for (int slot = 0; slot < coverCount; slot++) {
-                addSchemaColumn(
-                        columnNames, columnMetadata, coveredNames.getQuick(slot),
-                        coveredWriterIndices.getQuick(slot), coveredTypes.getQuick(slot)
-                );
+                if (payload != null) {
+                    // One blob per row group, matching row_id_blob, because every
+                    // column of a row group shares its row count. REQUIRED PLAIN
+                    // uncompressed for the same reason as the row-id blob: a
+                    // BYTE_ARRAY column carrying definition levels cannot be
+                    // addressed in the mapping, and addressing is the point.
+                    //
+                    // The descriptor's TYPE is therefore BINARY, not the covered
+                    // column's own type. Its ID still carries the covered
+                    // column's writer index, which is what the _im resolves a
+                    // cover slot by, and the blob header carries the element
+                    // width the reader multiplies by.
+                    addSchemaColumn(
+                            columnNames, columnMetadata, coveredNames.getQuick(slot),
+                            coveredWriterIndices.getQuick(slot), ColumnType.BINARY,
+                            TableUtils.packParquetConfig(
+                                    ParquetEncoding.ENCODING_PLAIN,
+                                    ParquetCompression.COMPRESSION_UNCOMPRESSED + 1,
+                                    -1,
+                                    false
+                            ) | PARQUET_CONFIG_REQUIRED_FLAG
+                    );
+                } else {
+                    addSchemaColumn(
+                            columnNames, columnMetadata, coveredNames.getQuick(slot),
+                            coveredWriterIndices.getQuick(slot), coveredTypes.getQuick(slot)
+                    );
+                }
             }
 
             if (payload != null) {
@@ -896,7 +1099,13 @@ public final class ParquetIndexSeal {
                 addChunkColumn(columnData, rowIdsAddr, rowIdsSize);
             }
             for (int slot = 0; slot < coverCount; slot++) {
-                addChunkColumn(columnData, sortedCoverAddrs.getQuick(slot), sortedCoverSizes.getQuick(slot));
+                if (payload != null) {
+                    addChunkColumn(columnData,
+                            payload.coverDataAddrs[slot], payload.coverDataSizes[slot],
+                            payload.coverAuxAddrs[slot], payload.coverAuxSizes[slot]);
+                } else {
+                    addChunkColumn(columnData, sortedCoverAddrs.getQuick(slot), sortedCoverSizes.getQuick(slot));
+                }
             }
 
             writerPtr = PartitionEncoder.createStreamingParquetWriter(
