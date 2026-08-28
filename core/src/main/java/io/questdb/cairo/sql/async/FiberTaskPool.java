@@ -77,13 +77,29 @@ final class FiberTaskPool<T extends FiberTask & QuietCloseable> implements Quiet
                 ? null
                 : new IllegalStateException(
                 "fiber task pool closed with leased tasks [leased="
-                        + leasedCount
-                        + ", created=" + createdCount.get()
-                        + ", free=" + freeTasks.count()
-                        + ']'
+                + leasedCount
+                + ", created=" + createdCount.get()
+                + ", free=" + freeTasks.count()
+                + ']'
         );
         failure = freeRetainedTasks(0, failure);
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    private Throwable freeRetainedTasks(int maxCount, Throwable failure) {
+        while (freeTasks.count() > maxCount) {
+            final T task = freeTasks.pop();
+            if (task == null) {
+                break;
+            }
+            createdCount.decrementAndGet();
+            failure = Misc.freeBestEffort(failure, task);
+        }
+        return failure;
+    }
+
+    private boolean isOpen() {
+        return (leaseState.get() & LEASE_OPEN) != 0;
     }
 
     T acquireLeased() {
@@ -209,22 +225,6 @@ final class FiberTaskPool<T extends FiberTask & QuietCloseable> implements Quiet
         this.maxRetainedCount = maxRetainedCount;
         final Throwable failure = freeRetainedTasks(isOpen() ? maxRetainedCount : 0, null);
         CairoException.rethrowCleanupFailure(failure);
-    }
-
-    private Throwable freeRetainedTasks(int maxCount, Throwable failure) {
-        while (freeTasks.count() > maxCount) {
-            final T task = freeTasks.pop();
-            if (task == null) {
-                break;
-            }
-            createdCount.decrementAndGet();
-            failure = Misc.freeBestEffort(failure, task);
-        }
-        return failure;
-    }
-
-    private boolean isOpen() {
-        return (leaseState.get() & LEASE_OPEN) != 0;
     }
 
     interface Factory<T extends FiberTask & QuietCloseable> {
