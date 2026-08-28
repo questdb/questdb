@@ -10888,10 +10888,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // the default, a NO_DEDUP commit on a dedup-keyed table would collapse the
             // very rows it asked to keep.
             //
-            // A commit carrying any non-default mode is stamped FORCE_FULL_COMMIT by
-            // WalTxnDetails, which is what keeps this sound rather than merely expensive:
-            // it applies alone rather than inside a block, and its rows are never left in
-            // the WAL lag for a later commit - under another mode - to flush.
+            // WalTxnDetails stamps a commit carrying any non-default mode
+            // FORCE_FULL_COMMIT, and stamps its predecessor too, so this commit applies
+            // alone rather than inside a block that would carry one mode for all of it.
+            // That is all the stamp buys. It says nothing about rows an earlier
+            // DEFAULT-mode commit already left in the WAL lag: this apply flushes those
+            // under the mode set here, and a predecessor already applied into the lag has
+            // left transactionMeta, so nothing can stamp it after the fact.
+            //
+            // LiveViewRefreshJob.commitLiveViewBlock() is what closes that case today. It
+            // routes every forward block of a dedup-keyed view to NO_DEDUP, so a table
+            // whose dedup keys matter never carries a DEFAULT-mode data commit for a later
+            // NO_DEDUP commit to meet in the lag. A future NO_DEDUP producer has to
+            // establish that property for itself; the stamp will not do it.
             this.dedupMode = dedupMode;
             try {
                 return processWalCommit(

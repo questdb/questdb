@@ -51,8 +51,12 @@ import org.jetbrains.annotations.NotNull;
  * <ul>
  *     <li><b>posting rows</b> - what the index says those keys hold over the interval, and
  *     what the scan actually pulls off the columns;</li>
- *     <li><b>the merge</b> - {@code O(rows * log |Q|)} rather than {@code O(rows)},
- *     because every row leaves the heap through a sift;</li>
+ *     <li><b>the merge</b> - {@code O(rows * |Q|)} rather than {@code O(rows)}, because
+ *     the priority queue is a sorted array rather than a heap: every row that leaves it
+ *     shifts the elements above the slot its replacement takes. The row pays the larger of
+ *     the two charges that can dominate: {@code ceil(log2 |Q|)}, which is what this route's
+ *     own measurement was taken under, and its shifts at {@link #MERGE_SHIFTS_PER_ROW} to
+ *     the base row - the first up to 320 keys, the second from 321 up;</li>
  *     <li><b>the setup</b> - two counts, not one, because the scan does two different
  *     things. It <b>opens</b> the index once per <b>partition</b>: {@code TableReader}
  *     caches an index reader per (partition, column, direction) and hands the same one to
@@ -123,6 +127,40 @@ public final class LiveViewCheckpointKeyedScanCost {
      * the column, or the reader refused one. The caller reads the whole range.
      */
     public static final long UNPRICEABLE = Numbers.LONG_NULL;
+    /**
+     * How many of the merge's element shifts one base row pays for, so the merge term
+     * carries no knob of its own.
+     * <p>
+     * {@code HeapRowCursor} merges through {@code IntLongSortedList}, which is a sorted
+     * array and not a heap: {@code pollAndReplace} searches for the replacement's slot and
+     * then {@code arrayCopy}s the elements above it down by one, across two arrays.
+     * Round-robin key interleaving - the ordinary shape for a time-ordered base - lands
+     * every replacement at the top of the list, so the shift is the whole of it and the
+     * per-row cost is linear in {@code |Q|} rather than logarithmic in it.
+     * <p>
+     * Thirty-two is what the route's one recorded measurement solves to. That measurement -
+     * an 800_000-row daily partition over eight shared query workers at 256 keys, priced
+     * 446_272 against a measured cost near 450_000 - leaves {@code (450_000 - 86_272) /
+     * 40_000 - 1}, about eight row-equivalents per posting row, for the merge at 256 keys.
+     * A round-robin merge over 256 keys shifts 255 elements per yielded row, so a base row
+     * buys {@code 255 / 8} of them, which rounds to thirty-two.
+     * <p>
+     * That solves {@code 1 + shifts / 32} to the measurement, which is why
+     * {@link #keyedScanCostRows} charges the larger of the shift term and the logarithmic
+     * one rather than their sum: the shift term is calibrated to <b>be</b> the whole merge
+     * charge wherever it applies, not to sit on top of another one. The logarithmic term
+     * keeps the floor under it, so no key domain prices cheaper than it did before this
+     * term existed; the two agree at 320 keys and the shift term leads from 321 up.
+     * <p>
+     * The number is a policy choice all the same. A shift element is one step of a
+     * primitive {@code System.arraycopy}; a base row is a column read plus the view's
+     * window evaluation, which {@link LiveViewCheckpointOpenSegmentCost} carries a 100ns
+     * prior for, and that pair would put the ratio in the hundreds rather than at
+     * thirty-two. Where the two disagree this follows the measurement, which over-charges
+     * the merge - the safe direction for a route that has to earn its place against a plain
+     * sequential read.
+     */
+    private static final int MERGE_SHIFTS_PER_ROW = 32;
     private long indexOpens;
     private long indexSeeks;
     private int pageFrameMaxRows;
@@ -292,7 +330,7 @@ public final class LiveViewCheckpointKeyedScanCost {
 
     /**
      * The keyed scan's price in whole-range row equivalents: its posting rows, each carrying
-     * the heap sift the merge costs, plus the per-partition index opens and the
+     * what the merge costs to yield it, plus the per-partition index opens and the
      * per-key-per-frame index seeks the setup costs.
      * <p>
      * Saturating rather than overflowing: an unpriceably wide key domain has to read as
@@ -306,10 +344,32 @@ public final class LiveViewCheckpointKeyedScanCost {
             long indexOpenRows,
             long indexSeekRows
     ) {
-        // One sift per level of the heap the merge builds, and a single-key scan builds
-        // none: ceil(log2(keyCount)) on top of the row itself.
-        final long sift = 1L + (keyCount <= 1 ? 0 : 32 - Integer.numberOfLeadingZeros(keyCount - 1));
-        final long merged = postingRows > Long.MAX_VALUE / sift ? Long.MAX_VALUE : postingRows * sift;
+        // The merge runs on a sorted array and not on a heap: yielding a row searches for
+        // its replacement's slot and then shifts every element above that slot down by one
+        // across two arrays - up to keyCount - 1 of them, which round-robin key
+        // interleaving makes the ordinary case rather than the worst one. A single-key
+        // scan merges nothing and pays neither.
+        //
+        // The larger of the two charges, not their sum. The logarithmic one is what the one
+        // shape this route was measured on priced at, and that shape leaves nothing beside
+        // it - see MERGE_SHIFTS_PER_ROW - so a shift charge stacked on top would re-price
+        // the measured shape at 1.6x what it measured. The shift charge takes over where it
+        // is the bigger of the two, which is where the array's linear cost is what actually
+        // dominates.
+        final long merge;
+        if (keyCount <= 1) {
+            merge = 1L;
+        } else {
+            final int shifts = keyCount - 1;
+            // The bit width of keyCount - 1, which is ceil(log2(keyCount)). Not literally
+            // the search's step count - IntLongSortedList.binSearch halves only while more
+            // than 65 entries are left and then walks - but the term the 256-key
+            // measurement was taken under, and the floor that keeps a narrow key domain
+            // priced exactly as it was before the shift charge existed.
+            final int keyBits = Integer.SIZE - Integer.numberOfLeadingZeros(shifts);
+            merge = 1L + Math.max(keyBits, shifts / MERGE_SHIFTS_PER_ROW);
+        }
+        final long merged = postingRows > Long.MAX_VALUE / merge ? Long.MAX_VALUE : postingRows * merge;
         final long setup = saturatingSum(
                 saturatingProduct(indexOpens, indexOpenRows),
                 saturatingProduct(indexSeeks, indexSeekRows)

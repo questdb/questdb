@@ -155,6 +155,83 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testChainedRepairFreesItsPublishedShellsWhenTheChainCannotOpen() throws Exception {
+        // A chaining capture opens the published root below the repaired interval from
+        // inside the chain's constructor, which allocates four native-holding shells
+        // first. The metadata read that opens them is one the subsystem treats as
+        // recoverable - beginCheckpointTimelineRepair logs the failure and retires the
+        // timeline instead - so the throw is an expected outcome rather than a fatal
+        // one. A constructor that throws never publishes this, so the assignment in
+        // openChain leaves the chain null and the capture's close() frees nothing:
+        // without the constructor's own guard every failed chained repair strands the
+        // shells it had already allocated, for the lifetime of the process.
+        final AtomicBoolean isSuperblockOpenFailing = new AtomicBoolean();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // The superblock is the first file the chain opens and the only one it
+                // opens read-write, so this fails openPublished and leaves the timeline
+                // read that precedes it - which maps metadata segments read-only -
+                // untouched.
+                if (isSuperblockOpenFailing.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final ObjList<LiveViewCheckpointTimelineEntry> entries = new ObjList<>();
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                writer.beginRepair(checkpointsDir, null, null, true)
+                ) {
+                    isSuperblockOpenFailing.set(true);
+                    try {
+                        // The interval starts above the first boundary, so the chain
+                        // resolves a predecessor and takes the branch that allocates.
+                        capture.collectBoundaries(ts(timestamp(30)), ts(timestamp(50)), entries);
+                        Assert.fail("a chain cannot open over an unreadable superblock");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+                    } finally {
+                        isSuperblockOpenFailing.set(false);
+                    }
+                    // capture.size() reads 0 here whether the chain threw or was never
+                    // opened at all - only capture() ever stages a boundary - so it
+                    // proves nothing. The entries the timeline read already handed back
+                    // do: collectBoundaries fills them from the read-only range scan and
+                    // calls openChain only afterwards, so a non-empty list places the
+                    // throw above the read, in the chain's constructor.
+                    final int boundaryCount = entries.size();
+                    Assert.assertTrue(
+                            "the timeline range read must complete before the chain opens",
+                            boundaryCount > 0
+                    );
+                    // That constructor is the only place this path opens the superblock
+                    // read-write, and it reaches the open only when the interval resolved
+                    // a predecessor - the branch that allocates the four shells. With the
+                    // fault lifted the identical call completes, which pins the failure
+                    // on the injected open rather than on a chain that could not have
+                    // opened either way.
+                    capture.collectBoundaries(ts(timestamp(30)), ts(timestamp(50)), entries);
+                    Assert.assertEquals(
+                            "the same interval must collect the same boundaries once the open succeeds",
+                            boundaryCount,
+                            entries.size()
+                    );
+                }
+            }
+        });
+    }
+
     // Fields of one snapshotted logical entry: key, root page reference, effective position.
     private static final int ENTRY_CHECKPOINT_ID = 1;
     private static final int ENTRY_EFFECTIVE_POSITION = 5;

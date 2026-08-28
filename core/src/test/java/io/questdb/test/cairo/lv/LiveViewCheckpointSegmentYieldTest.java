@@ -25,12 +25,17 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Coverage for the segment yield: one anchor segment's repair may stop on the refresh
@@ -50,6 +55,11 @@ import org.junit.Test;
  * unconsumed with its segments already repaired, and the next drain would re-classify the
  * range and repair every one of them again, converging on the same rows for twice the work.
  * <p>
+ * One case runs two refresh workers rather than one, because a production pool does: the
+ * notification queue is not sharded, so a worker that did not park a loop can still be handed
+ * a task for the view it is parked on. It must back off and leave the loop to its owner, and
+ * the owner must still finish it afterwards.
+ * <p>
  * The view is the reported customer shape the per-segment cases use: an
  * anchored WINDOW carrying an unbounded cumulative sum and count per account, over a base
  * whose timestamps span several anchor days so closed segments exist at all. The days are
@@ -64,9 +74,180 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
             "SELECT checkpoint_repair_in_progress, checkpoint_repair_last_disposition,"
                     + " o3_resume_replay_rows, o3_boundary_replay_rows, o3_replay_scan_rows"
                     + " FROM live_views()";
+    // A two-worker pool, which is what a default shared.worker.count gives a live view in
+    // production. Two is enough: the guard under test compares the parked session's owner
+    // against the worker running the turn, so one owner and one stranger cover it.
+    private static final int REFRESH_WORKER_COUNT = 2;
     private static final String REPAIR_READING_HEADER =
             "checkpoint_repair_in_progress\tcheckpoint_repair_last_disposition\t"
                     + "o3_resume_replay_rows\to3_boundary_replay_rows\to3_replay_scan_rows\n";
+
+    @Test
+    public void testAForeignWorkerLeavesAParkedSegmentLoopToItsOwner() throws Exception {
+        // The multi-worker shape of the yield. Every other case in this class drives a single
+        // refresh job, so a segment loop only ever parks and resumes on the same object. A
+        // production pool runs more than one worker, and the notification queue is not
+        // sharded - any worker can be handed a base-table task for a view another worker has
+        // parked a repair on. That worker must leave it alone: the parked session holds one
+        // pinned base reader, one uncommitted replacement and a replay standing half-way
+        // through a segment, and a second worker driving them would publish over its own
+        // pinned snapshot. Only the owner may continue it, and the loop position it parked
+        // must survive the stranger's whole pass.
+        //
+        // Deterministic by construction rather than by timing: the two workers never run at
+        // the same time. Every pass runs to completion before the next one starts, so the
+        // interleaving under test - park on worker 0, a full pass on worker 1, resume on
+        // worker 0 - is fixed by the call order. Worker 1's passes run on their own thread so
+        // the identity under test is a real second worker, not a second object on this one,
+        // and the test thread joins each pass before asserting anything about it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedThreeDays());
+            final LiveViewInstance instance = viewInstance();
+            // The idle fallback scan is sharded by table id (LiveViewRegistry.getShardedViews),
+            // so pin which worker owns lv rather than assuming it. Worker 0 owning the shard is
+            // what lets the shared drive helpers park the repair exactly as the single-worker
+            // cases do; worker 1 then reaches the view only through the notification queue,
+            // which is the production route a foreign worker takes to a parked view. Without
+            // this assertion a fixture edit that shifted lv's table id would silently move the
+            // shard and leave every assertion below vacuous.
+            Assert.assertEquals(
+                    "worker 0 must own the lv shard, or the drive helpers never park the repair",
+                    0,
+                    Math.floorMod(instance.getLiveViewToken().getTableId(), REFRESH_WORKER_COUNT)
+            );
+            try (
+                    LiveViewRefreshJob owner = new LiveViewRefreshJob(0, REFRESH_WORKER_COUNT, engine, 1);
+                    LiveViewRefreshJob foreign = new LiveViewRefreshJob(1, REFRESH_WORKER_COUNT, engine, 1)
+            ) {
+                driveRefreshToQuiescence(owner);
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), owner);
+
+                // The control the back-off assertions are measured against. This is the same
+                // notification route worker 1 takes below, over the same view, with nothing
+                // parked: it reaches refreshInstance and advances the watermark. Without it a
+                // "worker 1 changed nothing" assertion would also pass on a worker that never
+                // got near the view - which is exactly what a sharded fallback scan would do.
+                final long processedBeforeControl = instance.getLastProcessedSeqTxn();
+                execute("insert into tx values " + row(5, 3, "acct-2"));
+                Assert.assertTrue(
+                        "the foreign worker must dequeue the base-table notification",
+                        runOnePassOnItsOwnThread(foreign, "lv-foreign-refresh-control")
+                );
+                Assert.assertTrue(
+                        "the foreign worker's notification route must reach this view and refresh it",
+                        instance.getLastProcessedSeqTxn() > processedBeforeControl
+                );
+                drainWalQueue();
+                driveRefreshToQuiescence(owner);
+
+                // Park. Two closed segments under a one-row replay budget, so the first parks
+                // with the second still queued behind it on the loop - the case
+                // testTheSegmentBehindAParkedOneIsRepairedByTheResumingTurn covers on one
+                // worker.
+                execute("insert into tx values " + row(2, 5, "acct-1") + ", " + row(3, 5, "acct-1"));
+                drainWalQueue();
+                driveUntilParked(owner);
+                final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                Assert.assertNotNull("the segment repair must park before the foreign pass", parked);
+                Assert.assertSame("the worker that parked the repair must own it", owner, parked.getOwner());
+                Assert.assertTrue(
+                        "a one-row replay budget must park the first segment of the loop",
+                        owner.segmentYieldCountForTest() > 0
+                );
+
+                // The stranger's turn. Re-publishing the base head enqueues a task for tx
+                // without adding a row, which is what a coalesced or re-published commit
+                // notification looks like to a pool: worker 1 dequeues it and walks into the
+                // same refreshInstance the control just proved it reaches.
+                final long baseHead = baseHead();
+                Assert.assertTrue(
+                        "the parked view must still be lagging, or the foreign pass stops short of refreshInstance",
+                        baseHead > instance.getLastProcessedSeqTxn()
+                );
+                final long processedBeforeForeign = instance.getLastProcessedSeqTxn();
+                final long resumesBeforeForeign = instance.getCheckpointRepairResumes();
+                final String durableBeforeForeign = viewContents();
+                engine.getLiveViewStateStore()
+                        .notifyBaseTableCommit(engine.verifyTableName("tx"), baseHead);
+                Assert.assertTrue(
+                        "the foreign worker must dequeue the base-table notification",
+                        runOnePassOnItsOwnThread(foreign, "lv-foreign-refresh-parked")
+                );
+
+                Assert.assertSame(
+                        "the foreign worker must leave the parked session where it found it",
+                        parked,
+                        instance.getSuspendedRepair()
+                );
+                Assert.assertSame(
+                        "the foreign worker must not take ownership of another worker's repair",
+                        owner,
+                        parked.getOwner()
+                );
+                Assert.assertEquals(
+                        "the foreign worker must not continue another worker's replay",
+                        resumesBeforeForeign,
+                        instance.getCheckpointRepairResumes()
+                );
+                Assert.assertEquals(
+                        "the foreign worker must not repair a segment off a snapshot it does not hold",
+                        0,
+                        foreign.segmentRepairCountForTest()
+                );
+                Assert.assertEquals(0, foreign.segmentYieldCountForTest());
+                Assert.assertEquals(
+                        "a backed-off pass must not consume the change the parked loop still owes",
+                        processedBeforeForeign,
+                        instance.getLastProcessedSeqTxn()
+                );
+                TestUtils.assertEquals(
+                        "a backed-off pass must leave the durable view exactly as it found it",
+                        durableBeforeForeign,
+                        viewContents()
+                );
+                // refreshInstance takes the refresh latch before it reads the session owner and
+                // releases it in an outer finally, so a stranger's back-off must not lock the
+                // owner out of its own resume. Taking the latch here says so directly, ahead of
+                // the resume that would otherwise only say it indirectly - and it names the
+                // latch if it ever does strand, instead of surfacing as a view that never
+                // converges.
+                Assert.assertTrue(
+                        "the foreign back-off must not strand the refresh latch",
+                        instance.tryLockForRefresh()
+                );
+                instance.unlockAfterRefresh();
+
+                // Resume. The owner finishes the loop it parked, across the stranger's pass.
+                driveRefreshToQuiescence(owner);
+                Assert.assertNull(
+                        "the owner must finish the repair it parked",
+                        instance.getSuspendedRepair()
+                );
+                Assert.assertTrue(
+                        "the owner, not the stranger, must be the worker that resumed",
+                        instance.getCheckpointRepairResumes() > resumesBeforeForeign
+                );
+                Assert.assertEquals(
+                        "both segments must be repaired, each exactly once, across the foreign pass",
+                        2,
+                        owner.segmentRepairCountForTest()
+                );
+                Assert.assertEquals(
+                        "the foreign worker must have repaired nothing at all",
+                        0,
+                        foreign.segmentRepairCountForTest()
+                );
+                Assert.assertEquals(
+                        "the loop's last segment must advance the watermark over the whole change",
+                        baseHead,
+                        instance.getLastProcessedSeqTxn()
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
 
     @Test
     public void testAParkedSegmentRepairNamesNoDispositionAheadOfItsCounters() throws Exception {
@@ -319,6 +500,16 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The base table's sequencer head, which is what a refresh worker's fallback scan compares
+     * a view's watermark against.
+     */
+    private long baseHead() {
+        return engine.getTableSequencerAPI()
+                .getTxnTracker(engine.verifyTableName("tx"))
+                .getWriterTxn();
+    }
+
+    /**
      * Inserts {@code values}, drains, and drives the view to quiescence.
      *
      * @return the base table's sequencer head after the commit
@@ -382,6 +573,38 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     private String row(int day, int hour, String account) {
         return "('2026-01-" + String.format("%02d", day) + "T" + String.format("%02d", hour)
                 + ":00:00.000000Z', '" + account + "', 1.0)";
+    }
+
+    /**
+     * Runs one refresh pass of {@code job} on a thread of its own and waits for it to finish,
+     * so the pass carries a worker identity - and a carrier thread - that is not the test's.
+     * <p>
+     * The join is what keeps the case deterministic: the two workers never overlap, so the
+     * interleaving under test is fixed by the order of these calls rather than by timing. It
+     * is a safety bound, not the coordination - the assertion is that the thread finished, and
+     * a pass that hangs fails here naming the worker instead of timing the whole class out.
+     *
+     * @return what the pass reported through {@code Job.run()}
+     */
+    private boolean runOnePassOnItsOwnThread(LiveViewRefreshJob job, String threadName) throws Exception {
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final AtomicBoolean didWork = new AtomicBoolean();
+        final Thread worker = new Thread(() -> {
+            try {
+                didWork.set(job.processNotificationsForTest());
+            } catch (Throwable t) {
+                errors.add(t);
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, threadName);
+        worker.start();
+        worker.join(60_000);
+        Assert.assertFalse("refresh pass on " + threadName + " did not finish", worker.isAlive());
+        if (!errors.isEmpty()) {
+            throw new RuntimeException("refresh pass on " + threadName + " failed", errors.peek());
+        }
+        return didWork.get();
     }
 
     /**

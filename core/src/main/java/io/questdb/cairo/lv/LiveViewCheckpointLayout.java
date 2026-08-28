@@ -264,9 +264,10 @@ public final class LiveViewCheckpointLayout {
      * record in place, exactly as it did before this method existed. Closing the
      * mapping before publishing is the caller's job on both platforms.
      * <p>
-     * Only for names a caller deliberately rewrites: the repair marker and the
-     * repair descriptor. Published metadata and data segments never reach an
-     * existing final name - their ids are allocated past every published one -
+     * Only for names a caller deliberately rewrites: the {@code _repairing}
+     * prefix-preservation marker, the repair descriptor and the
+     * {@code _retirements} work set. Published metadata and data segments never
+     * reach an existing final name - their ids are allocated past every published one -
      * so those paths rename directly and rely on that invariant rather than on
      * replace semantics.
      */

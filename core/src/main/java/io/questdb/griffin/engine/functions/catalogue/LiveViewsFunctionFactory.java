@@ -98,6 +98,17 @@ import io.questdb.std.ObjList;
  * effective duration may tighten below that ceiling to keep a checkpoint below
  * similarly late future rows. All learned state resets on restart.
  * <p>
+ * Those three carry per-field freshness only, never a coherent tuple. Each group
+ * below states for itself what its own columns guarantee jointly, which is more
+ * often a disjoint split or a trend to read across rows than a tuple to read
+ * within one. The refresh worker keeps these three in independent volatile fields
+ * rather than in one published word or array, it bumps the sample count between
+ * the depth store and the duration store, and it relaxes the duration on its own
+ * at a seal that no correction preceded. A row can therefore pair one sample's
+ * depth with the neighbouring sample's count, or either of them with a duration a
+ * later seal already relaxed. Read each of the three on its own, and compare a
+ * trend across rows rather than a ratio within one.
+ * <p>
  * The {@code checkpoint_*} group describes the versioned checkpoint timeline, and
  * splits four ways.
  * <ul>
@@ -620,6 +631,16 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // depth. The feature switch changes execution, so when
                         // disabled the effective value is the configured fixed
                         // cadence even if a future caller retains learned state.
+                        // Each of the three reads one independent volatile field,
+                        // and of() deliberately does not snapshot them the way it
+                        // pairs the o3_* tuple below. The refresh worker publishes
+                        // no word, array or version stamp spanning the three - it
+                        // bumps the sample count between the depth store and the
+                        // duration store, and relaxes the duration alone at a seal
+                        // - so a reader-side snapshot would move the same three
+                        // loads earlier without pairing anything, while reading
+                        // like the of() pairings, which are real. The class
+                        // javadoc scopes these columns to per-field freshness.
                         case COLUMN_CHECKPOINT_EFFECTIVE_DURATION_MICROS -> {
                             final long configured =
                                     engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();

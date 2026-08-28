@@ -55,21 +55,21 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
     private final CairoConfiguration configuration;
     private final boolean followsOrderByAdvice;
     private final boolean framingSupported;
+    private final int[] fwdIndexedCursorFactoriesIdx = new int[]{0};
+    private final ObjList<SymbolIndexRowCursorFactory> fwdIndexedRowCursorFactories = new ObjList<>();
     private final boolean singleRowFactory;
     private final boolean supportsRandomAccess;
     protected FwdTableReaderPageFrameCursor fwdPageFrameCursor;
     private int bwdIndexedColumnIndex = -1;
     private PageFrameRecordCursor bwdIndexedRecordCursor;
     private SymbolIndexRowCursorFactory bwdIndexedRowCursorFactory;
-    private int fwdIndexedColumnIndex = -1;
-    private final int[] fwdIndexedCursorFactoriesIdx = new int[]{0};
-    private final ObjList<SymbolIndexRowCursorFactory> fwdIndexedRowCursorFactories = new ObjList<>();
-    private HeapRowCursorFactory fwdIndexedHeapRowCursorFactory;
-    private PageFrameRecordCursor fwdIndexedRecordCursor;
     private BwdTableReaderPageFrameCursor bwdPageFrameCursor;
     private PageFrameRecordCursor bwdRecordCursor;
     private PageFrameRecordCursor cursor;
     private Function filter;
+    private int fwdIndexedColumnIndex = -1;
+    private HeapRowCursorFactory fwdIndexedHeapRowCursorFactory;
+    private PageFrameRecordCursor fwdIndexedRecordCursor;
     private RowCursorFactory rowCursorFactory;
     private TimeFrameCursorImpl timeFrameCursor;
 
@@ -363,8 +363,10 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
      * page frame, merged into physical row order, which inside a partition is
      * designated-timestamp order. That shape costs two things a single-key scan does not,
      * and a caller pricing this against the full scan has to carry both: one index open per
-     * key per frame, and an {@code O(rows * log |keys|)} heap merge. See
-     * {@code LiveViewCheckpointKeyedScanCost}.
+     * partition with a seek per key per frame off it, and an {@code O(rows * |keys|)}
+     * merge - {@link io.questdb.std.IntLongSortedList} is a sorted array rather than a
+     * heap, so every row that leaves it shifts the elements above its replacement's slot.
+     * See {@code LiveViewCheckpointKeyedScanCost}.
      * <p>
      * {@code symbolKeys} are the table-local keys the column stores, so
      * {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL} selects the rows whose value
@@ -409,12 +411,16 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
             Misc.freeObjListAndClear(fwdIndexedRowCursorFactories);
             fwdIndexedColumnIndex = columnIndex;
         }
-        // Grown to the widest key set this factory has served, then trimmed to this one's:
-        // the per-key factories carry only the key they select on, so rebinding one is a
-        // field write and building one is not worth repeating per repair. Trimmed rather
-        // than left long, because the heap builds one row cursor per listed factory for
-        // every page frame - a surplus factory would open the index per frame for a key
-        // this repair is not following.
+        // Grown to this call's key count and trimmed back to it: the per-key factories
+        // carry only the key they select on, so rebinding one is a field write and
+        // building one is not worth repeating per repair. setPos() trims by moving the
+        // size down over the surplus slots rather than clearing them, so a later wider
+        // key set re-adds fresh factories over those slots rather than reusing them, and
+        // only the backing array's capacity survives a shrink. That costs nothing:
+        // SymbolIndexRowCursorFactory holds no resource its no-op close() would release.
+        // Trimmed rather than left long, because the heap builds one row cursor per
+        // listed factory for every page frame - a surplus factory would open the index
+        // per frame for a key this repair is not following.
         final int keyCount = symbolKeys.size();
         for (int i = fwdIndexedRowCursorFactories.size(); i < keyCount; i++) {
             fwdIndexedRowCursorFactories.add(new SymbolIndexRowCursorFactory(
@@ -663,9 +669,10 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         // The per-key factories the heap built those cursors from are this factory's too,
         // grown across repairs and reused, so they are freed here.
         failure = Misc.freeObjListBestEffort(failure, fwdIndexedRowCursorFactories);
-        // A constructor that fails before this class initializes its own fields still runs
-        // close(), and leaves both of these null. Guard them so cleanup reaches the owners
-        // freed below rather than losing the original failure to a NullPointerException.
+        // close() has to survive a half-built instance. An instance that never ran this class's
+        // field initializers - the route the half-built close contract covers - reaches here with
+        // both of these still null, so the guards keep cleanup going to the owners freed below
+        // instead of losing the original failure to a NullPointerException.
         if (fwdIndexedRowCursorFactories != null) {
             fwdIndexedRowCursorFactories.clear();
         }

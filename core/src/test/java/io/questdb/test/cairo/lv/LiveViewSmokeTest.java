@@ -21440,7 +21440,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
             drainWalQueue();
 
             try (RecordCursorFactory factory = select("SHOW CREATE LIVE VIEW lv")) {
@@ -21449,12 +21449,12 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         .noRandomAccess()
                         .returns("ddl\n" +
                                 "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY START FROM NOW AS (\n" +
-                                "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
+                                "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
                                 ");\n");
 
                 execute("DROP LIVE VIEW lv");
                 execute("CREATE LIVE VIEW lv FLUSH EVERY 2s START FROM NOW AS " +
-                        "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                        "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
                 drainWalQueue();
 
                 assertFactory(factory)
@@ -21462,7 +21462,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         .noRandomAccess()
                         .returns("ddl\n" +
                                 "CREATE LIVE VIEW 'lv' FLUSH EVERY 2s IN MEMORY 2s PARTITION BY DAY START FROM NOW AS (\n" +
-                                "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
+                                "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
                                 ");\n");
             }
             execute("DROP LIVE VIEW lv");

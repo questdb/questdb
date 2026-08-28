@@ -433,14 +433,27 @@ public class LiveViewInstance implements QuietCloseable {
     // Per-view duration cadence learned from out-of-order arrivals. The latest
     // correction depth is halved so a similarly late next row has a complete
     // checkpoint interval below it rather than landing on the newest boundary.
-    // Tightening is immediate; upward relaxation is capped at 25% per sample so
+    // Tightening is immediate; upward relaxation is capped at 25% per step so
     // one deep correction cannot abruptly discard a cadence that recent shallow
-    // corrections proved useful. All three fields are in-memory observability
-    // and reset on restart. Mutated by the refresh worker under the refresh latch;
-    // volatile for live_views().
+    // corrections proved useful. Two inputs relax it: a shallower correction
+    // sample, and each seal that a real write stamped
+    // (relaxAdaptiveCheckpointCadenceOnSeal) - without the latter, one late row
+    // would pin the tightened cadence for the life of the process. All three
+    // fields are in-memory observability and reset on restart. Mutated by the
+    // refresh worker under the refresh latch; volatile for live_views().
     private volatile long adaptiveCheckpointCorrectionCount;
     private volatile long adaptiveCheckpointDurationMicros = Numbers.LONG_NULL;
     private volatile long adaptiveCheckpointLastCorrectionDepthMicros = Numbers.LONG_NULL;
+    // The configured ceiling the last correction learned against, so the per-seal
+    // relaxation knows where to stop. LONG_NULL until the first correction, which
+    // is also when adaptiveCheckpointDurationMicros stops being LONG_NULL. Not
+    // surfaced by live_views(), and only the refresh worker touches it.
+    private long adaptiveCheckpointCeilingMicros = Numbers.LONG_NULL;
+    // Set by a correction and consumed by the next seal, which is the seal that
+    // correction's own O3 repair forces. That first seal is what the tightening
+    // asked for, so it relaxes nothing; every later seal without a fresh
+    // correction pays one step. See relaxAdaptiveCheckpointCadenceOnSeal().
+    private boolean hasAdaptiveCheckpointCorrectionSinceSeal;
     // Wall-clock (micros) of the most recent successful LV WAL commit. Used by
     // LiveViewRefreshJob to enforce FLUSH EVERY: a refresh that arrives within
     // flushEveryMicros of the previous commit is skipped, so high-rate base
@@ -895,6 +908,8 @@ public class LiveViewInstance implements QuietCloseable {
         }
         adaptiveCheckpointLastCorrectionDepthMicros = correctionDepthMicros;
         adaptiveCheckpointCorrectionCount++;
+        adaptiveCheckpointCeilingMicros = configuredDurationMicros;
+        hasAdaptiveCheckpointCorrectionSinceSeal = true;
         if (configuredDurationMicros <= 0) {
             // Zero already fires on every eligible cycle; negative values retain
             // the same legacy comparison semantics rather than being normalized.
@@ -2186,6 +2201,9 @@ public class LiveViewInstance implements QuietCloseable {
         this.seedCheckpointDataOffset = dataOffset;
         this.seedCheckpointMaxTs = maxTs;
         this.lastCheckpointWrittenUs = writtenUs;
+        if (writtenUs != Numbers.LONG_NULL) {
+            relaxAdaptiveCheckpointCadenceOnSeal();
+        }
     }
 
     /**
@@ -2322,6 +2340,9 @@ public class LiveViewInstance implements QuietCloseable {
         this.rowsSinceLastCheckpointWritten = 0;
         this.minSeenTsSinceCheckpoint = Long.MAX_VALUE;
         this.lastCheckpointWrittenUs = writtenUs;
+        if (writtenUs != Numbers.LONG_NULL) {
+            relaxAdaptiveCheckpointCadenceOnSeal();
+        }
         // Every head transition invalidates the root identity by default: the
         // caller re-stamps it through setHeadCheckpointRoot only when it actually
         // published (or restored) the root this head mirrors. A caller that seals
@@ -2882,6 +2903,49 @@ public class LiveViewInstance implements QuietCloseable {
                 plan.getReplayLowTs(),
                 plan.isHighBoundEof() ? Numbers.LONG_NULL : plan.getHighTsExclusive()
         };
+    }
+
+    /**
+     * Walks the learned cadence one 25% step back towards the configured ceiling
+     * the last correction learned against. Called from the two methods that stamp
+     * {@link #lastCheckpointWrittenUs} from a seal this process actually wrote -
+     * {@link #setHeadCheckpoint} and {@link #recordSeedCheckpointWritten} - and
+     * never from a restored head, which sealed nothing.
+     * <p>
+     * The first seal after a correction is exempt - that is the seal the same
+     * correction's repair forced, and it is the one the tightening asked for.
+     * <p>
+     * Absence of corrections is otherwise not an input:
+     * {@link #recordAdaptiveCheckpointCorrection} relaxes only on a further, and
+     * shallower, sample, so a single late row would hold the tightened cadence -
+     * up to 300x the seal rate at the shipped defaults - for the life of the
+     * process. Charging one step per seal makes the tightening pay for itself:
+     * the tighter the cadence, the faster the seals it causes retire it, while a
+     * view that keeps taking late rows keeps re-tightening on every correction.
+     */
+    private void relaxAdaptiveCheckpointCadenceOnSeal() {
+        // Read the volatile cadence first: recordAdaptiveCheckpointCorrection
+        // stores the two plain fields below before its own volatile store, so this
+        // load publishes them to whichever refresh worker holds the latch next.
+        // A LONG_NULL cadence also means no correction has run, hence no flag to
+        // consume.
+        final long current = adaptiveCheckpointDurationMicros;
+        final long ceiling = adaptiveCheckpointCeilingMicros;
+        if (current == Numbers.LONG_NULL || ceiling == Numbers.LONG_NULL || current >= ceiling) {
+            return;
+        }
+        if (hasAdaptiveCheckpointCorrectionSinceSeal) {
+            // The seal the correction that set this flag forced. Honour the cadence
+            // it just learned for one whole interval before charging it anything.
+            hasAdaptiveCheckpointCorrectionSinceSeal = false;
+            return;
+        }
+        // Matches the per-sample relaxation step in
+        // recordAdaptiveCheckpointCorrection. current < ceiling holds above, so
+        // the sum only overflows for an absurdly configured ceiling; treat that
+        // wrap as having reached it.
+        final long relaxed = current + Math.max(1, current / 4);
+        adaptiveCheckpointDurationMicros = relaxed < current || relaxed >= ceiling ? ceiling : relaxed;
     }
 
 }

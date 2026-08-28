@@ -378,6 +378,30 @@ public class CountFunctionFactoryHelper {
             }
         }
 
+        /**
+         * The same absorption, off an argument the caller has already evaluated. The group's
+         * pass-1 skip evaluates exactly this {@code arg} to decide whether the row reaches the
+         * map, so taking its answer here is what stops the row's argument being read twice -
+         * see {@link io.questdb.griffin.engine.window.WindowMapState#computeNext(Record)}.
+         * <p>
+         * The test is {@code Numbers.isFinite} rather than {@link #isNotNullFunc} because the
+         * caller that supplies an argument has already narrowed the predicate to that one. It
+         * offers this form only for a component
+         * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row}, which
+         * this class reaches only as a {@link WindowAccumulatorDescriptor#FAMILY_NON_NULL_COUNT}
+         * carrying {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE} - and every
+         * argument type that kind admits reaches {@code count(D)}, whose {@code isNotNullFunc}
+         * is this very test. A count over a SYMBOL, VARCHAR or DECIMAL argument names a
+         * different predicate and a different contribution kind, so no caller hands one a
+         * pre-read argument; such a call keeps the two-argument body above.
+         */
+        @Override
+        public void accumulateWindowState(Record record, MapValue value, double argument) {
+            if (isWindowStatePartitionKeyGuarded || Numbers.isFinite(argument)) {
+                value.putLong(windowStateNonNullCountSlot, value.getLong(windowStateNonNullCountSlot) + 1);
+            }
+        }
+
         @Override
         public void bindWindowStateSlots(@Nullable WindowAccumulatorProjection projection) {
             super.bindWindowStateSlots(projection);

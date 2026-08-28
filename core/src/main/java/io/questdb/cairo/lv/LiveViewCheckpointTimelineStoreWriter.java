@@ -3282,6 +3282,20 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return of(key, scalarState, statePageRefs, isUnchanged);
         }
 
+        /**
+         * Takes the page-backed arm's whole-state reference by copy, exactly as the
+         * ring entry above does.
+         * <p>
+         * Storing the argument instead would put a borrowed object in this shell:
+         * {@code freezeStatePage} names its page with a reference drawn from the seal's
+         * pooled scratch, and the next seal rewinds that pool and hands the same object
+         * out again. The shell is pooled too, so a shell this arm filled at one seal is
+         * reused by the ring arm at the next - and a valueless one-chunk ring matches
+         * the single-element width this arm always writes, so the ring copies straight
+         * into the borrowed object. Both functions would then name one reference, and
+         * the root {@code buildRoot} publishes - it reads every shell after every
+         * function is frozen - would give one of them the other's page.
+         */
         private FrozenPartition of(
                 byte[] key,
                 byte[] scalarState,
@@ -3291,7 +3305,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (statePageRefs.length != 1) {
                 statePageRefs = new LiveViewCheckpointStatePageRef[1];
             }
-            statePageRefs[0] = statePageRef;
+            LiveViewCheckpointStatePageRef ref = statePageRefs[0];
+            if (ref == null) {
+                ref = statePageRefs[0] = new LiveViewCheckpointStatePageRef();
+            }
+            copyStateRef(statePageRef, ref);
             return of(key, scalarState, statePageRefs, isUnchanged);
         }
 
@@ -4607,7 +4625,22 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     this.publishedMetaStore = new LiveViewCheckpointMetaStore(configuration);
                     this.publishedPreviousBoundary = new RootPreviousBoundary();
                     this.publishedRoot = new LiveViewCheckpointRoot(configuration);
-                    this.published = openPublished(predecessor);
+                    try {
+                        this.published = openPublished(predecessor);
+                    } catch (Throwable th) {
+                        // A constructor that throws never publishes this, so openChain
+                        // leaves the chain null and the capture's close() frees nothing.
+                        // The metadata openPublished reads is one a repair is allowed to
+                        // find unusable - the caller logs the failure and retires the
+                        // timeline instead - so the shells above have to be released
+                        // here, where they are still reachable, exactly as close() does.
+                        publishedPreviousBoundary.close();
+                        publishedPreviousBoundary.free();
+                        Misc.free(publishedFunctionDirectory);
+                        Misc.free(publishedMetaStore);
+                        Misc.free(publishedRoot);
+                        throw th;
+                    }
                 }
             }
 

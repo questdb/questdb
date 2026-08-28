@@ -313,8 +313,11 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile @NotNull DurableAckRegistry durableAckRegistry = DefaultDurableAckRegistry.INSTANCE;
     private FrameFactory frameFactory;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
-    private @Nullable Runnable liveViewCreateRollbackAfterResetHook;
-    private @Nullable Runnable liveViewCreateRollbackBeforeFenceHook;
+    // volatile: setLiveViewCreateRollbackHooks arms these from a coordinating test thread,
+    // while createLiveView reads them on whichever worker thread SqlCompilerImpl runs the
+    // CREATE on. Matches the sibling volatile ddlListener.
+    private volatile @Nullable Runnable liveViewCreateRollbackAfterResetHook;
+    private volatile @Nullable Runnable liveViewCreateRollbackBeforeFenceHook;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
     // Lazily initialized on first call to getMemoryTrackerProvider(), because the
     // FactoryProvider that produces it is not bound until config.init(engine, ...)

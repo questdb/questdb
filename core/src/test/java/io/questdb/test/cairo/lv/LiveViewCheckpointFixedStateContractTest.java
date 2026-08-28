@@ -205,21 +205,23 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
     }
 
     @Test
-    public void testFreezeRejectsAnImageThatMissesTheDeclaredWidth() {
-        try (MemoryCARWImpl mem = new MemoryCARWImpl(64, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
-            final LiveViewStatePageWriter writer = new LiveViewStatePageWriter();
-            // Truthful: the freeze returns the width it declared, and nothing else changes.
-            Assert.assertEquals(
-                    SUM_STATE_BYTES,
-                    writer.of(mem).freeze(new FixedWidthStub(SUM_STATE_BYTES, SUM_STATE_BYTES, false, true), null)
-            );
-            // A declining function is not measured at all, so an image of any width passes.
-            Assert.assertEquals(3, writer.of(mem).freeze(new FixedWidthStub(-1, 3, false, true), null));
+    public void testFreezeRejectsAnImageThatMissesTheDeclaredWidth() throws Exception {
+        assertMemoryLeak(() -> {
+            try (MemoryCARWImpl mem = new MemoryCARWImpl(64, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
+                final LiveViewStatePageWriter writer = new LiveViewStatePageWriter();
+                // Truthful: the freeze returns the width it declared, and nothing else changes.
+                Assert.assertEquals(
+                        SUM_STATE_BYTES,
+                        writer.of(mem).freeze(new FixedWidthStub(SUM_STATE_BYTES, SUM_STATE_BYTES, false, true), null)
+                );
+                // A declining function is not measured at all, so an image of any width passes.
+                Assert.assertEquals(3, writer.of(mem).freeze(new FixedWidthStub(-1, 3, false, true), null));
 
-            assertFreezeRejected(writer.of(mem), new FixedWidthStub(SUM_STATE_BYTES, SUM_STATE_BYTES - 1, false, true));
-            assertFreezeRejected(writer.of(mem), new FixedWidthStub(SUM_STATE_BYTES, SUM_STATE_BYTES + 1, false, true));
-            assertFreezeRejected(writer.of(mem), new FixedWidthStub(COUNT_STATE_BYTES, 0, false, true));
-        }
+                assertFreezeRejected(writer.of(mem), new FixedWidthStub(SUM_STATE_BYTES, SUM_STATE_BYTES - 1, false, true));
+                assertFreezeRejected(writer.of(mem), new FixedWidthStub(SUM_STATE_BYTES, SUM_STATE_BYTES + 1, false, true));
+                assertFreezeRejected(writer.of(mem), new FixedWidthStub(COUNT_STATE_BYTES, 0, false, true));
+            }
+        });
     }
 
     @Test
