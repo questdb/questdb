@@ -1113,21 +1113,37 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             unpackBufSize = needed;
         }
 
+        /**
+         * Widens {@code count} row ids of a flat group starting at GROUP
+         * ordinal {@code startOrdinal}.
+         * <p>
+         * Takes the ordinal rather than a key because the caller already knows
+         * it: the bind resolved the key's range from the {@code _im} directory,
+         * and asking again per batch put {@code getRowGroupRangeForKey},
+         * {@code firstKeyAt} and {@code rowGroupBlockOffset} among the hottest
+         * frames of a 1,000,000-key scan -- 19% of it, re-deriving a number the
+         * cursor was already holding.
+         */
+        protected long unpackFlatRowIds(int rowGroup, long startOrdinal, int count) {
+            ensureUnpackCapacity(count);
+            BitpackUtils.unpackValuesFrom(
+                    packedDataAddrs[rowGroup],
+                    (int) startOrdinal,
+                    count,
+                    packedBitWidths[rowGroup],
+                    packedBases[rowGroup],
+                    unpackBuf
+            );
+            return unpackBuf;
+        }
+
         protected long unpackRowIds(int rowGroup, int key, int from, int count) {
             if (isFlatGroup(rowGroup)) {
                 // Group-wide array: the key's run starts where the _im says it
-                // does, and `from` is an offset within that run.
+                // does, and `from` is an offset within that run. Callers that
+                // already hold the start ordinal should use unpackFlatRowIds.
                 final long range = imReader.getKeyRowRangeInGroup(rowGroup, key);
-                ensureUnpackCapacity(count);
-                BitpackUtils.unpackValuesFrom(
-                        packedDataAddrs[rowGroup],
-                        Numbers.decodeLowInt(range) + from,
-                        count,
-                        packedBitWidths[rowGroup],
-                        packedBases[rowGroup],
-                        unpackBuf
-                );
-                return unpackBuf;
+                return unpackFlatRowIds(rowGroup, Numbers.decodeLowInt(range) + from, count);
             }
             final long block = rowIdBlock(rowGroup, key);
             if (block == 0) {

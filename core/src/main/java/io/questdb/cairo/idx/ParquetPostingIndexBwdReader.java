@@ -168,6 +168,8 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private long packedLo;
         /** Size of the NEXT widen, doubling toward PACKED_WIDEN_BATCH. */
         private int packedBatch = PACKED_WIDEN_BATCH_MIN;
+        /** Whether {@link #rg}'s row ids are laid out flat, resolved once per bind. */
+        private boolean flatGroup;
         /** Group ordinal the current widened batch starts at; 0 off the packed arm. */
         private long coverOrdinalBase;
         private int cachedRowGroup = -1;
@@ -285,7 +287,11 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             packedKey = key;
             // See the forward reader: grow toward the cap.
             packedBatch = Math.min(packedBatch << 1, PACKED_WIDEN_BATCH);
-            rowIdPtr = unpackRowIds(rg, key, (int) packedNext, batch);
+            // See the forward reader: the bind already resolved this key's
+            // group ordinal, so a flat group needs no _im lookup here.
+            rowIdPtr = flatGroup
+                    ? unpackFlatRowIds(rg, packedKeyStart + packedNext, batch)
+                    : unpackRowIds(rg, key, (int) packedNext, batch);
             // The batch is ascending in the buffer; the countdown walks it from
             // its top, so the next step down continues the descending order.
             rowFloor = 0;
@@ -369,6 +375,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     // array indexed by GROUP ordinal. Either way the
                     // directory's ordinals give the run's LENGTH.
                     final boolean flat = isFlatGroup(rg);
+                    flatGroup = flat;
                     final long block = flat ? 0 : rowIdBlock(rg, key);
                     if (!flat && block == 0) {
                         throw CairoException.critical(0)

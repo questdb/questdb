@@ -44,6 +44,9 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
      * the group whole rather than each key's run in turn. Below it the two read
      * the same number of rows and the whole-group buffer is pure overhead.
      */
+    /** Diagnostic only: questdb.idx.packed.noseq=true withholds the closed-form
+     *  arithmetic path, to attribute a scan cost to it rather than assume it. */
+    private static final boolean NO_SEQ = Boolean.getBoolean("questdb.idx.packed.noseq");
     private static final int WHOLE_GROUP_KEY_THRESHOLD = 8;
     /**
      * Every pooled cursor this reader has handed out, free or checked out, so
@@ -197,6 +200,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          * touched per row -- the same trick the native chain's constant-delta
          * path uses, which is why it reads zero bytes a row.
          */
+        /** Whether {@link #rg}'s row ids are laid out flat, resolved once per bind. */
+        private boolean flatGroup;
         private boolean seqMode;
         private long seqStart;
         private long seqStride;
@@ -353,7 +358,11 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             }
             final int batch = (int) Math.min(packedEnd - packedNext, packedBatch);
             if (!seqMode) {
-                rowIdPtr = unpackRowIds(rg, key, (int) packedNext, batch);
+                // packedKeyStart + packedNext is the GROUP ordinal the bind
+                // already resolved, so a flat group needs no _im lookup here.
+                rowIdPtr = flatGroup
+                        ? unpackFlatRowIds(rg, packedKeyStart + packedNext, batch)
+                        : unpackRowIds(rg, key, (int) packedNext, batch);
             }
             // The widened batch has its own indices; covered values are addressed
             // by the GROUP ordinal, so record where this batch starts.
@@ -474,6 +483,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     // array indexed by GROUP ordinal. Either way the
                     // directory's ordinals give the run's LENGTH.
                     final boolean flat = isFlatGroup(rg);
+                    flatGroup = flat;
                     final long block = flat ? 0 : rowIdBlock(rg, key);
                     if (!flat && block == 0) {
                         throw CairoException.critical(0)
@@ -488,6 +498,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     // progression to read -- that is the cost of dropping the
                     // per-key header -- so it always seeks.
                     seqMode = !flat
+                            && !NO_SEQ
                             && CoveringCompressor.isArithmeticBlock(block)
                             && CoveringCompressor.arithmeticStride(block) > 0;
                     if (seqMode) {
