@@ -485,6 +485,9 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     // Widened one L1-sized batch at a time as the cursor walks,
                     // not all at once. See refillPackedBatch.
                     packedKeyStart = rowLo;
+                    // Sized once for the whole run, so the doubling below never
+                    // has to grow the buffer mid-key.
+                    ensureUnpackCapacity((int) Math.min(to - from, PACKED_WIDEN_BATCH));
                     packedNext = from;
                     packedEnd = to;
                     packedBatch = PACKED_WIDEN_BATCH_MIN;

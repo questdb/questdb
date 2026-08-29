@@ -759,6 +759,56 @@ public class CoveringCompressor {
      * The workspace must have room for count longs (read from the header at srcAddr).
      * Handles plain FoR and linear-prediction FoR.
      */
+    /**
+     * Decodes {@code count} longs starting at {@code from} into {@code destAddr},
+     * parsing the block header ONCE.
+     * <p>
+     * {@link #readLongAt} re-reads the count, bit width, frame-of-reference
+     * base, first value and stride on every call, which is fine for a point read
+     * and ruinous for a run: a 25,000-posting key drained through it re-parsed
+     * that header 25,000 times and measured at half the speed of the batched
+     * AVX2 widen it replaced. This is the batched form -- one header parse, then
+     * {@link BitpackUtils#unpackValuesFrom} over the residuals.
+     * <p>
+     * Reads in place: no workspace, because the residuals are widened straight
+     * into the destination and the linear-prediction term is added over it.
+     */
+    public static void readLongsInto(long srcAddr, int from, int count, long destAddr) {
+        long pos = srcAddr;
+        final int total = Unsafe.getInt(pos);
+        pos += 4;
+        final int rawBw = Unsafe.getByte(pos++) & 0xFF;
+        final boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
+        final int bw = isLinearPred ? rawBw & BW_MASK_6BIT : rawBw;
+        final long forBase = Unsafe.getLong(pos);
+        pos += 8;
+        if (from < 0 || count < 0 || from + count > total) {
+            throw new IndexOutOfBoundsException("readLongsInto [from=" + from + ", count=" + count + ", total=" + total + ']');
+        }
+
+        long firstValue = 0;
+        long stride = 0;
+        if (isLinearPred) {
+            firstValue = Unsafe.getLong(pos);
+            pos += 8;
+            stride = Unsafe.getLong(pos);
+            pos += 8;
+        }
+        if (bw > 0) {
+            BitpackUtils.unpackValuesFrom(pos, from, count, bw, forBase, destAddr);
+        } else {
+            for (int i = 0; i < count; i++) {
+                Unsafe.putLong(destAddr + (long) i * Long.BYTES, forBase);
+            }
+        }
+        if (isLinearPred) {
+            for (int i = 0; i < count; i++) {
+                final long at = destAddr + (long) i * Long.BYTES;
+                Unsafe.putLong(at, Unsafe.getLong(at) + firstValue + (long) (from + i) * stride);
+            }
+        }
+    }
+
     public static void decompressLongsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
         long pos = srcAddr;
         int count = Unsafe.getInt(pos);

@@ -960,6 +960,29 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * Widens {@code count} of {@code rowGroup}'s packed row ids, starting at
          * ordinal {@code from}, and returns the address holding them as int64.
          */
+        /**
+         * Grows the widen buffer to hold {@code count} row ids.
+         * <p>
+         * Frees and allocates rather than reallocating, because realloc PRESERVES
+         * the old contents and the next widen overwrites every byte of them. That
+         * copy measured at 21% of a wide-key scan: the batch doubles from
+         * {@link #PACKED_WIDEN_BATCH_MIN} on each key bind, so a 25,000-posting
+         * key grew through nine sizes and copied at each one, and
+         * {@code indexScanRead} builds a fresh reader per operation so it
+         * repeated for every key on every op.
+         */
+        protected void ensureUnpackCapacity(int count) {
+            final long needed = (long) count * Long.BYTES;
+            if (needed <= unpackBufSize) {
+                return;
+            }
+            if (unpackBuf != 0) {
+                Unsafe.free(unpackBuf, unpackBufSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            }
+            unpackBuf = Unsafe.malloc(needed, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+            unpackBufSize = needed;
+        }
+
         protected long unpackRowIds(int rowGroup, int key, int from, int count) {
             final long block = rowIdBlock(rowGroup, key);
             if (block == 0) {
@@ -972,21 +995,11 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                         .put("covering index packed payload is not addressable [rowGroup=").put(rowGroup)
                         .put(", column=").put(columnName).put(']');
             }
-            final long needed = (long) count * Long.BYTES;
-            if (needed > unpackBufSize) {
-                // Groups are bounded by the seal's row target, so this settles
-                // after the first few binds rather than growing per lookup.
-                unpackBuf = unpackBuf == 0
-                        ? Unsafe.malloc(needed, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER)
-                        : Unsafe.realloc(unpackBuf, unpackBufSize, needed, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-                unpackBufSize = needed;
-            }
-            // readLongAt addresses a value inside the compressed block, so a
-            // batch is widened without decompressing the whole key's run.
-            for (int i = 0; i < count; i++) {
-                Unsafe.getUnsafe().putLong(unpackBuf + ((long) i << 3),
-                        CoveringCompressor.readLongAt(block, from + i));
-            }
+            ensureUnpackCapacity(count);
+            // Batched: one header parse for the whole run, then an AVX2 widen
+            // over the residuals. Per-value readLongAt re-parses the block
+            // header every call and halved a wide-key drain.
+            CoveringCompressor.readLongsInto(block, from, count, unpackBuf);
             return unpackBuf;
         }
 
