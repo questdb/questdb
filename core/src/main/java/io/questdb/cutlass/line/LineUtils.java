@@ -44,10 +44,10 @@ public final class LineUtils {
      * closing the table writer. A {@link LineProtocolException} instead classifies as a per-message
      * rejection and leaves the writer alone.
      *
-     * @param driver          timestamp driver of the designated timestamp column
-     * @param ts              designated timestamp, in the units the producer sent
-     * @param unit            units of {@code ts}
-     * @param tableNameUtf16  table name, for the error message
+     * @param driver         timestamp driver of the designated timestamp column
+     * @param ts             designated timestamp, in the units the producer sent
+     * @param unit           units of {@code ts}
+     * @param tableNameUtf16 table name, for the error message
      * @return the timestamp converted to the column's precision
      */
     public static long fromDesignatedTimestamp(TimestampDriver driver, long ts, byte unit, String tableNameUtf16) {
