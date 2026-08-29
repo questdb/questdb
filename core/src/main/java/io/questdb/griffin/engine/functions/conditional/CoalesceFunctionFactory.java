@@ -71,6 +71,30 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         return "coalesce(V)";
     }
 
+    private static boolean isNotNullArg(Function arg, long value) {
+        return arg.isNotNull() || value != Numbers.LONG_NULL;
+    }
+
+    private static boolean isNotNullArg(Function arg, int value) {
+        return arg.isNotNull() || value != Numbers.INT_NULL;
+    }
+
+    private static boolean isNotNullArg(Function arg, float value) {
+        return arg.isNotNull() || Numbers.isFinite(value);
+    }
+
+    private static boolean isNotNullArg(Function arg, double value) {
+        return arg.isNotNull() || Numbers.isFinite(value);
+    }
+
+    private static boolean isNotNullArg(Function arg, CharSequence value) {
+        return arg.isNotNull() || value != null;
+    }
+
+    private static boolean isNotNullArg(Function arg, Long256 value) {
+        return arg.isNotNull() || isLong256NotNull(value);
+    }
+
     @Override
     public Function newInstance(
             int position,
@@ -117,9 +141,11 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
         }
         if (firstNotNull == 0) {
+            closeFunctions(args, 1, argsSize);
             return args.getQuick(0);
         }
         if (firstNotNull > 0) {
+            closeFunctions(args, firstNotNull + 1, argsSize);
             args.setPos(firstNotNull + 1);
         }
         final int effectiveArgsSize = args.size();
@@ -173,6 +199,12 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         };
     }
 
+    private static void closeFunctions(ObjList<Function> args, int lo, int hi) {
+        for (int i = lo; i < hi; i++) {
+            args.getQuick(i).close();
+        }
+    }
+
     @Override
     public int resolvePreferredVariadicType(int sqlPos, int argPos, ObjList<Function> args) throws SqlException {
         throw SqlException.$(sqlPos, "coalesce cannot be used with bind variables");
@@ -191,12 +223,22 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         default String getName() {
             return "coalesce";
         }
+
+        @Override
+        default boolean isNotNull() {
+            return getLeft().isNotNull() || getRight().isNotNull();
+        }
     }
 
     private interface MultiArgCoalesceFunction extends MultiArgFunction {
         @Override
         default String getName() {
             return "coalesce";
+        }
+
+        @Override
+        default boolean isNotNull() {
+            return args().size() > 0 && args().getQuick(args().size() - 1).isNotNull();
         }
     }
 
@@ -218,7 +260,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public long getDate(Record rec) {
             for (int i = 0; i < size; i++) {
                 long value = args.getQuick(i).getDate(rec);
-                if (value != Numbers.LONG_NULL) {
+                if (isNotNullArg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -246,7 +288,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             for (int i = 0; i < size; i++) {
                 final Function arg = args.getQuick(i);
                 arg.getDecimal128(rec, sink);
-                if (!sink.isNull()) {
+                if (arg.isNotNull() || !sink.isNull()) {
                     return;
                 }
             }
@@ -273,7 +315,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public short getDecimal16(Record rec) {
             for (int i = 0; i < size; i++) {
                 short value = args.getQuick(i).getDecimal16(rec);
-                if (value != Decimals.DECIMAL16_NULL) {
+                if (args.getQuick(i).isNotNull() || value != Decimals.DECIMAL16_NULL) {
                     return value;
                 }
             }
@@ -301,7 +343,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             for (int i = 0; i < size; i++) {
                 final Function arg = args.getQuick(i);
                 arg.getDecimal256(rec, sink);
-                if (!sink.isNull()) {
+                if (arg.isNotNull() || !sink.isNull()) {
                     return;
                 }
             }
@@ -328,7 +370,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public int getDecimal32(Record rec) {
             for (int i = 0; i < size; i++) {
                 int value = args.getQuick(i).getDecimal32(rec);
-                if (value != Decimals.DECIMAL32_NULL) {
+                if (args.getQuick(i).isNotNull() || value != Decimals.DECIMAL32_NULL) {
                     return value;
                 }
             }
@@ -355,7 +397,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public long getDecimal64(Record rec) {
             for (int i = 0; i < size; i++) {
                 long value = args.getQuick(i).getDecimal64(rec);
-                if (value != Decimals.DECIMAL64_NULL) {
+                if (args.getQuick(i).isNotNull() || value != Decimals.DECIMAL64_NULL) {
                     return value;
                 }
             }
@@ -382,7 +424,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public byte getDecimal8(Record rec) {
             for (int i = 0; i < size; i++) {
                 byte value = args.getQuick(i).getDecimal8(rec);
-                if (value != Decimals.DECIMAL8_NULL) {
+                if (args.getQuick(i).isNotNull() || value != Decimals.DECIMAL8_NULL) {
                     return value;
                 }
             }
@@ -408,7 +450,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public double getDouble(Record rec) {
             for (int i = 0; i < size; i++) {
                 double value = args.getQuick(i).getDouble(rec);
-                if (Numbers.isFinite(value)) {
+                if (isNotNullArg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -434,7 +476,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             for (int i = 0; i < size; i++) {
                 float value = args.getQuick(i).getFloat(rec);
-                if (Numbers.isFinite(value)) {
+                if (isNotNullArg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -461,7 +503,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public int getIPv4(Record rec) {
             for (int i = 0; i < size; i++) {
                 int value = args.getQuick(i).getIPv4(rec);
-                if (value != Numbers.IPv4_NULL) {
+                if (isNotNullArg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -488,7 +530,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             for (int i = 0; i < size; i++) {
                 int value = args.getQuick(i).getInt(rec);
-                if (value != Numbers.INT_NULL) {
+                if (isNotNullArg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -526,7 +568,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             Long256 value = Long256Impl.NULL_LONG256;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong256A(rec);
-                if (isLong256NotNull(value)) {
+                if (isNotNullArg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -538,7 +580,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             Long256 value = Long256Impl.NULL_LONG256;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong256B(rec);
-                if (isLong256NotNull(value)) {
+                if (isNotNullArg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -565,7 +607,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             long value;
             for (int i = 0; i < size; i++) {
                 value = args.getQuick(i).getLong(rec);
-                if (value != Numbers.LONG_NULL) {
+                if (isNotNullArg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -593,7 +635,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
                 CharSequence value = (isSymbol(arg.getType())) ? arg.getSymbol(rec) : arg.getStrA(rec);
-                if (value != null) {
+                if (isNotNullArg(arg, value)) {
                     return value;
                 }
             }
@@ -605,7 +647,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
                 CharSequence value = (isSymbol(arg.getType())) ? arg.getSymbolB(rec) : arg.getStrB(rec);
-                if (value != null) {
+                if (isNotNullArg(arg, value)) {
                     return value;
                 }
             }
@@ -633,7 +675,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             for (int i = 0; i < size; i++) {
                 Function arg = args.getQuick(i);
                 long value = arg.getTimestamp(rec);
-                if (value != Numbers.LONG_NULL) {
+                if (isNotNullArg(arg, value)) {
                     return timestampDriver.from(value, ColumnType.getTimestampType(arg.getType()));
                 }
             }

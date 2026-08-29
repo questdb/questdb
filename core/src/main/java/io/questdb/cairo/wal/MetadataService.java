@@ -70,7 +70,35 @@ public interface MetadataService {
      * @param isSequential            for columns that contain sequential values query optimiser can make assumptions on range searches (future feature)
      * @param isDedupKey              when set to true, column will be used as deduplication key
      */
-    void addColumn(
+    /**
+     * Legacy overload retained for source and binary compatibility.
+     */
+    default void addColumn(
+            CharSequence columnName,
+            int columnType,
+            int symbolCapacity,
+            boolean symbolCacheFlag,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean isSequential,
+            boolean isDedupKey,
+            SecurityContext securityContext
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                indexType,
+                indexValueBlockCapacity,
+                isSequential,
+                isDedupKey,
+                false,
+                securityContext
+        );
+    }
+
+    default void addColumn(
             CharSequence columnName,
             int columnType,
             int symbolCapacity,
@@ -81,7 +109,19 @@ public interface MetadataService {
             boolean isDedupKey,
             boolean isNotNull,
             SecurityContext securityContext
-    );
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                symbolCapacity,
+                symbolCacheFlag,
+                indexType,
+                indexValueBlockCapacity,
+                isSequential,
+                isDedupKey,
+                securityContext
+        );
+    }
 
     default void addColumn(
             CharSequence columnName,
@@ -209,7 +249,13 @@ public interface MetadataService {
      */
     void setColumnParquetEncoding(CharSequence columnName, int parquetEncodingConfig);
 
-    void setColumnNotNull(CharSequence columnName, boolean isNotNull);
+    /**
+     * Sets or clears NOT NULL. Legacy metadata services may not support this
+     * operation, so retain a default implementation for compatibility.
+     */
+    default void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        throw new UnsupportedOperationException("NOT NULL metadata changes are not supported");
+    }
 
     /**
      * Sets refresh type and settings for materialized view.

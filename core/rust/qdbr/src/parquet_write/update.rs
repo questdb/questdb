@@ -822,9 +822,11 @@ impl ParquetUpdater {
                 col.data_type
             };
 
-            let not_null = old_col_id_to_idx
+            let old_meta = old_col_id_to_idx
                 .get(&col.id)
-                .and_then(|&old_idx| old_qdb_meta.as_ref().and_then(|m| m.schema.get(old_idx)))
+                .and_then(|&old_idx| old_qdb_meta.as_ref().and_then(|m| m.schema.get(old_idx)));
+            let ascii = old_meta.and_then(|old_col| old_col.ascii);
+            let not_null = old_meta
                 .map(|old_col| old_col.not_null)
                 .unwrap_or(col.not_null_hint);
 
@@ -832,7 +834,7 @@ impl ParquetUpdater {
                 column_type,
                 column_top: 0,
                 format,
-                ascii: None,
+                ascii,
                 id: Some(col.id),
                 not_null,
             });

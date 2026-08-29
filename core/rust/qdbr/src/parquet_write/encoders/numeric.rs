@@ -699,16 +699,6 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
 /// Encodes an Optional page with no null filtering. This is used when Java
 /// marks a column NOT NULL: the Parquet schema remains Optional, but values
 /// equal to QuestDB's nullable sentinel are still real values.
-pub fn slice_to_page_simd_notnull<T: SimdEncodable>(
-    slice: &[T],
-    options: WriteOptions,
-    primitive_type: PrimitiveType,
-    encoding: Encoding,
-    bloom_hashes: Option<&mut HashSet<u64>>,
-) -> ParquetResult<Page> {
-    slice_to_page_simd_notnull_with_top(slice, 0, options, primitive_type, encoding, bloom_hashes)
-}
-
 pub fn slice_to_page_simd_notnull_with_top<T: SimdEncodable>(
     slice: &[T],
     column_top: usize,
@@ -1015,8 +1005,15 @@ mod tests {
     fn slice_to_page_simd_notnull_preserves_sentinel() {
         let data: Vec<i64> = vec![i64::MIN, 4];
         let pt = optional_type_for(ColumnTypeTag::Long);
-        let page = slice_to_page_simd_notnull(&data, write_options(), pt, Encoding::Plain, None)
-            .expect("encode");
+        let page = slice_to_page_simd_notnull_with_top(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
         let (num_values, num_nulls, _) = v2_header(&page);
         assert_eq!(num_values, 2);
         assert_eq!(num_nulls, 0);
@@ -1026,8 +1023,9 @@ mod tests {
     fn slice_to_page_simd_notnull_delta_preserves_sentinel() {
         let data: Vec<i32> = vec![i32::MIN, 4];
         let pt = optional_type_for(ColumnTypeTag::Int);
-        let page = slice_to_page_simd_notnull(
+        let page = slice_to_page_simd_notnull_with_top(
             &data,
+            0,
             write_options(),
             pt,
             Encoding::DeltaBinaryPacked,

@@ -16192,6 +16192,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putBin(int columnIndex, BinarySequence sequence) {
+            checkNotNullValue(columnIndex, sequence);
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putBin(sequence));
             setRowValueNotNull(columnIndex);
         }
@@ -16368,6 +16369,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStr(int columnIndex, CharSequence value) {
+            checkNotNullValue(columnIndex, value);
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value));
             setRowValueNotNull(columnIndex);
         }
@@ -16472,12 +16474,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putVarchar(int columnIndex, Utf8Sequence value) {
+            checkNotNullValue(columnIndex, value);
             VarcharTypeDriver.appendValue(
                     getSecondaryColumn(columnIndex),
                     getPrimaryColumn(columnIndex),
                     value
             );
             setRowValueNotNull(columnIndex);
+        }
+
+        private void checkNotNullValue(int columnIndex, Object value) {
+            if (value == null && TableUtils.isEnforceableNotNull(metadata.getColumnType(columnIndex), metadata.isNotNull(columnIndex))) {
+                throw CairoException.nonCritical()
+                        .put("NOT NULL constraint violation, column is required [column=")
+                        .put(metadata.getColumnName(columnIndex))
+                        .put(']');
+            }
         }
 
         private MemoryA getPrimaryColumn(int columnIndex) {

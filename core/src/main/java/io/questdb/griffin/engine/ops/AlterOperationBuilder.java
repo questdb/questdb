@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.ops;
 
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.LongList;
 import io.questdb.std.Mutable;
@@ -46,6 +47,19 @@ public class AlterOperationBuilder implements Mutable {
     // the builder and the operation it builds share the extraInfo list
     public AlterOperationBuilder() {
         this.op = createAlterOperation(extraInfo, extraStrInfo);
+    }
+
+    public void addColumnToList(
+            CharSequence columnName,
+            int columnNamePosition,
+            int type,
+            int symbolCapacity,
+            boolean cache,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean dedupKey
+    ) {
+        addColumnToList(columnName, columnNamePosition, type, symbolCapacity, cache, indexType, indexValueBlockCapacity, dedupKey, false);
     }
 
     public void addColumnToList(
@@ -105,6 +119,10 @@ public class AlterOperationBuilder implements Mutable {
         this.tableToken = tableToken;
         this.tableId = tableId;
         return this;
+    }
+
+    public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, byte indexType, int indexValueBlockCapacity) {
+        ofAddColumn(columnName, columnNamePosition, type, symbolCapacity, cache, indexType != IndexType.NONE, indexValueBlockCapacity, false);
     }
 
     public void ofAddColumn(CharSequence columnName, int columnNamePosition, int type, int symbolCapacity, boolean cache, boolean indexed, int indexValueBlockCapacity, boolean notNull) {

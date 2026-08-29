@@ -965,6 +965,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put(node.token);
             }
         } else {
+            // Division and remainder can yield a null sentinel even when every
+            // source column is NOT NULL (for example, division by zero). Keep
+            // backend null checks enabled for these derived expressions.
+            if (Chars.equals(node.token, '/') || Chars.equals(node.token, '%')) {
+                allColumnsNotNull = false;
+            }
             serializeOperator(node.position, node.token, argCount, node.type);
             maybeEmitI64ArithRootWidening(node);
         }

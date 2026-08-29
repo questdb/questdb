@@ -192,7 +192,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_DECIMAL64: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (def.isNotNull()) {
+                            scratch.appendColumnLong8Value(Numbers.LONG_NULL, rows);
+                        } else {
+                            fillNulls(scratch, rows);
+                        }
                     } else {
                         scratch.appendColumnLong8WithSentinel(base + lo * 8L, rows, def.isNotNull());
                     }
@@ -201,7 +205,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_DOUBLE: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (def.isNotNull()) {
+                            scratch.appendColumnDouble8Value(Double.NaN, rows);
+                        } else {
+                            fillNulls(scratch, rows);
+                        }
                     } else {
                         scratch.appendColumnDouble8(base + lo * 8L, rows, def.isNotNull());
                     }
@@ -210,7 +218,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_INT: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (def.isNotNull()) {
+                            scratch.appendColumnInt4Value(Numbers.INT_NULL, rows);
+                        } else {
+                            fillNulls(scratch, rows);
+                        }
                     } else {
                         scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.INT_NULL, def.isNotNull());
                     }
@@ -220,7 +232,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                     // QuestDB stores IPv4 NULL as the bit pattern 0 (Numbers.IPv4_NULL).
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (def.isNotNull()) {
+                            scratch.appendColumnInt4Value(Numbers.IPv4_NULL, rows);
+                        } else {
+                            fillNulls(scratch, rows);
+                        }
                     } else {
                         scratch.appendColumnInt4WithSentinel(base + lo * 4L, rows, Numbers.IPv4_NULL, def.isNotNull());
                     }
@@ -229,7 +245,11 @@ public class QwpResultBatchBuffer implements QuietCloseable {
                 case QwpConstants.TYPE_FLOAT: {
                     long base = frame.getPageAddress(ci);
                     if (base == 0) {
-                        fillNulls(scratch, rows);
+                        if (def.isNotNull()) {
+                            scratch.appendColumnFloat4Value(Float.NaN, rows);
+                        } else {
+                            fillNulls(scratch, rows);
+                        }
                     } else {
                         scratch.appendColumnFloat4(base + lo * 4L, rows, def.isNotNull());
                     }

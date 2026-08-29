@@ -445,7 +445,7 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
 
                 TableColumnMetadata colMeta;
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    colMeta = new TableColumnMetadata(name, type, IndexType.NONE, 1024, true, null);
+                    colMeta = new TableColumnMetadata(name, type, IndexType.BITMAP, 1024, true, null);
                 } else {
                     colMeta = new TableColumnMetadata(name, type);
                 }

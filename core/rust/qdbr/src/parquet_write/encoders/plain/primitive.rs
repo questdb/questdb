@@ -490,6 +490,7 @@ fn boolean_nullable_segments_to_page(
     .map(Page::Data)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn simd_segments_to_page<T: SimdEncodable>(
     columns: &[Column],
     first_partition_start: usize,

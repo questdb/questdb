@@ -1307,8 +1307,7 @@ macro_rules! simd_cases {
                 let ct = ColumnType::new(ColumnTypeTag::$tag, 0);
                 let pt = primitive_type_for(ct);
                 let page = data_page_from(
-                    slice_to_page_simd(&data, 0, $opts.clone(), pt, encoding, None, false)
-                        .expect("page"),
+                    slice_to_page_simd(&data, 0, $opts.clone(), pt, encoding, None).expect("page"),
                 );
                 $cases.push(build_case(
                     format!(
@@ -1381,7 +1380,6 @@ macro_rules! int_nullable_cases {
                         pt,
                         encoding,
                         None,
-                        false,
                     )
                     .expect("page"),
                 );
@@ -1663,7 +1661,6 @@ fn build_cases() -> Vec<BenchCase> {
                     primitive_type.clone(),
                     Encoding::Plain,
                     None,
-                    false,
                 )
                 .expect("page"),
             );
@@ -1713,7 +1710,6 @@ fn build_cases() -> Vec<BenchCase> {
                         primitive_type.clone(),
                         encoding,
                         None,
-                        false,
                     )
                     .expect("page"),
                 );

@@ -2769,6 +2769,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata slaveMetadata,
             int timestampIndex
     ) {
+        return createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, timestampIndex, false, false);
+    }
+
+    private JoinRecordMetadata createJoinMetadata(
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata,
+            int timestampIndex,
+            boolean nullableMaster,
+            boolean nullableSlave
+    ) {
         JoinRecordMetadata metadata;
         metadata = new JoinRecordMetadata(
                 configuration,
@@ -2783,6 +2795,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
 
+        if (nullableMaster) {
+            for (int i = 0, n = masterMetadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(i).setNotNullFlag(false);
+            }
+        }
+        if (nullableSlave) {
+            final int offset = masterMetadata.getColumnCount();
+            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(offset + i).setNotNullFlag(false);
+            }
+        }
         if (timestampIndex != -1) {
             metadata.setTimestampIndex(timestampIndex);
         }
@@ -6022,7 +6045,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         masterMetadata,
                                         slaveModel.getName(),
                                         slaveMetadata,
-                                        joinType == IQueryModel.JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1
+                                        joinType == IQueryModel.JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1,
+                                        joinType == IQueryModel.JOIN_CROSS_RIGHT || joinType == IQueryModel.JOIN_CROSS_FULL,
+                                        joinType == IQueryModel.JOIN_CROSS_LEFT || joinType == IQueryModel.JOIN_CROSS_FULL
                                 );
                                 joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 master = switch (joinType) {
@@ -6886,7 +6911,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
+                                joinMetadata = createJoinMetadata(
+                                        masterAlias,
+                                        masterMetadata,
+                                        slaveModel.getName(),
+                                        slaveMetadata,
+                                        joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex(),
+                                        joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER,
+                                        joinType == IQueryModel.JOIN_LEFT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER
+                                );
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
