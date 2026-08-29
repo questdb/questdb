@@ -272,10 +272,10 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * it binary searches the packed data with single-value unpacks and only
      * then widens the range it settled on. This is that search.
      */
-    protected static long packedSeekFirstAtLeast(long dataAddr, long lo, long hi, int bitWidth, long base, long value) {
+    protected static long packedSeekFirstAtLeast(long block, long lo, long hi, long value) {
         while (lo < hi) {
             final long mid = (lo + hi) >>> 1;
-            if (BitpackUtils.unpackValue(dataAddr, (int) mid, bitWidth, base) < value) {
+            if (CoveringCompressor.readLongAt(block, (int) mid) < value) {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -285,10 +285,10 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /** {@link #seekFirstAbove} against PACKED values. See {@link #packedSeekFirstAtLeast}. */
-    protected static long packedSeekFirstAbove(long dataAddr, long lo, long hi, int bitWidth, long base, long value) {
+    protected static long packedSeekFirstAbove(long block, long lo, long hi, long value) {
         while (lo < hi) {
             final long mid = (lo + hi) >>> 1;
-            if (BitpackUtils.unpackValue(dataAddr, (int) mid, bitWidth, base) <= value) {
+            if (CoveringCompressor.readLongAt(block, (int) mid) <= value) {
                 lo = mid + 1;
             } else {
                 hi = mid;
@@ -351,7 +351,13 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // little-endian length then the bytes.
                 final long blob = pidxAddr + pageOffset + Integer.BYTES;
                 final byte mode = Unsafe.getUnsafe().getByte(blob);
-                if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
+                if (mode == PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS) {
+                    // One linear-prediction block per key. The blob start is
+                    // what a key's block is resolved from; there is no
+                    // group-wide packed array to point at.
+                    packedBlobAddrs[rowGroup] = blob;
+                    dataAddr = blob;
+                } else if (mode == PostingIndexUtils.STRIDE_MODE_FLAT) {
                     packedBlobAddrs[rowGroup] = 0;
                     packedBases[rowGroup] = Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
                     packedBitWidths[rowGroup] = Unsafe.getUnsafe().getByte(blob + 1) & 0xFF;
@@ -405,6 +411,18 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             coverBlobAddrs[at] = addr;
         }
         return addr;
+    }
+
+    /**
+     * The linear-prediction block holding {@code key}'s row ids in
+     * {@code rowGroup}, or 0 when the key holds none.
+     */
+    protected long rowIdBlock(int rowGroup, int key) {
+        final long blob = packedDataAddr(rowGroup);
+        if (blob == 0) {
+            return 0;
+        }
+        return PostingIndexUtils.coverPerKeyBlock(blob, imReader.getRowGroupFirstKey(rowGroup), key);
     }
 
     /**
@@ -598,7 +616,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                         }
                         final int keyLo = Numbers.decodeLowInt(range);
                         final int keyHi = Numbers.decodeHighInt(range);
-                        final long ptr = probe.unpackRowIds(rg, k, keyLo, keyHi - keyLo);
+                        // Key-relative: the block holds only this key's run, so
+                        // it starts at 0 whatever the group ordinal says.
+                        final long ptr = probe.unpackRowIds(rg, k, 0, keyHi - keyLo);
                         if (keyHasPostingInRange(ptr, 0, keyHi - keyLo, rowLo, rowHi)) {
                             foundKeys.set(k);
                             found++;
@@ -752,11 +772,12 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // contiguous slice of it and its LENGTH is the answer. Two
                 // binary searches in the packed domain, and nothing is widened
                 // at all -- against widening the whole run and counting it.
-                final long addr = packedDataAddr(rowGroup);
-                final int bitWidth = packedBitWidth(rowGroup);
-                final long base = packedBase(rowGroup, key);
-                final long from = packedSeekFirstAtLeast(addr, lo, hi, bitWidth, base, minValue);
-                return packedSeekFirstAbove(addr, from, hi, bitWidth, base, maxValue) - from;
+                // The block is indexed KEY-RELATIVE, so the directory's group
+                // ordinals become a length here.
+                final long block = rowIdBlock(rowGroup, key);
+                final long n = hi - lo;
+                final long from = packedSeekFirstAtLeast(block, 0, n, minValue);
+                return packedSeekFirstAbove(block, from, n, maxValue) - from;
             }
             // Only the key's own rows, and only row_id: the run is the key's by
             // construction, so nothing here needs key_id to filter on.
@@ -782,13 +803,12 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // The matching rows are a contiguous ascending slice, so the
                 // j-th of them is one indexed read at from + j. No scan, and
                 // nothing widened but the single value returned.
-                final long addr = packedDataAddr(rowGroup);
-                final int bitWidth = packedBitWidth(rowGroup);
-                final long base = packedBase(rowGroup, key);
-                final long from = packedSeekFirstAtLeast(addr, lo, hi, bitWidth, base, minValue);
-                final long to = packedSeekFirstAbove(addr, from, hi, bitWidth, base, maxValue);
+                final long block = rowIdBlock(rowGroup, key);
+                final long n = hi - lo;
+                final long from = packedSeekFirstAtLeast(block, 0, n, minValue);
+                final long to = packedSeekFirstAbove(block, from, n, maxValue);
                 final long at = from + j;
-                return at < to ? BitpackUtils.unpackValue(addr, (int) at, bitWidth, base) : Numbers.LONG_NULL;
+                return at < to ? CoveringCompressor.readLongAt(block, (int) at) : Numbers.LONG_NULL;
             }
             final long rowIdPtr = decodeRowIdRange(rowGroup, key, lo, hi);
             long seen = 0;
@@ -903,6 +923,10 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         protected long emittedRow = -1;
         /** Row group {@link #emittedRow} is an ordinal within, under the packed arm. */
         protected int packedRowGroup = -1;
+        /** Key the emitted row belongs to, which selects its covered block. */
+        protected int packedKey = -1;
+        /** That key's first group ordinal, so a covered index can be made key-relative. */
+        protected long packedKeyStart;
         /**
          * The {@code key_id}-only cursor pruning level 3 binary searches, built
          * on the first row group this cursor bounds.
@@ -937,8 +961,8 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * ordinal {@code from}, and returns the address holding them as int64.
          */
         protected long unpackRowIds(int rowGroup, int key, int from, int count) {
-            final long dataAddr = packedDataAddr(rowGroup);
-            if (dataAddr == 0) {
+            final long block = rowIdBlock(rowGroup, key);
+            if (block == 0) {
                 // The seal writes this arm only uncompressed, uncovered and
                 // PLAIN, so the blob is addressable by construction. A file
                 // where it is not carries row ids nothing here can read, and
@@ -957,14 +981,12 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                         : Unsafe.realloc(unpackBuf, unpackBufSize, needed, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 unpackBufSize = needed;
             }
-            BitpackUtils.unpackValuesFrom(
-                    dataAddr,
-                    from,
-                    count,
-                    packedBitWidth(rowGroup),
-                    packedBase(rowGroup, key),
-                    unpackBuf
-            );
+            // readLongAt addresses a value inside the compressed block, so a
+            // batch is widened without decompressing the whole key's run.
+            for (int i = 0; i < count; i++) {
+                Unsafe.getUnsafe().putLong(unpackBuf + ((long) i << 3),
+                        CoveringCompressor.readLongAt(block, from + i));
+            }
             return unpackBuf;
         }
 
@@ -1112,7 +1134,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         @Override
         public byte getCoveredByte(int includeIdx) {
             if (packedPayload) {
-                return CoveringCompressor.readByteAt(coveredBlock(includeIdx), (int) emittedRow);
+                return CoveringCompressor.readByteAt(coveredBlock(includeIdx), coveredIndex());
             }
             return Unsafe.getUnsafe().getByte(coveredAddress(includeIdx, 1));
         }
@@ -1120,7 +1142,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         @Override
         public double getCoveredDouble(int includeIdx) {
             if (packedPayload) {
-                return CoveringCompressor.readDoubleAt(coveredBlock(includeIdx), (int) emittedRow);
+                return CoveringCompressor.readDoubleAt(coveredBlock(includeIdx), coveredIndex());
             }
             return Unsafe.getUnsafe().getDouble(coveredAddress(includeIdx, 8));
         }
@@ -1128,7 +1150,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         @Override
         public float getCoveredFloat(int includeIdx) {
             if (packedPayload) {
-                return CoveringCompressor.readFloatAt(coveredBlock(includeIdx), (int) emittedRow);
+                return CoveringCompressor.readFloatAt(coveredBlock(includeIdx), coveredIndex());
             }
             return Unsafe.getUnsafe().getFloat(coveredAddress(includeIdx, 4));
         }
@@ -1136,7 +1158,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         @Override
         public int getCoveredInt(int includeIdx) {
             if (packedPayload) {
-                return CoveringCompressor.readIntAt(coveredBlock(includeIdx), (int) emittedRow);
+                return CoveringCompressor.readIntAt(coveredBlock(includeIdx), coveredIndex());
             }
             return Unsafe.getUnsafe().getInt(coveredAddress(includeIdx, 4));
         }
@@ -1144,7 +1166,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         @Override
         public long getCoveredLong(int includeIdx) {
             if (packedPayload) {
-                return CoveringCompressor.readLongAt(coveredBlock(includeIdx), (int) emittedRow);
+                return CoveringCompressor.readLongAt(coveredBlock(includeIdx), coveredIndex());
             }
             return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 8));
         }
@@ -1182,7 +1204,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         @Override
         public short getCoveredShort(int includeIdx) {
             if (packedPayload) {
-                return CoveringCompressor.readShortAt(coveredBlock(includeIdx), (int) emittedRow);
+                return CoveringCompressor.readShortAt(coveredBlock(includeIdx), coveredIndex());
             }
             return Unsafe.getUnsafe().getShort(coveredAddress(includeIdx, 2));
         }
@@ -1278,7 +1300,25 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                         .put(", rowGroup=").put(packedRowGroup)
                         .put(", column=").put(columnName).put(']');
             }
-            return blob;
+            final long block = PostingIndexUtils.coverPerKeyBlock(
+                    blob, imReader.getRowGroupFirstKey(packedRowGroup), packedKey);
+            if (block == 0) {
+                throw CairoException.critical(0)
+                        .put("covering index packed cover block is absent for a key that emitted a row [slot=")
+                        .put(includeIdx).put(", key=").put(packedKey)
+                        .put(", rowGroup=").put(packedRowGroup)
+                        .put(", column=").put(columnName).put(']');
+            }
+            return block;
+        }
+
+        /**
+         * Index of the emitted row WITHIN its key's block. The blocks are per
+         * key, so a group ordinal does not address them -- the key's first
+         * ordinal has to come off first.
+         */
+        protected int coveredIndex() {
+            return (int) (emittedRow - packedKeyStart);
         }
 
         /**

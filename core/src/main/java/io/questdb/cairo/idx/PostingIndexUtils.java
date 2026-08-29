@@ -299,6 +299,61 @@ public final class PostingIndexUtils {
     public static final byte COVER_MODE_RAW = 0;
     public static final int COVER_BLOB_HEADER_SIZE = 4;
 
+    /**
+     * Covered-value blob holding one compressed block PER KEY, rather than one
+     * per row group.
+     * <p>
+     * Block granularity is what the codecs' compression rests on: ALP picks one
+     * exponent and factor per block, frame-of-reference one minimum, and a block
+     * spanning a whole row group is far less homogeneous than a block spanning
+     * one key. Measured on a 350,100-posting fixture, per-row-group blocks cost
+     * 2.40 B/posting for a DOUBLE where the native chain's per-key blocks cost
+     * 1.98, and 2.10 against 1.67 for a LONG -- 21 to 26% purely from block size.
+     * <p>
+     * The cost is a header per key per column: 19 bytes for ALP, 29 for
+     * linear prediction. On the same fixture's 344 keys that is ~20 KB against
+     * ~290 KB saved.
+     * <p>
+     * Layout: {@code mode(1B) | pad(3B) | keySpan(4B) | offset[keySpan](4B each)
+     * | blocks}. Key {@code k}'s block starts at {@code blob + offset[k -
+     * firstKey]}, and a value is addressed within it by its KEY-RELATIVE index,
+     * not the group ordinal. Offset 0 means the key holds no row -- a real block
+     * can never start there, the header occupies it.
+     */
+    public static final byte COVER_MODE_PER_KEY = 1;
+    public static final int COVER_PER_KEY_SPAN_OFFSET = 4;
+    public static final int COVER_PER_KEY_TABLE_OFFSET = 8;
+
+    /**
+     * Row-id blob holding one LINEAR-PREDICTION block per key, the same codec
+     * and container the covered columns use.
+     * <p>
+     * Row ids within a key are strictly increasing by construction -- the seal
+     * writes them key-major, ascending -- so linear prediction fits them
+     * exactly: on clustered data a key's postings are consecutive, the residuals
+     * are zero, and the block collapses to its header. Frame of reference cannot
+     * do that; it exploits the RANGE of a run and is blind to its spacing, which
+     * is why the per-group and per-key FoR forms both cost 1.59 B/posting where
+     * the native chain's delta encoding costs 0.42.
+     * <p>
+     * Same layout as {@link #COVER_MODE_PER_KEY}, and deliberately so: a row id
+     * is just another monotonically increasing LONG column, and giving it its
+     * own container would be a second thing to get wrong.
+     */
+    public static final byte PACKED_MODE_PER_KEY_BLOCKS = 3;
+
+    /** Header size of a per-key covered blob spanning {@code keySpan} directory entries. */
+    public static int coverPerKeyHeaderSize(int keySpan) {
+        return COVER_PER_KEY_TABLE_OFFSET + keySpan * Integer.BYTES;
+    }
+
+    /** Address of {@code key}'s compressed block, or 0 when it holds no row. */
+    public static long coverPerKeyBlock(long blobAddr, int firstKey, int key) {
+        final int off = Unsafe.getUnsafe().getInt(
+                blobAddr + COVER_PER_KEY_TABLE_OFFSET + (long) (key - firstKey) * Integer.BYTES);
+        return off == 0 ? 0 : blobAddr + off;
+    }
+
     /** Size of a raw covered-value blob holding {@code valueCount} values of {@code width} bytes. */
     public static int coverBlobSize(int valueCount, int width) {
         return COVER_BLOB_HEADER_SIZE + valueCount * width;

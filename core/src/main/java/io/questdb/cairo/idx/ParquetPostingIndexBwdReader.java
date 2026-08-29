@@ -278,8 +278,11 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             packedNext -= batch;
             // See the forward reader: covered values are addressed by the GROUP
             // ordinal, and this batch starts at the new packedNext.
-            coverOrdinalBase = packedNext;
+            // packedNext is KEY-RELATIVE; emittedRow must stay a GROUP ordinal
+            // so coveredIndex() can turn it back into a key-relative index.
+            coverOrdinalBase = packedKeyStart + packedNext;
             packedRowGroup = rg;
+            packedKey = key;
             // See the forward reader: grow toward the cap.
             packedBatch = Math.min(packedBatch << 1, PACKED_WIDEN_BATCH);
             rowIdPtr = unpackRowIds(rg, key, (int) packedNext, batch);
@@ -360,19 +363,26 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     // the reason given in the forward reader: widening the whole
                     // run and seeking inside it widens rows the window throws
                     // away.
-                    final long packedAddr = packedDataAddr(rg);
-                    final int bitWidth = packedBitWidth(rg);
-                    final long base = packedBase(rg, key);
+                    // Row ids live in a per-key block, indexed KEY-RELATIVE:
+                    // the directory's group ordinals give the run's LENGTH.
+                    final long block = rowIdBlock(rg, key);
+                    if (block == 0) {
+                        throw CairoException.critical(0)
+                                .put("covering index packed row-id block is absent for a key the directory holds [key=")
+                                .put(key).put(", rowGroup=").put(rg)
+                                .put(", column=").put(columnName).put(']');
+                    }
+                    final long runLen = rowHi - rowLo;
                     // See the forward reader: a window covering the whole
                     // group needs no search.
                     final long from;
                     final long to;
                     if (isWholeGroupInRange(rg, minValue, maxValue)) {
-                        from = rowLo;
-                        to = rowHi;
+                        from = 0;
+                        to = runLen;
                     } else {
-                        from = packedSeekFirstAtLeast(packedAddr, rowLo, rowHi, bitWidth, base, minValue);
-                        to = packedSeekFirstAbove(packedAddr, from, rowHi, bitWidth, base, maxValue);
+                        from = packedSeekFirstAtLeast(block, 0, runLen, minValue);
+                        to = packedSeekFirstAbove(block, from, runLen, maxValue);
                     }
                     lastTouchedRowGroup = rg;
                     if (from >= to) {
@@ -383,6 +393,7 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     decodedGroup = true;
                     // Widened one L1-sized batch at a time, from the top down,
                     // rather than the whole run at once. See refillPackedBatch.
+                    packedKeyStart = rowLo;
                     packedLo = from;
                     packedNext = to;
                     packedBatch = PACKED_WIDEN_BATCH_MIN;

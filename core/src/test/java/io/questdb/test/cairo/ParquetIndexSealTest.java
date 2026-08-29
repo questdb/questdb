@@ -43,6 +43,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
 import io.questdb.cairo.idx.BitpackUtils;
+import io.questdb.cairo.idx.CoveringCompressor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
@@ -3590,7 +3591,6 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         final FilesFacade ff = configuration.getFilesFacade();
         final int blobColumn = imReader.getRowIdBlobColumn();
         final boolean[] seen = new boolean[PACKED_ROW_COUNT];
-        int perKeyGroups = 0;
 
         try (Path path = new Path(); ParquetFileDecoder decoder = new ParquetFileDecoder()) {
             path.of(indexParquetPath).$();
@@ -3623,46 +3623,29 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     // seal picks whichever is smaller for the group. Both are
                     // decoded here, and the two assertions after the loop pin
                     // the CHOICE rather than just the decoding.
-                    final byte mode = Unsafe.getUnsafe().getByte(blob);
-                    final int bitWidth = Unsafe.getUnsafe().getByte(blob + 1) & 0xFF;
+                    // One linear-prediction block per key, in the container the
+                    // covered columns use. A key's values are addressed inside
+                    // its own block, KEY-RELATIVE, not by a group ordinal.
+                    Assert.assertEquals("row group " + g + " blob mode",
+                            PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS,
+                            Unsafe.getUnsafe().getByte(blob));
                     final int postings = (int) imReader.getRowGroupNumRows(g);
                     final int firstKey = imReader.getRowGroupFirstKey(g);
-                    final long dataAddr;
-                    if (mode == PostingIndexUtils.PACKED_MODE_PER_KEY) {
-                        perKeyGroups++;
-                        final int keySpan = Unsafe.getUnsafe().getInt(blob + PostingIndexUtils.PACKED_PER_KEY_SPAN_OFFSET);
-                        dataAddr = blob + PostingIndexUtils.packedPerKeyHeaderSize(keySpan);
-                        Assert.assertEquals("row group " + g + " blob length",
-                                PostingIndexUtils.packedPerKeyBlobSize(keySpan, postings, bitWidth), blobLen);
-                    } else {
-                        Assert.assertEquals("row group " + g + " blob mode",
-                                PostingIndexUtils.STRIDE_MODE_FLAT, mode);
-                        // A group holding ONE key cannot gain from a per-key
-                        // base -- that key's extent IS the group's -- so the
-                        // table would be pure overhead and the seal must decline
-                        // it. Every per-group group in this fixture is that case.
-                        Assert.assertEquals("row group " + g + " fell back to a per-group base"
-                                        + " while holding more than one key",
-                                1, distinctKeysInGroup(imReader, g));
-                        dataAddr = blob + PostingIndexUtils.PACKED_PAYLOAD_HEADER_SIZE;
-                        Assert.assertEquals("row group " + g + " blob length",
-                                PostingIndexUtils.packedPayloadBlobSize(postings, bitWidth), blobLen);
-                    }
                     int addressed = 0;
                     for (int k = firstKey, keys = imReader.getRowGroupKeyCount(g); k < firstKey + keys; k++) {
                         final long range = imReader.getKeyRowRangeInGroup(g, k);
+                        final long block = PostingIndexUtils.coverPerKeyBlock(blob, firstKey, k);
                         if (range == IndexMetaFileReader.KEY_ABSENT) {
+                            Assert.assertEquals("absent key " + k + " must have no block", 0, block);
                             continue;
                         }
+                        Assert.assertTrue("key " + k + " holds rows but has no block", block != 0);
                         final int lo = Numbers.decodeLowInt(range);
                         final int hi = Numbers.decodeHighInt(range);
-                        final long baseValue = mode == PostingIndexUtils.PACKED_MODE_PER_KEY
-                                ? PostingIndexUtils.packedPerKeyBase(blob, firstKey, k)
-                                : Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
-                        for (int j = lo; j < hi; j++) {
-                            final long rowId = BitpackUtils.unpackValue(dataAddr, j, bitWidth, baseValue);
+                        for (int j = 0; j < hi - lo; j++) {
+                            final long rowId = CoveringCompressor.readLongAt(block, j);
                             Assert.assertEquals(
-                                    "row group " + g + " ordinal " + j + " is addressed under key " + k,
+                                    "row group " + g + " key " + k + " index " + j + " is addressed under the wrong key",
                                     k,
                                     packedKeyOfRowId(rowId)
                             );
@@ -3684,14 +3667,6 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                 ff.close(fd);
             }
         }
-
-        // Liveness: the fixture assigns a new symbol every 500 rows, so its
-        // multi-key groups are exactly the case a per-key base exists for. If
-        // none chose it, the layout is dead code that still decodes.
-        Assert.assertTrue(
-                "no row group used the per-key frame of reference, so nothing exercised it",
-                perKeyGroups > 0
-        );
 
         for (int i = 0; i < seen.length; i++) {
             Assert.assertTrue("row id " + i + " has no posting", seen[i]);

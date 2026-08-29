@@ -337,8 +337,11 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             rowIdPtr = unpackRowIds(rg, key, (int) packedNext, batch);
             // The widened batch has its own indices; covered values are addressed
             // by the GROUP ordinal, so record where this batch starts.
-            coverOrdinalBase = packedNext;
+            // packedNext is KEY-RELATIVE; emittedRow must stay a GROUP ordinal
+            // so coveredIndex() can turn it back into a key-relative index.
+            coverOrdinalBase = packedKeyStart + packedNext;
             packedRowGroup = rg;
+            packedKey = key;
             packedNext += batch;
             // Grow toward the cap, so a drain amortises the native call while a
             // partial read never widens more than the minimum.
@@ -445,9 +448,16 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     // seek within it -- widens rows the window discards, which
                     // at 2,000 keys over 2M rows is 1,000 values a key however
                     // few the window admits.
-                    final long packedAddr = packedDataAddr(rg);
-                    final int bitWidth = packedBitWidth(rg);
-                    final long base = packedBase(rg, key);
+                    // Row ids live in a per-key block, indexed KEY-RELATIVE:
+                    // the directory's group ordinals give the run's LENGTH.
+                    final long block = rowIdBlock(rg, key);
+                    if (block == 0) {
+                        throw CairoException.critical(0)
+                                .put("covering index packed row-id block is absent for a key the directory holds [key=")
+                                .put(key).put(", rowGroup=").put(rg)
+                                .put(", column=").put(columnName).put(']');
+                    }
+                    final long runLen = rowHi - rowLo;
                     // A window that already contains the whole group needs no
                     // search: every row of the key's run is inside it. The seeks
                     // are two binary searches per key, and an unbounded scan --
@@ -456,11 +466,11 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     final long from;
                     final long to;
                     if (isWholeGroupInRange(rg, minValue, maxValue)) {
-                        from = rowLo;
-                        to = rowHi;
+                        from = 0;
+                        to = runLen;
                     } else {
-                        from = packedSeekFirstAtLeast(packedAddr, rowLo, rowHi, bitWidth, base, minValue);
-                        to = packedSeekFirstAbove(packedAddr, from, rowHi, bitWidth, base, maxValue);
+                        from = packedSeekFirstAtLeast(block, 0, runLen, minValue);
+                        to = packedSeekFirstAbove(block, from, runLen, maxValue);
                     }
                     lastTouchedRowGroup = rg;
                     if (from >= to) {
@@ -474,6 +484,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     windowNarrowed = true;
                     // Widened one L1-sized batch at a time as the cursor walks,
                     // not all at once. See refillPackedBatch.
+                    packedKeyStart = rowLo;
                     packedNext = from;
                     packedEnd = to;
                     packedBatch = PACKED_WIDEN_BATCH_MIN;
