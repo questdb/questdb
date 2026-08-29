@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationImpl;
 import io.questdb.log.Log;
@@ -240,7 +241,7 @@ public class CopyExportContext {
         CairoConfiguration configuration = engine.getConfiguration();
         int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
-        try (SqlCompiler compiler = engine.getSqlCompiler(); var sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+        try (SqlCompiler compiler = engine.getSqlCompiler(); var sqlExecutionContext = new SystemSqlExecutionContext(engine, 1)) {
             sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
             statusTableToken = compiler.query()
                     .$("CREATE TABLE IF NOT EXISTS \"")
@@ -586,5 +587,4 @@ public class CopyExportContext {
         }
     }
 }
-
 

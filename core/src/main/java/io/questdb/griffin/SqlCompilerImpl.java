@@ -356,7 +356,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             TableWriter.Row row = writer.newRow();
             copier.copy(context, record, row);
             row.append();
@@ -669,7 +669,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CommonUtils.TimestampUnitConverter converter = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType()).getTimestampUnitConverter(fromTimestampType);
         if (converter == null) {
             while (cursor.hasNext()) {
-                context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
                 TableWriter.Row row = writer.newRow(record.getTimestamp(cursorTimestampIndex));
                 copier.copy(context, record, row);
                 row.append();
@@ -683,7 +683,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         } else {
             while (cursor.hasNext()) {
-                context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+                context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
                 TableWriter.Row row = writer.newRow(converter.convert(record.getTimestamp(cursorTimestampIndex)));
                 copier.copy(context, record, row);
                 row.append();
@@ -718,7 +718,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final TimestampDriver timestampDriver = ColumnType.getTimestampDriver(writer.getMetadata().getTimestampType());
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestampDriver.implicitCast(record.getStrA(cursorTimestampIndex)));
             copier.copy(context, record, row);
@@ -753,7 +753,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final Record record = cursor.getRecord();
         reporter.onProgress(CopyDataProgressReporter.Stage.Start, cursor.size());
         while (cursor.hasNext()) {
-            context.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            context.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             // It's allowed to insert ISO formatted string to timestamp column
             TableWriter.Row row = writer.newRow(timestampDriver.implicitCastVarchar(record.getVarcharA(cursorTimestampIndex)));
             copier.copy(context, record, row);

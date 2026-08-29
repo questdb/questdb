@@ -28,6 +28,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.Worker;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
@@ -42,6 +43,23 @@ public final class FiberRuntime {
     public static final int NO_WORKER = -1;
     private static final long ADMISSION_OPEN = Long.MIN_VALUE;
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
+    private static final FiberDispatchTicket FAILED_DISPATCH_TICKET = new FiberDispatchTicket() {
+        @Override
+        public void onMount(FiberDispatchRequest request) {
+            final Throwable failure = request.getDispatchFailure();
+            if (failure instanceof RuntimeException runtimeException) {
+                throw runtimeException;
+            }
+            if (failure instanceof Error error) {
+                throw error;
+            }
+            throw new IllegalStateException("Fiber dispatch controller failed", failure);
+        }
+
+        @Override
+        public void onUnmount(FiberDispatchRequest request, boolean wasMounted) {
+        }
+    };
     private static final int GLOBAL_PROBE_INTERVAL = 61;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
     private static final int PROCESS_OWNED = 2;
@@ -55,6 +73,7 @@ public final class FiberRuntime {
     private final SOCountDownLatch closedLatch = new SOCountDownLatch(1);
     private final ObjList<FiberRuntimeConfigurationListener> configurationListeners = new ObjList<>();
     private final AtomicInteger detachedStealCursor = new AtomicInteger();
+    private final @Nullable FiberDispatchSession dispatchSession;
     private final FiberPool fiberPool;
     private final AtomicInteger finalizerCount = new AtomicInteger();
     private final LongAdder globalPublicationCount = new LongAdder();
@@ -97,6 +116,7 @@ public final class FiberRuntime {
                 null,
                 BindingRole.STANDALONE_TEST,
                 0,
+                null,
                 FiberWakeSink.NO_OP
         );
     }
@@ -110,6 +130,7 @@ public final class FiberRuntime {
                 null,
                 BindingRole.STANDALONE_TEST,
                 0,
+                null,
                 FiberWakeSink.NO_OP
         );
     }
@@ -123,6 +144,7 @@ public final class FiberRuntime {
                 null,
                 BindingRole.STANDALONE_TEST,
                 0,
+                null,
                 FiberWakeSink.NO_OP
         );
     }
@@ -142,6 +164,28 @@ public final class FiberRuntime {
                 null,
                 BindingRole.POOL_BOUND,
                 ownerWorkerCount,
+                null,
+                wakeSink
+        );
+    }
+
+    public FiberRuntime(
+            int retainedFiberCount,
+            int maxLiveFiberCount,
+            int mountBudget,
+            int ownerWorkerCount,
+            @Nullable FiberDispatchController dispatchController,
+            FiberWakeSink wakeSink
+    ) {
+        this(
+                retainedFiberCount,
+                maxLiveFiberCount,
+                mountBudget,
+                null,
+                null,
+                BindingRole.POOL_BOUND,
+                ownerWorkerCount,
+                dispatchController,
                 wakeSink
         );
     }
@@ -160,6 +204,7 @@ public final class FiberRuntime {
                 null,
                 BindingRole.STANDALONE_TEST,
                 0,
+                null,
                 FiberWakeSink.NO_OP
         );
     }
@@ -179,6 +224,7 @@ public final class FiberRuntime {
                 beforeWaitFireForTesting,
                 BindingRole.STANDALONE_TEST,
                 0,
+                null,
                 FiberWakeSink.NO_OP
         );
     }
@@ -191,6 +237,7 @@ public final class FiberRuntime {
             @Nullable Runnable beforeWaitFireForTesting,
             BindingRole bindingRole,
             int ownerWorkerCount,
+            @Nullable FiberDispatchController dispatchController,
             FiberWakeSink wakeSink
     ) {
         try {
@@ -252,6 +299,16 @@ public final class FiberRuntime {
                 this,
                 beforeWaitFireForTesting
         );
+        if (dispatchController == null) {
+            this.dispatchSession = null;
+        } else {
+            final FiberDispatchSession dispatchSession = dispatchController.openSession(this);
+            if (dispatchSession == null) {
+                throw new IllegalArgumentException("Fiber dispatch controller returned a null session");
+            }
+            this.dispatchSession = dispatchSession;
+            quiesceListeners.add(dispatchSession);
+        }
         for (int i = 0; i < LaunchResult.COUNT; i++) {
             launchCounts.add(new LongAdder());
         }
@@ -706,10 +763,22 @@ public final class FiberRuntime {
     }
 
     public LaunchResult launch(FiberTask task) {
-        return launch(task, task.getIncarnation());
+        return launch(task, task.getIncarnation(), null);
+    }
+
+    public LaunchResult launch(FiberTask task, @Nullable FiberDispatchContext dispatchContext) {
+        return launch(task, task.getIncarnation(), dispatchContext);
     }
 
     public LaunchResult launch(FiberTask task, long taskIncarnation) {
+        return launch(task, taskIncarnation, null);
+    }
+
+    public LaunchResult launch(
+            FiberTask task,
+            long taskIncarnation,
+            @Nullable FiberDispatchContext dispatchContext
+    ) {
         final LaunchResult result = preflight(task, taskIncarnation);
         if (result != null) {
             return record(result);
@@ -724,7 +793,7 @@ public final class FiberRuntime {
         if (fiber == null) {
             return record(state == FiberRuntimeState.OPEN ? LaunchResult.SATURATED : LaunchResult.QUIESCING);
         }
-        return launchReserved(fiber, fiber.getReservationEpoch(), task, taskIncarnation);
+        return launchReserved(fiber, fiber.getReservationEpoch(), task, taskIncarnation, dispatchContext);
     }
 
     /**
@@ -737,7 +806,17 @@ public final class FiberRuntime {
             FiberTask task,
             long taskIncarnation
     ) {
-        return launchReserved(fiber, reservationEpoch, task, taskIncarnation, false, null);
+        return launchReserved(fiber, reservationEpoch, task, taskIncarnation, null);
+    }
+
+    public LaunchResult launchReserved(
+            Fiber fiber,
+            long reservationEpoch,
+            FiberTask task,
+            long taskIncarnation,
+            @Nullable FiberDispatchContext dispatchContext
+    ) {
+        return launchReserved(fiber, reservationEpoch, task, taskIncarnation, dispatchContext, false, null);
     }
 
     /**
@@ -753,6 +832,16 @@ public final class FiberRuntime {
             FiberTask task,
             long taskIncarnation
     ) {
+        return launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation, null);
+    }
+
+    public LaunchResult launchReservedDirect(
+            Fiber fiber,
+            long reservationEpoch,
+            FiberTask task,
+            long taskIncarnation,
+            @Nullable FiberDispatchContext dispatchContext
+    ) {
         // Direct mount nests no continuation and, per CARRIER_MONITOR.md, requires a clean
         // worker-loop boundary. The held-monitor half of that contract has no cheap runtime
         // check; this pins the half that does.
@@ -764,6 +853,7 @@ public final class FiberRuntime {
                 reservationEpoch,
                 task,
                 taskIncarnation,
+                dispatchContext,
                 !SuspensionScope.hasAnyRoleSwitchLock(SuspensionScope.scope())
                         && (!isOwnerRequired || ownerContext != null),
                 ownerContext
@@ -1175,6 +1265,7 @@ public final class FiberRuntime {
             long reservationEpoch,
             FiberTask task,
             long taskIncarnation,
+            @Nullable FiberDispatchContext dispatchContext,
             boolean isDirectMountAllowed,
             @Nullable OwnerContext directOwnerContext
     ) {
@@ -1201,11 +1292,11 @@ public final class FiberRuntime {
                     case FiberTask.CLAIM_LAUNCHED -> {
                         isTaskClaimed = true;
                         if (isDirectMountAllowed) {
-                            if (fiber.stageForDirectMountOrRequestRun(task, reservationEpoch)) {
+                            if (fiber.stageForDirectMountOrRequestRun(task, reservationEpoch, dispatchContext)) {
                                 directFiber = fiber;
                             }
                         } else {
-                            fiber.stageAndRequestRun(task, reservationEpoch);
+                            fiber.stageAndRequestRun(task, reservationEpoch, dispatchContext);
                         }
                         hasFiberReservation = false;
                         hasTaskSlot = false;
@@ -1286,16 +1377,14 @@ public final class FiberRuntime {
         Fiber.Outcome outcome = fiber.getOutcomeScratch();
         outcome.clear();
         try {
-            if (!fiber.beginMount()) {
-                throw mountInvariantFailed(fiber.getExecutionState());
-            }
-            fiber.setLastMountWorkerId(ownerContext != null ? ownerContext.workerId : NO_WORKER);
-            mountedCount.increment();
-            mountCount.increment();
-            try {
-                fiber.runMounted();
-            } finally {
-                mountedCount.decrement();
+            final FiberDispatchSession dispatchSession = this.dispatchSession;
+            if (dispatchSession == null) {
+                runMount(fiber, ownerContext);
+            } else {
+                if (isDirectMount && !prepareDirectDispatch(fiber, ownerContext, dispatchSession)) {
+                    return PROCESS_OWNED;
+                }
+                runControlledMount(fiber, ownerContext);
             }
             if (fiber.isDone()) {
                 fiber.takeOutcome(outcome);
@@ -1306,6 +1395,8 @@ public final class FiberRuntime {
                 finalizeOutcome(outcome);
             } else if (fiber.getYieldReason() == Fiber.YIELD_WAIT) {
                 fiber.publishWaiting();
+            } else if (fiber.getYieldReason() == Fiber.YIELD_DISPATCH) {
+                fiber.publishDispatchYield();
             } else {
                 fiber.takeOutcome(outcome);
                 if (!fiber.transitionMountedToFree()) {
@@ -1339,6 +1430,38 @@ public final class FiberRuntime {
         return isTerminated
                 ? PROCESS_TERMINATED
                 : hasFiberOwnership ? PROCESS_OWNED : PROCESS_RELEASED;
+    }
+
+    private boolean prepareDirectDispatch(
+            Fiber fiber,
+            @Nullable OwnerContext ownerContext,
+            FiberDispatchSession dispatchSession
+    ) {
+        final FiberDispatchRequest request = requireDispatchRequest(fiber);
+        final long dispatchEpoch = request.begin(FiberDispatchRoute.DIRECT, ownerContext);
+        final FiberDispatchTicket ticket;
+        try {
+            ticket = dispatchSession.tryDispatchDirect(request);
+        } catch (Throwable th) {
+            if (!request.grantFailure(dispatchEpoch, th, FAILED_DISPATCH_TICKET)) {
+                throw new IllegalStateException("Fiber direct dispatch failure could not be recorded", th);
+            }
+            return true;
+        }
+        if (ticket != null) {
+            if (!request.grantDirect(dispatchEpoch, ticket)) {
+                throw new IllegalStateException("Fiber direct dispatch request was resolved concurrently");
+            }
+            return true;
+        }
+        request.markDirectPending(dispatchEpoch);
+        try {
+            fiber.requestRun();
+        } catch (Throwable th) {
+            request.abort(dispatchEpoch);
+            throw th;
+        }
+        return false;
     }
 
     private void advertiseOrphan(Shard shard) {
@@ -1473,6 +1596,110 @@ public final class FiberRuntime {
                         ? "local publication fallback"
                         : "global publication"
         );
+    }
+
+    private static FiberDispatchRequest requireDispatchRequest(Fiber fiber) {
+        final FiberDispatchRequest request = fiber.getDispatchRequest();
+        if (request == null) {
+            throw new IllegalStateException("controlled Fiber has no dispatch request");
+        }
+        return request;
+    }
+
+    private void runControlledMount(Fiber fiber, @Nullable OwnerContext ownerContext) throws Throwable {
+        final FiberDispatchRequest request = requireDispatchRequest(fiber);
+        final long dispatchEpoch = request.getDispatchEpoch();
+        final FiberDispatchTicket ticket = request.consume();
+        boolean wasMounted = false;
+        Throwable mountFailure = null;
+        try {
+            request.validateForMount();
+            ticket.onMount(request);
+            if (!fiber.beginMount()) {
+                throw mountInvariantFailed(fiber.getExecutionState());
+            }
+            wasMounted = true;
+            fiber.installMountedDispatchTicket(ticket);
+            fiber.setLastMountWorkerId(ownerContext != null ? ownerContext.workerId : NO_WORKER);
+            mountedCount.increment();
+            mountCount.increment();
+            fiber.runMounted();
+        } catch (Throwable th) {
+            mountFailure = th;
+            throw th;
+        } finally {
+            if (wasMounted) {
+                mountedCount.decrement();
+                fiber.clearMountedDispatchTicket(ticket);
+            }
+            Throwable cleanupFailure = null;
+            try {
+                MemoryTracker.detachResourceMemoryCurrentThread();
+            } catch (Throwable th) {
+                cleanupFailure = th;
+            }
+            try {
+                ticket.onUnmount(request, wasMounted);
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
+            try {
+                request.complete(dispatchEpoch, ticket);
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
+            if (cleanupFailure != null) {
+                if (mountFailure != null) {
+                    if (mountFailure != cleanupFailure) {
+                        mountFailure.addSuppressed(cleanupFailure);
+                    }
+                } else {
+                    throw cleanupFailure;
+                }
+            }
+        }
+    }
+
+    private void runMount(Fiber fiber, @Nullable OwnerContext ownerContext) {
+        if (!fiber.beginMount()) {
+            throw mountInvariantFailed(fiber.getExecutionState());
+        }
+        fiber.setLastMountWorkerId(ownerContext != null ? ownerContext.workerId : NO_WORKER);
+        mountedCount.increment();
+        mountCount.increment();
+        try {
+            fiber.runMounted();
+        } finally {
+            try {
+                MemoryTracker.detachResourceMemoryCurrentThread();
+            } finally {
+                mountedCount.decrement();
+            }
+        }
+    }
+
+    private void submitDispatch(
+            FiberDispatchRequest request,
+            long dispatchEpoch,
+            FiberDispatchSession dispatchSession
+    ) {
+        try {
+            dispatchSession.requestDispatch(request);
+        } catch (Throwable th) {
+            if (request.grantFailure(dispatchEpoch, th, FAILED_DISPATCH_TICKET)) {
+                publishGrantedDispatch(request);
+            } else {
+                LOG.critical().$("Fiber dispatch controller failed after resolving request [error=").$(th).I$();
+            }
+        }
     }
 
     private @Nullable Fiber selectBeforePark(Shard ownerShard) {
@@ -1773,6 +2000,16 @@ public final class FiberRuntime {
 
     void enqueue(Fiber fiber) {
         final OwnerContext ownerContext = currentOwnerContext();
+        final FiberDispatchSession dispatchSession = this.dispatchSession;
+        if (dispatchSession != null) {
+            final FiberDispatchRoute route = fiber.isShutdownRequested()
+                    ? FiberDispatchRoute.SHUTDOWN_CLEANUP
+                    : FiberDispatchRoute.REQUEST_RUN;
+            final FiberDispatchRequest request = requireDispatchRequest(fiber);
+            final long dispatchEpoch = request.begin(route, ownerContext);
+            submitDispatch(request, dispatchEpoch, dispatchSession);
+            return;
+        }
         if (fiber.isShutdownRequested()) {
             // Retirement and runtime-shutdown continuations are cleanup, not affinity work. Keep
             // them on the global queue so they do not jump ahead of older injected tasks through
@@ -1787,6 +2024,23 @@ public final class FiberRuntime {
         if (ownerContext != null) {
             validateOwner(ownerContext);
         }
+        final FiberDispatchSession dispatchSession = this.dispatchSession;
+        if (dispatchSession != null) {
+            final FiberDispatchRequest request = requireDispatchRequest(fiber);
+            final long dispatchEpoch = request.getDispatchEpoch();
+            if (request.getRoute() == FiberDispatchRoute.DIRECT_PENDING && request.isPending(dispatchEpoch)) {
+                submitDispatch(request, dispatchEpoch, dispatchSession);
+                return;
+            }
+            final FiberDispatchRoute route = fiber.isShutdownRequested()
+                    ? FiberDispatchRoute.SHUTDOWN_CLEANUP
+                    : fiber.getYieldReason() == Fiber.YIELD_DISPATCH
+                      ? FiberDispatchRoute.DISPATCH_YIELD
+                      : FiberDispatchRoute.POST_PROCESS_RESIGNAL;
+            final long nextDispatchEpoch = request.begin(route, ownerContext);
+            submitDispatch(request, nextDispatchEpoch, dispatchSession);
+            return;
+        }
         if (fiber.isShutdownRequested()) {
             publish(fiber, ownerContext, PublicationMode.SHUTDOWN_CLEANUP);
             return;
@@ -1794,6 +2048,14 @@ public final class FiberRuntime {
         // A null explicit context is DETACHED, not an arbitrary external publisher, so it must not
         // reuse the Fiber's previous owner as a wake preference.
         publish(fiber, ownerContext, PublicationMode.POST_PROCESS_RESIGNAL);
+    }
+
+    @Nullable
+    FiberDispatchRequest newDispatchRequest(Fiber fiber) {
+        final FiberDispatchSession dispatchSession = this.dispatchSession;
+        return dispatchSession != null
+                ? new FiberDispatchRequest(fiber, this, dispatchSession.createRequestState())
+                : null;
     }
 
     void onFiberPoolReleaseFailure(Throwable th) {
@@ -1805,6 +2067,23 @@ public final class FiberRuntime {
         if (isInlineSuspendViolationLogged.compareAndSet(false, true)) {
             LOG.critical().$("fiber suspension refused, carrier is pinned [reason=").$(pinnedReason).I$();
         }
+    }
+
+    void publishGrantedDispatch(FiberDispatchRequest request) {
+        if (request.getRuntime() != this) {
+            throw new IllegalArgumentException("Fiber dispatch request does not belong to this runtime");
+        }
+        final FiberDispatchRoute route = request.getRoute();
+        final Fiber fiber = request.getFiber();
+        final OwnerContext ownerContext = request.getOwnerContext();
+        final PublicationMode publicationMode = switch (route) {
+            case DIRECT_PENDING, DISPATCH_YIELD, POST_PROCESS_RESIGNAL -> PublicationMode.POST_PROCESS_RESIGNAL;
+            case REQUEST_RUN -> PublicationMode.REQUEST_RUN;
+            case SHUTDOWN_CLEANUP -> PublicationMode.SHUTDOWN_CLEANUP;
+            case DIRECT -> throw new IllegalStateException("direct Fiber dispatch cannot be queued as a direct route");
+            case null -> throw new IllegalStateException("Fiber dispatch request has no route");
+        };
+        publish(fiber, ownerContext, publicationMode);
     }
 
     @TestOnly

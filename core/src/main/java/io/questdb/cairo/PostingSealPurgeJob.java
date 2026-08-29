@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -111,7 +112,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             this.retryDelay = configuration.getColumnPurgeRetryDelay();
             this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
             this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
-            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            this.sqlExecutionContext = new SystemSqlExecutionContext(engine, 1);
             this.sqlExecutionContext.with(
                     configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                     null,
@@ -283,7 +284,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         SqlExecutionContextImpl sqlExecutionContext = null;
         try {
             CairoConfiguration configuration = engine.getConfiguration();
-            sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            sqlExecutionContext = new SystemSqlExecutionContext(engine, 1);
             sqlExecutionContext.with(
                     configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                     null,

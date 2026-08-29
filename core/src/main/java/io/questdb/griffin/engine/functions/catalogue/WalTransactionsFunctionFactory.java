@@ -184,7 +184,7 @@ public class WalTransactionsFunctionFactory implements FunctionFactory {
 
             @Override
             public boolean hasNext() {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 return logCursor.hasNext();
             }
 

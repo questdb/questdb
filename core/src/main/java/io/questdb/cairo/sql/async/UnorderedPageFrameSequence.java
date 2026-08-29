@@ -540,9 +540,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     ) {
         try {
             if (isTimeThrottled) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             } else {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
             return false;
         } catch (CairoException e) {

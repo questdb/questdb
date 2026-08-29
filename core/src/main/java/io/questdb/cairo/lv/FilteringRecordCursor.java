@@ -93,7 +93,7 @@ final class FilteringRecordCursor implements RecordCursor {
             // a turn budget sees nothing tick while a rejecting filter walks the whole
             // scan range. The breaker's own throttle keeps this to one real check per
             // window.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             baseRowsConsumed++;
             if (filter.getBool(record)) {
                 return true;

@@ -155,6 +155,24 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
     boolean checkIfTripped(long millis, long fd);
 
     /**
+     * Boolean breaker check followed by the policy-neutral cooperative-poll extension point when
+     * the breaker is still healthy. Use only at a call site where the current continuation may
+     * safely suspend.
+     */
+    default boolean checkIfTrippedOrYield() {
+        return checkIfTripped();
+    }
+
+    /**
+     * Timestamped boolean breaker check followed by the policy-neutral cooperative-poll extension
+     * point when the breaker is still healthy. Use only at a call site where the current
+     * continuation may safely suspend.
+     */
+    default boolean checkIfTrippedOrYield(long millis, long fd) {
+        return checkIfTripped(millis, fd);
+    }
+
+    /**
      * Same as {@link #checkIfTripped()} but bypasses the connection-probe throttle. Meant for cold
      * error paths that classify an abort after the fact and need a current connection verdict.
      */
@@ -190,6 +208,22 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
      * - {@link #STATE_TIMEOUT} <br>
      */
     int getState(long millis, long fd);
+
+    /**
+     * Classifying breaker check followed by the policy-neutral cooperative-poll extension point
+     * when the result is {@link #STATE_OK}. Use only at a suspendable call site.
+     */
+    default int getStateOrYield() {
+        return getState();
+    }
+
+    /**
+     * Timestamped classifying breaker check followed by the policy-neutral cooperative-poll
+     * extension point when the result is {@link #STATE_OK}. Use only at a suspendable call site.
+     */
+    default int getStateOrYield(long millis, long fd) {
+        return getState(millis, fd);
+    }
 
     long getTimeout();
 
@@ -232,6 +266,25 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
     void statefulThrowExceptionIfTrippedNoThrottle();
 
     /**
+     * Unthrottled breaker check followed by the policy-neutral cooperative-poll extension point.
+     * Use only at a call site where the current continuation may safely suspend.
+     */
+    default void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
+        statefulThrowExceptionIfTrippedNoThrottle();
+    }
+
+    /**
+     * Stateful breaker check followed by the policy-neutral cooperative-poll extension point.
+     * Use only at a call site where the current continuation may safely suspend. The OSS default
+     * preserves {@link #statefulThrowExceptionIfTripped()} semantics. Implementations backed by a
+     * {@code CairoEngine} invoke its extension point after the breaker check; neither the breaker
+     * nor this interface carries scheduling state.
+     */
+    default void statefulThrowExceptionIfTrippedOrYield() {
+        statefulThrowExceptionIfTripped();
+    }
+
+    /**
      * Checks cancellation and timeout on every call (both are cheap, so the query stays promptly
      * cancellable), but throttles only the heavy connection probe by elapsed wall-clock time.
      * <p>
@@ -246,6 +299,14 @@ public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, Can
      */
     default void statefulThrowExceptionIfTrippedTimeThrottled() {
         statefulThrowExceptionIfTrippedNoThrottle();
+    }
+
+    /**
+     * Time-throttled breaker check followed by the policy-neutral cooperative-poll extension
+     * point. Use only at a call site where the current continuation may safely suspend.
+     */
+    default void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+        statefulThrowExceptionIfTrippedTimeThrottled();
     }
 
     /**

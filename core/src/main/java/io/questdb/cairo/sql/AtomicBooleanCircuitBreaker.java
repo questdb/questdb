@@ -85,6 +85,24 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         return isCancelled();
     }
 
+    @Override
+    public boolean checkIfTrippedOrYield() {
+        final boolean isTripped = checkIfTripped();
+        if (!isTripped) {
+            engine.onSqlExecutionCooperativePoll();
+        }
+        return isTripped;
+    }
+
+    @Override
+    public boolean checkIfTrippedOrYield(long millis, long fd) {
+        final boolean isTripped = checkIfTripped(millis, fd);
+        if (!isTripped) {
+            engine.onSqlExecutionCooperativePoll();
+        }
+        return isTripped;
+    }
+
     public void clear() {
         fd = -1;
         testCount = 0;
@@ -113,6 +131,24 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Override
     public int getState(long millis, long fd) {
         return getState();
+    }
+
+    @Override
+    public int getStateOrYield() {
+        final int state = getState();
+        if (state == STATE_OK) {
+            engine.onSqlExecutionCooperativePoll();
+        }
+        return state;
+    }
+
+    @Override
+    public int getStateOrYield(long millis, long fd) {
+        final int state = getState(millis, fd);
+        if (state == STATE_OK) {
+            engine.onSqlExecutionCooperativePoll();
+        }
+        return state;
     }
 
     @Override
@@ -175,11 +211,29 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     }
 
     @Override
+    public void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
+        statefulThrowExceptionIfTrippedNoThrottle();
+        engine.onSqlExecutionCooperativePoll();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedOrYield() {
+        statefulThrowExceptionIfTripped();
+        engine.onSqlExecutionCooperativePoll();
+    }
+
+    @Override
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         testCount = 0;
         if (isCancelled()) {
             throw CairoException.queryCancelled(fd);
         }
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+        statefulThrowExceptionIfTrippedTimeThrottled();
+        engine.onSqlExecutionCooperativePoll();
     }
 
     @Override

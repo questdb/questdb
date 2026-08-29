@@ -215,7 +215,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 callback.call();
             }
             entry.setStartTime(microsecondClock.getTicks(), carrierId);
-            if (circuitBreaker.checkIfTripped()) {
+            if (circuitBreaker.checkIfTrippedOrYield()) {
                 LOG.errorW().$("copy was cancelled [copyId=").$hexPadded(localTaskCopy.getCopyID()).$(']').$();
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }

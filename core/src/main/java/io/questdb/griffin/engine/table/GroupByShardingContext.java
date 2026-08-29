@@ -395,7 +395,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
 
         if (dispatcher != null && !publicationPermit) {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                 mergeShard(-1, shardIndex);
             }
             finalizeShardStats();
@@ -416,7 +416,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
 
                         if (!isOwnerParkable && strategy.shouldSteal(mergedCount)) {
                             mergeShard(-1, shardIndex);
@@ -464,7 +464,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
                     }
-                    if (circuitBreaker.checkIfTripped()) {
+                    if (circuitBreaker.checkIfTrippedOrYield()) {
                         postAggregationCircuitBreaker.cancel();
                     }
 
@@ -494,7 +494,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             }
         }
 
-        if (!postAggregationCircuitBreaker.checkIfTripped()) {
+        if (!postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
             finalizeShardStats();
         }
 

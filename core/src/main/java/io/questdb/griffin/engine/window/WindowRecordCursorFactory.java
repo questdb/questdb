@@ -344,7 +344,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             boolean hasNext = super.hasNext();
             if (hasNext) {
                 final Record record = baseCursor.getRecord();

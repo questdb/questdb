@@ -252,7 +252,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
             TableToken token,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
         if (vanishedBetweenSnapshotAndEmit(token, executionContext)) {
             logSkippedObject(token, "object no longer present at emit time");
             return;
@@ -474,7 +474,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         }
         // the whole dump is materialized eagerly, and resolving a mat view's dependencies compiles its
         // query; honour cancellation/timeout per object so a large schema stays interruptible
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
         // mark before recursing so a malformed cycle cannot cause infinite recursion
         emitted.add(token);
         final ObjList<TableToken> dependencies = new ObjList<>();

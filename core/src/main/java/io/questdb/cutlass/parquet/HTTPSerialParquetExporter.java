@@ -206,7 +206,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
     private void processHybridStreamExport() throws Exception {
         boolean isPageFrameBacked = exportMode == ParquetExportMode.PAGE_FRAME_BACKED;
         CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
-        if (circuitBreaker.checkIfTripped()) {
+        if (circuitBreaker.checkIfTrippedOrYield()) {
             LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
@@ -237,7 +237,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         PageFrameCursor pageFrameCursor = task.getPageFrameCursor();
         assert pageFrameCursor != null;
         CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
-        if (circuitBreaker.checkIfTripped()) {
+        if (circuitBreaker.checkIfTrippedOrYield()) {
             LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
@@ -255,7 +255,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         // Initialize with current value to avoid spurious release after resume from PeerIsSlowToReadException
         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
         while ((frame = pageFrameCursor.next()) != null) {
-            if (circuitBreaker.checkIfTripped()) {
+            if (circuitBreaker.checkIfTrippedOrYield()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }

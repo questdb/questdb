@@ -117,7 +117,7 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
         if (circuitBreaker != null) {
             while (hasNext()) {
                 counter.inc();
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
         } else {
             while (hasNext()) {

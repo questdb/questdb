@@ -113,6 +113,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean parallelTopKEnabled;
     private boolean parallelHorizonJoinEnabled;
     private boolean parallelWindowJoinEnabled;
+    private long queryRegistryOwnerId = -1;
     private QueryFutureUpdateListener queryFutureUpdateListener = QueryFutureUpdateListener.EMPTY;
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
@@ -347,6 +348,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long getQueryRegistryOwnerId() {
+        return queryRegistryOwnerId;
+    }
+
+    @Override
     public int getNowTimestampType() {
         return nowTimestampType;
     }
@@ -544,6 +550,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;
+        this.queryRegistryOwnerId = -1;
         // Defensive: a query reusing this per-connection context must never inherit a
         // stale supervisor from a prior query. QueryProgress restores it in the finally of
         // cursor open; reset() is a backstop for reused per-connection contexts if that
@@ -632,6 +639,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setMemoryTracker(@Nullable MemoryTracker tracker) {
         this.memoryTracker = tracker;
+    }
+
+    @Override
+    public void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
+        this.queryRegistryOwnerId = queryRegistryOwnerId;
     }
 
     @Override

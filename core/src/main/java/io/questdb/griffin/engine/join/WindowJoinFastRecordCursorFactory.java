@@ -722,7 +722,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         if (slaveTimestamp > slaveTimestampHi) {
                             break;
@@ -1034,7 +1034,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         if (slaveTimestamp > slaveTimestampHi) {
                             break;
@@ -1296,7 +1296,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         if (slaveTimestamp > slaveTimestampHi) {
                             break;
@@ -1552,7 +1552,7 @@ public class WindowJoinFastRecordCursorFactory extends AbstractRecordCursorFacto
                     slaveTimeFrameHelper.recordAt(baseSlaveRowId);
                     for (; ; ) {
                         slaveTimeFrameHelper.recordAtRowIndex(slaveRowIndex);
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         final long slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
                         if (slaveTimestamp > slaveTimestampHi) {
                             break;

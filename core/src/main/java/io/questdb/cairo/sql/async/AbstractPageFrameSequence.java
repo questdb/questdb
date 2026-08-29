@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberWaitCoordinator;
 import io.questdb.mp.continuation.SuspensionScope;
@@ -46,6 +47,7 @@ abstract class AbstractPageFrameSequence {
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue =
             new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
+    private FiberDispatchContext dispatchContext;
 
     public CairoException buildInterruptionException() {
         final int reason = getCancelReason();
@@ -109,6 +111,10 @@ abstract class AbstractPageFrameSequence {
     }
 
     public abstract SqlExecutionCircuitBreaker getCircuitBreaker();
+
+    public FiberDispatchContext getDispatchContext() {
+        return dispatchContext;
+    }
 
     public long getProgressVersion() {
         return progressVersion.get();
@@ -215,6 +221,7 @@ abstract class AbstractPageFrameSequence {
     }
 
     protected final void resetCancellation() {
+        dispatchContext = Fiber.captureParallelDispatchContext();
         cancellationSignal.reopen();
         cancelReason.set(CANCEL_REASON_UNSET);
     }

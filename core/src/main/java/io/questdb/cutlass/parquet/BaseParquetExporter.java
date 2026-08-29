@@ -84,7 +84,7 @@ public abstract class BaseParquetExporter {
                 if (rowCount == 0) break;
             }
 
-            if (circuitBreaker.checkIfTripped()) {
+            if (circuitBreaker.checkIfTrippedOrYield()) {
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
             exporter.writeHybridFrame(columnData, rowCount);

@@ -217,7 +217,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                         .setInterruption(true);
             }
             if (statefulCircuitBreaker != null) {
-                statefulCircuitBreaker.statefulThrowExceptionIfTripped();
+                statefulCircuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             }
             throw CairoException.nonCritical().put("query aborted").setInterruption(true);
         }
@@ -317,7 +317,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             @Nullable SqlExecutionCircuitBreaker statefulCircuitBreaker
     ) {
         if (statefulCircuitBreaker != null) {
-            statefulCircuitBreaker.statefulThrowExceptionIfTripped();
+            statefulCircuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         } else if (circuitBreaker.checkIfTripped()) {
             throw CairoException.nonCritical().put("query aborted").setInterruption(true);
         }

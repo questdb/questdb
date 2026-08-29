@@ -204,7 +204,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
 
     private void buildMap() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         frameSequence.prepareForDispatch();
         frameSequence.getAtom().getFilterContext().initMemoryPools(frameSequence.getPageFrameAddressCache(), frameSequence.getMemoryTracker());
         frameSequence.dispatchAndAwait();
@@ -227,7 +227,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     postAggregationDoneLatch,
                     postAggregationStartedCounter
             );
-            if (postAggregationCircuitBreaker.checkIfTripped()) {
+            if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
                 throw buildInterruptionException();
             }
             // The shards contain non-intersecting row groups, so we can return what's in the shards without merging them.
@@ -264,7 +264,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 if (dispatcher != null && !publicationPermit) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                     final Map shard = atom.getDestShards().getQuick(shardIndex);
                     final DirectLongLongSortedList ownerList = atom.getLongTopKList(
                             -1,
@@ -282,7 +282,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
 
                         if (!isOwnerParkable && workStealingStrategy.shouldSteal(processedCount)) {
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
@@ -335,7 +335,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
                     }
-                    if (circuitBreaker.checkIfTripped()) {
+                    if (circuitBreaker.checkIfTrippedOrYield()) {
                         postAggregationCircuitBreaker.cancel();
                     }
 
@@ -365,7 +365,7 @@ class AsyncGroupByRecordCursor implements RecordCursor {
             }
         }
 
-        if (postAggregationCircuitBreaker.checkIfTripped()) {
+        if (postAggregationCircuitBreaker.checkIfTrippedOrYield()) {
             throw buildInterruptionException();
         }
 

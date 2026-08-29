@@ -94,6 +94,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     static final int QUERY_UPDATE_CONFIRMATION = QUERY_INSERT_CONFIRMATION + 1; // 16
     private static final byte DEFAULT_API_VERSION = 1;
     private static final Log LOG = LogFactory.getLog(JsonQueryProcessorState.class);
+    private static final long SQL_EXECUTION_OWNER_UNINITIALIZED = Long.MIN_VALUE;
     private final HttpResponseArrayWriteState arrayState = new HttpResponseArrayWriteState();
     private final StringSink columnNameSink = new StringSink();
     private final ObjList<String> columnNames = new ObjList<>();
@@ -123,6 +124,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private int errorPosition;
     private long executeStartNanos;
     private boolean explain = false;
+    private boolean isSqlExecutionOwnerMounted;
     private boolean noMeta = false;
     // Operation is stored here to be retried
     private Operation operation;
@@ -139,6 +141,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private RecordCursorFactory recordCursorFactory;
     private Rnd rnd;
     private long skip;
+    private long sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
     private long stop;
     private boolean timings = false;
     private long updateRecords;
@@ -172,43 +175,47 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void clear() {
-        apiVersion = DEFAULT_API_VERSION;
-        columnCount = 0;
-        columnSkewList.clear();
-        columnTypesAndFlags.clear();
-        columnNames.clear();
-        queryTimestampIndex = -1;
-        cursor = Misc.free(cursor);
-        record = null;
-        if (recordCursorFactory != null) {
-            if (queryCacheable) {
-                httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
-            } else {
-                recordCursorFactory.close();
+        try {
+            apiVersion = DEFAULT_API_VERSION;
+            columnCount = 0;
+            columnSkewList.clear();
+            columnTypesAndFlags.clear();
+            columnNames.clear();
+            queryTimestampIndex = -1;
+            cursor = Misc.free(cursor);
+            record = null;
+            if (recordCursorFactory != null) {
+                if (queryCacheable) {
+                    httpConnectionContext.getSelectCache().put(query, recordCursorFactory);
+                } else {
+                    recordCursorFactory.close();
+                }
+                recordCursorFactory = null;
             }
-            recordCursorFactory = null;
+            query.clear();
+            columnNameSink.clear();
+            queryState = QUERY_SETUP_FIRST_RECORD;
+            columnIndex = 0;
+            columnValueFullySent = true;
+            arrayState.clear();
+            countRows = false;
+            explain = false;
+            noMeta = false;
+            timings = false;
+            pausedQuery = false;
+            quoteLargeNum = false;
+            queryJitCompiled = false;
+            operationFuture = Misc.free(operationFuture);
+            skip = 0;
+            count = 0;
+            counter.clear();
+            stop = 0;
+            containsSecret = false;
+            errorMessage.clear();
+            updateRecords = 0;
+        } finally {
+            clearSqlExecutionOwner();
         }
-        query.clear();
-        columnNameSink.clear();
-        queryState = QUERY_SETUP_FIRST_RECORD;
-        columnIndex = 0;
-        columnValueFullySent = true;
-        arrayState.clear();
-        countRows = false;
-        explain = false;
-        noMeta = false;
-        timings = false;
-        pausedQuery = false;
-        quoteLargeNum = false;
-        queryJitCompiled = false;
-        operationFuture = Misc.free(operationFuture);
-        skip = 0;
-        count = 0;
-        counter.clear();
-        stop = 0;
-        containsSecret = false;
-        errorMessage.clear();
-        updateRecords = 0;
     }
 
     public void clearFactory() {
@@ -219,9 +226,13 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     @Override
     public void close() {
-        cursor = Misc.free(cursor);
-        clearFactory();
-        freeAsyncOperation();
+        try {
+            cursor = Misc.free(cursor);
+            clearFactory();
+            freeAsyncOperation();
+        } finally {
+            clearSqlExecutionOwner();
+        }
     }
 
     public void configure(
@@ -309,6 +320,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         return rnd;
     }
 
+    public long getSqlExecutionOwnerId() {
+        return sqlExecutionOwnerId;
+    }
+
     public long getStatementTimeout() {
         return statementTimeout;
     }
@@ -319,6 +334,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public boolean isPausedQuery() {
         return pausedQuery;
+    }
+
+    public boolean isSqlExecutionOwnerStarted() {
+        return sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED;
     }
 
     public void logBufferTooSmall() {
@@ -332,6 +351,18 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                 .$(", execute: ").$(nanosecondClock.getTicks() - executeStartNanos)
                 .$(", q=`").$safe(getQueryOrHidden())
                 .$("`]").$();
+    }
+
+    public void mountSqlExecutionOwner() {
+        final long ownerId = sqlExecutionOwnerId;
+        if (ownerId > -1 && !isSqlExecutionOwnerMounted) {
+            final var executionContext = httpConnectionContext.getSqlExecutionContext();
+            if (executionContext == null) {
+                throw new IllegalStateException("HTTP SQL execution owner has no execution context");
+            }
+            executionContext.getCairoEngine().mountSqlExecution(ownerId, executionContext);
+            isSqlExecutionOwnerMounted = true;
+        }
     }
 
     public void onResumeConfirmation(HttpChunkedResponse response) throws PeerIsSlowToReadException, PeerDisconnectedException {
@@ -397,6 +428,17 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.rnd = rnd;
     }
 
+    public void setSqlExecutionOwnerId(long sqlExecutionOwnerId) {
+        if (this.sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
+            throw new IllegalStateException("HTTP SQL execution owner is already initialized");
+        }
+        if (sqlExecutionOwnerId < -1) {
+            throw new IllegalArgumentException("HTTP SQL execution owner ID is invalid");
+        }
+        this.sqlExecutionOwnerId = sqlExecutionOwnerId;
+        isSqlExecutionOwnerMounted = sqlExecutionOwnerId > -1;
+    }
+
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
     }
@@ -430,6 +472,34 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void storeUpdateConfirmation(long updateRecords) {
         queryState = QUERY_UPDATE_CONFIRMATION;
         this.updateRecords = updateRecords;
+    }
+
+    public void unmountSqlExecutionOwner() {
+        final long ownerId = sqlExecutionOwnerId;
+        if (ownerId > -1 && isSqlExecutionOwnerMounted) {
+            final var executionContext = httpConnectionContext.getSqlExecutionContext();
+            if (executionContext == null) {
+                throw new IllegalStateException("HTTP SQL execution owner has no execution context");
+            }
+            executionContext.getCairoEngine().unmountSqlExecution(ownerId, executionContext);
+            isSqlExecutionOwnerMounted = false;
+        }
+    }
+
+    private void clearSqlExecutionOwner() {
+        final long ownerId = sqlExecutionOwnerId;
+        try {
+            if (ownerId > -1) {
+                final var executionContext = httpConnectionContext.getSqlExecutionContext();
+                if (executionContext == null) {
+                    throw new IllegalStateException("HTTP SQL execution owner has no execution context");
+                }
+                executionContext.getCairoEngine().endSqlExecution(ownerId, executionContext);
+            }
+        } finally {
+            sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
+            isSqlExecutionOwnerMounted = false;
+        }
     }
 
     private static byte parseApiVersion(HttpRequestHeader header) {

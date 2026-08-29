@@ -127,6 +127,7 @@ import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.MultiArgFunction;
@@ -149,6 +150,7 @@ import io.questdb.mp.Queue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.SimpleWaitingLock;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.preferences.SettingsStore;
 import io.questdb.std.BoolList;
@@ -168,6 +170,7 @@ import io.questdb.std.NumericException;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Rnd;
 import io.questdb.std.Transient;
 import io.questdb.std.str.MutableCharSink;
@@ -746,6 +749,16 @@ public class CairoEngine implements Closeable, WriterSource {
                 .put("txn timed out [table=").put(tableName)
                 .put(", expectedTxn=").put(seqTxn)
                 .put(", writerTxn=").put(writerTxn);
+    }
+
+    /**
+     * Extension point at an authenticated protocol's SQL boundary, before parsing or compilation.
+     * A non-negative return value identifies an owner that remains active until the matching
+     * {@link #endSqlExecution(long, SqlExecutionContext)} call. The OSS engine has no protocol-level
+     * admission policy and returns {@code -1}.
+     */
+    public long beginSqlExecution(CharSequence query, SqlExecutionContext executionContext) {
+        return -1;
     }
 
     public void buildViewGraphs() {
@@ -2083,6 +2096,12 @@ public class CairoEngine implements Closeable, WriterSource {
         partitionOverwriteControl.enable();
     }
 
+    /**
+     * Completes a protocol-owned SQL execution started by {@link #beginSqlExecution}.
+     */
+    public void endSqlExecution(long ownerId, SqlExecutionContext executionContext) {
+    }
+
     public void enqueueCompileView(TableToken tableToken) {
         viewStateStore.enqueueCompile(tableToken);
     }
@@ -3160,6 +3179,12 @@ public class CairoEngine implements Closeable, WriterSource {
         return walWriterPool.lock(tableToken);
     }
 
+    /**
+     * Mounts a retained protocol-owned execution for another executable segment.
+     */
+    public void mountSqlExecution(long ownerId, SqlExecutionContext executionContext) {
+    }
+
     public boolean notifyDropped(TableToken tableToken) {
         if (tableNameRegistry.dropTable(tableToken)) {
             notifyPoolsTableDropped(tableToken, false);
@@ -3223,6 +3248,30 @@ public class CairoEngine implements Closeable, WriterSource {
         unpublishedWalTxnCount.incrementAndGet();
     }
 
+    /**
+     * Extension point invoked only by the explicitly suspendable SQL circuit-breaker poll.
+     * The base engine has no cooperative scheduling policy. Derived engines may use this
+     * boundary to consult execution state owned by the currently mounted Fiber segment.
+     */
+    public void onSqlExecutionCooperativePoll() {
+    }
+
+    /**
+     * Extension point invoked after a SQL execution has been published in the query registry and
+     * its cancellation signal has been bound. The returned lease, when non-null, is owned by the
+     * matching registry entry and is closed exactly once before that entry is recycled.
+     * <p>
+     * The base engine deliberately has no execution-admission or scheduling policy.
+     */
+    public @Nullable QuietCloseable onSqlExecutionRegistered(
+            long queryId,
+            SqlExecutionContext executionContext,
+            FiberCancellationSignal cancellationSignal,
+            long cancellationGeneration
+    ) {
+        return null;
+    }
+
     public void print(CharSequence sql, MutableCharSink<?> sink) throws SqlException {
         print(sql, sink, rootExecutionContext);
     }
@@ -3235,6 +3284,18 @@ public class CairoEngine implements Closeable, WriterSource {
         ) {
             CursorPrinter.println(cursor, factory.getMetadata(), sink);
         }
+    }
+
+    /**
+     * Publishes the query text of a protocol-owned execution after compilation has classified
+     * whether the statement contains secrets. The OSS engine has no protocol owner to update.
+     */
+    public void publishSqlExecutionQuery(
+            long ownerId,
+            CharSequence query,
+            boolean containsSecret,
+            SqlExecutionContext executionContext
+    ) {
     }
 
     /**
@@ -3646,6 +3707,12 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public void unlockWalWriters(TableToken tableToken) {
         walWriterPool.unlock(tableToken, true);
+    }
+
+    /**
+     * Unmounts a retained protocol-owned execution while preserving its lifetime owner.
+     */
+    public void unmountSqlExecution(long ownerId, SqlExecutionContext executionContext) {
     }
 
     public long update(CharSequence updateSql, SqlExecutionContext sqlExecutionContext) throws SqlException {
@@ -4898,7 +4965,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     protected SqlExecutionContext createRootExecutionContext() {
-        return new SqlExecutionContextImpl(this, 0).with(AllowAllSecurityContext.INSTANCE);
+        return new SystemSqlExecutionContext(this, 0).with(AllowAllSecurityContext.INSTANCE);
     }
 
     protected @NotNull TableNameRegistry createTableNameRegistry(CairoConfiguration configuration, TableFlagResolver tableFlagResolver) {

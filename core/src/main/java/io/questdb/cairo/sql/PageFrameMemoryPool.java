@@ -68,11 +68,13 @@ import org.jetbrains.annotations.TestOnly;
  * bytes ({@code cairo.sql.parquet.cache.memory.size}). When a miss arrives
  * and {@code cachedBytes} is already at or above the budget,
  * {@link #acquireBuffer} reuses the LRU oldest unpinned
- * {@link ParquetBuffers} in place: it resets only the logical state and
- * leaves all native memory alive so the upcoming decode overwrites it via
- * the Rust {@code ColumnChunkBuffers::reset()} path, growing each
- * {@code Vec} via realloc only when the new chunk exceeds the buffer's
- * historical peak. Because reuse keeps that peak allocated, each entry is
+     * {@link ParquetBuffers} in place: it retains the tracker-aware data/aux
+     * vectors so the upcoming decode overwrites them via the Rust
+     * {@code ColumnChunkBuffers::reset()} path, growing each vector via realloc
+     * only when the new chunk exceeds the buffer's historical peak. A
+     * tracker-bound decode drops system-allocated VarcharSlice page buffers
+     * before returning their explicit charge; untracked decodes may reuse those
+     * buffers across columns. Because the cache retains its data/aux peak, each entry is
  * accounted at {@code retainedBytes} - the largest decode it has held - and
  * after every decode {@link #trimToBudget} closes LRU-oldest unpinned
  * entries until the total drops back under the budget. Entries currently

@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
@@ -237,8 +238,8 @@ public class VectorAggregateEntry implements Mutable {
     ) {
         startedCounter.incrementAndGet();
 
-        if (circuitBreaker.checkIfTripped() || (oomCounter != null && oomCounter.get() > 0)) {
-            doneLatch.countDown();
+        if (circuitBreaker.checkIfTrippedOrYield() || (oomCounter != null && oomCounter.get() > 0)) {
+            complete(doneLatch);
             return;
         }
 
@@ -270,14 +271,22 @@ public class VectorAggregateEntry implements Mutable {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
-                doneLatch.countDown();
+                complete(doneLatch);
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             CairoException.rethrowCleanupFailure(failure);
             return;
         }
-        doneLatch.countDown();
+        complete(doneLatch);
+    }
+
+    private static void complete(CountDownLatchSPI doneLatch) {
+        try {
+            MemoryTracker.detachResourceMemoryCurrentThread();
+        } finally {
+            doneLatch.countDown();
+        }
     }
 
     void of(

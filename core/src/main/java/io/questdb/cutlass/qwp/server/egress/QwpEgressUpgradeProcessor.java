@@ -1903,7 +1903,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             // The page-frame path never consults the breaker inside the SQL layer; this
             // between-batch check is the only timeout/disconnect enforcement it gets.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             // Credit-limited streams park when the client-advertised budget hits
             // zero. The next CREDIT frame replenishes via handleCredit and
             // re-enters streamResults to continue.

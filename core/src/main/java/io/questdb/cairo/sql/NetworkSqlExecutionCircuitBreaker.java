@@ -126,6 +126,24 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         return testConnection(fd);
     }
 
+    @Override
+    public boolean checkIfTrippedOrYield() {
+        final boolean isTripped = checkIfTripped();
+        if (!isTripped) {
+            engine.onSqlExecutionCooperativePoll();
+        }
+        return isTripped;
+    }
+
+    @Override
+    public boolean checkIfTrippedOrYield(long millis, long fd) {
+        final boolean isTripped = checkIfTripped(millis, fd);
+        if (!isTripped) {
+            engine.onSqlExecutionCooperativePoll();
+        }
+        return isTripped;
+    }
+
     public void clear() {
         secret = -1;
         powerUpTime = Long.MAX_VALUE;
@@ -196,6 +214,24 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
             return STATE_BROKEN_CONNECTION;
         }
         return STATE_OK;
+    }
+
+    @Override
+    public int getStateOrYield() {
+        final int state = getState();
+        if (state == STATE_OK) {
+            engine.onSqlExecutionCooperativePoll();
+        }
+        return state;
+    }
+
+    @Override
+    public int getStateOrYield(long millis, long fd) {
+        final int state = getState(millis, fd);
+        if (state == STATE_OK) {
+            engine.onSqlExecutionCooperativePoll();
+        }
+        return state;
     }
 
     @Override
@@ -288,6 +324,18 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
+    public void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
+        statefulThrowExceptionIfTrippedNoThrottle();
+        engine.onSqlExecutionCooperativePoll();
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedOrYield() {
+        statefulThrowExceptionIfTripped();
+        engine.onSqlExecutionCooperativePoll();
+    }
+
+    @Override
     public void statefulThrowExceptionIfTrippedNoThrottle() {
         final long now = clock.getTicks();
         testCount = 0;
@@ -313,6 +361,12 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (testConnectionTimeThrottled(now, fd)) {
             throw CairoException.queryDisconnected(fd);
         }
+    }
+
+    @Override
+    public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
+        statefulThrowExceptionIfTrippedTimeThrottled();
+        engine.onSqlExecutionCooperativePoll();
     }
 
     @Override

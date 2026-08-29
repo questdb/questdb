@@ -154,7 +154,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         if (currentAddr >= emitEndAddr) {
             return false;
         }
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         final long rowId = Unsafe.getLong(currentAddr);
         currentAddr += entrySize;
         baseCursor.recordAt(baseRecord, rowId);
@@ -259,7 +259,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             runBuild();
         }
         entries.sort();
-        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         computeEmitWindow();
         toTop();
         if (emitStartAddr < emitEndAddr) {
@@ -295,7 +295,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
             return;
         }
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             encoder.encodeTopK(baseRecord, baseRecord.getRowId(), entries);
         }
     }
@@ -321,7 +321,7 @@ class EncodedSortLimitedLightRecordCursor implements DelegatingRecordCursor, Rec
         long rowsInGroup = 1;
         long rowsSoFar = 0;
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             addr = encodeCurrentRow();
             final long currentKey = Unsafe.getLong(addr);
             if (groupKey == currentKey) {

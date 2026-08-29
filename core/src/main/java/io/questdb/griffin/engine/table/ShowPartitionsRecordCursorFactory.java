@@ -202,7 +202,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
         @Override
         public boolean hasNext() {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTripped();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedOrYield();
             if (++partitionIndex < limit) {
                 loadNextPartition();
                 return true;

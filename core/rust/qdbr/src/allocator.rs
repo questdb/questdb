@@ -27,7 +27,7 @@ use std::fmt::{Display, Formatter};
 use std::ptr::NonNull;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use qdb_core::memory_tracker::MemoryTracker;
+use qdb_core::memory_tracker::{MemoryScope, MemoryTracker};
 
 #[cfg(test)]
 use std::sync::Arc;
@@ -49,8 +49,14 @@ pub fn take_last_alloc_error() -> Option<AllocFailure> {
 /// Identifies which limit was breached when an allocation is rejected.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum AllocScope {
+    /// The Resource Group tracker binding is invalid.
+    Configuration,
     /// The global RSS memory limit, shared by every allocation.
     Global,
+    /// The Resource Group aggregate memory limit.
+    Group,
+    /// The managed-query process safety limit.
+    Process,
     /// The per-workload memory tracker bound to this allocator.
     Query,
 }
@@ -103,7 +109,10 @@ impl Display for AllocFailure {
                 rss_mem_used,
             } => {
                 let scope_label = match scope {
+                    AllocScope::Configuration => "resource-group tracker configuration",
                     AllocScope::Global => "global",
+                    AllocScope::Group => "group",
+                    AllocScope::Process => "process",
                     AllocScope::Query => "query",
                 };
                 write!(
@@ -303,27 +312,32 @@ impl QdbAllocator {
                 return Err(AllocError);
             }
         }
-        // Per-workload limit, only when a tracker is bound. Resolve the tracker once
-        // rather than null-checking it twice for its two counter words.
-        if let Some(tracker) = self.memory_tracker() {
-            let limit = tracker.limit();
-            if limit > 0 {
-                let used = tracker.used();
-                if used.saturating_add(requested_size) > limit {
-                    ALLOC_ERROR.with(|error| {
-                        *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {
-                            memory_tag: self.memory_tag,
-                            requested_size,
-                            scope: AllocScope::Query,
-                            rss_mem_limit: limit,
-                            rss_mem_used: used,
-                        });
-                    });
-                    return Err(AllocError);
-                }
-            }
-        }
         Ok(())
+    }
+
+    fn reserve_tracker(&self, requested_size: usize) -> Result<bool, AllocError> {
+        let Some(tracker) = self.memory_tracker() else {
+            return Ok(false);
+        };
+        if let Err(breach) = tracker.try_charge(requested_size) {
+            let scope = match breach.scope {
+                MemoryScope::Configuration => AllocScope::Configuration,
+                MemoryScope::Group => AllocScope::Group,
+                MemoryScope::Process => AllocScope::Process,
+                MemoryScope::Query => AllocScope::Query,
+            };
+            ALLOC_ERROR.with(|error| {
+                *error.borrow_mut() = Some(AllocFailure::MemoryLimitExceeded {
+                    memory_tag: self.memory_tag,
+                    requested_size,
+                    scope,
+                    rss_mem_limit: breach.limit,
+                    rss_mem_used: breach.used,
+                });
+            });
+            return Err(AllocError);
+        }
+        Ok(true)
     }
 
     /// Charges the requested `layout.size()`, not the slice length the allocator
@@ -340,18 +354,12 @@ impl QdbAllocator {
             .fetch_add(requested_size, COUNTER_ORDERING);
         self.rss_mem_used()
             .fetch_add(requested_size, COUNTER_ORDERING);
-        if let Some(tracker) = self.memory_tracker() {
-            tracker.charge_unchecked(requested_size);
-        }
         self.malloc_count().fetch_add(1, COUNTER_ORDERING);
     }
 
     fn track_grow(&self, delta: usize) {
         self.tagged_used().fetch_add(delta, COUNTER_ORDERING);
         self.rss_mem_used().fetch_add(delta, COUNTER_ORDERING);
-        if let Some(tracker) = self.memory_tracker() {
-            tracker.charge_unchecked(delta);
-        }
         self.realloc_count().fetch_add(1, COUNTER_ORDERING);
     }
 
@@ -381,8 +389,9 @@ impl QdbAllocator {
         self.free_count().fetch_add(1, COUNTER_ORDERING);
     }
 
-    /// Charges `bytes` of externally-allocated native memory against the
-    /// per-query tracker after checking the configured limits. Returns an
+    /// Reserves `bytes` of externally-allocated native memory against the
+    /// per-query tracker before the backing allocation is allowed to happen.
+    /// Returns an
     /// error (recording the breach via `take_last_alloc_error`, exactly as a
     /// rejected `allocate` does) when the per-query or global limit would be
     /// crossed.
@@ -400,9 +409,7 @@ impl QdbAllocator {
             return Ok(());
         }
         self.check_alloc_limit(bytes)?;
-        if let Some(tracker) = self.memory_tracker() {
-            tracker.charge_unchecked(bytes);
-        }
+        self.reserve_tracker(bytes)?;
         Ok(())
     }
 
@@ -418,23 +425,43 @@ impl QdbAllocator {
             tracker.credit(bytes);
         }
     }
+
+    pub(crate) fn tracks_query_memory(&self) -> bool {
+        self.memory_tracker().is_some()
+    }
 }
 
 unsafe impl Allocator for QdbAllocator {
     fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let aligned_layout = Self::aligned_layout(layout)?;
         self.check_alloc_limit(layout.size())?;
-        let allocated = Global
-            .allocate(Self::aligned_layout(layout)?)
-            .map_err(|error| save_oom_err(error, layout.size()))?;
+        let tracker_reserved = self.reserve_tracker(layout.size())?;
+        let allocated = match Global.allocate(aligned_layout) {
+            Ok(allocated) => allocated,
+            Err(error) => {
+                if tracker_reserved {
+                    self.memory_tracker().unwrap().credit(layout.size());
+                }
+                return Err(save_oom_err(error, layout.size()));
+            }
+        };
         self.track_allocate(layout.size());
         Ok(allocated)
     }
 
     fn allocate_zeroed(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
+        let aligned_layout = Self::aligned_layout(layout)?;
         self.check_alloc_limit(layout.size())?;
-        let allocated = Global
-            .allocate_zeroed(Self::aligned_layout(layout)?)
-            .map_err(|error| save_oom_err(error, layout.size()))?;
+        let tracker_reserved = self.reserve_tracker(layout.size())?;
+        let allocated = match Global.allocate_zeroed(aligned_layout) {
+            Ok(allocated) => allocated,
+            Err(error) => {
+                if tracker_reserved {
+                    self.memory_tracker().unwrap().credit(layout.size());
+                }
+                return Err(save_oom_err(error, layout.size()));
+            }
+        };
         self.track_allocate(layout.size());
         Ok(allocated)
     }
@@ -457,14 +484,19 @@ unsafe impl Allocator for QdbAllocator {
     ) -> Result<NonNull<[u8]>, AllocError> {
         assert!(new_layout.size() > old_layout.size());
         let delta = new_layout.size() - old_layout.size();
+        let old_aligned_layout = Self::aligned_layout(old_layout)?;
+        let new_aligned_layout = Self::aligned_layout(new_layout)?;
         self.check_alloc_limit(delta)?;
-        let allocated = Global
-            .grow(
-                ptr,
-                Self::aligned_layout(old_layout)?,
-                Self::aligned_layout(new_layout)?,
-            )
-            .map_err(|error| save_oom_err(error, delta))?;
+        let tracker_reserved = self.reserve_tracker(delta)?;
+        let allocated = match Global.grow(ptr, old_aligned_layout, new_aligned_layout) {
+            Ok(allocated) => allocated,
+            Err(error) => {
+                if tracker_reserved {
+                    self.memory_tracker().unwrap().credit(delta);
+                }
+                return Err(save_oom_err(error, delta));
+            }
+        };
         self.track_grow(delta);
         Ok(allocated)
     }
@@ -477,14 +509,19 @@ unsafe impl Allocator for QdbAllocator {
     ) -> Result<NonNull<[u8]>, AllocError> {
         assert!(new_layout.size() > old_layout.size());
         let delta = new_layout.size() - old_layout.size();
+        let old_aligned_layout = Self::aligned_layout(old_layout)?;
+        let new_aligned_layout = Self::aligned_layout(new_layout)?;
         self.check_alloc_limit(delta)?;
-        let allocated = Global
-            .grow_zeroed(
-                ptr,
-                Self::aligned_layout(old_layout)?,
-                Self::aligned_layout(new_layout)?,
-            )
-            .map_err(|error| save_oom_err(error, delta))?;
+        let tracker_reserved = self.reserve_tracker(delta)?;
+        let allocated = match Global.grow_zeroed(ptr, old_aligned_layout, new_aligned_layout) {
+            Ok(allocated) => allocated,
+            Err(error) => {
+                if tracker_reserved {
+                    self.memory_tracker().unwrap().credit(delta);
+                }
+                return Err(save_oom_err(error, delta));
+            }
+        };
         self.track_grow(delta);
         Ok(allocated)
     }

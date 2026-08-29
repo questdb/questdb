@@ -35,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.NotNull;
@@ -129,9 +130,10 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         try {
             final int slotId = ctx.maybeAcquire(carrierId, owner, circuitBreaker);
             try {
-                if (!circuitBreaker.checkIfTripped()) {
-                    ctx.mergeShard(slotId, shardIndex);
+                if (circuitBreaker.checkIfTrippedOrYield()) {
+                    return;
                 }
+                ctx.mergeShard(slotId, shardIndex);
             } finally {
                 ctx.release(slotId);
             }
@@ -148,6 +150,11 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
+                MemoryTracker.detachResourceMemoryCurrentThread();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            try {
                 doneLatch.countDown();
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
@@ -155,7 +162,11 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             CairoException.rethrowCleanupFailure(failure);
             return;
         }
-        doneLatch.countDown();
+        try {
+            MemoryTracker.detachResourceMemoryCurrentThread();
+        } finally {
+            doneLatch.countDown();
+        }
     }
 
     @Override

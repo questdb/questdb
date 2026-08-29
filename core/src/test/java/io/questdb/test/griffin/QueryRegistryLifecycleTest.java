@@ -32,7 +32,18 @@ import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.griffin.QueryRegistry;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.CarrierIdentity;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
+import io.questdb.mp.continuation.FiberDispatchController;
+import io.questdb.mp.continuation.FiberDispatchRequest;
+import io.questdb.mp.continuation.FiberDispatchSession;
+import io.questdb.mp.continuation.FiberDispatchTicket;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.FiberWakeSink;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.test.AbstractCairoTest;
@@ -526,6 +537,38 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
                     throw new AssertionError("canceller failed", fault.get());
                 }
                 Assert.assertFalse(cancelResult.get());
+            }
+        });
+    }
+
+    @Test
+    public void testProtocolOwnerIsRetainedOnlyByItsOwnExecutionContext() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(
+                    1,
+                    1,
+                    8,
+                    0,
+                    ImmediateDispatchController.INSTANCE,
+                    FiberWakeSink.NO_OP
+            );
+            final ProtocolOwnerTask task = new ProtocolOwnerTask(engine.getQueryRegistry());
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (!task.isDone() && System.nanoTime() < deadline) {
+                    runtime.drain(8);
+                }
+                Assert.assertTrue("protocol owner task did not complete", task.isDone());
+                Assert.assertNull(task.failure);
+            } finally {
+                runtime.beginQuiesce();
+                final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+                    runtime.drain(8);
+                }
+                Assert.assertTrue(runtime.awaitClosed(deadline));
+                runtime.closeAfterDrained();
             }
         });
     }
@@ -1096,6 +1139,63 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         }
     }
 
+    private enum ImmediateDispatchController implements FiberDispatchController, FiberDispatchSession, FiberDispatchTicket {
+        INSTANCE;
+
+        private boolean quiescing;
+
+        @Override
+        public void beginQuiesce() {
+            quiescing = true;
+        }
+
+        @Override
+        public boolean isQuiesced() {
+            return quiescing;
+        }
+
+        @Override
+        public void onMount(FiberDispatchRequest request) {
+        }
+
+        @Override
+        public void onUnmount(FiberDispatchRequest request, boolean wasMounted) {
+        }
+
+        @Override
+        public FiberDispatchSession openSession(FiberRuntime runtime) {
+            quiescing = false;
+            return this;
+        }
+
+        @Override
+        public void progressQuiesce() {
+        }
+
+        @Override
+        public void requestDispatch(FiberDispatchRequest request) {
+            Assert.assertTrue(request.grant(request.getDispatchEpoch(), this));
+        }
+
+        @Override
+        public FiberDispatchTicket tryDispatchDirect(FiberDispatchRequest request) {
+            return this;
+        }
+    }
+
+    private static final class OwnerDispatchContext implements FiberDispatchContext {
+        private final long ownerId;
+
+        private OwnerDispatchContext(long ownerId) {
+            this.ownerId = ownerId;
+        }
+
+        @Override
+        public long getQueryRegistryOwnerId() {
+            return ownerId;
+        }
+    }
+
     private static class PrincipalSecurityContext extends AllowAllSecurityContext {
         private final String principal;
 
@@ -1106,6 +1206,60 @@ public class QueryRegistryLifecycleTest extends AbstractCairoTest {
         @Override
         public String getPrincipal() {
             return principal;
+        }
+    }
+
+    private static final class ProtocolOwnerTask extends FiberTask {
+        private Throwable failure;
+        private final QueryRegistry registry;
+
+        private ProtocolOwnerTask(QueryRegistry registry) {
+            this.registry = registry;
+        }
+
+        @Override
+        protected boolean runStep() {
+            try (
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE);
+                    SqlExecutionContextImpl nestedContext = new SqlExecutionContextImpl(engine, 1)
+                            .with(AllowAllSecurityContext.INSTANCE)
+            ) {
+                final long ownerId = registry.registerOwner("SELECT owner", context);
+                final QueryRegistry.Entry ownerEntry = registry.getEntry(ownerId);
+                Assert.assertNotNull(ownerEntry);
+                Assert.assertEquals("<PENDING>", ownerEntry.getQuery().toString());
+                registry.publishOwnerQuery(ownerId, "SELECT owner", false);
+                Assert.assertEquals("SELECT owner", ownerEntry.getQuery().toString());
+                registry.publishOwnerQuery(ownerId, "SELECT hidden", true);
+                Assert.assertEquals("SELECT owner", ownerEntry.getQuery().toString());
+
+                Assert.assertTrue(Fiber.yieldForDispatch(new OwnerDispatchContext(ownerId)));
+                final long nestedId = registry.register("SELECT nested", context);
+                Assert.assertEquals(ownerId, nestedId);
+                registry.unregister(nestedId, context);
+                Assert.assertSame(ownerEntry, registry.getEntry(ownerId));
+
+                final long independentId = registry.register("SELECT system nested", nestedContext);
+                Assert.assertNotEquals(ownerId, independentId);
+                registry.unregister(independentId, nestedContext);
+                Assert.assertSame(ownerEntry, registry.getEntry(ownerId));
+
+                Assert.assertTrue(Fiber.yieldForDispatch(null));
+                registry.unregister(ownerId, context);
+                Assert.assertNull(registry.getEntry(ownerId));
+
+                final long ordinaryId = registry.register("SELECT portal_a", context);
+                Assert.assertTrue(Fiber.yieldForDispatch(new OwnerDispatchContext(ordinaryId)));
+                final long siblingId = registry.register("SELECT portal_b", context);
+                Assert.assertNotEquals(ordinaryId, siblingId);
+                registry.unregister(siblingId, context);
+                Assert.assertTrue(Fiber.yieldForDispatch(null));
+                registry.unregister(ordinaryId, context);
+            } catch (Throwable th) {
+                failure = th;
+            }
+            return true;
         }
     }
 

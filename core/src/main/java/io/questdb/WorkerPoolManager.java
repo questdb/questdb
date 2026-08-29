@@ -59,17 +59,19 @@ public abstract class WorkerPoolManager implements Target {
     @Nullable
     private WorkerPool lineTcpWriterPool;
     private final AtomicBoolean running = new AtomicBoolean();
+    private final ServerConfiguration serverConfiguration;
 
     public WorkerPoolManager(ServerConfiguration config) {
+        this.serverConfiguration = config;
         WorkerPool networkPool = null;
         WorkerPool queryPool = null;
         WorkerPool writePool = null;
         try {
-            networkPool = new WorkerPool(config.getSharedWorkerPoolNetworkConfiguration());
+            networkPool = config.createWorkerPool(config.getSharedWorkerPoolNetworkConfiguration());
             queryPool = config.getSharedWorkerPoolQueryConfiguration().getWorkerCount() > 0
-                    ? new WorkerPool(config.getSharedWorkerPoolQueryConfiguration())
+                    ? config.createWorkerPool(config.getSharedWorkerPoolQueryConfiguration())
                     : null;
-            writePool = new WorkerPool(config.getSharedWorkerPoolWriteConfiguration());
+            writePool = config.createWorkerPool(config.getSharedWorkerPoolWriteConfiguration());
             sharedPoolNetwork = networkPool;
             sharedPoolQuery = queryPool;
             sharedPoolWrite = writePool;
@@ -100,6 +102,10 @@ public abstract class WorkerPoolManager implements Target {
         return sharedPoolNetwork;
     }
 
+    public @Nullable WorkerPool getSharedPoolQuery() {
+        return sharedPoolQuery;
+    }
+
     public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
         return getWorkerPool(config, requesterName, sharedPoolWrite);
     }
@@ -125,7 +131,7 @@ public abstract class WorkerPoolManager implements Target {
             String poolName = config.getPoolName();
             WorkerPool dedicatedPool = dedicatedPools.get(poolName);
             if (dedicatedPool == null) {
-                dedicatedPool = new WorkerPool(config);
+                dedicatedPool = serverConfiguration.createWorkerPool(config);
                 dedicatedPools.put(poolName, dedicatedPool);
             }
             LOG.info().$("custom thread pool [name=").$(poolName)

@@ -34,9 +34,11 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberTask;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.mp.continuation.TimerShards;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -107,6 +109,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             return orderedFrameSequence.getCancellationSignal();
         }
         return unorderedFrameSequence != null ? unorderedFrameSequence.getCancellationSignal() : null;
+    }
+
+    @Nullable
+    FiberDispatchContext getDispatchContext() {
+        if (orderedFrameSequence != null) {
+            return orderedFrameSequence.getDispatchContext();
+        }
+        return unorderedFrameSequence != null ? unorderedFrameSequence.getDispatchContext() : null;
     }
 
     boolean isBound() {
@@ -348,10 +358,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             this.orderedReduceTask = null;
             this.orderedFrameSequence = null;
             try {
-                subSeq.done(cursor);
+                MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
-                frameSequence.getReduceFinishedCounter().incrementAndGet();
-                dispatcher.signalProgress(frameSequence);
+                try {
+                    subSeq.done(cursor);
+                } finally {
+                    frameSequence.getReduceFinishedCounter().incrementAndGet();
+                    dispatcher.signalProgress(frameSequence);
+                }
             }
         }
     }
@@ -382,9 +396,13 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             this.unorderedFrameIndex = -1;
             this.unorderedFrameSequence = null;
             try {
-                frameSequence.getDoneLatch().countDown();
+                MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
-                dispatcher.signalProgress(frameSequence);
+                try {
+                    frameSequence.getDoneLatch().countDown();
+                } finally {
+                    dispatcher.signalProgress(frameSequence);
+                }
             }
         }
     }

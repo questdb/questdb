@@ -334,7 +334,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (doneLatch.done(queuedCount)) {
                 break;
             }
-            if (circuitBreaker.checkIfTripped()) {
+            if (circuitBreaker.checkIfTrippedOrYield()) {
                 sharedCB.cancel();
             }
 
@@ -577,7 +577,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
             // Time-throttled so it checks cancellation/timeout unconditionally while bounding the
             // connection probe to once per window.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final int vafCount = vafList.size();
             final RingQueue<VectorAggregateTask> queue = bus.getVectorAggregateQueue();
             final MPSequence pubSeq = bus.getVectorAggregatePubSeq();
@@ -623,7 +623,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         final int valueColumnIndex = vaf.getColumnIndex();
 
                         if (dispatcher != null && !publicationPermit) {
-                            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                             VectorAggregateEntry.aggregateUnsafe(
                                     workerId,
                                     oomCounter,
@@ -652,7 +652,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
 
                                 if (!isOwnerParkable && workStealingStrategy.shouldSteal(mergedCount)) {
                                     VectorAggregateEntry.aggregateUnsafe(
@@ -734,7 +734,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             sharedCircuitBreaker,
                             workStealingStrategy
                     );
-                    if (sharedCircuitBreaker.checkIfTripped()) {
+                    if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
                         resetRostiMemorySize();
                     }
                     frameAddressCache.unfreezeCoveredReaders();
@@ -753,11 +753,11 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 aggregateError.throwError();
             }
 
-            if (sharedCircuitBreaker.checkIfTripped()) {
+            if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
                 // A tripped shared breaker with no recorded error means the dispatcher aborted
                 // queued entries (quiesce); the rostis were reset above, so the query must fail
                 // rather than return a partial aggregate.
-                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                 throw CairoException.queryCancelled();
             }
 
@@ -784,7 +784,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             if (pRostiBig == pRosti[i] || raf.getSize(pRosti[i]) < 1) {
                                 continue;
                             }
-                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                             long oldSize = Rosti.getAllocMemory(pRostiBig);
                             if (!vaf.merge(pRostiBig, pRosti[i])) {
                                 resetRostiMemorySize();
@@ -795,7 +795,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             raf.updateMemoryUsage(pRostiBig, oldSize);
                         }
 
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
 
                         // some wrapUp() methods can increase rosti size
                         long oldSize = Rosti.getAllocMemory(pRostiBig);
@@ -807,7 +807,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         }
                         raf.updateMemoryUsage(pRostiBig, oldSize);
                     }
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                     for (int i = 0, n = pRosti.length; i < n; i++) {
                         if (pRostiBig == pRosti[i]) {
                             continue;
@@ -818,7 +818,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         }
                     }
                 } else {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                     for (int j = 0; j < vafCount; j++) {
                         // some wrapUp() methods can increase rosti size (e.g. inserting the null key)
                         long oldSize = Rosti.getAllocMemory(pRostiBig);

@@ -97,7 +97,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isTreeMapBuilt) {
             buildTreeMap();
             isTreeMapBuilt = true;
@@ -272,7 +272,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                             final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
                             final long seq = dispatcher != null && !publicationPermit ? -1 : pubSeq.next();
                             if (seq < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                                 if (publicationPermit && isOwnerParkable) {
                                     if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                                         Os.pause();
@@ -337,7 +337,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                     if (doneLatch.done(queuedCount)) {
                         break;
                     }
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                     if (isOwnerParkable) {
                         if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
                             Os.pause();
@@ -365,20 +365,20 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             throw th;
         } finally {
             processTasks(queuedCount);
-            if (sharedCircuitBreaker.checkIfTripped()) {
+            if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
                 LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
                 argumentsAddress = 0;
             }
         }
 
-        if (sharedCircuitBreaker.checkIfTripped()) {
+        if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
             // A tripped shared breaker on the non-throw path means a worker scan failed, or the
             // dispatcher aborted queued tasks (quiesce); either way the row set is incomplete, so
             // the query must fail rather than return partial rows.
             if (scanError.hasError()) {
                 scanError.throwError();
             }
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
             throw CairoException.queryCancelled();
         }
 
@@ -439,7 +439,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             if (doneLatch.done(queuedCount)) {
                 break;
             }
-            if (circuitBreaker.checkIfTripped()) {
+            if (circuitBreaker.checkIfTrippedOrYield()) {
                 sharedCircuitBreaker.cancel();
             }
             if (isOwnerParkable) {

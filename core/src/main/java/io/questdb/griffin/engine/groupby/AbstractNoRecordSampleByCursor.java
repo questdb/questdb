@@ -128,7 +128,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         topNextDst = nextDstUtc;
         circuitBreaker = executionContext.getCircuitBreaker();
         // Consult the breaker at open, so an empty base scan (whose row loops never run) stays cancellable.
-        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
         rowId = 0;
         isNotKeyedLoopInitialized = false;
         areTimestampsInitialized = false;
@@ -287,7 +287,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         while (baseCursor.hasNext()) {
             timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 adjustDstInFlight(timestamp - tzOffset);
                 groupByFunctionsUpdater.updateExisting(mapValue, baseRecord, rowId++);
             } else {

@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
@@ -134,7 +135,7 @@ public class LatestByTask implements QuietCloseable, Mutable {
 
     public boolean run() {
         try {
-            if (!circuitBreaker.checkIfTripped()) {
+            if (!circuitBreaker.checkIfTrippedOrYield()) {
                 GeoHashNative.latestByAndFilterPrefix(
                         frameMemoryPool,
                         keyBaseAddress,
@@ -167,9 +168,13 @@ public class LatestByTask implements QuietCloseable, Mutable {
         if (!completed) {
             completed = true;
             try {
-                doneLatch.countDown();
-            } finally {
                 frameMemoryPool.close();
+            } finally {
+                try {
+                    MemoryTracker.detachResourceMemoryCurrentThread();
+                } finally {
+                    doneLatch.countDown();
+                }
             }
         }
     }

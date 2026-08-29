@@ -96,7 +96,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!areRecordsFound) {
             findRecords();
             toTop();
@@ -187,7 +187,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter == null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -212,7 +212,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter != null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -272,7 +272,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter == null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -297,7 +297,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         assert filter != null;
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -323,7 +323,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         final int searchSize = includedSymbolKeys.size();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;
@@ -349,7 +349,7 @@ class LatestByValueListRecordCursor extends AbstractPageFrameRecordCursor {
         int searchSize = includedSymbolKeys.size();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             final int frameIndex = frameCount;
             final long partitionLo = frame.getPartitionLo();
             final long partitionHi = frame.getPartitionHi() - 1;

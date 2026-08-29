@@ -211,6 +211,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private MemoryTracker queryMemoryTracker;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
+    private SqlExecutionContext sqlExecutionOwnerContext;
+    private long sqlExecutionOwnerId = -1;
+    private boolean sqlExecutionOwnerMounted;
     // The count of rows sent that have been sent to the client per fetch. Client can either
     // fetch all rows at once, or in batches. In case of full fetch, this is the
     // count of rows in the cursor. If client fetches in batches, this is the count
@@ -364,6 +367,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         queryCancellation.clear();
         queryMemoryTracker = null;
         sqlAffectedRowCount = 0;
+        endSqlExecutionOwner();
+        sqlExecutionOwnerContext = null;
+        sqlExecutionOwnerId = -1;
+        sqlExecutionOwnerMounted = false;
         sqlReturnRowCount = 0;
         sqlReturnRowCountLimit = 0;
         sqlReturnRowCountToBeSent = 0;
@@ -392,6 +399,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         queryCancellation.clear();
         queryMemoryTracker = null;
         stateSuspended = false;
+        endSqlExecutionOwner();
     }
 
     public void commit(ObjObjHashMap<TableToken, TableWriterAPI> pendingWriters) throws PGMessageProcessingException {
@@ -469,9 +477,6 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // pipeline entries begin life as anonymous, typical pipeline length is 1-3 entries
         // we do not need to create new objects until we know we're caching the entry
         this.sqlText = sqlText;
-        if (!recompile) {
-            sqlExecutionContext.reset();
-        }
         this.empty = sqlText == null || sqlText.isEmpty();
         if (empty) {
             sqlExecutionContext.setCacheHit(cacheHit = true);
@@ -3497,12 +3502,22 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
+    void beginSqlExecutionOwner(CharSequence query, SqlExecutionContext executionContext) {
+        if (sqlExecutionOwnerId > -1) {
+            throw new IllegalStateException("PG pipeline entry already has a SQL execution owner");
+        }
+        final long ownerId = engine.beginSqlExecution(query, executionContext);
+        if (ownerId > -1) {
+            sqlExecutionOwnerContext = executionContext;
+            sqlExecutionOwnerId = ownerId;
+            sqlExecutionOwnerMounted = true;
+        }
+    }
+
     /**
      * Resets per-iteration state so the entry can serve another execution.
-     * Intentionally does NOT touch {@code stateSuspended} or {@code cursor}:
-     * a suspended named portal must keep both alive across iterations so the
-     * next Execute can resume the same cursor. Callers that mean to discard
-     * the suspended cursor must invoke {@link #closeSuspendedCursor()} first.
+     * A suspended named portal retains its cursor and execution owner for the
+     * next Execute. Every terminal iteration closes the owner here.
      */
     void clearState() {
         error = false;
@@ -3513,6 +3528,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = SYNC_DESC_NONE;
         stateExec = false;
         stateClosed = false;
+        if (!stateSuspended) {
+            endSqlExecutionOwner();
+        }
         arrayViewPool.clear();
         varcharArrayViewPool.clear();
     }
@@ -3648,6 +3666,57 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                 }
             }
             lo += valueSize;
+        }
+    }
+
+    void endSqlExecutionOwner() {
+        final long ownerId = sqlExecutionOwnerId;
+        if (ownerId > -1) {
+            final SqlExecutionContext executionContext = sqlExecutionOwnerContext;
+            try {
+                engine.endSqlExecution(ownerId, executionContext);
+            } finally {
+                sqlExecutionOwnerContext = null;
+                sqlExecutionOwnerId = -1;
+                sqlExecutionOwnerMounted = false;
+            }
+        }
+    }
+
+    boolean hasSqlExecutionOwner() {
+        return sqlExecutionOwnerId > -1;
+    }
+
+    boolean isSqlExecutionOwnerMounted() {
+        return sqlExecutionOwnerMounted;
+    }
+
+    boolean isSqlTextSecret() {
+        return sqlTextHasSecret;
+    }
+
+    void mountSqlExecutionOwner() {
+        if (sqlExecutionOwnerId > -1 && !sqlExecutionOwnerMounted) {
+            engine.mountSqlExecution(sqlExecutionOwnerId, sqlExecutionOwnerContext);
+            sqlExecutionOwnerMounted = true;
+        }
+    }
+
+    void publishSqlExecutionOwner() {
+        if (sqlExecutionOwnerId > -1) {
+            engine.publishSqlExecutionQuery(
+                    sqlExecutionOwnerId,
+                    sqlText,
+                    sqlTextHasSecret,
+                    sqlExecutionOwnerContext
+            );
+        }
+    }
+
+    void unmountSqlExecutionOwner() {
+        if (sqlExecutionOwnerId > -1 && sqlExecutionOwnerMounted) {
+            engine.unmountSqlExecution(sqlExecutionOwnerId, sqlExecutionOwnerContext);
+            sqlExecutionOwnerMounted = false;
         }
     }
 

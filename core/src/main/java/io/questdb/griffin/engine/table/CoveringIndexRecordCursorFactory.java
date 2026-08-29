@@ -590,7 +590,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public boolean hasNext() {
             // Consult the breaker at the top, so empty/no-match scans (frameCursor null, or no rows for
             // the key) still observe cancellation, and long index scans stay cancellable.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (frameCursor == null) {
                 return false;
             }
@@ -2257,7 +2257,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         public boolean hasNext() {
             // Consult the breaker at the top, so empty/no-match scans (frameCursor null, or no resolved
             // keys) still observe cancellation, and long multi-key merges stay cancellable.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (frameCursor == null) {
                 return false;
             }

@@ -189,6 +189,10 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         }
 
         try {
+            state.mountSqlExecutionOwner();
+            if (!state.isSqlExecutionOwnerStarted()) {
+                state.setSqlExecutionOwnerId(engine.beginSqlExecution(state.getQuery(), sqlExecutionContext));
+            }
             if (fut != null) {
                 retryQueryExecution(state, fut);
                 return;
@@ -198,6 +202,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
                 try {
+                    engine.publishSqlExecutionQuery(
+                            state.getSqlExecutionOwnerId(),
+                            state.getQuery(),
+                            false,
+                            sqlExecutionContext
+                    );
                     sqlExecutionContext.storeTelemetry(CompiledQuery.SELECT, TelemetryOrigin.HTTP);
                     executeCachedSelect(state, factory);
                 } catch (TableReferenceOutOfDateException e) {
@@ -219,6 +229,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             readyForNextRequest(context);
         } catch (EntryUnavailableException e) {
             LOG.info().$("[fd=").$(context.getFd()).$("] resource busy, will retry").$();
+            state.unmountSqlExecutionOwner();
             throw RetryOperationException.INSTANCE;
         } catch (CairoException e) {
             internalError(
@@ -311,6 +322,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // preserve random when we park the context
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.setRnd(sqlExecutionContext.getRandom());
+            state.unmountSqlExecutionOwner();
         }
     }
 
@@ -332,6 +344,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             sqlExecutionContext.with(context.getSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
+            state.mountSqlExecutionOwner();
             if (!state.isPausedQuery()) {
                 context.resumeResponseSend();
             } else {
@@ -492,6 +505,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
                 final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                engine.publishSqlExecutionQuery(
+                        state.getSqlExecutionOwnerId(),
+                        state.getQuery(),
+                        sqlExecutionContext.containsSecret(),
+                        sqlExecutionContext
+                );
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
                 state.setQueryType(cc.getType());

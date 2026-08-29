@@ -38,6 +38,7 @@ import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
@@ -203,23 +204,30 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
                             frameSequence.setError(th);
                         }
                     } finally {
-                        if (isFiberSuspendable) {
-                            SuspensionScope.restoreCancellationSignal(
-                                    previousCancellationSignal,
-                                    previousCancellationSignalGeneration
-                            );
-                            SuspensionScope.enterSupplementalCancellationSignal(
-                                    previousSupplementalCancellationSignal,
-                                    previousSupplementalCancellationSignalGeneration
-                            );
-                        } else {
-                            SuspensionScope.restoreMode(suspensionScope, previousMode);
-                        }
                         try {
-                            frameSequence.getDoneLatch().countDown();
+                            if (isFiberSuspendable) {
+                                SuspensionScope.restoreCancellationSignal(
+                                        previousCancellationSignal,
+                                        previousCancellationSignalGeneration
+                                );
+                                SuspensionScope.enterSupplementalCancellationSignal(
+                                        previousSupplementalCancellationSignal,
+                                        previousSupplementalCancellationSignalGeneration
+                                );
+                            } else {
+                                SuspensionScope.restoreMode(suspensionScope, previousMode);
+                            }
                         } finally {
-                            if (dispatcher != null) {
-                                dispatcher.signalProgress(frameSequence);
+                            try {
+                                MemoryTracker.detachResourceMemoryCurrentThread();
+                            } finally {
+                                try {
+                                    frameSequence.getDoneLatch().countDown();
+                                } finally {
+                                    if (dispatcher != null) {
+                                        dispatcher.signalProgress(frameSequence);
+                                    }
+                                }
                             }
                         }
                     }
@@ -243,7 +251,7 @@ public class UnorderedPageFrameReduceJob implements Job, QuietCloseable {
     ) {
         final int cbState = frameSequence.isUninterruptible()
                 ? SqlExecutionCircuitBreaker.STATE_OK
-                : circuitBreaker.getState(
+                : circuitBreaker.getStateOrYield(
                 frameSequence.getStartTime(),
                 frameSequence.getCircuitBreaker().getFd()
         );

@@ -33,7 +33,9 @@ import io.questdb.mp.CarrierIdentity;
 import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.Worker;
 import io.questdb.mp.continuation.CancellationBinding;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.std.CarrierLocal;
 import io.questdb.std.Chars;
 import io.questdb.std.ConcurrentLongHashMap;
@@ -44,10 +46,12 @@ import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -57,7 +61,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * A concurrent registry of running sql commands.
  */
 public class QueryRegistry {
+    private static final String DEFERRED_QUERY_TEXT = "<PENDING>";
     private static final Log LOG = LogFactory.getLog(QueryRegistry.class);
+    private static final String SECRET_QUERY_TEXT = "<SECRET>";
     private final Clock clock;
     private final AtomicLong idSeq = new AtomicLong();
     private final CarrierLocal<EntryHolder> localQueryPool = new CarrierLocal<>(EntryHolder::new);
@@ -129,11 +135,11 @@ public class QueryRegistry {
                     entry.cancel();
                     entry.changedAtNs = clock.getTicks();
                     entry.state = Entry.State.CANCELLED;
-                    // Log inside the guard: it reads entry.query, which a concurrent
+                    // Log inside the guard: it reads entry.queryText, which a concurrent
                     // register() would overwrite once the entry is released and recycled.
                     // The chars are copied into the async log buffer synchronously, so the
                     // owner's retire() busy-wait stays short.
-                    LOG.info().$("cancelling query [user=").$(cancellerPrincipal).$(",queryId=").$(queryId).$(",sql=").$(entry.query).I$();
+                    LOG.info().$("cancelling query [user=").$(cancellerPrincipal).$(",queryId=").$(queryId).$(",sql=").$(entry.queryText).I$();
                     return true;
                 } finally {
                     entry.activate(queryId);
@@ -181,6 +187,42 @@ public class QueryRegistry {
     }
 
     /**
+     * Returns the Resource Group ID captured by the active execution lease, or SQL NULL when the
+     * owner is absent or the engine did not attach a Resource Group lease. The double lifecycle
+     * check prevents a pooled entry recycled concurrently for another query from leaking its
+     * identity into this query.
+     */
+    public long getResourceGroupId(long queryId) {
+        final Entry entry = registry.get(queryId);
+        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
+            return Numbers.LONG_NULL;
+        }
+        final QuietCloseable lease = entry.executionLease;
+        final long groupId = lease instanceof SqlExecutionLease sqlExecutionLease
+                ? sqlExecutionLease.getResourceGroupId()
+                : Numbers.LONG_NULL;
+        Unsafe.loadFence();
+        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? groupId : Numbers.LONG_NULL;
+    }
+
+    /**
+     * Returns the immutable Resource Group name captured by the active execution lease, or null
+     * when the owner is absent or the engine did not attach a Resource Group lease.
+     */
+    public @Nullable CharSequence getResourceGroupName(long queryId) {
+        final Entry entry = registry.get(queryId);
+        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
+            return null;
+        }
+        final QuietCloseable lease = entry.executionLease;
+        final CharSequence groupName = lease instanceof SqlExecutionLease sqlExecutionLease
+                ? sqlExecutionLease.getResourceGroupName()
+                : null;
+        Unsafe.loadFence();
+        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? groupName : null;
+    }
+
+    /**
      * Add given command to registry.
      *
      * @param query            - query text
@@ -188,6 +230,98 @@ public class QueryRegistry {
      * @return non-negative id assigned to given query. It may be used to look query up in registry.
      */
     public long register(CharSequence query, SqlExecutionContext executionContext) {
+        final long contextOwnerId = executionContext.getQueryRegistryOwnerId();
+        if (contextOwnerId > -1) {
+            return retainOwner(contextOwnerId, executionContext);
+        }
+        final FiberDispatchContext dispatchContext = Fiber.captureDispatchContext();
+        if (dispatchContext != null) {
+            final long ownerId = dispatchContext.getQueryRegistryOwnerId();
+            if (ownerId > -1) {
+                final long retainedOwnerId = tryRetainDispatchedOwner(ownerId, executionContext);
+                if (retainedOwnerId > -1) {
+                    return retainedOwnerId;
+                }
+            }
+        }
+        return register0(query, executionContext, false);
+    }
+
+    /**
+     * Registers a protocol-owned SQL execution before compilation. Its text remains hidden until
+     * {@link #publishOwnerQuery(long, CharSequence, boolean)} is called after the compiler has
+     * classified secret-bearing statements.
+     */
+    public long registerOwner(CharSequence query, SqlExecutionContext executionContext) {
+        return register0(query, executionContext, true);
+    }
+
+    /**
+     * Mounts an existing protocol owner for another executable segment.
+     */
+    public void mountOwner(long queryId, SqlExecutionContext executionContext) {
+        final Entry entry = getOwnerEntry(queryId, executionContext);
+        final QuietCloseable executionLease = entry.executionLease;
+        if (executionLease instanceof SqlExecutionLease lease) {
+            lease.mount();
+        }
+        final MemoryTracker memoryTracker = entry.memoryTracker;
+        if (memoryTracker != null) {
+            executionContext.setMemoryTracker(memoryTracker);
+        }
+    }
+
+    /**
+     * Publishes a protocol owner's query text after secret classification. The first publication
+     * wins; retries therefore never mutate a StringSink already visible to query_activity().
+     */
+    public void publishOwnerQuery(long queryId, CharSequence query, boolean containsSecret) {
+        if (queryId < 0) {
+            return;
+        }
+        final Entry entry = registry.get(queryId);
+        if (entry == null || !entry.publishQuery(queryId, query, containsSecret)) {
+            throw new IllegalStateException("query registry owner is no longer active [id=" + queryId + ']');
+        }
+    }
+
+    /** Unmounts a protocol owner between executable segments. */
+    public void unmountOwner(long queryId, SqlExecutionContext executionContext) {
+        final Entry entry = getOwnerEntry(queryId, executionContext);
+        Throwable cleanupFailure = null;
+        try {
+            MemoryTracker.detachResourceMemoryCurrentThread();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        final QuietCloseable executionLease = entry.executionLease;
+        if (executionLease instanceof SqlExecutionLease lease) {
+            try {
+                lease.unmount();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
+        }
+        final MemoryTracker memoryTracker = entry.memoryTracker;
+        try {
+            if (memoryTracker != null && executionContext.getMemoryTracker() == memoryTracker) {
+                executionContext.setMemoryTracker(null);
+            }
+        } catch (Throwable th) {
+            if (cleanupFailure == null) {
+                cleanupFailure = th;
+            } else if (cleanupFailure != th) {
+                cleanupFailure.addSuppressed(th);
+            }
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    private long register0(CharSequence query, SqlExecutionContext executionContext, boolean deferQueryText) {
         final long queryId = idSeq.getAndIncrement();
         final Entry e = acquireEntry();
         // Just in case something messed the cached Entry
@@ -199,11 +333,14 @@ public class QueryRegistry {
         e.changedAtNs = e.registeredAtNs;
         e.state = Entry.State.ACTIVE;
 
-        if (executionContext.containsSecret()) {
-            e.query.put("<SECRET>");
+        if (deferQueryText) {
+            e.queryText = DEFERRED_QUERY_TEXT;
+        } else if (executionContext.containsSecret()) {
+            e.queryText = SECRET_QUERY_TEXT;
         } else {
             // we shouldn't copy text in case of sensitive queries
             e.query.put(query);
+            e.queryText = e.query;
         }
 
         final Worker worker = Worker.current();
@@ -213,47 +350,58 @@ public class QueryRegistry {
         }
         e.isWAL = executionContext.isWalApplication();
         e.principal = executionContext.getSecurityContext().getPrincipal();
+        e.executionContext = executionContext;
+        e.protocolOwner = deferQueryText;
+        e.referenceCount = 1;
 
-        // Acquire a per-workload memory tracker for this workload, or inherit an
-        // outer one. Inheritance is allowed only when the bound tracker belongs to
-        // a non-QUERY background workload: a mat-view refresh or WAL apply job
-        // binds its own tracker on a dedicated execution context before running
-        // inner SQL, and that inner SQL must charge the background workload's
-        // budget. Such nesting is strictly LIFO and single-threaded.
-        //
-        // A QUERY tracker already on the context is NOT inherited. Concurrent PG
-        // named portals share one SqlExecutionContext and are siblings, not
-        // nested: a suspended portal leaves its tracker bound, and inheriting it
-        // would conflate the two portals' accounting and -- once the first
-        // portal's cursor closes and recycles that tracker to the pool -- corrupt
-        // an unrelated query's counter. Each top-level QUERY gets its own tracker.
-        //
-        // Acquire a tracker even when the QUERY limit is 0 (unlimited) so that
-        // accounting stays on and query_activity.memory_used reports live usage
-        // for every query. A null tracker when unlimited would save one atomic
-        // on the tracked allocation path, at the cost of that observability.
         final MemoryTracker outerTracker = executionContext.getMemoryTracker();
-        if (outerTracker == null || outerTracker.getWorkload() == MemoryTrackerWorkload.QUERY) {
-            final MemoryTrackerProvider provider = executionContext.getCairoEngine().getMemoryTrackerProvider();
-            final MemoryTracker tracker = provider.acquire(
-                    executionContext.getSecurityContext(),
-                    queryId,
-                    MemoryTrackerWorkload.QUERY
-            );
-            executionContext.setMemoryTracker(tracker);
-            e.memoryTracker = tracker;
-        }
 
+        boolean isCancellationBound = false;
         try {
-            // the volatile lifecycle store also publishes the plain field writes
-            // above (including the memory tracker) to threads that look the entry
-            // up via the registry
+            // Publish the descriptor before admission so a queued query can be
+            // cancelled through the registry.
             e.activate(queryId);
             registry.put(queryId, e);
 
+            executionContext.copyCancelledFlagsTo(e.previousCancelledBinding, e.previousSimpleCancelledBinding);
+            executionContext.setCancelledFlag(e.cancelled, e.cancelledGeneration);
+            isCancellationBound = true;
+            e.executionLease = executionContext.getCairoEngine().onSqlExecutionRegistered(
+                    queryId,
+                    executionContext,
+                    e.cancelled,
+                    e.cancelledGeneration
+            );
+
+            // Acquire a per-workload memory tracker only after an optional engine admission hook
+            // has committed. A queued Enterprise query therefore owns its registry descriptor and
+            // cancellation signal, but no query tracker or active memory budget. OSS returns no
+            // execution lease and reaches this block without any additional branch or allocation.
+            //
+            // Inheritance is allowed only when the bound tracker belongs to a non-QUERY background
+            // workload. A QUERY tracker already on the context is not inherited because concurrent
+            // PG named portals are siblings that share one SqlExecutionContext.
+            if (outerTracker == null || outerTracker.getWorkload() == MemoryTrackerWorkload.QUERY) {
+                MemoryTracker tracker = e.executionLease instanceof SqlExecutionLease sqlExecutionLease
+                        ? sqlExecutionLease.getMemoryTracker()
+                        : null;
+                if (tracker == null) {
+                    final MemoryTrackerProvider provider = executionContext.getCairoEngine().getMemoryTrackerProvider();
+                    tracker = provider.acquire(
+                            executionContext.getSecurityContext(),
+                            queryId,
+                            MemoryTrackerWorkload.QUERY
+                    );
+                }
+                executionContext.setMemoryTracker(tracker);
+                e.memoryTracker = tracker;
+            }
+
+            // Registration listeners observe a fully initialized execution: admission has
+            // committed, cancellation is bound, and any query memory tracker is installed.
             Listener listener = this.listener;
             if (listener != null) {
-                listener.onRegister(query, queryId, executionContext);
+                listener.onRegister(deferQueryText ? DEFERRED_QUERY_TEXT : query, queryId, executionContext);
             }
         } catch (Throwable th) {
             // registry.put() can OOM mid-rehash. register() runs outside the
@@ -261,26 +409,89 @@ public class QueryRegistry {
             // just-acquired tracker (else its native blocks leak during the very OOM
             // the feature bounds), drop the partial entry, and retire the Entry
             // before recycling it.
-            registry.remove(queryId);
-            if (e.memoryTracker != null) {
+            boolean detached = false;
+            try {
+                detached = registry.remove(queryId, e) || registry.get(queryId) != e;
+                if (!detached) {
+                    appendCleanupFailure(
+                            th,
+                            new IllegalStateException("query registry rollback could not detach entry [id=" + queryId + ']')
+                    );
+                }
+            } catch (Throwable cleanupFailure) {
+                appendCleanupFailure(th, cleanupFailure);
+            }
+            if (isCancellationBound) {
+                try {
+                    clearStaleSignalBinding(e.previousCancelledBinding);
+                } catch (Throwable cleanupFailure) {
+                    appendCleanupFailure(th, cleanupFailure);
+                }
+                try {
+                    clearStaleSignalBinding(e.previousSimpleCancelledBinding);
+                } catch (Throwable cleanupFailure) {
+                    appendCleanupFailure(th, cleanupFailure);
+                }
+                try {
+                    executionContext.restoreCancelledFlag(
+                            e.cancelled,
+                            e.previousCancelledBinding,
+                            e.previousSimpleCancelledBinding
+                    );
+                } catch (Throwable cleanupFailure) {
+                    appendCleanupFailure(th, cleanupFailure);
+                }
+            }
+            final MemoryTracker memoryTracker = e.memoryTracker;
+            if (memoryTracker != null) {
                 // Restore the prior tracker only if the slot is still ours; a
                 // concurrently-suspended sibling portal may have rebound it.
-                if (executionContext.getMemoryTracker() == e.memoryTracker) {
-                    executionContext.setMemoryTracker(outerTracker);
+                try {
+                    if (executionContext.getMemoryTracker() == memoryTracker) {
+                        executionContext.setMemoryTracker(outerTracker);
+                    }
+                } catch (Throwable cleanupFailure) {
+                    appendCleanupFailure(th, cleanupFailure);
                 }
-                e.memoryTracker.close();
-                e.memoryTracker = null;
+                try {
+                    memoryTracker.close();
+                } catch (Throwable cleanupFailure) {
+                    appendCleanupFailure(th, cleanupFailure);
+                } finally {
+                    e.memoryTracker = null;
+                }
             }
-            if (e.retire(queryId)) {
-                recycle(e);
-            } else {
-                LOG.error().$("query lifecycle mismatch on register rollback [id=").$(queryId).I$();
+            final QuietCloseable executionLease = e.executionLease;
+            if (executionLease != null) {
+                try {
+                    executionLease.close();
+                } catch (Throwable cleanupFailure) {
+                    appendCleanupFailure(th, cleanupFailure);
+                } finally {
+                    e.executionLease = null;
+                }
+            }
+            boolean retired = false;
+            try {
+                retired = e.retire(queryId);
+            } catch (Throwable cleanupFailure) {
+                appendCleanupFailure(th, cleanupFailure);
+            }
+            if (detached && retired) {
+                try {
+                    recycle(e);
+                } catch (Throwable cleanupFailure) {
+                    appendCleanupFailure(th, cleanupFailure);
+                }
+            } else if (!retired) {
+                try {
+                    LOG.error().$("query lifecycle mismatch on register rollback [id=").$(queryId).I$();
+                } catch (Throwable cleanupFailure) {
+                    appendCleanupFailure(th, cleanupFailure);
+                }
             }
             throw th;
         }
-
-        executionContext.copyCancelledFlagsTo(e.previousCancelledBinding, e.previousSimpleCancelledBinding);
-        executionContext.setCancelledFlag(e.cancelled, e.cancelledGeneration);
         return queryId;
     }
 
@@ -301,38 +512,110 @@ public class QueryRegistry {
             return;
         }
 
-        final Entry e = registry.remove(queryId);
+        final Entry e = registry.get(queryId);
         if (e != null) {
-            clearStaleSignalBinding(e.previousCancelledBinding);
-            clearStaleSignalBinding(e.previousSimpleCancelledBinding);
-            executionContext.restoreCancelledFlag(e.cancelled, e.previousCancelledBinding, e.previousSimpleCancelledBinding);
+            final int releaseResult = e.release(queryId, executionContext);
+            if (releaseResult == Entry.RELEASE_RETAINED) {
+                return;
+            }
+            if (releaseResult != Entry.RELEASE_FINAL) {
+                LOG.error().$("query lifecycle mismatch [id=").$(queryId).I$();
+                return;
+            }
+            Throwable cleanupFailure = null;
+            boolean detached = false;
+            try {
+                detached = registry.remove(queryId, e);
+                if (!detached) {
+                    cleanupFailure = appendCleanupFailure(
+                            cleanupFailure,
+                            new IllegalStateException("query registry could not detach retired entry [id=" + queryId + ']')
+                    );
+                }
+            } catch (Throwable th) {
+                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+            }
+            try {
+                clearStaleSignalBinding(e.previousCancelledBinding);
+            } catch (Throwable th) {
+                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+            }
+            try {
+                clearStaleSignalBinding(e.previousSimpleCancelledBinding);
+            } catch (Throwable th) {
+                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+            }
+            try {
+                executionContext.restoreCancelledFlag(
+                        e.cancelled,
+                        e.previousCancelledBinding,
+                        e.previousSimpleCancelledBinding
+                );
+            } catch (Throwable th) {
+                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+            }
             // Release the per-workload memory tracker if this register() call
             // acquired it. A null e.memoryTracker means the registration was
             // nested under an outer workload that owns the tracker; in that
             // case we must not touch the context's tracker reference.
-            if (e.memoryTracker != null) {
+            final MemoryTracker memoryTracker = e.memoryTracker;
+            if (memoryTracker != null) {
                 // Clear the context slot only if it still points at our tracker. A
                 // concurrently-suspended sibling portal (sharing this context) may
                 // have rebound the slot to its own tracker after us; nulling it then
                 // would strand that sibling. Out-of-order portal close makes this
                 // conditional necessary -- see the inheritance note in register().
-                if (executionContext.getMemoryTracker() == e.memoryTracker) {
-                    executionContext.setMemoryTracker(null);
+                try {
+                    if (executionContext.getMemoryTracker() == memoryTracker) {
+                        executionContext.setMemoryTracker(null);
+                    }
+                } catch (Throwable th) {
+                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
                 }
-                e.memoryTracker.close();
-                e.memoryTracker = null;
+                try {
+                    memoryTracker.close();
+                } catch (Throwable th) {
+                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+                } finally {
+                    e.memoryTracker = null;
+                }
             }
-            // Retire the entry to guard pooled reuse: this waits out an in-flight
-            // canceller and only recycles the entry once it owns the lifecycle word.
-            if (e.retire(queryId)) {
-                recycle(e);
-            } else {
-                LOG.error().$("query lifecycle mismatch [id=").$(queryId).I$();
+            final QuietCloseable executionLease = e.executionLease;
+            if (executionLease != null) {
+                try {
+                    executionLease.close();
+                } catch (Throwable th) {
+                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+                } finally {
+                    e.executionLease = null;
+                }
             }
+            if (detached) {
+                try {
+                    recycle(e);
+                } catch (Throwable th) {
+                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+                }
+            }
+            CairoException.rethrowCleanupFailure(cleanupFailure);
         } else {
             // this might happen if query was cancelled
             LOG.error().$("query to unregister not found [id=").$(queryId).I$();
         }
+    }
+
+    private static Throwable appendCleanupFailure(@Nullable Throwable primary, Throwable failure) {
+        if (primary == null) {
+            return failure;
+        }
+        if (primary != failure) {
+            try {
+                primary.addSuppressed(failure);
+            } catch (Throwable ignored) {
+                // Preserve forward cleanup progress when suppression itself cannot allocate.
+            }
+        }
+        return primary;
     }
 
     private static void clearStaleSignalBinding(CancellationBinding binding) {
@@ -355,6 +638,44 @@ public class QueryRegistry {
         }
         final Entry entry = queryPool.pop();
         return entry != null ? entry : new Entry();
+    }
+
+    private Entry getOwnerEntry(long queryId, SqlExecutionContext executionContext) {
+        if (queryId < 0) {
+            throw new IllegalArgumentException("query registry owner ID must be non-negative");
+        }
+        final Entry entry = registry.get(queryId);
+        if (entry == null
+                || !Entry.isActiveLifecycle(queryId, entry.lifecycle)
+                || !entry.protocolOwner
+                || entry.executionContext != executionContext) {
+            throw new IllegalStateException("query registry owner is no longer active [id=" + queryId + ']');
+        }
+        return entry;
+    }
+
+    private long retainOwner(long ownerId, SqlExecutionContext executionContext) {
+        final Entry owner = registry.get(ownerId);
+        if (owner != null && owner.protocolOwner && owner.executionContext == executionContext) {
+            if (owner.retain(ownerId)) {
+                return ownerId;
+            }
+            throw new IllegalStateException("query registry owner is no longer active [id=" + ownerId + ']');
+        }
+        throw new IllegalStateException("query registry owner does not match execution context [id=" + ownerId + ']');
+    }
+
+    private long tryRetainDispatchedOwner(long ownerId, SqlExecutionContext executionContext) {
+        final Entry owner = registry.get(ownerId);
+        if (owner != null
+                && Entry.isActiveLifecycle(ownerId, owner.lifecycle)
+                && (!owner.protocolOwner || owner.executionContext != executionContext)) {
+            // Dispatch identity propagates through nested work, including SYSTEM SQL using its
+            // own execution context. Only the protocol context that created an owner may retain
+            // it. Ordinary query owners and nested contexts receive independent registry entries.
+            return -1;
+        }
+        return retainOwner(ownerId, executionContext);
     }
 
     private void recycle(Entry entry) {
@@ -395,6 +716,9 @@ public class QueryRegistry {
      * with the rest of the entry.
      */
     public static class Entry implements Mutable {
+        private static final int RELEASE_FINAL = 1;
+        private static final int RELEASE_MISMATCH = -1;
+        private static final int RELEASE_RETAINED = 0;
         private static final long LIFECYCLE_IDLE = -1;
         private static final long LIFECYCLE_OFFSET = Unsafe.getFieldOffset(Entry.class, "lifecycle");
         private static final long LIFECYCLE_STATE_ACTIVE = 0;
@@ -407,11 +731,13 @@ public class QueryRegistry {
         private final StringSink query = new StringSink();
         private long cancelledGeneration;
         private long changedAtNs;
+        private SqlExecutionContext executionContext;
         private boolean isWAL;
         // Packs query id and state into one CAS word to guard pooled Entry reuse.
         // The id occupies bits 2-63, so the usable id space is 2^62; idSeq starts
         // at 0 on every server start and cannot realistically reach that.
         private volatile long lifecycle = LIFECYCLE_IDLE;
+        private volatile QuietCloseable executionLease;
         // Non-null only when this register() call acquired the tracker. Nested
         // registrations that inherit an outer tracker leave this null so that
         // the matching unregister() does not touch the context's tracker.
@@ -427,6 +753,9 @@ public class QueryRegistry {
         private MemoryTracker memoryTracker;
         private CharSequence poolName;
         private CharSequence principal;
+        private boolean protocolOwner;
+        private volatile CharSequence queryText = query;
+        private int referenceCount;
         private long registeredAtNs;
         private byte state;
         private long workerId;
@@ -449,10 +778,15 @@ public class QueryRegistry {
             registeredAtNs = 0;
             changedAtNs = 0;
             cancelledGeneration = cancelled.reopen();
+            executionContext = null;
+            executionLease = null;
             memoryTracker = null;
             poolName = null;
             previousCancelledBinding.clear();
             previousSimpleCancelledBinding.clear();
+            protocolOwner = false;
+            queryText = query;
+            referenceCount = 0;
             workerId = -1;
             principal = null;
             state = State.IDLE;
@@ -501,8 +835,8 @@ public class QueryRegistry {
             return principal;
         }
 
-        public StringSink getQuery() {
-            return query;
+        public CharSequence getQuery() {
+            return queryText;
         }
 
         public long getRegisteredAtNs() {
@@ -519,6 +853,70 @@ public class QueryRegistry {
 
         public boolean isWAL() {
             return isWAL;
+        }
+
+        private boolean publishQuery(long queryId, CharSequence queryText, boolean containsSecret) {
+            if (!beginCancel(queryId)) {
+                return false;
+            }
+            try {
+                if (this.queryText != DEFERRED_QUERY_TEXT) {
+                    return true;
+                }
+                if (containsSecret) {
+                    this.queryText = SECRET_QUERY_TEXT;
+                } else {
+                    query.clear();
+                    query.put(queryText);
+                    // Volatile publication happens only after the reusable sink is complete, so
+                    // query_activity() can never race a mutation of the visible buffer.
+                    this.queryText = query;
+                }
+                return true;
+            } finally {
+                activate(queryId);
+            }
+        }
+
+        private int release(long queryId, SqlExecutionContext executionContext) {
+            if (!beginCancel(queryId)) {
+                return RELEASE_MISMATCH;
+            }
+            boolean reactivate = true;
+            try {
+                if (this.executionContext != executionContext || referenceCount < 1) {
+                    return RELEASE_MISMATCH;
+                }
+                referenceCount--;
+                if (referenceCount > 0) {
+                    return RELEASE_RETAINED;
+                }
+                lifecycle = lifecycle(queryId, LIFECYCLE_STATE_RETIRED);
+                reactivate = false;
+                return RELEASE_FINAL;
+            } finally {
+                if (reactivate) {
+                    activate(queryId);
+                }
+            }
+        }
+
+        private boolean retain(long queryId) {
+            if (!beginCancel(queryId)) {
+                return false;
+            }
+            try {
+                if (referenceCount < 1) {
+                    return false;
+                }
+                if (referenceCount == Integer.MAX_VALUE) {
+                    throw new IllegalStateException("query registry owner reference count exhausted [id=" + queryId + ']');
+                }
+                referenceCount++;
+                return true;
+            } finally {
+                activate(queryId);
+            }
         }
 
         /**

@@ -37,6 +37,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
@@ -92,7 +93,7 @@ public class TelemetryConfigLogger implements PreferencesUpdateListener, Closeab
         instanceDesc = instanceDesc == null ? "" : instanceDesc;
 
         try (final SqlCompiler compiler = engine.getSqlCompiler()) {
-            final SqlExecutionContextImpl sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            final SqlExecutionContextImpl sqlExecutionContext = new SystemSqlExecutionContext(engine, 1);
             sqlExecutionContext.with(
                     engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext(),
                     null,

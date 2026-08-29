@@ -42,9 +42,9 @@ public final class PerQueryMemoryTracker extends MemoryTracker {
     PerQueryMemoryTracker(PerQueryMemoryTrackerProvider provider) {
         this.provider = provider;
         this.nativeAddress = Unsafe.malloc(Unsafe.MEMORY_TRACKER_BLOCK_SIZE, MemoryTag.NATIVE_MEMORY_TRACKER);
-        // The counters must start zeroed: used = 0, limit = 0.
-        Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_USED_OFFSET, 0L);
-        Unsafe.getUnsafe().putLong(nativeAddress + Unsafe.MEMORY_TRACKER_LIMIT_OFFSET, 0L);
+        // Zero the complete cache line, including the optional versioned Resource Group tail.
+        // OSS leaves that tail at zero for the tracker's entire lifetime.
+        Vect.memset(nativeAddress, Unsafe.MEMORY_TRACKER_BLOCK_SIZE, 0);
     }
 
     @Override

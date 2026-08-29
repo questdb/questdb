@@ -34,6 +34,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeConfigurationListener;
@@ -766,9 +767,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             boolean isDirectMountAllowed
     ) {
         final long taskIncarnation = task.getIncarnation();
+        final FiberDispatchContext dispatchContext = task.getDispatchContext();
         final LaunchResult result = isDirectMountAllowed && !Fiber.isMounted()
-                ? runtime.launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation)
-                : runtime.launchReserved(fiber, reservationEpoch, task, taskIncarnation);
+                ? runtime.launchReservedDirect(fiber, reservationEpoch, task, taskIncarnation, dispatchContext)
+                : runtime.launchReserved(fiber, reservationEpoch, task, taskIncarnation, dispatchContext);
         // launchReserved() may already have run the terminal callbacks, which recycle the task and bump
         // its incarnation; another carrier can then own it. Only abort a task still at our incarnation.
         if (result != LaunchResult.LAUNCHED
@@ -846,7 +848,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return switch (reason) {
             case FiberWaitCoordinator.REASON_CANCEL -> {
                 if (circuitBreaker != null) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                 }
                 yield true;
             }
@@ -854,7 +856,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             case FiberWaitCoordinator.REASON_PROGRESS -> false;
             case FiberWaitCoordinator.REASON_TIMER -> {
                 if (circuitBreaker != null) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                    circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                 }
                 yield false;
             }

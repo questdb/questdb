@@ -80,7 +80,7 @@ class UnionRecordCursor extends AbstractUnionSymbolSourceCursor implements NoRan
                 if (key.create()) {
                     return true;
                 }
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             } else {
                 return false;
             }

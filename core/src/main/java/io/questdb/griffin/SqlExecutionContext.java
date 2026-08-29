@@ -165,6 +165,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return null;
     }
 
+    /**
+     * Returns the protocol execution owner currently mounted on this context, or {@code -1}.
+     * This covers passive SHADOW ownership as well as scheduler-controlled ENFORCE segments.
+     */
+    default long getQueryRegistryOwnerId() {
+        return -1;
+    }
+
     default @NotNull MessageBus getMessageBus() {
         return getCairoEngine().getMessageBus();
     }
@@ -308,6 +316,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParquetRowGroupPruningEnabled();
 
+    /**
+     * Returns {@code true} for engine-owned SQL that is run as part of bootstrap or background
+     * maintenance rather than on behalf of a client query. Such work is governed by its owning
+     * subsystem instead of client-query admission and scheduling.
+     */
+    default boolean isSystemSql() {
+        return false;
+    }
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -399,6 +416,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * at workload end so the context is ready for the next workload.
      */
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
+    /**
+     * Binds the protocol execution owner for nested QueryRegistry registrations on this context.
+     */
+    default void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
     }
 
     void setNowAndFixClock(long now, int nowTimestampType);

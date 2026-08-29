@@ -25,12 +25,14 @@
 //! Carrier identity primitive used by Java-side `CarrierLocal`.
 //!
 //! Stores a small integer per OS thread in a const-initialized
-//! `thread_local!`. The two `extern "C"` symbols are bound from Java via
+//! `thread_local!`. The exported symbols are bound from Java via
 //! the Foreign Function & Memory API (`Linker.Option.critical`) so that
 //! C2 cannot fold the lookup with a hoisted `Thread.currentThread()`
 //! across `Continuation.yield`/`run` boundaries.
 
 use std::cell::Cell;
+
+use qdb_core::memory_tracker::{detach_thread_local, detach_thread_local_if, publish_thread_local};
 
 thread_local! {
     static CARRIER_ID: Cell<i32> = const { Cell::new(-1) };
@@ -44,6 +46,23 @@ pub extern "C" fn qdb_carrier_bind(id: i32) {
 #[no_mangle]
 pub extern "C" fn qdb_carrier_current() -> i32 {
     CARRIER_ID.with(|c| c.get())
+}
+
+#[no_mangle]
+pub extern "C" fn qdb_memory_tracker_detach() {
+    detach_thread_local();
+}
+
+#[no_mangle]
+pub extern "C" fn qdb_memory_tracker_detach_if(tracker_address: i64, generation: i64) {
+    if tracker_address > 0 && generation > 0 {
+        detach_thread_local_if(tracker_address as usize, generation as usize);
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn qdb_memory_tracker_publish() {
+    publish_thread_local();
 }
 
 #[cfg(test)]

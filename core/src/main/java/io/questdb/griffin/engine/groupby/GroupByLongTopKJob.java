@@ -39,6 +39,7 @@ import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
 import io.questdb.std.DirectLongLongSortedList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.tasks.GroupByLongTopKTask;
 import org.jetbrains.annotations.NotNull;
@@ -164,11 +165,12 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
         try {
             final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
             try {
-                if (!circuitBreaker.checkIfTripped()) {
-                    final Map shard = atom.getDestShards().getQuick(shardIndex);
-                    final DirectLongLongSortedList list = atom.getLongTopKList(slotId, order, limit);
-                    shard.getCursor().longTopK(list, longFunc);
+                if (circuitBreaker.checkIfTrippedOrYield()) {
+                    return;
                 }
+                final Map shard = atom.getDestShards().getQuick(shardIndex);
+                final DirectLongLongSortedList list = atom.getLongTopKList(slotId, order, limit);
+                shard.getCursor().longTopK(list, longFunc);
             } finally {
                 atom.release(slotId);
             }
@@ -185,6 +187,11 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
+                MemoryTracker.detachResourceMemoryCurrentThread();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            try {
                 doneLatch.countDown();
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
@@ -192,7 +199,11 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
             CairoException.rethrowCleanupFailure(failure);
             return;
         }
-        doneLatch.countDown();
+        try {
+            MemoryTracker.detachResourceMemoryCurrentThread();
+        } finally {
+            doneLatch.countDown();
+        }
     }
 
     @Override

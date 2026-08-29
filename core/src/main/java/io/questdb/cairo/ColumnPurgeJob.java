@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.RingQueue;
@@ -90,7 +91,7 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
             this.retryDelayLimit = configuration.getColumnPurgeRetryDelayLimit();
             this.retryDelay = configuration.getColumnPurgeRetryDelay();
             this.retryDelayMultiplier = configuration.getColumnPurgeRetryDelayMultiplier();
-            this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
+            this.sqlExecutionContext = new SystemSqlExecutionContext(engine, 1);
             this.sqlExecutionContext.with(
                     configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
                     null,

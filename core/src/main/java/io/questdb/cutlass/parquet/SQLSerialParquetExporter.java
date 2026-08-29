@@ -167,7 +167,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                 sqlExecutionContext.getSecurityContext().authorizeSelectOnAnyColumn(tableToken);
             }
 
-            if (circuitBreaker.checkIfTripped()) {
+            if (circuitBreaker.checkIfTrippedOrYield()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }
@@ -207,7 +207,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
 
                     try (PartitionDescriptor partitionDescriptor = new PartitionDescriptor()) {
                         for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-                            if (circuitBreaker.checkIfTripped()) {
+                            if (circuitBreaker.checkIfTrippedOrYield()) {
                                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
@@ -519,7 +519,7 @@ public class SQLSerialParquetExporter extends BaseParquetExporter implements Clo
                         PageFrame frame;
                         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
                         while ((frame = pfc.next()) != null) {
-                            if (circuitBreaker.checkIfTripped()) {
+                            if (circuitBreaker.checkIfTrippedOrYield()) {
                                 throw CopyExportException.instance(phase, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
                             }
                             exporter.writePageFrame(pfc, frame);
