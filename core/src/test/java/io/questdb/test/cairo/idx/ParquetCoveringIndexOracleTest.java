@@ -872,6 +872,120 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Every fixture above gives a key hundreds of postings, which is the shape
+     * the seal answers with a linear-prediction block per key. This one gives a
+     * key two, which is the shape it answers with one frame-of-reference array
+     * for the whole group -- a 29-byte per-key block header costs more than the
+     * two row ids it would describe.
+     * <p>
+     * That layout has its own addressing: group ordinals rather than
+     * key-relative ones, a group-wide base and bit width rather than a block,
+     * and no per-key progression to solve in closed form. None of it is reached
+     * by a 16-key fixture, so without this the differential grid would go green
+     * having never entered the branch.
+     */
+    private void createNarrowArm(String table) throws Exception {
+        execute("CREATE TABLE " + table + " (" +
+                "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        // Two postings a key, against a crossover of about 3.6.
+        execute("INSERT INTO " + table + " SELECT" +
+                " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                " 's' || (x % " + (ROW_COUNT / 2) + ")," +
+                " x::DOUBLE," +
+                " x * 3" +
+                " FROM long_sequence(" + ROW_COUNT + ")");
+        drainWalQueue();
+        execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+        drainWalQueue();
+        execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE POSTING");
+        drainWalQueue();
+        engine.releaseInactive();
+    }
+
+    @Test
+    public void testThePackedReaderMatchesTheNativeOneWhereRowIdsAreLaidOutFlat() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+            createNarrowArm("native_flat_arm");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
+            createNarrowArm("parquet_flat_arm");
+
+            try (
+                    TableReader nativeReader = engine.getReader(engine.verifyTableName("native_flat_arm"));
+                    TableReader parquetReader = engine.getReader(engine.verifyTableName("parquet_flat_arm"))
+            ) {
+                final int nativeCol = nativeReader.getMetadata().getColumnIndex("sym");
+                final int parquetCol = parquetReader.getMetadata().getColumnIndex("sym");
+
+                final IndexReader nativeFwd = nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD);
+                final IndexReader parquetFwd = parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD);
+                Assert.assertTrue(
+                        "the parquet arm must actually dispatch to the parquet reader",
+                        parquetFwd instanceof AbstractParquetPostingIndexReader
+                );
+                final AbstractParquetPostingIndexReader packed = (AbstractParquetPostingIndexReader) parquetFwd;
+                Assert.assertTrue("the packed payload property did not take", packed.isPackedPayload());
+                // Without this the grid below would compare the per-key path
+                // against the oracle and report the flat path as covered.
+                Assert.assertTrue(
+                        "no row group was laid out flat, so this exercises the per-key path only",
+                        packed.flatRowIdGroupCount() > 0
+                );
+
+                final int keyCount = nativeFwd.getKeyCount();
+                Assert.assertTrue("the fixture must have many keys", keyCount > 1000);
+
+                final long half = ROW_COUNT / 2;
+                final long[][] windows = {
+                        {0, Long.MAX_VALUE},
+                        {0, 0},
+                        {0, half},
+                        {half, ROW_COUNT},
+                        {ROW_COUNT, Long.MAX_VALUE},
+                        {half, half - 1}, // empty
+                };
+
+                // Sampled, not exhaustive: 30,000 keys across the full grid is
+                // minutes of runtime for no more coverage than a stride that is
+                // coprime with the key count reaches. The first and last keys
+                // are included explicitly -- they are the group edges, where an
+                // ordinal that should be group-relative and is not shows up.
+                for (int key = 0; key < keyCount; key += 331) {
+                    for (long[] w : windows) {
+                        assertSameSequence(
+                                nativeReader, parquetReader, nativeCol, parquetCol,
+                                key, w[0], w[1], null, IndexReader.DIR_FORWARD
+                        );
+                        assertSameSequence(
+                                nativeReader, parquetReader, nativeCol, parquetCol,
+                                key, w[0], w[1], null, IndexReader.DIR_BACKWARD
+                        );
+                        assertSamePrimitives(
+                                (PostingIndexReader) nativeReader.getIndexReader(0, nativeCol, IndexReader.DIR_FORWARD),
+                                (PostingIndexReader) parquetReader.getIndexReader(0, parquetCol, IndexReader.DIR_FORWARD),
+                                key, w[0], w[1]
+                        );
+                    }
+                }
+                for (int key : new int[]{0, 1, keyCount - 2, keyCount - 1}) {
+                    for (long[] w : windows) {
+                        assertSameSequence(
+                                nativeReader, parquetReader, nativeCol, parquetCol,
+                                key, w[0], w[1], null, IndexReader.DIR_FORWARD
+                        );
+                        assertSameSequence(
+                                nativeReader, parquetReader, nativeCol, parquetCol,
+                                key, w[0], w[1], null, IndexReader.DIR_BACKWARD
+                        );
+                    }
+                }
+            }
+        });
+    }
+
     private void drain(
             IndexReader reader, int key, long min, long max, int[] covers,
             LongList rowIds, LongList coveredValues

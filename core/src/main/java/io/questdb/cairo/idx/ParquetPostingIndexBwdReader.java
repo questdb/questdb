@@ -363,10 +363,14 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     // the reason given in the forward reader: widening the whole
                     // run and seeking inside it widens rows the window throws
                     // away.
-                    // Row ids live in a per-key block, indexed KEY-RELATIVE:
-                    // the directory's group ordinals give the run's LENGTH.
-                    final long block = rowIdBlock(rg, key);
-                    if (block == 0) {
+                    // Row ids live either in a per-key block indexed
+                    // KEY-RELATIVE, or -- where a per-key block header would
+                    // cost more than the ids it describes -- in one group-wide
+                    // array indexed by GROUP ordinal. Either way the
+                    // directory's ordinals give the run's LENGTH.
+                    final boolean flat = isFlatGroup(rg);
+                    final long block = flat ? 0 : rowIdBlock(rg, key);
+                    if (!flat && block == 0) {
                         throw CairoException.critical(0)
                                 .put("covering index packed row-id block is absent for a key the directory holds [key=")
                                 .put(key).put(", rowGroup=").put(rg)
@@ -380,6 +384,11 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     if (isWholeGroupInRange(rg, minValue, maxValue)) {
                         from = 0;
                         to = runLen;
+                    } else if (flat) {
+                        // Searched over GROUP ordinals, then made key-relative,
+                        // because that is the domain the widen below works in.
+                        from = flatSeekFirstAtLeast(rg, rowLo, rowHi, minValue) - rowLo;
+                        to = flatSeekFirstAbove(rg, rowLo + from, rowHi, maxValue) - rowLo;
                     } else {
                         from = packedSeekFirstAtLeast(block, 0, runLen, minValue);
                         to = packedSeekFirstAbove(block, from, runLen, maxValue);

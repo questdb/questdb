@@ -342,6 +342,45 @@ public final class PostingIndexUtils {
      */
     public static final byte PACKED_MODE_PER_KEY_BLOCKS = 3;
 
+    /**
+     * Per-key blocks whose sizes are all EQUAL, so a key's block address is
+     * computed rather than looked up.
+     * <p>
+     * The offset table costs a random load per key from a table that is 4 bytes
+     * an entry -- 131 KB for a 32,768-key group -- so at high cardinality it
+     * misses cache on essentially every key. That load, not decoding, is what a
+     * profile of the 1,000,000-key range read found: 96 of 97 samples were
+     * resolving the block, and the arm reading row ids straight from the mapping
+     * spent its time in the window search instead.
+     * <p>
+     * Uniformity is common exactly where it hurts. A key with two postings
+     * encodes as an arithmetic block -- linear prediction fits any two points
+     * exactly -- and every such block is the same size, so a partition with
+     * uniformly narrow keys needs no table at all.
+     * <p>
+     * Layout: {@code mode(1B) | pad(3B) | keySpan(4B) | blockSize(4B) | pad(4B)
+     * | blocks}. Key {@code k}'s block is at
+     * {@code blob + PACKED_UNIFORM_DATA_OFFSET + (k - firstKey) * blockSize}.
+     * Absent keys still occupy a slot, which is what keeps the arithmetic
+     * valid; the {@code _im} directory is what says they hold no row, so their
+     * bytes are never read.
+     */
+    public static final byte PACKED_MODE_PER_KEY_UNIFORM = 4;
+    public static final int PACKED_UNIFORM_BLOCK_SIZE_OFFSET = 8;
+    public static final int PACKED_UNIFORM_DATA_OFFSET = 16;
+
+    /** Total size of a uniform-block blob. */
+    public static int packedUniformBlobSize(int keySpan, int blockSize) {
+        return PACKED_UNIFORM_DATA_OFFSET + keySpan * blockSize;
+    }
+
+    /** Address of {@code key}'s block in a uniform-block blob. No table lookup. */
+    public static long packedUniformBlock(long blobAddr, int firstKey, int key) {
+        final int blockSize = Unsafe.getUnsafe().getInt(blobAddr + PACKED_UNIFORM_BLOCK_SIZE_OFFSET);
+        return blobAddr + PACKED_UNIFORM_DATA_OFFSET + (long) (key - firstKey) * blockSize;
+    }
+
+
     /** Header size of a per-key covered blob spanning {@code keySpan} directory entries. */
     public static int coverPerKeyHeaderSize(int keySpan) {
         return COVER_PER_KEY_TABLE_OFFSET + keySpan * Integer.BYTES;

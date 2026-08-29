@@ -468,10 +468,14 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     // seek within it -- widens rows the window discards, which
                     // at 2,000 keys over 2M rows is 1,000 values a key however
                     // few the window admits.
-                    // Row ids live in a per-key block, indexed KEY-RELATIVE:
-                    // the directory's group ordinals give the run's LENGTH.
-                    final long block = rowIdBlock(rg, key);
-                    if (block == 0) {
+                    // Row ids live either in a per-key block indexed
+                    // KEY-RELATIVE, or -- where a per-key block header would
+                    // cost more than the ids it describes -- in one group-wide
+                    // array indexed by GROUP ordinal. Either way the
+                    // directory's ordinals give the run's LENGTH.
+                    final boolean flat = isFlatGroup(rg);
+                    final long block = flat ? 0 : rowIdBlock(rg, key);
+                    if (!flat && block == 0) {
                         throw CairoException.critical(0)
                                 .put("covering index packed row-id block is absent for a key the directory holds [key=")
                                 .put(key).put(", rowGroup=").put(rg)
@@ -480,8 +484,11 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     final long runLen = rowHi - rowLo;
                     // A stride of zero would mean repeated row ids, which a key
                     // never has, so the closed form is only taken when it is
-                    // genuinely a progression.
-                    seqMode = CoveringCompressor.isArithmeticBlock(block)
+                    // genuinely a progression. A flat group carries no per-key
+                    // progression to read -- that is the cost of dropping the
+                    // per-key header -- so it always seeks.
+                    seqMode = !flat
+                            && CoveringCompressor.isArithmeticBlock(block)
                             && CoveringCompressor.arithmeticStride(block) > 0;
                     if (seqMode) {
                         seqStart = CoveringCompressor.arithmeticStart(block);
@@ -504,6 +511,11 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                                 ceilDiv(minValue - seqStart, seqStride)));
                         to = Math.max(from, Math.min(runLen,
                                 Math.floorDiv(maxValue - seqStart, seqStride) + 1));
+                    } else if (flat) {
+                        // Searched over GROUP ordinals, then made key-relative,
+                        // because that is the domain the widen below works in.
+                        from = flatSeekFirstAtLeast(rg, rowLo, rowHi, minValue) - rowLo;
+                        to = flatSeekFirstAbove(rg, rowLo + from, rowHi, maxValue) - rowLo;
                     } else {
                         from = packedSeekFirstAtLeast(block, 0, runLen, minValue);
                         to = packedSeekFirstAbove(block, from, runLen, maxValue);

@@ -351,7 +351,8 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // little-endian length then the bytes.
                 final long blob = pidxAddr + pageOffset + Integer.BYTES;
                 final byte mode = Unsafe.getUnsafe().getByte(blob);
-                if (mode == PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS) {
+                if (mode == PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS
+                        || mode == PostingIndexUtils.PACKED_MODE_PER_KEY_UNIFORM) {
                     // One linear-prediction block per key. The blob start is
                     // what a key's block is resolved from; there is no
                     // group-wide packed array to point at.
@@ -414,15 +415,83 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /**
+     * True when {@code rowGroup}'s row ids live in one frame-of-reference array
+     * for the whole group rather than in a block per key.
+     * <p>
+     * The seal picks the layout per group by cost, so a single file holds both:
+     * a group of wide keys keeps its per-key blocks, and one of narrow keys --
+     * where a 29-byte block header would cost more than the row ids it
+     * describes -- goes flat. Callers must ask rather than assume.
+     */
+    protected boolean isFlatGroup(int rowGroup) {
+        // Resolves the mode as a side effect; packedBlobAddrs is only
+        // meaningful once the group has been looked at.
+        return packedDataAddr(rowGroup) != 0 && packedBlobAddrs[rowGroup] == 0;
+    }
+
+    /**
+     * The row id at group ordinal {@code ordinal} of a flat group. Valid only
+     * where {@link #isFlatGroup(int)} holds.
+     */
+    protected long flatRowIdAt(int rowGroup, long ordinal) {
+        return BitpackUtils.unpackValue(
+                packedDataAddrs[rowGroup], (int) ordinal, packedBitWidths[rowGroup], packedBases[rowGroup]);
+    }
+
+    /**
+     * First group ordinal in {@code [lo, hi)} whose row id is at or above
+     * {@code value}, or {@code hi}. Ordinals are GROUP-relative, matching the
+     * {@code _im} directory that produced the bounds.
+     */
+    protected long flatSeekFirstAtLeast(int rowGroup, long lo, long hi, long value) {
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (flatRowIdAt(rowGroup, mid) < value) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /** First group ordinal in {@code [lo, hi)} whose row id exceeds {@code value}, or {@code hi}. */
+    protected long flatSeekFirstAbove(int rowGroup, long lo, long hi, long value) {
+        while (lo < hi) {
+            final long mid = (lo + hi) >>> 1;
+            if (flatRowIdAt(rowGroup, mid) <= value) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /**
      * The linear-prediction block holding {@code key}'s row ids in
-     * {@code rowGroup}, or 0 when the key holds none.
+     * {@code rowGroup}, or 0 when the key holds none or the group is flat.
+     * <p>
+     * Returns 0 rather than a block for a flat group DELIBERATELY. A flat
+     * group's cached address is its packed array, not a blob, so reading a
+     * per-key offset out of it yields a wild pointer -- three call sites that
+     * missed the layout branch turned into a SIGSEGV rather than an error. 0
+     * puts them on the "block is absent" path instead, which throws with the
+     * group and key in the message.
      */
     protected long rowIdBlock(int rowGroup, int key) {
         final long blob = packedDataAddr(rowGroup);
-        if (blob == 0) {
+        if (blob == 0 || packedBlobAddrs[rowGroup] == 0) {
             return 0;
         }
-        return PostingIndexUtils.coverPerKeyBlock(blob, imReader.getRowGroupFirstKey(rowGroup), key);
+        final int firstKey = imReader.getRowGroupFirstKey(rowGroup);
+        // Uniform blocks are addressed arithmetically, which spares the random
+        // load into a 4-byte-per-key offset table -- the load a profile of the
+        // 1,000,000-key range read found to be nearly all of its cost.
+        if (Unsafe.getUnsafe().getByte(blob) == PostingIndexUtils.PACKED_MODE_PER_KEY_UNIFORM) {
+            return PostingIndexUtils.packedUniformBlock(blob, firstKey, key);
+        }
+        return PostingIndexUtils.coverPerKeyBlock(blob, firstKey, key);
     }
 
     /**
@@ -551,6 +620,28 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     @TestOnly
     public boolean isPackedPayload() {
         return packedPayload;
+    }
+
+    /**
+     * Number of row groups whose row ids the seal laid out flat rather than as
+     * a block per key.
+     * <p>
+     * Exists so a differential test can PROVE it entered the flat path. The
+     * layout is chosen per group by cost, so a fixture of wide keys takes the
+     * per-key path throughout and would compare that path against the native
+     * oracle while appearing to cover both -- the same way the covered grid
+     * silently never reached the flat branch on a 16-key fixture.
+     */
+    @TestOnly
+    public int flatRowIdGroupCount() {
+        final int groups = Math.max(imReader.getIndexRowGroupCount(), 1);
+        int n = 0;
+        for (int rg = 0; rg < groups; rg++) {
+            if (isFlatGroup(rg)) {
+                n++;
+            }
+        }
+        return n;
     }
 
     @Override
@@ -773,7 +864,13 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // binary searches in the packed domain, and nothing is widened
                 // at all -- against widening the whole run and counting it.
                 // The block is indexed KEY-RELATIVE, so the directory's group
-                // ordinals become a length here.
+                // ordinals become a length here. A flat group has no per-key
+                // block: its ordinals stay group-relative and the directory's
+                // bounds are used as they are.
+                if (isFlatGroup(rowGroup)) {
+                    final long at = flatSeekFirstAtLeast(rowGroup, lo, hi, minValue);
+                    return flatSeekFirstAbove(rowGroup, at, hi, maxValue) - at;
+                }
                 final long block = rowIdBlock(rowGroup, key);
                 final long n = hi - lo;
                 final long from = packedSeekFirstAtLeast(block, 0, n, minValue);
@@ -803,6 +900,12 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // The matching rows are a contiguous ascending slice, so the
                 // j-th of them is one indexed read at from + j. No scan, and
                 // nothing widened but the single value returned.
+                if (isFlatGroup(rowGroup)) {
+                    final long at0 = flatSeekFirstAtLeast(rowGroup, lo, hi, minValue);
+                    final long end = flatSeekFirstAbove(rowGroup, at0, hi, maxValue);
+                    final long at = at0 + j;
+                    return at < end ? flatRowIdAt(rowGroup, at) : Numbers.LONG_NULL;
+                }
                 final long block = rowIdBlock(rowGroup, key);
                 final long n = hi - lo;
                 final long from = packedSeekFirstAtLeast(block, 0, n, minValue);
@@ -984,6 +1087,21 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         }
 
         protected long unpackRowIds(int rowGroup, int key, int from, int count) {
+            if (isFlatGroup(rowGroup)) {
+                // Group-wide array: the key's run starts where the _im says it
+                // does, and `from` is an offset within that run.
+                final long range = imReader.getKeyRowRangeInGroup(rowGroup, key);
+                ensureUnpackCapacity(count);
+                BitpackUtils.unpackValuesFrom(
+                        packedDataAddrs[rowGroup],
+                        Numbers.decodeLowInt(range) + from,
+                        count,
+                        packedBitWidths[rowGroup],
+                        packedBases[rowGroup],
+                        unpackBuf
+                );
+                return unpackBuf;
+            }
             final long block = rowIdBlock(rowGroup, key);
             if (block == 0) {
                 // The seal writes this arm only uncompressed, uncovered and

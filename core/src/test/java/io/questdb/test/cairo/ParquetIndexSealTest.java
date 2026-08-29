@@ -3626,17 +3626,30 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
                     // One linear-prediction block per key, in the container the
                     // covered columns use. A key's values are addressed inside
                     // its own block, KEY-RELATIVE, not by a group ordinal.
-                    Assert.assertEquals("row group " + g + " blob mode",
-                            PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS,
-                            Unsafe.getUnsafe().getByte(blob));
+                    // Either per-key layout is legal. The seal drops the offset
+                    // table when every block comes out the same size, which is
+                    // what this fixture produces -- 500 postings a key, so every
+                    // block is an equally sized arithmetic block.
+                    final byte mode = Unsafe.getUnsafe().getByte(blob);
+                    Assert.assertTrue("row group " + g + " blob mode " + mode,
+                            mode == PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS
+                                    || mode == PostingIndexUtils.PACKED_MODE_PER_KEY_UNIFORM);
                     final int postings = (int) imReader.getRowGroupNumRows(g);
                     final int firstKey = imReader.getRowGroupFirstKey(g);
                     int addressed = 0;
                     for (int k = firstKey, keys = imReader.getRowGroupKeyCount(g); k < firstKey + keys; k++) {
                         final long range = imReader.getKeyRowRangeInGroup(g, k);
-                        final long block = PostingIndexUtils.coverPerKeyBlock(blob, firstKey, k);
+                        final long block = mode == PostingIndexUtils.PACKED_MODE_PER_KEY_UNIFORM
+                                ? PostingIndexUtils.packedUniformBlock(blob, firstKey, k)
+                                : PostingIndexUtils.coverPerKeyBlock(blob, firstKey, k);
                         if (range == IndexMetaFileReader.KEY_ABSENT) {
-                            Assert.assertEquals("absent key " + k + " must have no block", 0, block);
+                            // Under the uniform layout an absent key still owns a
+                            // slot -- that is what keeps the address arithmetic
+                            // valid -- so absence is the _im's statement, not the
+                            // blob's.
+                            if (mode == PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS) {
+                                Assert.assertEquals("absent key " + k + " must have no block", 0, block);
+                            }
                             continue;
                         }
                         Assert.assertTrue("key " + k + " holds rows but has no block", block != 0);
@@ -4564,5 +4577,89 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         path.of(configuration.getDbRoot()).concat(token);
         TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, dirNameTxn);
         return path;
+    }
+
+    /**
+     * A table of {@code rows} rows over {@code keys} distinct symbols, so that
+     * postings-per-key is exactly {@code rows / keys}. The only fixture knob
+     * that matters here is that ratio: it is what a per-key block's header has
+     * to amortise over.
+     */
+    private void createCardinalityTable(String tableName, int rows, int keys) throws Exception {
+        execute("CREATE TABLE " + tableName + " (" +
+                "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + tableName + " SELECT" +
+                " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                " 'q' || ((x - 1) % " + keys + ")," +
+                " x::DOUBLE," +
+                " x" +
+                " FROM long_sequence(" + rows + ")");
+        drainWalQueue();
+        // A later partition, so the indexed one is not active and can convert.
+        execute("INSERT INTO " + tableName + " VALUES ('2024-01-02T00:00:00Z', 'q0', 1.0, 1)");
+        drainWalQueue();
+    }
+
+    /** Sealed {@code sym.pidx.*} bytes for one shape under one payload arm. */
+    private long sealedPidxBytes(String tableName, int rows, int keys, boolean packedPayload) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, packedPayload);
+        createCardinalityTable(tableName, rows, keys);
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+        drainWalQueue();
+        execute("ALTER TABLE " + tableName + " ALTER COLUMN sym ADD INDEX TYPE POSTING");
+        drainWalQueue();
+        engine.releaseInactive();
+        try (Path path = new Path()) {
+            return sumIndexFiles(partitionPath(path, tableName).toString(), "sym.pidx.");
+        }
+    }
+
+    /**
+     * A per-key row-id block costs a 29-byte {@link io.questdb.cairo.idx.CoveringCompressor}
+     * linear-prediction header ({@code LONG_LINEAR_PRED_HEADER_SIZE}) before it
+     * stores a single row id, so it only pays for itself once a key owns more
+     * postings than that header replaces: 29/8 is about 3.6 raw int64 row ids.
+     * <p>
+     * Both shapes are measured in one test because the claim is a CROSSOVER,
+     * not a level. Measuring only the wide shape says a per-key block is a win
+     * and measuring only the narrow one says it is a loss; the pair is what
+     * shows the header is the variable. The narrow shape is S7's -- two
+     * postings a key -- which is where the benchmark ladder's high-cardinality
+     * regression lives.
+     * <p>
+     * Asserted as "never larger than the per-posting arm" rather than as the
+     * ratio observed today, because the packed arm exists to be smaller. A
+     * fixture that merely pinned today's numbers would go green on a change
+     * that made the narrow shape worse still.
+     */
+    @Test
+    public void testAPerKeyBlockNeverCostsMoreThanTheRowIdsItReplaces() throws Exception {
+        assertMemoryLeak(() -> {
+            final int rows = 200_000;
+            // 200 postings a key: the header is 0.15 bytes a posting, noise.
+            final long wideN = sealedPidxBytes("t_card_wide_n", rows, 1_000, false);
+            final long wideB = sealedPidxBytes("t_card_wide_b", rows, 1_000, true);
+            // 2 postings a key: the header is 14.5 bytes a posting, against 8
+            // bytes for the raw row ids it is meant to be replacing.
+            final long narrowN = sealedPidxBytes("t_card_narrow_n", rows, 100_000, false);
+            final long narrowB = sealedPidxBytes("t_card_narrow_b", rows, 100_000, true);
+
+            System.out.printf(
+                    "%n  postings/key   arm N (KB)   arm B (KB)   B/N%n" +
+                            "  %-14d %-12d %-12d %.2fx%n" +
+                            "  %-14d %-12d %-12d %.2fx%n%n",
+                    rows / 1_000, wideN >> 10, wideB >> 10, wideB / (double) wideN,
+                    rows / 100_000, narrowN >> 10, narrowB >> 10, narrowB / (double) narrowN);
+
+            Assert.assertTrue(
+                    "the packed arm must be smaller where a key is wide [armN=" + wideN + ", armB=" + wideB + ']',
+                    wideB < wideN);
+            Assert.assertTrue(
+                    "a per-key block must never cost more than the raw row ids it replaces"
+                            + " [postingsPerKey=" + (rows / 100_000) + ", armN=" + narrowN + ", armB=" + narrowB + ']',
+                    narrowB <= narrowN);
+        });
     }
 }
