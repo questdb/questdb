@@ -704,8 +704,12 @@ public final class ParquetIndexSeal {
                         ? PostingIndexUtils.packedUniformBlobSize(plan.keySpan, uniformSize)
                         : Integer.MAX_VALUE;
 
+                // questdb.idx.packed.noflat=true withholds the flat layout, so
+                // a benchmark can negative-control it: the narrow-key win must
+                // vanish when it is off, on the same build and the same run.
                 final int at;
-                if (flatSize < tableSize && flatSize < uniformBlobSize) {
+                if (flatSize < tableSize && flatSize < uniformBlobSize
+                        && !Boolean.getBoolean("questdb.idx.packed.noflat")) {
                     PostingIndexUtils.encodePackedPayloadBlob(blob, groupRowIds, rows, flatMin, flatBitWidth);
                     at = flatSize;
                 } else if (uniformBlobSize <= tableSize) {

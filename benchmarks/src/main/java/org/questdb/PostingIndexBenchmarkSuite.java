@@ -109,6 +109,26 @@ public class PostingIndexBenchmarkSuite {
             "--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED",
     };
 
+    /**
+     * {@code -Dquestdb.idx.*} flags set on the launcher, as {@code -D} args for
+     * the FORKED jvm.
+     * <p>
+     * The seal runs in the fork, so a storage-format flag set only on the
+     * launcher changes nothing about the file being measured: the run compares
+     * the default against itself and reports the difference as noise. The
+     * existing {@code questdb.idx.packed.align} flag has exactly this shape,
+     * so any A/B taken with it and a forked run measured nothing.
+     */
+    private static String[] forwardedIdxFlags() {
+        final java.util.ArrayList<String> args = new java.util.ArrayList<>();
+        for (String name : System.getProperties().stringPropertyNames()) {
+            if (name.startsWith("questdb.idx.")) {
+                args.add("-D" + name + '=' + System.getProperty(name));
+            }
+        }
+        return args.toArray(new String[0]);
+    }
+
     static {
         // Runs in the FORKED jvm as well as this one. main()'s haltInstance()
         // does not: JMH forks run ForkedMain, so from the moment execution
@@ -221,6 +241,7 @@ public class PostingIndexBenchmarkSuite {
                 // contaminate each other, which is why forking is the default.
                 builder.forks(Integer.getInteger("questdb.suite.bench.forks", 1))
                         .jvmArgsAppend(JVM_EXPORTS)
+                        .jvmArgsAppend(forwardedIdxFlags())
                         .warmupIterations(1)
                         .measurementIterations(2);
             } else {
@@ -238,6 +259,7 @@ public class PostingIndexBenchmarkSuite {
                 final int iters = Integer.getInteger("questdb.suite.bench.iterations", 5);
                 builder.forks(1)
                         .jvmArgsAppend(JVM_EXPORTS)
+                        .jvmArgsAppend(forwardedIdxFlags())
                         // Three warmup iterations, not one. One second of
                         // warmup does not settle JIT on these cells, and the
                         // instability shows up as CONFIDENT wrong verdicts
