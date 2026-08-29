@@ -2523,6 +2523,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (masterMetadata.getTimestampIndex() != -1) {
                 metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
             }
+            // ASOF/LT are left-outer joins: an unmatched master row is paired
+            // with a null slave record, so NOT NULL constraints on the slave
+            // cannot be retained in the joined result metadata.
+            for (int i = masterMetadata.getColumnCount(), n = metadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(i).setNotNullFlag(false);
+            }
             return generator.create(
                     configuration,
                     metadata,
@@ -5540,7 +5546,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
-        final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, masterMetadata.getTimestampIndex(), false, true);
         try {
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -5894,7 +5900,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
-        JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, masterMetadata.getTimestampIndex(), false, true);
         try {
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                 int[][] ltSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);

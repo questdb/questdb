@@ -357,7 +357,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         seqTxn
                 );
 
-                if (hasSchemaChange) {
+                if (hasSchemaChange || forceFullReencode) {
                     // Table schema differs from parquet file schema (ADD COLUMN,
                     // DROP COLUMN, or both). Pass the full target schema to Rust
                     // so the output file footer, column remapping, and null column
@@ -382,7 +382,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         if (noNulls) {
                             colType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                         }
-                        final int colId = tableWriterMetadata.getColumnMetadata(i).getWriterIndex();
+                        final int colId = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
                         final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(i).getParquetEncodingConfig();
                         schemaDesc.addColumn(
                                 tableWriterMetadata.getColumnName(i),
@@ -1745,13 +1745,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // rowId is irrelevant for oooCopyIndex, which only reads timestamps.
         final long mergeIndexAddr = sortedTimestampsAddr + o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES;
 
-        // Non-owning descriptor: every column hands the encoder pointers into
-        // O3 source buffers (sorted data, sorted aux, merge index for the
-        // timestamp), so there's nothing to free on this path.
         final PartitionDescriptor descriptor = ctx.getFreshPartitionDescriptor();
         descriptor.of(tableWriter.getTableToken().getTableName(), rowCount, timestampIndex);
+        final LongList allocatedBuffers = new LongList();
 
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+        try {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
             int columnType = tableWriterMetadata.getColumnType(columnIndex);
             if (columnType < 0) {
                 continue;
@@ -1782,6 +1781,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     throw th;
                 }
 
+                allocatedBuffers.add(dstAuxAddr);
+                allocatedBuffers.add(dstAuxSize);
+                allocatedBuffers.add(dstDataAddr);
+                allocatedBuffers.add(dstDataSize);
                 try {
                     O3CopyJob.mergeCopy(
                             columnType,
@@ -1796,8 +1799,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             0
                     );
                 } catch (Throwable th) {
-                    Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
-                    Unsafe.free(dstDataAddr, dstDataSize, MemoryTag.NATIVE_O3);
                     throw th;
                 }
 
@@ -1819,6 +1820,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final long srcOooFixAddr = oooMem1.addressOf(0);
                 long dstFixSize = rowCount * ColumnType.sizeOf(columnType);
                 long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
+                allocatedBuffers.add(dstFixAddr);
+                allocatedBuffers.add(dstFixSize);
 
                 try {
                     O3CopyJob.mergeCopy(
@@ -1834,7 +1837,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             0
                     );
                 } catch (Throwable th) {
-                    Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
                     throw th;
                 }
 
@@ -1896,8 +1898,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
         }
 
-        // Publish only after all columns have been added so Rust sees a complete row group.
-        partitionUpdater.addRowGroup(metadataPosition, descriptor);
+            // Publish only after all columns have been added so Rust sees a complete row group.
+            partitionUpdater.addRowGroup(metadataPosition, descriptor);
+        } finally {
+            descriptor.clear();
+            for (int i = 0, n = allocatedBuffers.size(); i < n; i += 2) {
+                Unsafe.free(allocatedBuffers.getQuick(i), allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_O3);
+            }
+        }
     }
 
     /**

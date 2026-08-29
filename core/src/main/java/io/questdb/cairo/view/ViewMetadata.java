@@ -47,18 +47,18 @@ public class ViewMetadata extends GenericRecordMetadata implements TableMetadata
         if (sourceMetadata != null) {
             final ViewMetadata metadata = newInstance(viewToken);
             for (int i = 0, n = sourceMetadata.getColumnCount(); i < n; i++) {
-                metadata.add(
-                        new TableColumnMetadata(
-                                sourceMetadata.getColumnName(i),
-                                sourceMetadata.getColumnType(i),
-                                IndexType.NONE,
-                                0,
-                                false,
-                                sourceMetadata.getMetadata(i),
-                                i,
-                                false
-                        )
+                final TableColumnMetadata columnMetadata = new TableColumnMetadata(
+                        sourceMetadata.getColumnName(i),
+                        sourceMetadata.getColumnType(i),
+                        IndexType.NONE,
+                        0,
+                        false,
+                        sourceMetadata.getMetadata(i),
+                        i,
+                        false
                 );
+                columnMetadata.setNotNullFlag(sourceMetadata.isNotNull(i));
+                metadata.add(columnMetadata);
             }
             metadata.setTimestampIndex(sourceMetadata.getTimestampIndex());
             return metadata;
