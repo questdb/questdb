@@ -97,6 +97,10 @@ import org.junit.Test;
  */
 public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     private static final int ACCOUNTS = 4;
+    // Forward commits the cost differential runs. Enough that a per-commit divergence
+    // between the arms cannot hide inside a single boundary case, and small enough that the
+    // case stays a sub-second unit test.
+    private static final int FORWARD_COMMITS = 32;
     private static final int ROWS_PER_ACCOUNT_PER_DAY = 4;
 
     @Test
@@ -1072,6 +1076,115 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The forward path's price for the identity, pinned as a differential rather than as a
+     * benchmark. The keyed arm's table carries {@code (created_at, account_id)}, so every one
+     * of its forward commits goes out at {@code WAL_DEDUP_MODE_NO_DEDUP}, which
+     * {@code WalTxnDetails} turns into {@code FORCE_FULL_COMMIT} - one transaction per applied
+     * block, and no WAL lag. The plain arm stamps neither. This case holds that the difference
+     * costs the keyed arm nothing on the forward path: the same applies, and the same rows
+     * physically written.
+     * <p>
+     * It holds because the refresh worker applies each live-view WAL block inline right after
+     * committing it, so only one transaction is ever pending, and
+     * {@code WalTxnDetails.readObservableTxnMeta} already stamps a sole pending transaction
+     * {@code LAST_ROW_COMMIT} - which {@code getCommitToTimestamp} reports as
+     * {@code FORCE_FULL_COMMIT} whatever the dedup mode. Both arms therefore take the full-commit
+     * path that the identity is charged with forcing. If a future change ever leaves live-view
+     * transactions pending in batches, the plain arm starts absorbing them into its WAL lag and
+     * this case fails on {@code plainApplies} rather than reporting the regression as a
+     * performance number nobody runs.
+     * <p>
+     * The applies are counted as the view table's own {@code _txn} transactions, not as the WAL
+     * lag row count: the fast-lag publish drains the lag inside the same apply call, so a lag
+     * counter sampled between commits reads zero whether the lag ran or not, and would pass
+     * vacuously. One table transaction per live-view WAL transaction is the same statement in
+     * an observable form.
+     */
+    @Test
+    public void testTheIdentityCostsTheForwardPathNoExtraApplyAndNoExtraWrittenRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createBothArms(seedAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+
+                // The arms really are the two arms: the switch put the pair on one table's own
+                // _meta and nothing on the other's.
+                Assert.assertEquals("created_at,account_id", dedupKeysOf("lv"));
+                Assert.assertEquals("", dedupKeysOf("lv_plain"));
+
+                final long keyedWalBefore = liveViewWriterTxn("lv");
+                final long plainWalBefore = liveViewWriterTxn("lv_plain");
+                final long keyedAppliesBefore = tableTransactions("lv");
+                final long plainAppliesBefore = tableTransactions("lv_plain");
+                final long keyedRowsBefore = durableRows("lv");
+                final long plainRowsBefore = durableRows("lv_plain");
+                long physicallyWrittenRows = 0;
+
+                // Forward-only commits above everything either view holds, strictly increasing,
+                // so no repair fires and what is left is the forward path alone. The explicit
+                // drainWalQueue above applies the base commit before the window opens.
+                // driveRefreshToQuiescence then calls drainWalQueue again INSIDE the window, but
+                // it writes nothing there: the base has nothing left to apply, and
+                // ApplyWal2TableJob.doRun drops every live-view notification while refresh is
+                // enabled, so the refresh worker's own inline apply is the only writer in the
+                // window.
+                for (int i = 0; i < FORWARD_COMMITS; i++) {
+                    execute("insert into tx values "
+                            + row(5, 1, 0, i, "acct-1") + ", " + row(5, 1, 0, i, "acct-2"));
+                    drainWalQueue();
+                    final long writtenBefore = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+                    driveRefreshToQuiescence(job);
+                    physicallyWrittenRows +=
+                            engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows() - writtenBefore;
+                }
+
+                final long keyedWalTxns = liveViewWriterTxn("lv") - keyedWalBefore;
+                final long plainWalTxns = liveViewWriterTxn("lv_plain") - plainWalBefore;
+                final long keyedApplies = tableTransactions("lv") - keyedAppliesBefore;
+                final long plainApplies = tableTransactions("lv_plain") - plainAppliesBefore;
+                final long keyedRows = durableRows("lv") - keyedRowsBefore;
+                final long plainRows = durableRows("lv_plain") - plainRowsBefore;
+
+                Assert.assertEquals(
+                        "each forward commit must reach the keyed arm as exactly one live-view WAL transaction",
+                        FORWARD_COMMITS,
+                        keyedWalTxns
+                );
+                Assert.assertEquals("both arms must see the same commits", keyedWalTxns, plainWalTxns);
+                Assert.assertEquals(
+                        "the identity must cost the keyed arm no extra apply",
+                        plainApplies,
+                        keyedApplies
+                );
+                Assert.assertEquals(
+                        "one table transaction per live-view WAL transaction: the keyed arm's"
+                                + " FORCE_FULL_COMMIT takes away a lag the forward path never had",
+                        keyedWalTxns,
+                        keyedApplies
+                );
+                Assert.assertEquals(
+                        "and the plain arm retains nothing in its lag either, which is what makes"
+                                + " the equality above a statement about the path rather than a coincidence",
+                        plainWalTxns,
+                        plainApplies
+                );
+                Assert.assertEquals("the two arms must append the same rows", plainRows, keyedRows);
+                // getPhysicallyWrittenRows counts the whole engine, so this equality also
+                // assumes the two views are the only tables written inside the window - true
+                // here for the reason the loop comment gives. A third writer would break the
+                // equality outright rather than bias it quietly.
+                Assert.assertEquals(
+                        "neither arm may write a row more than once - the identity must buy no"
+                                + " write amplification",
+                        keyedRows + plainRows,
+                        physicallyWrittenRows
+                );
+                assertArmsAgree();
+            }
+        });
+    }
+
+    /**
      * One row of the view's own output, as the repair's copier writes it: the designated
      * timestamp, the projected key and the window's value.
      */
@@ -1398,5 +1511,17 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             }
         }
         return rows.toString();
+    }
+
+    /**
+     * The named view table's own transaction number - the count of {@code _txn} commits it has
+     * taken. One per applied live-view WAL transaction when the apply takes the full-commit
+     * path, fewer when the WAL lag absorbs several transactions before one commit publishes
+     * them all.
+     */
+    private long tableTransactions(String viewName) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(viewName))) {
+            return reader.getTxn();
+        }
     }
 }

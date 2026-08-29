@@ -443,8 +443,8 @@ public final class LiveViewAccumulatorDescriptor {
 
     /**
      * The codec version rides inside the identity as well as beside it in the
-     * manifest. The manifest field is what {@link LiveViewWindowStateManifest#isByteEqual}
-     * reads; carrying it here too makes {@link #isSameIdentity} complete on its own,
+     * manifest. The byte-for-byte manifest comparison reads the manifest field;
+     * carrying it here too makes {@link #isSameIdentity} complete on its own,
      * so the plan's merge cannot fold two components a codec bump has separated.
      */
     private byte[] encode() {

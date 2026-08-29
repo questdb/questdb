@@ -54,26 +54,52 @@ public class LiveViewCheckpointOpenSegmentCostTest {
     @Test
     public void testPerViewSamplesMoveTheCrossover() {
         final LiveViewCheckpointOpenSegmentCost cost = new LiveViewCheckpointOpenSegmentCost();
+
+        // The cold-start priors price this route in favour of the keyed executor:
+        // whole = 20_000 rows * 100 + 64_000_000 bytes * 6 = 386_000_000 ns,
+        // keyed = 200_000 cost rows * 250 + 10_000 keys * 5_000 = 100_000_000 ns.
+        // The 150% keyed upper bound (150_000_000) stays well under the 85% whole-range
+        // hysteresis floor (328_100_000), so the model overrides the row verdict.
+        Assert.assertTrue(cost.shouldOverrideWholeRange(
+                false,
+                64_000_000,
+                20_000,
+                200_000,
+                10_000
+        ));
+        Assert.assertEquals(386_000_000L, cost.getLastWholeEstimateNanos());
+        Assert.assertEquals(100_000_000L, cost.getLastKeyedEstimateNanos());
+
+        // This view then measures a restore that runs 12x faster than the prior (0.5 ns/byte),
+        // a whole-range scan twice as fast (50 ns/row), a keyed scan 4x slower (1_000 ns per
+        // cost row) and a key-state transplant twice as slow (10_000 ns/key).
         cost.setRatesForTest(
-                1_000,
+                32_000_000,
+                64_000_000,
                 1_000_000,
+                20_000,
                 1_000_000,
-                10_000,
-                1_000_000,
-                10_000,
+                20_000,
+                200_000_000,
+                200_000,
                 100_000_000,
-                100_000,
-                100_000_000,
-                1_000
+                10_000
         );
 
+        // The samples move the crossover to the other side of the same inputs:
+        // whole = 1_000_000 + 32_000_000 = 33_000_000 ns,
+        // keyed = 200_000_000 + 100_000_000 = 300_000_000 ns, so the 150% keyed upper
+        // bound (450_000_000) now dwarfs the 85% hysteresis floor (28_050_000) and the
+        // model leaves the row verdict alone.
         Assert.assertFalse(cost.shouldOverrideWholeRange(
                 false,
-                1_000_000,
-                10_000,
-                100_000,
-                1_000
+                64_000_000,
+                20_000,
+                200_000,
+                10_000
         ));
+        Assert.assertEquals(33_000_000L, cost.getLastWholeEstimateNanos());
+        Assert.assertEquals(300_000_000L, cost.getLastKeyedEstimateNanos());
     }
 
     @Test

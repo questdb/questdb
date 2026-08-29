@@ -48,7 +48,10 @@ import java.util.Arrays;
  * guard the reader already applies is not sufficient cover. The writer therefore
  * compares the compiled manifest byte-for-byte against the predecessor root's and, on
  * any difference at all, takes the full-scan conversion path a legacy predecessor
- * takes. That is why {@link #isByteEqual} exists and why nothing weaker is offered.
+ * takes. Both the seal and the restore run that comparison as a plain
+ * {@code Arrays.equals} over the encoded bytes: a decoder locates every field of a
+ * fused entry by offset alone, so no weaker test can tell a difference it may tolerate
+ * from one that silently shifts every field after it.
  * <p>
  * The window identity, key schema and anchor value type are <b>not</b> in here: they
  * are the root's own fields, and predecessor compatibility is all four checks
@@ -153,16 +156,6 @@ public final class LiveViewWindowStateManifest {
      */
     public int getTotalInlineStateBytes() {
         return totalInlineStateBytes;
-    }
-
-    /**
-     * The predecessor-compatibility test. Any difference at all - a reordered
-     * component, a codec version bump, a changed argument - forces the full-scan
-     * conversion seal, because an incremental seal across differing manifests would
-     * publish the new layout over leaves the old one wrote.
-     */
-    public boolean isByteEqual(LiveViewWindowStateManifest other) {
-        return other != null && Arrays.equals(encoded, other.encoded);
     }
 
     private byte[] encode(ObjList<LiveViewAccumulatorDescriptor> components, IntList componentOffsets) {

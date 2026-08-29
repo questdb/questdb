@@ -71,8 +71,10 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -7811,6 +7813,391 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                                 "2026-04-01T00:00:00.000000Z\t1\t1\n" +
                                 "2026-04-01T00:00:01.000000Z\t2\t2\n");
             }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushLeadMultiCycleUnappliedBacklogDoesNotStrandStaleTierRows() throws Exception {
+        // Sibling of testFlushLeadUnappliedBlockIsRetriedOnQuiescentBase, which holds the LV
+        // TableWriter across ONE refresh cycle. Holding it across TWO used to leave the view
+        // permanently WRONG - not merely behind - with nothing raising a fault. This test covers
+        // the retryPendingLiveViewApply applier; the other applier, flushLead's own inline apply,
+        // has its own test directly below -
+        // testFlushLeadOwnApplyDrainingBacklogDoesNotStrandStaleTierRows.
+        // Each is red only with its own guard reverted, so both are load-bearing.
+        //
+        // Cycle 1 flushes a block whose inline apply no-ops on EntryUnavailableException, so
+        // flushLead un-stamps the slot and marks the tier stale. Cycle 2 therefore takes
+        // finishLeadRefresh's tierStale branch: it flushes (a second block, whose apply no-ops
+        // again) and then calls rebuildInMemoryTier, which restages the slot from the
+        // STILL-STALE disk, stamps it with that stale seqTxn and clears the stale marking. The
+        // slot is a correct tail of the disk it was staged from - but the LV WAL still carries
+        // two unapplied blocks, and the marking that would have told the next applier to rebuild
+        // is gone.
+        //
+        // Releasing the writer lets scanForLaggingViews / retryPendingLiveViewApply land the
+        // whole backlog, which makes the disk tier completely correct. The slot is not: it holds
+        // the OLD disk's tail. retryPendingLiveViewApply used to read isTierStale() as false and
+        // re-stamp the slot with the post-apply seqTxn instead of rebuilding it, and the read
+        // path's seam takes that stamp as proof that the slot's overlap band IS the disk scan's
+        // trailing leadStart rows. The seam then served diskSize - leadStart disk rows followed
+        // by the slot, dropping the newest leadStart rows of the LV table and re-emitting the
+        // slot's stale rows in their place. flushLead's own restamp carried the same flaw
+        // whenever its apply drained a backlog along with its own block.
+        //
+        // The substitution is one-for-one, so count(*) stayed RIGHT while the rows were WRONG -
+        // a count-only assertion passes either way. The content assertion below is the one that
+        // discriminates, and it compares the view against the same SELECT recomputed straight
+        // from the base.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Hold the LV TableWriter across TWO consecutive flush cycles. Each cycle's
+                // inline apply returns on EntryUnavailableException without applying, so both
+                // blocks stay committed-but-unapplied. The WAL apply lock reason is the one
+                // applyWal treats as a legitimate concurrent holder (isUnsolicitedTableLock).
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                }
+                Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
+                        2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertFalse("a busy writer must not suspend the LV table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+                // Both preconditions of the retry-site guard, asserted rather than assumed. Cycle
+                // 2's rebuild cleared the tier-stale marking, which is what makes the re-stamp
+                // this test forbids look legitimate to retryPendingLiveViewApply; a future change
+                // that left the marking set would route the retry into rebuildInMemoryTier for the
+                // wrong reason and leave this test green and vacuous.
+                Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
+                                + " re-stamp below look legitimate", instance.isTierStale());
+                final long committedSeqTxn = tracker.getSeqTxn();
+
+                // The writer is free again: the scan retries the apply and lands the backlog.
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the retried apply must catch the LV table up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+                // The second precondition: retryPendingLiveViewApply, not flushLead, is the
+                // applier here. The base stays quiescent from the release onwards, so
+                // refreshInstance is skipped (head == processedTo) and no flush can run - and a
+                // flush that did run would commit a block and move the committed seqTxn. Pinning
+                // it unchanged keeps this test on the retry site if a future change ever lets a
+                // cycle re-enter flushLead on a quiescent base.
+                Assert.assertEquals("no flush may run after the writer is released: the retry site"
+                                + " must be the applier that lands the backlog",
+                        committedSeqTxn, tracker.getSeqTxn());
+            }
+
+            // The defect is silent. Pin that here, BEFORE the content assertions, so a future
+            // regression that merely starts raising a fault cannot be mistaken for a fix - and
+            // so the recompute oracle below stays honest (a fault self-heals into exactly that
+            // recompute, which would make the comparison pass either way).
+            assertNoRefreshFaults("lv");
+
+            // Passes with and without the defect: the seam drops as many disk rows as it
+            // substitutes slot rows. Kept to document why a count-only check catches nothing.
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n3\n");
+
+            // Both sides project the timestamp to VARCHAR so neither result carries a designated
+            // timestamp. The fluent battery asserts timestamp monotonicity BEFORE row content, and
+            // the seam's substitution breaks monotonicity too (it appends the stale slot row after
+            // the newer disk rows) - so a timestamped assertion would fail on the ordering and never
+            // show WHICH rows are wrong. The separate timestamped assertion further down covers the
+            // ordering contract on its own.
+            final String expected = "ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t2\t2\n" +
+                    "2026-04-01T00:00:02.000000Z\t3\t3\n";
+            // The oracle: the view's own SELECT recomputed from the base table.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // The view must hold exactly that. With the defect it holds
+            // (00:00:00, 1, 1), (00:00:00, 1, 1), (00:00:01, 2, 2) - the stale slot's row
+            // re-emitted in place of the newest row on disk.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // The view still has to present itself as an ascending designated-timestamp result:
+            // the seam must not emit a row whose timestamp goes backwards.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushLeadOwnApplyDrainingBacklogDoesNotStrandStaleTierRows() throws Exception {
+        // Pins flushLead's OWN re-stamp, the twin of the retry-site case that
+        // testFlushLeadMultiCycleUnappliedBacklogDoesNotStrandStaleTierRows pins. The two tests
+        // cover the two different appliers that can drain a committed-but-unapplied live-view
+        // backlog, and only this one reaches flushLead:
+        //
+        //   - that test releases the writer onto a QUIESCENT base, so refreshInstance is skipped
+        //     (head == processedTo) and scanForLaggingViews / retryPendingLiveViewApply is the
+        //     applier;
+        //   - this test releases the writer and then lands a FRESH base commit before the idle
+        //     scan gets a turn. processNotifications drains the notification queue first and only
+        //     calls scanForLaggingViews when that drain did no work, so the queue wins: the cycle
+        //     re-enters flushLead, and flushLead's own inline apply drains the whole backlog plus
+        //     the block it just committed. This is the ordinary-write-workload route.
+        //
+        // Without its guard, flushLead re-stamps the published slot with the post-apply seqTxn on
+        // the assumption that the apply landed exactly this flush's own lead. It did not: it also
+        // landed the two backlog blocks, whose rows sit on disk UNDERNEATH the slot's stale overlap
+        // band. That breaks the seam's identity - "the slot's overlap band IS the disk scan's
+        // trailing leadStart rows" - so the read serves diskSize - leadStart disk rows and then the
+        // slot, dropping the newest disk rows and re-emitting the slot's stale ones in their place.
+        //
+        // The substitution is one-for-one, so the row count stays right and no fault is raised.
+        // Revert flushLead's guard and this test goes red on CONTENT while every other live-view
+        // test - including its twin above, which drains the backlog through the other applier -
+        // stays green.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Two held cycles build the backlog and, on the second, leave tierStale false:
+                // finishLeadRefresh's tierStale branch restages the slot from the still-stale disk
+                // and clears the marking while both blocks are still unapplied.
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                }
+                Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
+                        2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
+                                + " re-stamp below look legitimate",
+                        instance.isTierStale());
+
+                // The writer is free, and a fresh base commit is queued BEFORE the job runs again.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:03.000000Z', 4)");
+                drainWalQueue();
+
+                // ONE pass. The notification drain does work, so scanForLaggingViews cannot run in
+                // it - the retry site is out of reach and only flushLead's own apply can have
+                // caught the LV table up. Asserting that here is what pins this test to hunk 1
+                // rather than letting it drift onto the retry path.
+                Assert.assertTrue("the queued base commit must give the job work", job.run());
+                Assert.assertEquals("flushLead's own inline apply must have drained the backlog and"
+                                + " its own block in one pass, without the lagging-view scan",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the LV table must stay caught up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+            }
+
+            // Silent: the apply succeeded, so nothing faults while the view serves wrong rows.
+            // Asserted before the content, so a future regression that merely starts raising a
+            // fault cannot pass as a fix, and so the recompute oracle stays honest.
+            assertNoRefreshFaults("lv");
+
+            // Passes with and without the defect - the seam drops as many disk rows as it
+            // substitutes slot rows. Kept to document why a count-only check catches nothing.
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n4\n");
+
+            // Both sides project the timestamp to VARCHAR so neither result carries a designated
+            // timestamp: QueryAssertion checks timestamp monotonicity BEFORE row content, and the
+            // seam's substitution breaks monotonicity too, which would hide WHICH rows are wrong.
+            final String expected = "ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t2\t2\n" +
+                    "2026-04-01T00:00:02.000000Z\t3\t3\n" +
+                    "2026-04-01T00:00:03.000000Z\t4\t4\n";
+            // The oracle: the view's own SELECT recomputed from the base table.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // The view must hold exactly that. Without flushLead's guard it holds
+            // (00:00:00, 1, 1), (00:00:00, 1, 1), (00:00:01, 2, 2), (00:00:03, 4, 4) - the stale
+            // slot row re-emitted, and the row at 00:00:02 dropped off the disk side of the seam.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // And the view must still present itself as an ascending designated-timestamp result.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot() throws Exception {
+        // The SECOND half of flushLead's post-apply guard:
+        //   lvAppliedSeqTxn != lvAppliedBefore + 1 || lvTracker.getSeqTxn() != lvAppliedSeqTxn
+        // The sibling above drives the first half - an apply that advances by MORE than one
+        // transaction. This one drives the second: an apply that advances by exactly one and still
+        // leaves the LV WAL behind, because it stopped part-way through the backlog. The apply
+        // drains the OLDEST outstanding block first, so the one transaction it landed is an
+        // earlier flush's block, not the block this flush just committed - the flushed lead is
+        // still off disk while the published slot holds it.
+        //
+        // Reaching that shape takes two test-side settings, because the harness suppresses it
+        // twice over. The apply loop stops when it crosses its per-table time quota
+        // (cairo.wal.apply.table.time.quota - in production the 1000 ms default, or a shutdown
+        // terminating the loop the same way), and Overrides pins that quota to -1 for every test,
+        // which makes the loop unbounded; the tests also freeze the clock, which would make even a
+        // zero quota unbounded. So this test sets the quota to zero AND installs a clock that
+        // advances one microsecond per read, armed for the single pass under test. The loop's
+        // firstRun guard still lands one transaction; every iteration after it reads a clock that
+        // has already passed the deadline, so the loop exits with the rest of the backlog
+        // outstanding and commitSeqTxn publishes exactly that one transaction.
+        //
+        // Without the second half of the guard flushLead falls through to restampSlotAfterFlush,
+        // which asserts that the slot's band IS the LV table's trailing rows at the applied
+        // seqTxn. Disk does not hold the slot's newest row at all here, so the seam serves the
+        // slot in place of rows disk really holds: the view shows the un-applied row and hides an
+        // applied one, at the same row count and with no fault raised.
+        final DriftingMicrosClock clock = new DriftingMicrosClock();
+        testMicrosClock = clock;
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Two held cycles build the backlog and, on the second, leave tierStale false:
+                // finishLeadRefresh's tierStale branch restages the slot from the still-stale disk
+                // and clears the marking while both blocks are still unapplied.
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                }
+                Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
+                        2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
+                                + " re-stamp below look legitimate", instance.isTierStale());
+
+                // The writer is free, and a fresh base commit is queued BEFORE the job runs again,
+                // so the notification drain wins over the lagging-view scan and the cycle
+                // re-enters flushLead - the same route the sibling above takes.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:03.000000Z', 4)");
+                drainWalQueue();
+
+                final long appliedBefore = tracker.getWriterTxn();
+                clock.startDrifting();
+                try {
+                    Assert.assertTrue("the queued base commit must give the job work", job.run());
+                } finally {
+                    clock.stopDrifting();
+                }
+                Assert.assertEquals("the exhausted quota must stop flushLead's inline apply after"
+                                + " exactly one transaction", appliedBefore + 1, tracker.getWriterTxn());
+                Assert.assertEquals("the second backlog block and this flush's own block must stay"
+                                + " committed but unapplied", appliedBefore + 3, tracker.getSeqTxn());
+                Assert.assertFalse("a part-way apply must not suspend the LV table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+
+                // The discriminating read, taken while the LV WAL is still behind. Disk holds the
+                // baseline row plus the one block this apply landed, and the guard un-stamped the
+                // slot, so the seam disengages and the view serves exactly those - behind the base,
+                // never wrong. Without the guard flushLead re-stamps the slot, whose rows are the
+                // baseline row (restaged from the stale disk) and the just-flushed row that never
+                // reached disk, and the seam serves those instead.
+                assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                        .noLeakCheck().expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                                "2026-04-01T00:00:01.000000Z\t2\t2\n");
+
+                // The clock is frozen again, so the quota no longer bites and the rest of the
+                // backlog lands.
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the retried apply must catch the LV table up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+            }
+
+            // Silent: the part-way apply succeeded as far as it went, so nothing faults. Asserted
+            // before the content, so a future regression that merely starts raising a fault cannot
+            // pass as a fix, and so the recompute oracle below stays honest.
+            assertNoRefreshFaults("lv");
+
+            final String expected = "ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t2\t2\n" +
+                    "2026-04-01T00:00:02.000000Z\t3\t3\n" +
+                    "2026-04-01T00:00:03.000000Z\t4\t4\n";
+            // The oracle: the view's own SELECT recomputed from the base table.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // Once the backlog lands the view must hold exactly that, and must still present
+            // itself as an ascending designated-timestamp result.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize().returns(expected);
 
             execute("DROP LIVE VIEW lv");
         });
@@ -22930,5 +23317,34 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             assertShowCreateLiveViewRoundTrips("lv");
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    /**
+     * Reads like the default test clock - frozen on {@code currentMicros} - until
+     * {@link #startDrifting()} arms it, after which every read returns one microsecond later than
+     * the last. The WAL apply loop computes its deadline from one clock read and tests every later
+     * iteration against another, so an armed drift plus a zero
+     * {@code cairo.wal.apply.table.time.quota} stops the apply after the transaction its firstRun
+     * guard forces through. That is the part-way apply
+     * {@link #testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot} is about; nothing
+     * else in the suite needs it, and a frozen clock leaves even a zero quota unbounded.
+     */
+    private static final class DriftingMicrosClock implements MicrosecondClock {
+        private long drift;
+        private boolean isDrifting;
+
+        @Override
+        public long getTicks() {
+            final long base = currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+            return isDrifting ? base + drift++ : base;
+        }
+
+        private void startDrifting() {
+            isDrifting = true;
+        }
+
+        private void stopDrifting() {
+            isDrifting = false;
+        }
     }
 }

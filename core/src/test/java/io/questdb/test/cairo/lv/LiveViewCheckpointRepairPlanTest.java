@@ -1300,11 +1300,6 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     /**
-     * An anchored rebuild that declined localization: both floors back at the view
-     * boundary and the tail read out, which is what an anchored view's repair did before
-     * the segment bounded it.
-     */
-    /**
      * An anchored rebuild that localized behind an {@code EOF} bound: both floors raised
      * off the view boundary, no finite {@code H}, and the replay's state promoted rather
      * than the pre-repair runtime restored. The floors are what the repair is for - a
@@ -1330,6 +1325,11 @@ public class LiveViewCheckpointRepairPlanTest {
         Assert.assertTrue(plan.isReplayStateKeyComplete());
     }
 
+    /**
+     * An anchored rebuild that declined localization: both floors back at the view
+     * boundary and the tail read out, which is what an anchored view's repair did before
+     * the segment bounded it.
+     */
     private static void assertAnchorRebuildIsUnlocalized(LiveViewCheckpointRepairPlan plan) {
         Assert.assertFalse(plan.isResumeFromAnchor());
         Assert.assertFalse(plan.isLocalized());

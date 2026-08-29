@@ -70,21 +70,30 @@ final class LiveViewCheckpointRetirementQueue {
     private LiveViewCheckpointRetirementQueue() {
     }
 
+    /**
+     * Merges {@code additions} into {@code base} by segment id and publishes the
+     * result. The caller has already read the queue - it needs the image's
+     * generation and live data segment count to choose between the queue this
+     * publication advances and the seed a missing, corrupt or stale queue is
+     * rebuilt from - so it hands over the base it selected instead of making
+     * this read the same file a second time.
+     * <p>
+     * The merge runs on the scratch's own buffer and never writes through
+     * {@code base}, so the caller keeps the list it passed in.
+     */
     static void mergeAndWrite(
             @NotNull CairoConfiguration configuration,
             @NotNull LiveViewCheckpointRetirementQueueScratch scratch,
             @Transient @NotNull Path checkpointsDir,
             @NotNull LongList additions,
-            @NotNull LongList seed,
+            @NotNull LongList base,
             long generation,
             long liveDataSegmentCount
     ) {
         final LongList entries = scratch.entries;
-        final State state = scratch.state;
-        if (!read(configuration, scratch, checkpointsDir, entries, state) || state.generation + 1 != generation) {
-            entries.clear();
-            entries.add(seed);
-        }
+        assert entries != base : "the merge must not write through the caller's base list";
+        entries.clear();
+        entries.add(base);
         for (int i = 0, n = additions.size(); i < n; i += ENTRY_STRIDE) {
             put(entries, additions, i);
         }

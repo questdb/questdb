@@ -49,7 +49,6 @@ final class LiveViewCheckpointRetirementQueueScratch implements QuietCloseable {
     final Path finalPath = new Path();
     final MemoryMARW mem = Vm.getCMARWInstance();
     final Path path = new Path();
-    final LiveViewCheckpointRetirementQueue.State state = new LiveViewCheckpointRetirementQueue.State();
     final Path tmpPath = new Path();
 
     @Override
@@ -59,6 +58,5 @@ final class LiveViewCheckpointRetirementQueueScratch implements QuietCloseable {
         Misc.free(path);
         Misc.free(tmpPath);
         entries.clear();
-        state.clear();
     }
 }

@@ -2066,12 +2066,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
             liveDataSegmentCount = rebuiltLiveDataSegmentCount;
         }
+        // The read above is the only one this publication owes the queue: it
+        // already carries the image and the generation test the merge would
+        // otherwise recompute over a second open, mmap and full-image checksum.
         LiveViewCheckpointRetirementQueue.mergeAndWrite(
                 configuration,
                 shells.retirementQueueScratch,
                 checkpointsDir,
                 directoryWriter.getRetirementTransitions(),
-                seed,
+                advancesExisting ? existing : seed,
                 generation,
                 liveDataSegmentCount
         );

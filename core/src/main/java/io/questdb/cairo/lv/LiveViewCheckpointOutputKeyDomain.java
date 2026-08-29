@@ -132,22 +132,6 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable {
         }
     }
 
-    /**
-     * Hands every key this domain holds to {@code visitor}, in slot order.
-     * <p>
-     * The order is the hash table's rather than any order the caller put the keys in,
-     * which is what a key-scoped restore wants: it looks each one up in a persistent tree
-     * whose descents the reader memoizes, and slot order is as good as any for that.
-     */
-    public void forEach(@NotNull Visitor visitor) {
-        for (int i = 0, n = keys.length; i < n; i++) {
-            final byte[] key = keys[i];
-            if (key != null) {
-                visitor.visit(key);
-            }
-        }
-    }
-
     public boolean isEmpty() {
         return size() == 0;
     }
@@ -199,10 +183,5 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable {
                 free--;
             }
         }
-    }
-
-    @FunctionalInterface
-    public interface Visitor {
-        void visit(@NotNull byte[] key);
     }
 }

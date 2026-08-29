@@ -67,10 +67,13 @@ import java.util.Arrays;
  * The owners expose their backing arrays through package-private {@code borrow*} accessors, and
  * the builders and result roots expose their borrowed state through package-private
  * {@code isBorrowingCompiledForTest} / {@code ofBorrowedCompiled} / {@code ofBuilder} methods.
- * This test reaches all of them by reflection, the pattern the other {@code io.questdb.test.cairo.lv}
- * tests already use, so no test-only <i>class</i> ships inside {@code io.questdb.cairo.lv}. That
- * package still carries {@code @TestOnly} members, this diff included; what reflection keeps out of
- * it is a whole production-shaped type that exists only for a test.
+ * This test reaches all of them by reflection, so no test-only <i>class</i> ships inside
+ * {@code io.questdb.cairo.lv}. Package-private access is not open to it: every test class in the
+ * repository declares a package under {@code io.questdb.test}, so no test can sit in the package
+ * it exercises, and over forty test classes reach production internals with {@code setAccessible}
+ * for that reason. The {@code io.questdb.cairo.lv} package still carries {@code @TestOnly} members,
+ * this diff included; what reflection keeps out of it is a whole production-shaped type that exists
+ * only for a test.
  */
 public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
 

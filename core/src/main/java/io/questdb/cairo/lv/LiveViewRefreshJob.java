@@ -3940,7 +3940,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // See LiveViewSmokeTest.testFlushLeadInlineApplyFailureRecoversWithoutDuplication.
         final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(token);
         // Captured before the apply so the restamp below can tell a real apply from a no-op /
-        // suspend: only when the writer txn advanced did the flushed lead reach disk.
+        // suspend: only when the writer txn advanced did the flushed lead reach disk. The restamp
+        // also measures the advance against it, to separate "this flush's block alone landed" from
+        // "an older backlog landed with it".
         final long lvAppliedBefore = lvTracker.getWriterTxn();
         applyLiveViewWal(token);
         // Read the applied LV-table seqTxn only AFTER applyWalDirect: restampSlotAfterFlush
@@ -4000,6 +4002,36 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // even double-serve an overlap row). Un-stamp so the fence disengages and reads are
                 // disk-only and self-consistent until the block lands. Same appliedBefore/After
                 // guard retryPendingLiveViewApply uses.
+                restampSlot(instance, Numbers.LONG_NULL, 0);
+                instance.setTierStale(true);
+            } else if (lvAppliedSeqTxn != lvAppliedBefore + 1 || lvTracker.getSeqTxn() != lvAppliedSeqTxn) {
+                // The apply landed something other than exactly this flush's own block, in one of
+                // two shapes. The first half catches an advance of more than one transaction: an
+                // earlier flush left a committed-but-unapplied backlog (its inline apply hit a busy
+                // LV writer) and this apply drained that backlog together with the block above. The
+                // second half catches an apply that stopped part-way - it spent its per-table time
+                // quota, or a shutdown terminated it - and left transactions outstanding. It drains
+                // the OLDEST block first, so the block still outstanding is the one committed above.
+                // Re-stamping asserts that the slot's overlap band IS the LV table's trailing rows
+                // at lvAppliedSeqTxn - the identity the read path's seam cuts on - and neither shape
+                // holds it: a drained backlog puts its rows UNDER that band on disk, and a part-way
+                // apply leaves the band's own rows off disk altogether. The seam would then serve
+                // diskSize - leadStart disk rows and the slot on top, re-emitting the slot's rows in
+                // place of rows the LV table really holds, at an unchanged row count and with no
+                // fault raised. Un-stamp so the fence disengages and reads run disk-only, and let
+                // the next cycle rebuild the slot from disk. Disk stays a correct prefix of the LV
+                // table in both shapes - fully current when the apply drained everything, trailing
+                // the still-outstanding blocks when it did not - so those reads are behind at worst,
+                // never wrong.
+                // See LiveViewSmokeTest.testFlushLeadOwnApplyDrainingBacklogDoesNotStrandStaleTierRows
+                // for the first half and
+                // LiveViewSmokeTest.testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot
+                // for the second.
+                // Both halves are load-bearing. A one-transaction advance alone does not prove the
+                // applied block is ours: an apply that backs off part-way lands the OLDEST
+                // outstanding block, so a backlog of two could advance by one and leave this flush's
+                // block pending. Requiring the LV WAL to be fully applied as well pins it - exactly
+                // one transaction was outstanding, and it is the one committed above.
                 restampSlot(instance, Numbers.LONG_NULL, 0);
                 instance.setTierStale(true);
             } else {
@@ -4352,11 +4384,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * Re-derived each cycle rather than cached, because base dedup config is mutable
      * via {@code ALTER TABLE ... DEDUP ENABLE/DISABLE}: a one-shot flag would freeze
-     * the wrong cadence across a flip. The read is a MetadataCache read-lock plus a
-     * map lookup on the memory-resident catalogue (no file open); it is once per
-     * cycle, never per row, so the non-dedup per-row hot loop is unaffected. The
-     * catalogue reflects the timestamp column's dedup flag, which is set exactly when
-     * the table is dedup-enabled (mirrors {@code TableWriter.isDeduplicationEnabled()}).
+     * the wrong cadence across a flip. The method opens the base table's own metadata
+     * through {@code engine.getTableMetadata(baseToken)} and scans its columns for a
+     * dedup key, so the read can open files and can throw {@link CairoException}; it
+     * runs once per cycle, never per row, so the non-dedup per-row hot loop is
+     * unaffected. Only a base the pool reports dropped or unregistered answers "no" on
+     * a throw - every other failure propagates out of the refresh cycle, which hands it
+     * to {@code handleRefreshFailure}. SQL rejects a dedup key list that omits the
+     * designated timestamp, so scanning every column agrees with
+     * {@code TableWriter.isDeduplicationEnabled()}.
      */
     /**
      * Reports whether the apply-lag back-off still holds this view back this tick. The wall-clock floor
@@ -6951,13 +6987,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * existing row and keeps the incoming one, at apply time and therefore out of sight
      * of both walks. A table with no dedup key column cannot do it at all.
      * <p>
-     * {@link #isDedupBase} answers the same question off the metadata cache, and answers
-     * it earlier: a dedup base is routed to {@link #drainAppliedBase}, which hands the
-     * repair no change ceiling and no insert-only claim, so a repair that reaches here
-     * with dedup enabled is one whose routing already changed under it (an
+     * {@link #isDedupBase} answers the same question off the base table's own metadata,
+     * and answers it earlier: a dedup base is routed to {@link #drainAppliedBase}, which
+     * hands the repair no change ceiling and no insert-only claim, so a repair that
+     * reaches here with dedup enabled is one whose routing already changed under it (an
      * {@code ALTER ... DEDUP ENABLE} between cycles). This reads the pinned reader's own
-     * metadata rather than the cache for the same reason the bounds read the pinned
-     * reader's rows - it is the snapshot the discovery is about to search.
+     * metadata rather than reopening the base for the same reason the bounds read the
+     * pinned reader's rows - it is the snapshot the discovery is about to search.
      */
     private static boolean hasDedupKeys(TableReaderMetadata metadata) {
         for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
@@ -12835,16 +12871,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // waits for the operator; hasPendingLiveViewApply skips it meanwhile.
                 return false;
             }
-            if (instance.isTierStale()) {
-                // The slot is an incomplete subset of the now-current disk (an emergency flush
-                // left it un-published). Rebuild it from disk rather than re-stamping content
-                // that never received the flushed rows.
-                rebuildInMemoryTier(instance);
-            } else {
-                // The flushed rows reached disk and are still in the slot, which is a complete
-                // subset of it again. Re-stamp so the seam routes reads back through RAM.
-                restampSlotAfterFlush(instance, appliedAfter);
-            }
+            // Always rebuild the slot from the now-current disk; never re-stamp it.
+            // A re-stamp asserts the seam's identity - that the slot's band IS the LV table's
+            // trailing rows at appliedAfter - and this site cannot establish it. It knows only
+            // that the applied seqTxn advanced; it does not know which disk image staged the
+            // published slot. An earlier cycle's rebuildInMemoryTier stages the slot from the disk
+            // of its own moment, so when this apply lands a backlog the slot holds an OLDER tail
+            // and the rows this apply just landed sit ABOVE it. The seam would then serve
+            // diskSize - leadStart disk rows and the slot on top, dropping the newest rows of the
+            // LV table and re-emitting the slot's older ones in their place, at an unchanged row
+            // count and with no fault raised. isTierStale() does not separate the two shapes
+            // either: that same earlier rebuild clears the marking while the backlog is still
+            // pending. A rebuild re-establishes the identity by construction, and it costs nothing
+            // on the common path - this site runs only when an apply that had failed finally lands.
+            // See LiveViewSmokeTest.testFlushLeadMultiCycleUnappliedBacklogDoesNotStrandStaleTierRows.
+            rebuildInMemoryTier(instance);
             return true;
         } catch (Throwable t) {
             // A tier rebuild / re-stamp failure is not fatal and must not invalidate the view:

@@ -194,6 +194,83 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeRebuildsWhenTheRetirementQueueNamesAnOlderGeneration() throws Exception {
+        // purge() stamps the queue file with the generation it pinned. A
+        // publication that lands afterwards without persisting a queue of its own
+        // leaves that file naming an older generation, and everything the newer
+        // catalogue retired is missing from it. The stale-generation half of
+        // purge()'s queue test is what turns such a file into a rebuild. The
+        // catalogue recheck further down cannot stand in for it: the recheck only
+        // drops queue entries the selected catalogue contradicts, so it can never
+        // add back the entry a stale file never carried.
+        assertMemoryLeak(() -> {
+            final DataSegment live = writeDataSegment(10, 111);
+            final DataSegment retiredEarly = writeDataSegment(20, 222);
+            final DataSegment retiredLate = writeDataSegment(30, 333);
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointMetaStore metaStore = openMetaStore();
+                 LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
+                directory.addSegment(10, live.fileLength, 1);
+                directory.addSegment(20, retiredEarly.fileLength, 1);
+                directory.addSegment(30, retiredLate.fileLength, 1);
+                directory.publish(metaStore, 1, 101);
+                directory.retire(20, 2);
+                directory.publish(metaStore, 2, 102);
+                directory.publish(metaStore, 3, 103);
+
+                // Cold start: no queue file exists yet, so this rebuilds from the
+                // catalogue, purges segment 20 and writes the first durable queue,
+                // stamped generation 3.
+                final LiveViewCheckpointDataStore.PurgeResult coldStart = dataStore.purge();
+                Assert.assertTrue(coldStart.requiresPhysicalOrphanScan());
+                Assert.assertEquals(1, coldStart.getPurgedSegmentCount());
+                Assert.assertTrue(
+                        "purge() must durably write a retirement queue file",
+                        retirementQueueFile().exists()
+                );
+
+                // Control: nothing has published since, so the file still names the
+                // pinned generation and purge() must take the queue path. Without
+                // this half, a change that made every purge rebuild would still
+                // satisfy the stale assertions below.
+                final LiveViewCheckpointDataStore.PurgeResult current = dataStore.purge();
+                Assert.assertFalse(
+                        "a queue naming the pinned generation must not force a rebuild",
+                        current.requiresPhysicalOrphanScan()
+                );
+                Assert.assertEquals(0, current.getCatalogueEntriesVisited());
+                Assert.assertEquals(2, current.getLiveSegmentCount());
+
+                // Generation 4 retires segment 30 and generation 5 overwrites the
+                // last slot that still named it, neither of them writing a queue.
+                // The file now names generation 3 and lists segment 20 alone.
+                directory.retire(30, 4);
+                directory.publish(metaStore, 4, 104);
+                directory.publish(metaStore, 5, 105);
+
+                final LiveViewCheckpointDataStore.PurgeResult stale = dataStore.purge();
+                Assert.assertTrue(
+                        "a queue naming an older generation must force a catalogue rebuild",
+                        stale.requiresPhysicalOrphanScan()
+                );
+                // Trusting the stale image instead would visit no catalogue entry,
+                // carry its stale live count of 2 through, and work off the single
+                // segment it names rather than the two the generation-5 catalogue
+                // shows as zero-reference.
+                Assert.assertEquals(3, stale.getCatalogueEntriesVisited());
+                Assert.assertEquals(1, stale.getLiveSegmentCount());
+                Assert.assertEquals(2, stale.getQueueEntriesVisited());
+                // The rebuild is what discovers segment 30 at all, so the unlink is
+                // the behaviour the generation test buys, not merely the flag.
+                Assert.assertEquals(1, stale.getPurgedSegmentCount());
+                Assert.assertEquals(retiredLate.fileLength, stale.getPurgedBytes());
+                Assert.assertFalse(dataFileExists(30));
+                Assert.assertTrue("a still-referenced segment must survive the rebuild", dataFileExists(10));
+            }
+        });
+    }
+
+    @Test
     public void testPurgeRecoversFromCorruptRetirementQueue() throws Exception {
         // On-disk layout of the private LiveViewCheckpointRetirementQueue file
         // format (documented in its own source, not exposed to tests): an

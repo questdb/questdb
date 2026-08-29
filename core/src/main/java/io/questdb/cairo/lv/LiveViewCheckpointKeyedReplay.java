@@ -446,10 +446,6 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         return armed;
     }
 
-    public boolean isMerging() {
-        return storedRowCursor != null;
-    }
-
     /**
      * @return whether this repair is still attempting a sparse publication, which is what
      * makes {@link #getMergedRows()} a count of rows nothing wrote
