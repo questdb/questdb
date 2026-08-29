@@ -494,16 +494,40 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     final long runLen = rowHi - rowLo;
                     // A stride of zero would mean repeated row ids, which a key
                     // never has, so the closed form is only taken when it is
-                    // genuinely a progression. A flat group carries no per-key
-                    // progression to read -- that is the cost of dropping the
-                    // per-key header -- so it always seeks.
-                    seqMode = !flat
-                            && !NO_SEQ
-                            && CoveringCompressor.isArithmeticBlock(block)
-                            && CoveringCompressor.arithmeticStride(block) > 0;
-                    if (seqMode) {
-                        seqStart = CoveringCompressor.arithmeticStart(block);
-                        seqStride = CoveringCompressor.arithmeticStride(block);
+                    // genuinely a progression.
+                    if (flat) {
+                        // A flat group has no per-key block to read a start and
+                        // stride out of, but it does not need one for a SHORT
+                        // run: one or two values are a progression by
+                        // definition, since any two ascending values differ by
+                        // a constant. Reading them costs the two unpacks the
+                        // widen would have done anyway.
+                        //
+                        // Bounded at two deliberately. At three the run has to
+                        // be VERIFIED before the closed form is sound, which
+                        // costs exactly the unpacks the closed form exists to
+                        // avoid. Flat is only chosen where a key is narrower
+                        // than a 29-byte block header -- under about four
+                        // postings -- so two covers most of what it is picked
+                        // for, and the S7 shape it was measured on exactly.
+                        seqMode = !NO_SEQ && runLen > 0 && runLen <= 2;
+                        if (seqMode) {
+                            seqStart = flatRowIdAt(rg, rowLo);
+                            // A single-posting run never indexes past 0, so the
+                            // stride is unused; 1 keeps the closed-form seek's
+                            // divisor positive rather than special-casing it.
+                            seqStride = runLen == 2
+                                    ? flatRowIdAt(rg, rowLo + 1) - seqStart
+                                    : 1;
+                        }
+                    } else {
+                        seqMode = !NO_SEQ
+                                && CoveringCompressor.isArithmeticBlock(block)
+                                && CoveringCompressor.arithmeticStride(block) > 0;
+                        if (seqMode) {
+                            seqStart = CoveringCompressor.arithmeticStart(block);
+                            seqStride = CoveringCompressor.arithmeticStride(block);
+                        }
                     }
                     // A window that already contains the whole group needs no
                     // search: every row of the key's run is inside it. The seeks

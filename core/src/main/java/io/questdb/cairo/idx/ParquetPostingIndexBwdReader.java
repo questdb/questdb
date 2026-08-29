@@ -170,6 +170,13 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
         private int packedBatch = PACKED_WIDEN_BATCH_MIN;
         /** Whether {@link #rg}'s row ids are laid out flat, resolved once per bind. */
         private boolean flatGroup;
+        /**
+         * True when the current key's run is an arithmetic progression, so its
+         * row ids are GENERATED rather than read. See the forward reader.
+         */
+        private boolean seqMode;
+        private long seqStart;
+        private long seqStride;
         /** Group ordinal the current widened batch starts at; 0 off the packed arm. */
         private long coverOrdinalBase;
         private int cachedRowGroup = -1;
@@ -231,7 +238,11 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 }
                 while (rowInGroup > rowFloor) {
                     final long i = --rowInGroup;
-                    final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                    // coverOrdinalBase + i is the GROUP ordinal; minus the key's
+                    // start it is the key-relative index the progression is in.
+                    final long rowId = seqMode
+                            ? seqStart + (coverOrdinalBase + i - packedKeyStart) * seqStride
+                            : Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
                     if (!windowNarrowed && (rowId < minValue || rowId > maxValue)) {
                         continue;
                     }
@@ -272,6 +283,11 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
          * passes over memory that does not fit in L1, and it measured slower
          * than native despite a faster inner loop.
          */
+        /** Ceiling division for positive divisors, used by the closed-form seek. */
+        private static long ceilDiv(long a, long b) {
+            return -Math.floorDiv(-a, b);
+        }
+
         private boolean refillPackedBatch() {
             if (packedNext <= packedLo) {
                 return false;
@@ -288,10 +304,13 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             // See the forward reader: grow toward the cap.
             packedBatch = Math.min(packedBatch << 1, PACKED_WIDEN_BATCH);
             // See the forward reader: the bind already resolved this key's
-            // group ordinal, so a flat group needs no _im lookup here.
-            rowIdPtr = flatGroup
-                    ? unpackFlatRowIds(rg, packedKeyStart + packedNext, batch)
-                    : unpackRowIds(rg, key, (int) packedNext, batch);
+            // group ordinal, so a flat group needs no _im lookup here. Under
+            // seqMode nothing is widened at all -- hasNext generates.
+            if (!seqMode) {
+                rowIdPtr = flatGroup
+                        ? unpackFlatRowIds(rg, packedKeyStart + packedNext, batch)
+                        : unpackRowIds(rg, key, (int) packedNext, batch);
+            }
             // The batch is ascending in the buffer; the countdown walks it from
             // its top, so the next step down continues the descending order.
             rowFloor = 0;
@@ -384,6 +403,25 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                                 .put(", column=").put(columnName).put(']');
                     }
                     final long runLen = rowHi - rowLo;
+                    // Established exactly as the forward reader establishes it,
+                    // including the short-run rule for a flat group: one or two
+                    // ascending values are a progression by definition.
+                    if (flat) {
+                        seqMode = runLen > 0 && runLen <= 2;
+                        if (seqMode) {
+                            seqStart = flatRowIdAt(rg, rowLo);
+                            seqStride = runLen == 2
+                                    ? flatRowIdAt(rg, rowLo + 1) - seqStart
+                                    : 1;
+                        }
+                    } else {
+                        seqMode = CoveringCompressor.isArithmeticBlock(block)
+                                && CoveringCompressor.arithmeticStride(block) > 0;
+                        if (seqMode) {
+                            seqStart = CoveringCompressor.arithmeticStart(block);
+                            seqStride = CoveringCompressor.arithmeticStride(block);
+                        }
+                    }
                     // See the forward reader: a window covering the whole
                     // group needs no search.
                     final long from;
@@ -391,6 +429,12 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     if (isWholeGroupInRange(rg, minValue, maxValue)) {
                         from = 0;
                         to = runLen;
+                    } else if (seqMode) {
+                        // Solved rather than searched, as forward does.
+                        from = Math.max(0, Math.min(runLen,
+                                ceilDiv(minValue - seqStart, seqStride)));
+                        to = Math.max(from, Math.min(runLen,
+                                Math.floorDiv(maxValue - seqStart, seqStride) + 1));
                     } else if (flat) {
                         // Searched over GROUP ordinals, then made key-relative,
                         // because that is the domain the widen below works in.
