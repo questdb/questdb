@@ -1982,7 +1982,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColBinDate(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) throws PGMessageProcessingException {
         final long longValue = record.getDate(columnIndex);
-        if (longValue != Numbers.LONG_NULL) {
+        if (notNull || longValue != Numbers.LONG_NULL) {
             utf8Sink.putNetworkInt(Long.BYTES);
             // PG epoch starts at 2000 rather than 1970
             utf8Sink.putNetworkLong(toPgMicros(longValue, true));
@@ -2300,7 +2300,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     private void outColBinTimestamp(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType, boolean notNull) throws PGMessageProcessingException {
         final long longValue = record.getTimestamp(columnIndex);
-        if (longValue == Numbers.LONG_NULL) {
+        if (!notNull && longValue == Numbers.LONG_NULL) {
             utf8Sink.setNullValue();
         } else {
             utf8Sink.putNetworkInt(Long.BYTES);
@@ -2413,7 +2413,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void outColTxtDate(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
         final long longValue = record.getDate(columnIndex);
         if (longValue == Numbers.LONG_NULL) {
-            utf8Sink.setNullValue();
+            if (!notNull) {
+                utf8Sink.setNullValue();
+                return;
+            }
+            final long a = utf8Sink.skipInt();
+            utf8Sink.put(longValue);
+            utf8Sink.putLenEx(a);
         } else {
             final long a = utf8Sink.skipInt();
             PG_DATE_MILLI_TIME_Z_PRINT_FORMAT.format(longValue, EN_LOCALE, null, utf8Sink);
@@ -2596,7 +2602,13 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         long offset;
         long timestamp = record.getTimestamp(columnIndex);
         if (timestamp == Numbers.LONG_NULL) {
-            utf8Sink.setNullValue();
+            if (!notNull) {
+                utf8Sink.setNullValue();
+                return;
+            }
+            offset = utf8Sink.skipInt();
+            utf8Sink.put(timestamp);
+            utf8Sink.putLenEx(offset);
         } else {
             offset = utf8Sink.skipInt();
             ColumnType.getTimestampDriver(timestampType).appendToPGWireText(utf8Sink, timestamp);
