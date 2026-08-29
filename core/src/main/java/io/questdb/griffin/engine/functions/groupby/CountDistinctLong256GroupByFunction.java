@@ -60,7 +60,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final Long256 l256 = arg.getLong256A(record);
-        if (isLong256NotNull(l256)) {
+        if (arg.isNotNull() || isLong256NotNull(l256)) {
             mapValue.putLong(valueIndex, 1);
             setA.of(0).add(l256.getLong0(), l256.getLong1(), l256.getLong2(), l256.getLong3());
             mapValue.putLong(valueIndex + 1, setA.ptr());
@@ -74,7 +74,7 @@ public class CountDistinctLong256GroupByFunction extends LongFunction implements
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final Long256 l256 = arg.getLong256A(record);
-        if (isLong256NotNull(l256)) {
+        if (arg.isNotNull() || isLong256NotNull(l256)) {
             final long l0 = l256.getLong0();
             final long l1 = l256.getLong1();
             final long l2 = l256.getLong2();

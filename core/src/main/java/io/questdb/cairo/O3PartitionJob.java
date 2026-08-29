@@ -2886,7 +2886,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 descriptor.addColumn(
                         columnName,
-                        columnType,
+                        metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                         columnId,
                         0,
                         dataAddr,
@@ -2913,7 +2913,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // layout, so no encoding-aware fallback is needed.
                 descriptor.addColumn(
                         columnName,
-                        ColumnType.setDesignatedTimestampBit(columnType, true)
+                        ColumnType.setDesignatedTimestampBit(
+                                        metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
+                                        true
+                                )
                                 | PARQUET_TIMESTAMP_STRIDED_16,
                         columnId,
                         0,
@@ -2966,7 +2969,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             } else {
                 descriptor.addColumn(
                         columnName,
-                        columnType,
+                        metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                         columnId,
                         0,
                         srcFixSliceAddr,

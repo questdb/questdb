@@ -58,7 +58,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
         if (rowCount > 0) {
             final double batchMin = Vect.minDouble(dataAddr, rowCount);
             final double existing = mapValue.getDouble(valueIndex);
-            if (batchMin < existing || Numbers.isNull(existing)) {
+            if (batchMin < existing || (!isArgNotNull && Numbers.isNull(existing))) {
                 mapValue.putDouble(valueIndex, batchMin);
             }
         }
@@ -92,7 +92,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getDouble(addr);
-                if (value < current || Numbers.isNull(current)) {
+                if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && Numbers.isNull(current))) {
                     Unsafe.putDouble(addr, value);
                 }
             }
@@ -103,7 +103,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final double value = arg.getDouble(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getDouble(addr);
-                if (value < current || Numbers.isNull(current)) {
+                if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && Numbers.isNull(current))) {
                     Unsafe.putDouble(addr, value);
                 }
             }
@@ -114,7 +114,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double min = mapValue.getDouble(valueIndex);
         double next = arg.getDouble(record);
-        if (next < min || Numbers.isNull(min)) {
+        if (next < min || (!isArgNotNull && Numbers.isNull(min))) {
             mapValue.putDouble(valueIndex, next);
         }
     }
@@ -169,7 +169,7 @@ public class MinDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMin = srcValue.getDouble(valueIndex);
         double destMin = destValue.getDouble(valueIndex);
-        if (srcMin < destMin || Numbers.isNull(destMin)) {
+        if (srcMin < destMin || (!isArgNotNull && Numbers.isNull(destMin))) {
             destValue.putDouble(valueIndex, srcMin);
         }
     }

@@ -420,7 +420,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int columnType = TableUtils.getColumnType(newMetaMem, writerIndex);
             byte indexType = TableUtils.getColumnIndexType(newMetaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(newMetaMem, writerIndex);
-            boolean isNotNull = TableUtils.isColumnNotNull(newMetaMem, writerIndex);
+            boolean isNotNull = TableUtils.isColumnNotNull(newMetaMem, writerIndex) || writerIndex == timestampIndex;
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
             int symbolCapacity = TableUtils.getSymbolCapacity(newMetaMem, writerIndex);

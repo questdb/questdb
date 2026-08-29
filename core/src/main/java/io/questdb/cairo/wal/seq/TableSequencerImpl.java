@@ -294,8 +294,8 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.getColumnMetadata(i).getSymbolCapacity(),
                     metadata.isNotNull(i)
             );
-            sink.setColumnCovering(i, coveringColumnIndices);
             if (columnType > -1) {
+                sink.setColumnCovering(compressedColumnCount, coveringColumnIndices);
                 reorderNeeded |= lastOrder > columnOrder;
                 lastOrder = columnOrder;
                 if (i == timestampIndex) {

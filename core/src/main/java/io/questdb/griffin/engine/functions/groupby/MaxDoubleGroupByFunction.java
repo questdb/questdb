@@ -58,7 +58,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
         if (rowCount > 0) {
             final double batchMax = Vect.maxDouble(dataAddr, rowCount);
             final double existing = mapValue.getDouble(valueIndex);
-            if (batchMax > existing || Numbers.isNull(existing)) {
+            if (batchMax > existing || (!isArgNotNull && Numbers.isNull(existing))) {
                 mapValue.putDouble(valueIndex, batchMax);
             }
         }
@@ -92,7 +92,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getDouble(addr);
-                if (value > current || Numbers.isNull(current)) {
+                if (Map.isNewBatchEntry(encoded) || value > current || (!isArgNotNull && Numbers.isNull(current))) {
                     Unsafe.putDouble(addr, value);
                 }
             }
@@ -103,7 +103,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
                 final double value = arg.getDouble(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final double current = Unsafe.getDouble(addr);
-                if (value > current || Numbers.isNull(current)) {
+                if (Map.isNewBatchEntry(encoded) || value > current || (!isArgNotNull && Numbers.isNull(current))) {
                     Unsafe.putDouble(addr, value);
                 }
             }
@@ -114,7 +114,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double max = mapValue.getDouble(valueIndex);
         double next = arg.getDouble(record);
-        if (next > max || Numbers.isNull(max)) {
+        if (next > max || (!isArgNotNull && Numbers.isNull(max))) {
             mapValue.putDouble(valueIndex, next);
         }
     }
@@ -169,7 +169,7 @@ public class MaxDoubleGroupByFunction extends DoubleFunction implements GroupByF
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMax = srcValue.getDouble(valueIndex);
         double destMax = destValue.getDouble(valueIndex);
-        if (srcMax > destMax || Numbers.isNull(destMax)) {
+        if (srcMax > destMax || (!isArgNotNull && Numbers.isNull(destMax))) {
             destValue.putDouble(valueIndex, srcMax);
         }
     }
