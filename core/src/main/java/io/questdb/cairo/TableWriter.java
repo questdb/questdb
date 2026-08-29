@@ -16382,12 +16382,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         @Override
         public void putStr(int columnIndex, CharSequence value, int pos, int len) {
+            checkNotNullValue(columnIndex, value);
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStr(value, pos, len));
             setRowValueNotNull(columnIndex);
         }
 
         @Override
         public void putStrUtf8(int columnIndex, DirectUtf8Sequence value) {
+            checkNotNullValue(columnIndex, value);
             getSecondaryColumn(columnIndex).putLong(getPrimaryColumn(columnIndex).putStrUtf8(value));
             setRowValueNotNull(columnIndex);
         }

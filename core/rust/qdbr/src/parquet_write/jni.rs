@@ -772,12 +772,12 @@ fn build_column_infos_from_partition<'a>(
             };
 
             let mut flags = crate::parquet_metadata::types::ColumnFlags::new();
-            let repetition = if col.not_null_hint {
-                crate::parquet_metadata::types::FieldRepetition::Required
-            } else {
-                crate::parquet_metadata::types::FieldRepetition::Optional
-            };
-            flags = flags.with_repetition(repetition);
+            // NOT NULL is a QuestDB semantic preserved in QdbMeta. The
+            // physical repetition must match the schema actually emitted;
+            // forcing Required here would disagree with Optional columns.
+            flags = flags.with_repetition(crate::parquet_metadata::types::FieldRepetition::from(
+                schema_columns[i].base_type.get_field_info().repetition,
+            ));
 
             if col.data_type.tag() == qdb_core::col_type::ColumnTypeTag::Symbol {
                 flags = flags.with_local_key_is_global();

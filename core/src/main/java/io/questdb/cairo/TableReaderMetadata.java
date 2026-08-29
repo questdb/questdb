@@ -361,7 +361,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         origWriterIndex
                 );
                 colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(mem, writerIndex) : 0);
-                colMeta.setNotNullFlag(TableUtils.isColumnNotNull(mem, writerIndex));
+                colMeta.setNotNullFlag(TableUtils.isColumnNotNull(mem, writerIndex) || writerIndex == timestampIndex);
                 columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
                 if (!columnNameIndexMap.put(colName, denseIndex)) {

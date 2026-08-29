@@ -378,6 +378,35 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             boolean cache,
             byte indexType,
             int indexValueBlockCapacity,
+            boolean dedupKey
+    ) {
+        ofAddColumn(
+                tableId,
+                tableToken,
+                tableNamePosition,
+                columnName,
+                columnNamePosition,
+                columnType,
+                symbolCapacity,
+                cache,
+                indexType,
+                indexValueBlockCapacity,
+                dedupKey,
+                false
+        );
+    }
+
+    public void ofAddColumn(
+            int tableId,
+            TableToken tableToken,
+            int tableNamePosition,
+            CharSequence columnName,
+            int columnNamePosition,
+            int columnType,
+            int symbolCapacity,
+            boolean cache,
+            byte indexType,
+            int indexValueBlockCapacity,
             boolean dedupKey,
             boolean notNull
     ) {

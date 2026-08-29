@@ -2742,6 +2742,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             metadata.add(slaveAlias, slaveMetadata.getColumnMetadata(i));
         }
 
+        // HORIZON is left-outer on the slave side: unmatched rows are
+        // represented by a null slave record.
+        int slaveOffset = masterMetadata.getColumnCount() + 2;
+        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+            metadata.getColumnMetadata(slaveOffset + i).setNotNullFlag(false);
+        }
+
         // Set timestamp index from master
         int masterTsIdx = masterMetadata.getTimestampIndex();
         if (masterTsIdx >= 0) {

@@ -129,6 +129,13 @@ public class SequencerMetadataPool extends AbstractMultiTenantPool<SequencerMeta
         }
 
         @Override
+        public void setColumnCovering(int columnIndex, @Transient IntList coveringColumnIndices) {
+            if (coveringColumnIndices != null && columnIndex >= 0 && columnIndex < columnMetadata.size()) {
+                columnMetadata.getQuick(columnIndex).setCoveringColumnIndices(new IntList(coveringColumnIndices));
+            }
+        }
+
+        @Override
         public void close() {
             if (pool != null && getEntry() != null) {
                 pool.returnToPool(this);

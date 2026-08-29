@@ -827,7 +827,7 @@ impl ParquetUpdater {
                 .and_then(|&old_idx| old_qdb_meta.as_ref().and_then(|m| m.schema.get(old_idx)));
             let ascii = old_meta.and_then(|old_col| old_col.ascii);
             let not_null = old_meta
-                .map(|old_col| old_col.not_null)
+                .map(|old_col| old_col.not_null || col.not_null_hint)
                 .unwrap_or(col.not_null_hint);
 
             qdb_meta.schema.push(QdbMetaCol {

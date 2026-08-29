@@ -2508,12 +2508,12 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtGeoByte(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags) {
-        outColTxtGeoHash(utf8Sink, rec.getGeoByte(columnIndex), bitFlags);
+    private void outColTxtGeoByte(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags, boolean notNull) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoByte(columnIndex), bitFlags, notNull);
     }
 
-    private void outColTxtGeoHash(PGResponseSink utf8Sink, long value, int bitFlags) {
-        if (value == GeoHashes.NULL) {
+    private void outColTxtGeoHash(PGResponseSink utf8Sink, long value, int bitFlags, boolean notNull) {
+        if (value == GeoHashes.NULL && !notNull) {
             utf8Sink.setNullValue();
         } else {
             final long a = utf8Sink.skipInt();
@@ -2526,16 +2526,16 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
     }
 
-    private void outColTxtGeoInt(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags) {
-        outColTxtGeoHash(utf8Sink, rec.getGeoInt(columnIndex), bitFlags);
+    private void outColTxtGeoInt(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags, boolean notNull) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoInt(columnIndex), bitFlags, notNull);
     }
 
-    private void outColTxtGeoLong(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags) {
-        outColTxtGeoHash(utf8Sink, rec.getGeoLong(columnIndex), bitFlags);
+    private void outColTxtGeoLong(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags, boolean notNull) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoLong(columnIndex), bitFlags, notNull);
     }
 
-    private void outColTxtGeoShort(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags) {
-        outColTxtGeoHash(utf8Sink, rec.getGeoShort(columnIndex), bitFlags);
+    private void outColTxtGeoShort(PGResponseSink utf8Sink, Record rec, int columnIndex, int bitFlags, boolean notNull) {
+        outColTxtGeoHash(utf8Sink, rec.getGeoShort(columnIndex), bitFlags, notNull);
     }
 
     private void outColTxtIPv4(PGResponseSink utf8Sink, Record record, int columnIndex, boolean notNull) {
@@ -2923,19 +2923,19 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     case BINARY_TYPE_GEOBYTE:
                         // pgwire advertises every geohash width as PG_VARCHAR, as it does IPv4, so
                         // the two format codes emit the same bytes and both labels share this arm.
-                        outColTxtGeoByte(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
+                        outColTxtGeoByte(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1), isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.GEOSHORT:
                     case BINARY_TYPE_GEOSHORT:
-                        outColTxtGeoShort(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
+                        outColTxtGeoShort(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1), isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.GEOINT:
                     case BINARY_TYPE_GEOINT:
-                        outColTxtGeoInt(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
+                        outColTxtGeoInt(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1), isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.GEOLONG:
                     case BINARY_TYPE_GEOLONG:
-                        outColTxtGeoLong(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1));
+                        outColTxtGeoLong(utf8Sink, record, colIndex, pgResultSetColumnTypes.getQuick(2 * colIndex + 1), isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.NULL:
                     case BINARY_TYPE_NULL:
