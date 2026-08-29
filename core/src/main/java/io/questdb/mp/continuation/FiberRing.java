@@ -30,10 +30,12 @@ import org.jetbrains.annotations.TestOnly;
 
 /**
  * Growable MPMC queue of {@link Fiber} references. The logical Fiber limits bound the number of
- * entries; linked queue segments only let a live configuration increase exceed startup capacity.
+ * entries; segment slots are allocated eagerly, so the startup capacity is clamped and linked
+ * queue segments serve any excess.
  */
 final class FiberRing {
     private static final int MAX_CAPACITY = 1 << 30;
+    private static final int MAX_EAGER_CAPACITY = 1 << 20;
     private static final int MIN_CAPACITY = 32;
     private final ConcurrentQueue<Fiber> queue;
     @TestOnly
@@ -44,7 +46,7 @@ final class FiberRing {
             throw new IllegalArgumentException("initialCapacity is out of range [value=" + initialCapacity + ']');
         }
         queue = ConcurrentQueue.createConcurrentObjectQueue(
-                Numbers.ceilPow2(Math.max(MIN_CAPACITY, initialCapacity))
+                Numbers.ceilPow2(Math.min(MAX_EAGER_CAPACITY, Math.max(MIN_CAPACITY, initialCapacity)))
         );
     }
 

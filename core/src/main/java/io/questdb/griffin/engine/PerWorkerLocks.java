@@ -212,7 +212,9 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 throw CairoException.nonCritical().put("query aborted, server is closing").setInterruption(true);
             }
             if (fiberSlot == SLOT_WAIT_ABORTED) {
-                throw CairoException.nonCritical().put("reducer slot wait could not suspend the mounted fiber");
+                throw CairoException.nonCritical()
+                        .put("reducer slot wait could not suspend the mounted fiber")
+                        .setInterruption(true);
             }
             if (statefulCircuitBreaker != null) {
                 statefulCircuitBreaker.statefulThrowExceptionIfTripped();
