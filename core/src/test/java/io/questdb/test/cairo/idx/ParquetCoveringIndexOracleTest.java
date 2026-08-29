@@ -31,6 +31,7 @@ import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.LongList;
@@ -983,6 +984,85 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                     }
                 }
             }
+        });
+    }
+
+    /**
+     * Which row-id layout the seal actually picks, across the shapes the
+     * benchmark ladder measures.
+     * <p>
+     * The seal can emit three, and picks per group by size. A layout that is
+     * never picked is dead weight -- a mode byte, a decode branch and a
+     * reader path that no file exercises -- and the only way to know is to
+     * seal the shapes and look. Reported as a table rather than asserted on
+     * counts, because the point is the distribution, not any one number; the
+     * one assertion is that every group got SOME layout, which catches a
+     * costing bug that leaves a group unaddressable.
+     */
+    @Test
+    public void testWhichRowIdLayoutTheSealPicksAcrossShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
+
+            // keys, and whether a key's postings arrive together (clustered)
+            // or spread across the partition (round robin). Both matter: a
+            // clustered key's ids are a near-progression, which is what a
+            // per-key block compresses best.
+            final int[] keyCounts = {16, 2_000, ROW_COUNT / 200, ROW_COUNT / 4, ROW_COUNT / 2};
+            final boolean[] clustered = {false, true};
+
+            final StringBuilder table = new StringBuilder(
+                    "\n  keys      postings/key  layout   flat  perKeyTable  perKeyUniform\n");
+            for (boolean cluster : clustered) {
+                for (int keys : keyCounts) {
+                    final String name = "layout_" + (cluster ? "c" : "r") + keys;
+                    execute("CREATE TABLE " + name + " (" +
+                            "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                            ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    // SKEWED, not x % keys. An even split gives every key the
+                    // same posting count and so the same compressed block
+                    // size, which picks the uniform layout by construction --
+                    // the offset-table layout exists precisely for the groups
+                    // an even split cannot produce. A square distribution puts
+                    // a few keys on many rows and most keys on few, which is
+                    // what a real symbol column looks like.
+                    final String sym = cluster
+                            ? "'s' || ((x - 1) / " + Math.max(1, ROW_COUNT / keys) + ")"
+                            : "'s' || ((x * x) % " + keys + ")";
+                    execute("INSERT INTO " + name + " SELECT" +
+                            " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                            " " + sym + "," +
+                            " x::DOUBLE," +
+                            " x * 3" +
+                            " FROM long_sequence(" + ROW_COUNT + ")");
+                    drainWalQueue();
+                    execute("ALTER TABLE " + name + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+                    drainWalQueue();
+                    execute("ALTER TABLE " + name + " ALTER COLUMN sym ADD INDEX TYPE POSTING");
+                    drainWalQueue();
+                    engine.releaseInactive();
+
+                    try (TableReader r = engine.getReader(engine.verifyTableName(name))) {
+                        final int col = r.getMetadata().getColumnIndex("sym");
+                        final AbstractParquetPostingIndexReader idx =
+                                (AbstractParquetPostingIndexReader) r.getIndexReader(0, col, IndexReader.DIR_FORWARD);
+                        Assert.assertTrue("the packed payload property did not take", idx.isPackedPayload());
+                        final int flat = idx.rowIdGroupCountByMode(PostingIndexUtils.STRIDE_MODE_FLAT);
+                        final int tbl = idx.rowIdGroupCountByMode(PostingIndexUtils.PACKED_MODE_PER_KEY_BLOCKS);
+                        final int uni = idx.rowIdGroupCountByMode(PostingIndexUtils.PACKED_MODE_PER_KEY_UNIFORM);
+                        table.append(String.format(
+                                "  %-9d %-13d %-8s %-5d %-12d %d%n",
+                                keys, ROW_COUNT / keys, cluster ? "clust" : "rr", flat, tbl, uni));
+                        Assert.assertTrue(
+                                "a group got no layout at all [keys=" + keys + ", clustered=" + cluster + ']',
+                                flat + tbl + uni > 0);
+                    }
+                    execute("DROP TABLE " + name);
+                    drainWalQueue();
+                }
+            }
+            System.out.println(table);
         });
     }
 

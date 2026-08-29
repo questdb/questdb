@@ -632,6 +632,33 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * oracle while appearing to cover both -- the same way the covered grid
      * silently never reached the flat branch on a 16-key fixture.
      */
+    /**
+     * Number of row groups whose row-id layout is {@code mode}, one of the
+     * {@code PostingIndexUtils} payload modes. For deciding whether a layout
+     * the seal can emit is ever actually chosen.
+     */
+    @TestOnly
+    public int rowIdGroupCountByMode(byte mode) {
+        final int groups = Math.max(imReader.getIndexRowGroupCount(), 1);
+        int n = 0;
+        for (int rg = 0; rg < groups; rg++) {
+            if (packedDataAddr(rg) == 0) {
+                continue;
+            }
+            // A flat group caches its DATA address, which is past the header
+            // the mode byte lives in; the blob start is kept only for the
+            // per-key modes, so the flat case is identified by its absence.
+            final long blob = packedBlobAddrs[rg];
+            final byte actual = blob == 0
+                    ? PostingIndexUtils.STRIDE_MODE_FLAT
+                    : Unsafe.getUnsafe().getByte(blob);
+            if (actual == mode) {
+                n++;
+            }
+        }
+        return n;
+    }
+
     @TestOnly
     public int flatRowIdGroupCount() {
         final int groups = Math.max(imReader.getIndexRowGroupCount(), 1);
