@@ -1419,19 +1419,9 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     @Test
     public void testInfinityRowsSurviveIsNullPruning() throws Exception {
-        // Numbers.isNull(double) is an exponent-bits test, so QuestDB calls every non-finite value
-        // NULL - NaN and +/-Infinity alike - while the parquet writer's Nullable for f32/f64 reports
-        // is_nan() alone. An infinity is therefore written as an ordinary value and left out of
-        // null_count, so the IS_NULL pushdown skipped the whole row group on "null_count == 0" and
-        // dropped a row native storage returns.
-        //
-        // isNullOpPushable() now refuses IS NULL for DOUBLE, so the IS NULL arm below pins that
-        // gate rather than the native writer_undercounts_nulls guard, which nothing pushes a
-        // condition to any more. The "d > 1e308" and IS NOT NULL arms are the live pushdown here.
-        //
-        // The infinity has to arrive through a NON-CONSTANT expression: FunctionParser folds a
-        // constant one through DoubleConstant#newInstance, which maps every non-finite value onto
-        // NULL, so "1e308 * 10" stores a NaN and the writer and reader agree on it.
+        // Nullable FLOAT/DOUBLE functions normalize every non-finite value to SQL NULL semantics.
+        // The infinity arrives through a non-constant expression so this test still verifies that
+        // native and Parquet storage agree on IS NULL / IS NOT NULL and do not prune the null row.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src (m DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO src VALUES (10.0, '2024-01-01T01:00:00.000000Z')");
@@ -1440,10 +1430,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("INSERT INTO inf SELECT 1e308 * m, ts FROM src");
             execute("INSERT INTO inf VALUES (2.0, '2024-01-02T00:00:00.000000Z')");
 
-            // A genuine infinity, not a NaN: only an infinity is greater than the largest finite
-            // double, and a NaN would fail this comparison.
             assertQuery("SELECT count() c FROM inf WHERE d > 1e308")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
 
             final String nulls = """
                     d
@@ -1467,17 +1455,8 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     @Test
     public void testInfinityRowsSurviveNullEqualityPruning() throws Exception {
-        // The same hole as testInfinityRowsSurviveIsNullPruning, on the EQ path rather than the
-        // IS NULL one. `d = null::double` is not a bare NULL keyword, so it compiles to an ordinary
-        // OP_EQ with a NaN bound; isExactEqDouble certifies NaN as exact because the native side
-        // decides a NULL bound from the null count rather than the statistics. That count came from
-        // a writer that calls only is_nan() null, so a row group holding an infinity - which
-        // Numbers.equals calls EQUAL to NULL, and which EqDoubleFunctionFactory therefore matches
-        // natively - reported has_nulls == false and was pruned away.
-        //
-        // Both signs, and both the statistics and the bloom paths: the bloom arm is the one that
-        // runs when the group carries a bloom filter for the column, and it reads the same
-        // has_nulls.
+        // Pin the equality form as well as IS NULL. Both signs normalize to NULL for a nullable
+        // column, and both the statistics and bloom paths must preserve those rows after conversion.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src2 (m DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO src2 VALUES (10.0, '2024-01-01T01:00:00.000000Z')");
@@ -1487,12 +1466,10 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
             execute("INSERT INTO inf2 SELECT -1e308 * m, '2024-01-01T02:00:00.000000Z'::TIMESTAMP FROM src2");
             execute("INSERT INTO inf2 VALUES (2.0, '2024-01-02T00:00:00.000000Z')");
 
-            // Genuine infinities, not NaNs: only an infinity compares outside the finite range,
-            // and a NaN would fail both comparisons.
             assertQuery("SELECT count() c FROM inf2 WHERE d > 1e308")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
             assertQuery("SELECT count() c FROM inf2 WHERE d < -1e308")
-                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n1\n");
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
 
             final String nulls = """
                     d
