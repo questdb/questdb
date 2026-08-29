@@ -157,13 +157,18 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         return switch (tagOf(returnType)) {
             case DOUBLE ->
                     effectiveArgsSize == 2 ? new TwoDoubleCoalesceFunction(args) : new DoubleCoalesceFunction(args, effectiveArgsSize);
-            case DATE -> effectiveArgsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, effectiveArgsSize);
+            case DATE ->
+                    effectiveArgsSize == 2 ? new TwoDateCoalesceFunction(args) : new DateCoalesceFunction(args, effectiveArgsSize);
             case TIMESTAMP ->
                     effectiveArgsSize == 2 ? new TwoTimestampCoalesceFunction(args, returnType) : new TimestampCoalesceFunction(args, returnType);
-            case LONG -> effectiveArgsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, effectiveArgsSize);
-            case LONG256 -> effectiveArgsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
-            case INT -> effectiveArgsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, effectiveArgsSize);
-            case IPv4 -> effectiveArgsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, effectiveArgsSize);
+            case LONG ->
+                    effectiveArgsSize == 2 ? new TwoLongCoalesceFunction(args) : new LongCoalesceFunction(args, effectiveArgsSize);
+            case LONG256 ->
+                    effectiveArgsSize == 2 ? new TwoLong256CoalesceFunction(args) : new Long256CoalesceFunction(args);
+            case INT ->
+                    effectiveArgsSize == 2 ? new TwoIntCoalesceFunction(args) : new IntCoalesceFunction(args, effectiveArgsSize);
+            case IPv4 ->
+                    effectiveArgsSize == 2 ? new TwoIPv4CoalesceFunction(args) : new IPv4CoalesceFunction(args, effectiveArgsSize);
             case FLOAT ->
                     effectiveArgsSize == 2 ? new TwoFloatCoalesceFunction(args) : new FloatCoalesceFunction(args, effectiveArgsSize);
             case STRING, SYMBOL -> {
@@ -181,7 +186,8 @@ public class CoalesceFunctionFactory implements FunctionFactory {
             }
             case VARCHAR ->
                     effectiveArgsSize == 2 ? new TwoVarcharCoalesceFunction(args) : new VarcharCoalesceFunction(args, effectiveArgsSize);
-            case UUID -> effectiveArgsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, effectiveArgsSize);
+            case UUID ->
+                    effectiveArgsSize == 2 ? new TwoUuidCoalesceFunction(args) : new UuidCoalesceFunction(args, effectiveArgsSize);
             case BOOLEAN, SHORT, BYTE, CHAR ->
                 // Null on these data types not supported
                     args.getQuick(0);

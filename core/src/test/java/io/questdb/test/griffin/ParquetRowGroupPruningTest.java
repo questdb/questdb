@@ -3732,19 +3732,10 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
 
     @Test
     public void testNonFiniteBindVariableBoundPruningMatchesNative() throws Exception {
-        // PushdownFilterExtractor accepts any isConstantOrRuntimeConstant() bound and reads it at
-        // scan time, and nothing between the PGWire binder (Double.longBitsToDouble of the raw
-        // wire bits) and the pruner normalises it - so a bind variable delivers a genuine
-        // +/-Infinity where a constant expression could only deliver NULL.
-        //
-        // Such a bound is tolerance-equal to NULL (Numbers.isNull is an exponent-bits test), so the
-        // filter's inclusive and equality forms keep every NULL row, while NULL rows never appear in
-        // a row group's min/max statistics. Pruning used to push it anyway: toleranceBound(+Inf, GE)
-        // is Math.nextDown(+Inf - 1e-10) = Double.MAX_VALUE, a FINITE bound that certifies and then
-        // prunes every group whose max is finite. The INT arm reached the same place through
-        // integralBound and the out-of-range rewrite, which turns into "> INT_MAX" and drops every
-        // group. Measured before the fix: the parquet table returned one NULL row where the native
-        // table returned two.
+        // A DOUBLE bind variable is nullable, so +/-Infinity has SQL NULL semantics. Equality and
+        // inclusive comparisons keep NULL rows; strict comparisons keep none. Row-group pruning
+        // must decline these bounds because NULLs are absent from min/max statistics, and compiled
+        // filtering must agree with the Java fallback used by Parquet frames.
         // SHORT and BYTE are excluded: they have no NULL sentinel, so the fixture holds no NULL row
         // for pruning to lose.
         assertMemoryLeak(() -> {
@@ -3754,19 +3745,13 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                 createNullMixedPartialParquet(columnType, "6", "7", "2", "9");
                 final String suffix = "DOUBLE".equals(columnType) || "FLOAT".equals(columnType) ? ".0" : "";
                 // Fixture in ts order: null, 6, 7 (parquet partition), null, 2, 9 (native partition).
-                final String allRows = "c6\nnull\n6" + suffix + "\n7" + suffix + "\nnull\n2" + suffix + "\n9" + suffix + "\n";
-                final String finiteRows = "c6\n6" + suffix + "\n7" + suffix + "\n2" + suffix + "\n9" + suffix + "\n";
                 final String nullRows = "c6\nnull\nnull\n";
                 final String noRows = "c6\n";
                 for (double bound : new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}) {
-                    final boolean isPositive = bound == Double.POSITIVE_INFINITY;
-                    // With an infinite bound, Numbers.equals(row, bound) reduces to "the row is
-                    // NULL", so "eq || ..." keeps the NULLs and "!eq && ..." drops them, while the
-                    // raw ordering half orders the infinity as an ordinary extreme.
-                    assertBindVarBoundMatchesNative(">=", bound, isPositive ? nullRows : allRows);
-                    assertBindVarBoundMatchesNative("<=", bound, isPositive ? allRows : nullRows);
-                    assertBindVarBoundMatchesNative(">", bound, isPositive ? noRows : finiteRows);
-                    assertBindVarBoundMatchesNative("<", bound, isPositive ? finiteRows : noRows);
+                    assertBindVarBoundMatchesNative(">=", bound, nullRows);
+                    assertBindVarBoundMatchesNative("<=", bound, nullRows);
+                    assertBindVarBoundMatchesNative(">", bound, noRows);
+                    assertBindVarBoundMatchesNative("<", bound, noRows);
                     assertBindVarBoundMatchesNative("=", bound, nullRows);
                 }
                 // Control: the decline must be narrow. A finite bind-variable bound still prunes,

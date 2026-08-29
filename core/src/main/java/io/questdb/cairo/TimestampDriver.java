@@ -105,7 +105,7 @@ public interface TimestampDriver {
      * Formats a value using the legacy nullable interpretation.
      *
      * @deprecated use {@link #append(long, CharSink, boolean)} when the column
-     *             nullability is known.
+     * nullability is known.
      */
     @Deprecated
     default boolean append(long fixedAddr, CharSink<?> stringSink) {

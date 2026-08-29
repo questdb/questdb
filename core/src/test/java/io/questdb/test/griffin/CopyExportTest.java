@@ -333,7 +333,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns("""
                                 path\tdiskSizeHuman
-                                test_table.parquet\t641.0 B
+                                test_table.parquet\t657.0 B
                                 """);
             };
             testCopyExport(stmt, test);
@@ -762,8 +762,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files() order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2023-01.parquet\t672.0 B\n" +
-                                        "test_table" + File.separator + "2023-02.parquet\t672.0 B\n");
+                                        "test_table" + File.separator + "2023-01.parquet\t688.0 B\n" +
+                                        "test_table" + File.separator + "2023-02.parquet\t688.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -846,8 +846,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2020-01-01.parquet\t666.0 B\n" +
-                                        "test_table" + File.separator + "2020-01-02.parquet\t648.0 B\n");
+                                        "test_table" + File.separator + "2020-01-01.parquet\t683.0 B\n" +
+                                        "test_table" + File.separator + "2020-01-02.parquet\t664.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -954,7 +954,7 @@ public class CopyExportTest extends AbstractCairoTest {
                         assertQuery("select path, diskSizeHuman from export_files()  order by path")
                                 .noLeakCheck()
                                 .returns("path\tdiskSizeHuman\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t1022.0 B\n" +
+                                        "price_1h" + File.separator + "2023-09.parquet\t1.0 KiB\n" +
                                         "price_1h" + File.separator + "2023-11.parquet\t1.0 KiB\n");
                     });
 

@@ -238,7 +238,7 @@ public class NotNullCastExtendedTypesTest extends AbstractCairoTest {
             assertSql(
                     """
                             d64_s
-
+                            
                             123.45
                             """,
                     "SELECT DISTINCT d64::string d64_s FROM t ORDER BY d64_s"
@@ -289,7 +289,7 @@ public class NotNullCastExtendedTypesTest extends AbstractCairoTest {
             assertSql(
                     """
                             d256_s
-
+                            
                             42.00
                             """,
                     "SELECT DISTINCT d256::string d256_s FROM t ORDER BY d256_s"
@@ -393,7 +393,7 @@ public class NotNullCastExtendedTypesTest extends AbstractCairoTest {
                     """
                             i_str
                             ('2024-06-10T00:00:00.000Z', '2024-06-11T00:00:00.000Z')
-
+                            
                             """,
                     "SELECT interval(ts1, ts2)::string i_str FROM t ORDER BY tsOrder"
             );
@@ -402,7 +402,7 @@ public class NotNullCastExtendedTypesTest extends AbstractCairoTest {
                     """
                             i_v
                             ('2024-06-10T00:00:00.000Z', '2024-06-11T00:00:00.000Z')
-
+                            
                             """,
                     "SELECT interval(ts1, ts2)::varchar i_v FROM t ORDER BY tsOrder"
             );

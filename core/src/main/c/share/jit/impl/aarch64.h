@@ -688,6 +688,28 @@ namespace questdb::aarch64 {
         }
     }
 
+    inline Gp float_is_finite(Compiler &c, const Vec &value) {
+        Gp bits = c.new_gp32();
+        Gp result = c.new_gp32();
+        c.fmov(bits, value);
+        c.and_(bits, bits, imm(0x7F800000));
+        cmp_imm32(c, bits, 0x7F800000);
+        c.cset(result, CondCode::kNE);
+        return result;
+    }
+
+    inline Gp double_is_finite(Compiler &c, const Vec &value) {
+        Gp bits = c.new_gp64();
+        Gp inf_bits = c.new_gp64();
+        Gp result = c.new_gp32();
+        c.fmov(bits, value);
+        c.mov(inf_bits, int64_t(0x7FF0000000000000LL));
+        c.and_(bits, bits, inf_bits);
+        c.cmp(bits, inf_bits);
+        c.cset(result, CondCode::kNE);
+        return result;
+    }
+
     // fabs(l - r) <= epsilon, with special handling for infinities.
     // The tolerance test is INCLUSIVE, matching Numbers.equals() ("Math.abs(l - r) <= DOUBLE_TOLERANCE").
     inline Gp double_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon, bool eq) {

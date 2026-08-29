@@ -1751,152 +1751,152 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         try {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            int columnType = tableWriterMetadata.getColumnType(columnIndex);
-            if (columnType < 0) {
-                continue;
-            }
-            final String columnName = tableWriterMetadata.getColumnName(columnIndex);
-            final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
-            final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
-            final boolean notTheTimestamp = columnIndex != timestampIndex;
-            final boolean isNotNull = tableWriterMetadata.isNotNull(columnIndex);
-            final int columnOffset = getPrimaryColumnIndex(columnIndex);
-            final MemoryCR oooMem1 = oooColumns.getQuick(columnOffset);
-            final MemoryCR oooMem2 = oooColumns.getQuick(columnOffset + 1);
-
-            if (ColumnType.isVarSize(columnType)) {
-                final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
-                final long srcOooAuxAddr = oooMem2.addressOf(0);
-                final long srcOooDataAddr = oooMem1.addressOf(0);
-
-                long dstAuxSize = ctd.getAuxVectorSize(rowCount);
-                long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, o3Lo, o3Hi);
-
-                long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
-                long dstDataAddr;
-                try {
-                    dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
-                } catch (Throwable th) {
-                    Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
-                    throw th;
+                int columnType = tableWriterMetadata.getColumnType(columnIndex);
+                if (columnType < 0) {
+                    continue;
                 }
+                final String columnName = tableWriterMetadata.getColumnName(columnIndex);
+                final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
+                final boolean notTheTimestamp = columnIndex != timestampIndex;
+                final boolean isNotNull = tableWriterMetadata.isNotNull(columnIndex);
+                final int columnOffset = getPrimaryColumnIndex(columnIndex);
+                final MemoryCR oooMem1 = oooColumns.getQuick(columnOffset);
+                final MemoryCR oooMem2 = oooColumns.getQuick(columnOffset + 1);
 
-                allocatedBuffers.add(dstAuxAddr);
-                allocatedBuffers.add(dstAuxSize);
-                allocatedBuffers.add(dstDataAddr);
-                allocatedBuffers.add(dstDataSize);
-                try {
-                    O3CopyJob.mergeCopy(
-                            columnType,
-                            mergeIndexAddr,
-                            rowCount,
-                            0, // srcDataAuxAddr - not accessed (bit 63 = 0)
-                            0, // srcDataVarAddr - not accessed
-                            srcOooAuxAddr,
-                            srcOooDataAddr,
-                            dstAuxAddr,
-                            dstDataAddr,
-                            0
-                    );
-                } catch (Throwable th) {
-                    throw th;
-                }
+                if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
+                    final long srcOooAuxAddr = oooMem2.addressOf(0);
+                    final long srcOooDataAddr = oooMem1.addressOf(0);
 
-                descriptor.addColumn(
-                        columnName,
-                        isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
-                        columnId,
-                        0,
-                        dstDataAddr,
-                        dstDataSize,
-                        dstAuxAddr,
-                        dstAuxSize,
-                        0,
-                        0,
-                        parquetEncodingConfig
-                );
-                // Ownership transferred to partitionDescriptor, don't free on error.
-            } else {
-                final long srcOooFixAddr = oooMem1.addressOf(0);
-                long dstFixSize = rowCount * ColumnType.sizeOf(columnType);
-                long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
-                allocatedBuffers.add(dstFixAddr);
-                allocatedBuffers.add(dstFixSize);
+                    long dstAuxSize = ctd.getAuxVectorSize(rowCount);
+                    long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, o3Lo, o3Hi);
 
-                try {
-                    O3CopyJob.mergeCopy(
-                            notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
-                            mergeIndexAddr,
-                            rowCount,
-                            0, // srcDataFixAddr - not accessed (bit 63 = 0)
-                            0,
-                            srcOooFixAddr,
-                            0,
-                            dstFixAddr,
-                            0,
-                            0
-                    );
-                } catch (Throwable th) {
-                    throw th;
-                }
-
-                if (ColumnType.isSymbol(columnType)) {
-                    final MemoryR offsetsMem;
-                    final MemoryR valuesMem;
-                    final int symbolCount;
-                    final long valuesMemSize;
-                    int encodeColumnType;
+                    long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
+                    long dstDataAddr;
                     try {
-                        final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
-                        offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
-                        valuesMem = symbolMapWriter.getSymbolValuesMemory();
-
-                        symbolCount = symbolMapWriter.getSymbolCount();
-                        final long offset = SymbolMapWriter.keyToOffset(symbolCount);
-                        assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
-                        valuesMemSize = offsetsMem.getLong(offset);
-                        assert valuesMemSize <= valuesMem.size();
-
-                        // High bit = no-null hint for def level encoding, not schema Repetition.
-                        encodeColumnType = columnType;
-                        if (isNotNull) {
-                            encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
-                        }
+                        dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
                     } catch (Throwable th) {
-                        Unsafe.free(dstFixAddr, dstFixSize, MemoryTag.NATIVE_O3);
+                        Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
                         throw th;
                     }
-                    descriptor.addColumn(
-                            columnName,
-                            encodeColumnType,
-                            columnId,
-                            0,
-                            dstFixAddr,
-                            dstFixSize,
-                            valuesMem.addressOf(0),
-                            valuesMemSize,
-                            // Skip header. Pass element count, not byte size.
-                            offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
-                            symbolCount,
-                            parquetEncodingConfig
-                    );
-                } else {
+
+                    allocatedBuffers.add(dstAuxAddr);
+                    allocatedBuffers.add(dstAuxSize);
+                    allocatedBuffers.add(dstDataAddr);
+                    allocatedBuffers.add(dstDataSize);
+                    try {
+                        O3CopyJob.mergeCopy(
+                                columnType,
+                                mergeIndexAddr,
+                                rowCount,
+                                0, // srcDataAuxAddr - not accessed (bit 63 = 0)
+                                0, // srcDataVarAddr - not accessed
+                                srcOooAuxAddr,
+                                srcOooDataAddr,
+                                dstAuxAddr,
+                                dstDataAddr,
+                                0
+                        );
+                    } catch (Throwable th) {
+                        throw th;
+                    }
+
                     descriptor.addColumn(
                             columnName,
                             isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                             columnId,
                             0,
-                            dstFixAddr,
-                            dstFixSize,
-                            0,
-                            0,
+                            dstDataAddr,
+                            dstDataSize,
+                            dstAuxAddr,
+                            dstAuxSize,
                             0,
                             0,
                             parquetEncodingConfig
                     );
+                    // The descriptor borrows these buffers until addRowGroup() returns.
+                } else {
+                    final long srcOooFixAddr = oooMem1.addressOf(0);
+                    long dstFixSize = rowCount * ColumnType.sizeOf(columnType);
+                    long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
+                    allocatedBuffers.add(dstFixAddr);
+                    allocatedBuffers.add(dstFixSize);
+
+                    try {
+                        O3CopyJob.mergeCopy(
+                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                                mergeIndexAddr,
+                                rowCount,
+                                0, // srcDataFixAddr - not accessed (bit 63 = 0)
+                                0,
+                                srcOooFixAddr,
+                                0,
+                                dstFixAddr,
+                                0,
+                                0
+                        );
+                    } catch (Throwable th) {
+                        throw th;
+                    }
+
+                    if (ColumnType.isSymbol(columnType)) {
+                        final MemoryR offsetsMem;
+                        final MemoryR valuesMem;
+                        final int symbolCount;
+                        final long valuesMemSize;
+                        int encodeColumnType;
+                        try {
+                            final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
+                            offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                            valuesMem = symbolMapWriter.getSymbolValuesMemory();
+
+                            symbolCount = symbolMapWriter.getSymbolCount();
+                            final long offset = SymbolMapWriter.keyToOffset(symbolCount);
+                            assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
+                            valuesMemSize = offsetsMem.getLong(offset);
+                            assert valuesMemSize <= valuesMem.size();
+
+                            // High bit = no-null hint for def level encoding, not schema Repetition.
+                            encodeColumnType = columnType;
+                            if (isNotNull) {
+                                encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
+                            }
+                        } catch (Throwable th) {
+                            // dstFixAddr is tracked in allocatedBuffers and freed by the outer finally.
+                            throw th;
+                        }
+                        descriptor.addColumn(
+                                columnName,
+                                encodeColumnType,
+                                columnId,
+                                0,
+                                dstFixAddr,
+                                dstFixSize,
+                                valuesMem.addressOf(0),
+                                valuesMemSize,
+                                // Skip header. Pass element count, not byte size.
+                                offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
+                                symbolCount,
+                                parquetEncodingConfig
+                        );
+                    } else {
+                        descriptor.addColumn(
+                                columnName,
+                                isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
+                                columnId,
+                                0,
+                                dstFixAddr,
+                                dstFixSize,
+                                0,
+                                0,
+                                0,
+                                0,
+                                parquetEncodingConfig
+                        );
+                    }
                 }
             }
-        }
 
             // Publish only after all columns have been added so Rust sees a complete row group.
             partitionUpdater.addRowGroup(metadataPosition, descriptor);
@@ -2914,9 +2914,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 descriptor.addColumn(
                         columnName,
                         ColumnType.setDesignatedTimestampBit(
-                                        metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
-                                        true
-                                )
+                                metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
+                                true
+                        )
                                 | PARQUET_TIMESTAMP_STRIDED_16,
                         columnId,
                         0,

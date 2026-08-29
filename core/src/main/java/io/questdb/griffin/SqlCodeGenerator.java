@@ -1747,7 +1747,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * place to upgrade when NOT NULL-aware aggregation ships. See the null-bitmaps plan.
      */
     private static boolean isVectorAggregateUnsafeForNotNull(RecordMetadata metadata, int columnIndex) {
-        return columnIndex >= 0 && metadata.isNotNull(columnIndex);
+        // Designated timestamps are validated to exclude the sentinel, so native aggregation is
+        // safe for that one implicit NOT NULL column. Ordinary NOT NULL columns may store their
+        // sentinel as data and must remain on the non-vectorized path.
+        return columnIndex >= 0
+                && columnIndex != metadata.getTimestampIndex()
+                && metadata.isNotNull(columnIndex);
     }
 
     private boolean assembleKeysAndFunctionReferences(

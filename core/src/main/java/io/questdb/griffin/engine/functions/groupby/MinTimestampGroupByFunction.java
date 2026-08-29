@@ -61,7 +61,8 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
     @Override
     public void computeBatch(MapValue mapValue, long dataAddr, int rowCount, long startRowId) {
         if (rowCount > 0) {
-            final long batchMin = Vect.minLong(dataAddr, rowCount);
+            // Designated timestamps are validated and sorted ASC within a frame.
+            final long batchMin = isDesignated ? Unsafe.getLong(dataAddr) : Vect.minLong(dataAddr, rowCount);
             if (isArgNotNull || batchMin != Numbers.LONG_NULL) {
                 final long existing = mapValue.getTimestamp(valueIndex);
                 if (batchMin < existing || existing == Numbers.LONG_NULL) {
@@ -180,7 +181,9 @@ public class MinTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public boolean supportsBatchComputation() {
-        return !isArgNotNull;
+        // Ordinary NOT NULL timestamps stay on the per-row path because their sentinel is valid
+        // data. Designated timestamps cannot contain that sentinel and use the sorted-frame path.
+        return isDesignated || !isArgNotNull;
     }
 
     @Override

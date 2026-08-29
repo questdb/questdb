@@ -174,10 +174,9 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public boolean supportsBatchComputation() {
-        // NOT NULL columns take the per-row compute path; the native batch
-        // kernel treats the type sentinel as null and under-counts / skips
-        // values the NOT NULL contract declares to be real data.
-        return !isArgNotNull;
+        // Ordinary NOT NULL timestamps stay on the per-row path because their sentinel is valid
+        // data. Designated timestamps cannot contain that sentinel and use the sorted-frame path.
+        return isDesignated || !isArgNotNull;
     }
 
     @Override

@@ -274,7 +274,9 @@ public class QueryAssertion {
         return this;
     }
 
-    /** Compatibility overload for the legacy query assertion failure form. */
+    /**
+     * Compatibility overload for the legacy query assertion failure form.
+     */
     public void ddl(CharSequence ddl, int errorPos, CharSequence message) throws Exception {
         this.ddl(ddl);
         fails(errorPos, message);

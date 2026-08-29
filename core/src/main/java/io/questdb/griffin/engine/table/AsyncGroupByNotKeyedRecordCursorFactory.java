@@ -108,28 +108,18 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             this.groupByFunctions = groupByFunctions;
             this.sharedRecordFunctions = sharedRecordFunctions;
 
-            // Compute batch eligibility for each group by function.
             final RecordMetadata baseMetadata = base.getMetadata();
-            final int[] batchColumnIndexes = new int[groupByFunctions.size()];
-            boolean hasBatchFunctions = false;
-            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                batchColumnIndexes[i] = computeBatchColumnIndex(groupByFunctions.getQuick(i), baseMetadata);
-                if (batchColumnIndexes[i] != AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE) {
-                    hasBatchFunctions = true;
-                }
-            }
-
-            // Mark min/max over the designated timestamp column as designated so they
-            // skip the per-frame column scan. Per-frame data is sorted ASC by the
-            // designated timestamp, so the first row is the frame minimum and the last
-            // row is the frame maximum.
+            // Mark direct min/max arguments over the designated timestamp before computing batch
+            // eligibility. Designated timestamps are validated and sorted, so this path does not
+            // inherit the native kernel's sentinel-as-null behavior for ordinary NOT NULL columns.
             final int designatedTsIndex = baseMetadata.getTimestampIndex();
             if (designatedTsIndex >= 0) {
                 for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
-                    if (batchColumnIndexes[i] != designatedTsIndex) {
-                        continue;
-                    }
-                    if (!markDesignatedTimestamp(groupByFunctions.getQuick(i))) {
+                    final GroupByFunction function = groupByFunctions.getQuick(i);
+                    final Function arg = function.getComputeBatchArg();
+                    if (!(arg instanceof ColumnFunction columnFunction)
+                            || columnFunction.getColumnIndex() != designatedTsIndex
+                            || !markDesignatedTimestamp(function)) {
                         continue;
                     }
                     if (perWorkerGroupByFunctions != null) {
@@ -137,6 +127,16 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                             markDesignatedTimestamp(perWorkerGroupByFunctions.getQuick(w).getQuick(i));
                         }
                     }
+                }
+            }
+
+            // Compute batch eligibility for each group by function.
+            final int[] batchColumnIndexes = new int[groupByFunctions.size()];
+            boolean hasBatchFunctions = false;
+            for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+                batchColumnIndexes[i] = computeBatchColumnIndex(groupByFunctions.getQuick(i), baseMetadata);
+                if (batchColumnIndexes[i] != AsyncGroupByNotKeyedAtom.BATCH_NOT_ELIGIBLE) {
+                    hasBatchFunctions = true;
                 }
             }
 
