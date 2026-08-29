@@ -16322,10 +16322,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tBITMAP\t
-                            val\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
+                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tBITMAP\t\tfalse
+                            val\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }
@@ -16349,11 +16349,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\tprice,qty,ts
-                            price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
+                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\tprice,qty,ts\tfalse
+                            price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }
@@ -16411,9 +16411,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
+                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\t\tfalse
                             """);
         });
     }
@@ -16452,7 +16452,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 't_drop_show' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \tsym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty, ts),
                             \tprice DOUBLE,
                             \tqty INT
@@ -16463,11 +16463,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\tprice,qty,ts
-                            price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
-                            qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
+                            sym\tSYMBOL\ttrue\t256\ttrue\t128\t0\tfalse\tfalse\tPOSTING\tprice,qty,ts\tfalse
+                            price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            qty\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }
@@ -16489,7 +16489,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 't_show' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \tsym SYMBOL INDEX TYPE POSTING INCLUDE (price, qty, ts),
                             \tprice DOUBLE,
                             \tqty INT

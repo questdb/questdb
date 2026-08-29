@@ -261,11 +261,6 @@ public class AllowAllSecurityContext extends AbstractAllowAllSecurityContext {
     }
 
     @Override
-    public CharSequence getPrincipal() {
-        return Constants.USER_NAME;
-    }
-
-    @Override
     protected SecurityContext newPrincipalContext(CharSequence principal) {
         return new AllowAllSecurityContext(settingsReadOnly, principal);
     }

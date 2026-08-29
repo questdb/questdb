@@ -55,8 +55,4 @@ public class CharColumn extends CharFunction implements ColumnFunction {
         return isNotNull;
     }
 
-    @Override
-    public boolean isThreadSafe() {
-        return true;
-    }
 }

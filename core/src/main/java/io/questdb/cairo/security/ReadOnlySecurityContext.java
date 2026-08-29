@@ -302,11 +302,6 @@ public class ReadOnlySecurityContext extends AbstractReadOnlySecurityContext {
     }
 
     @Override
-    public CharSequence getPrincipal() {
-        return Constants.USER_NAME;
-    }
-
-    @Override
     public boolean isQueryCancellationAllowed() {
         return false;
     }

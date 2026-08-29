@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.DoubleFunction;
-
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SignDoubleFunctionFactory implements FunctionFactory {
@@ -60,11 +60,14 @@ public class SignDoubleFunctionFactory implements FunctionFactory {
 
         @Override
         public double getDouble(Record rec) {
-            double d = arg.getDouble(rec);
-            if (d == -0.0d) {
+            final double value = arg.getDouble(rec);
+            if (!isNotNull() && !Numbers.isFinite(value)) {
+                return Double.NaN;
+            }
+            if (value == -0.0d) {
                 return 0.0d;
             }
-            return Math.signum(d);
+            return Math.signum(value);
         }
 
         @Override

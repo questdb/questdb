@@ -101,6 +101,7 @@ public final class PGUtils {
             int resumePoint
     ) throws PGMessageProcessingException {
         final short typeTag = ColumnType.tagOf(columnType);
+        final boolean isColumnNotNull = pipelineEntry != null && pipelineEntry.isColumnNotNull(columnIndex);
         switch (typeTag) {
             case ColumnType.NULL:
                 return Integer.BYTES;
@@ -111,61 +112,61 @@ public final class PGUtils {
                 return Integer.BYTES + Short.BYTES;
             case ColumnType.CHAR:
                 final char charValue = record.getChar(columnIndex);
-                return !pipelineEntry.isColumnNotNull(columnIndex) && charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
+                return !isColumnNotNull && charValue == 0 ? Integer.BYTES : Integer.BYTES + Chars.charBytes(charValue);
             case ColumnType.IPv4:
                 final int ipValue = record.getIPv4(columnIndex);
-                return pipelineEntry.isColumnNotNull(columnIndex) || ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
+                return isColumnNotNull || ipValue != Numbers.IPv4_NULL ? Integer.BYTES + Numbers.sinkSizeIPv4(ipValue) : Integer.BYTES;
             case ColumnType.INT:
                 final int value = record.getInt(columnIndex);
-                return pipelineEntry.isColumnNotNull(columnIndex) || value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
+                return isColumnNotNull || value != Numbers.INT_NULL ? Integer.BYTES + Integer.BYTES : Integer.BYTES;
             case ColumnType.LONG:
                 final long longValue = record.getLong(columnIndex);
-                return pipelineEntry.isColumnNotNull(columnIndex) || longValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+                return isColumnNotNull || longValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
             case ColumnType.DATE:
                 final long dateValue = record.getDate(columnIndex);
-                return pipelineEntry.isColumnNotNull(columnIndex) || dateValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+                return isColumnNotNull || dateValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
             case ColumnType.TIMESTAMP:
                 final long tsValue = record.getTimestamp(columnIndex);
-                return pipelineEntry.isColumnNotNull(columnIndex) || tsValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
+                return isColumnNotNull || tsValue != Numbers.LONG_NULL ? Integer.BYTES + Long.BYTES : Integer.BYTES;
             case ColumnType.FLOAT:
                 final float floatValue = record.getFloat(columnIndex);
-                return !pipelineEntry.isColumnNotNull(columnIndex) && Numbers.isNull(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
+                return !isColumnNotNull && Numbers.isNull(floatValue) ? Integer.BYTES : Integer.BYTES + Float.BYTES;
             case ColumnType.DOUBLE:
                 final double doubleValue = record.getDouble(columnIndex);
-                return !pipelineEntry.isColumnNotNull(columnIndex) && Numbers.isNull(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
+                return !isColumnNotNull && Numbers.isNull(doubleValue) ? Integer.BYTES : Integer.BYTES + Double.BYTES;
             case ColumnType.DECIMAL8: {
                 final byte decimal = record.getDecimal8(columnIndex);
-                return decimalBinSize(decimal == Decimals.DECIMAL8_NULL, pipelineEntry.isColumnNotNull(columnIndex), columnType, decimal);
+                return decimalBinSize(decimal == Decimals.DECIMAL8_NULL, isColumnNotNull, columnType, decimal);
             }
             case ColumnType.DECIMAL16: {
                 final short decimal = record.getDecimal16(columnIndex);
-                return decimalBinSize(decimal == Decimals.DECIMAL16_NULL, pipelineEntry.isColumnNotNull(columnIndex), columnType, decimal);
+                return decimalBinSize(decimal == Decimals.DECIMAL16_NULL, isColumnNotNull, columnType, decimal);
             }
             case ColumnType.DECIMAL32: {
                 final int decimal = record.getDecimal32(columnIndex);
-                return decimalBinSize(decimal == Decimals.DECIMAL32_NULL, pipelineEntry.isColumnNotNull(columnIndex), columnType, decimal);
+                return decimalBinSize(decimal == Decimals.DECIMAL32_NULL, isColumnNotNull, columnType, decimal);
             }
             case ColumnType.DECIMAL64: {
                 final long decimal = record.getDecimal64(columnIndex);
-                return decimalBinSize(decimal == Decimals.DECIMAL64_NULL, pipelineEntry.isColumnNotNull(columnIndex), columnType, decimal);
+                return decimalBinSize(decimal == Decimals.DECIMAL64_NULL, isColumnNotNull, columnType, decimal);
             }
             case ColumnType.DECIMAL128: {
                 final Decimal128 decimal = sqlExecutionContext.getDecimal128();
                 record.getDecimal128(columnIndex, decimal);
-                return decimalBinSize(decimal.isNull(), pipelineEntry.isColumnNotNull(columnIndex), columnType, decimal);
+                return decimalBinSize(decimal.isNull(), isColumnNotNull, columnType, decimal);
             }
             case ColumnType.DECIMAL256: {
                 final Decimal256 decimal = sqlExecutionContext.getDecimal256();
                 record.getDecimal256(columnIndex, decimal);
-                return decimalBinSize(decimal.isNull(), pipelineEntry.isColumnNotNull(columnIndex), columnType, decimal);
+                return decimalBinSize(decimal.isNull(), isColumnNotNull, columnType, decimal);
             }
             case ColumnType.UUID:
                 final long lo = record.getLong128Lo(columnIndex);
                 final long hi = record.getLong128Hi(columnIndex);
-                return pipelineEntry.isColumnNotNull(columnIndex) || !Uuid.isNull(lo, hi) ? Integer.BYTES + Long.BYTES * 2 : Integer.BYTES;
+                return isColumnNotNull || !Uuid.isNull(lo, hi) ? Integer.BYTES + Long.BYTES * 2 : Integer.BYTES;
             case ColumnType.LONG256:
                 final Long256 long256Value = record.getLong256A(columnIndex);
-                return !pipelineEntry.isColumnNotNull(columnIndex) && Long256Impl.isNull(long256Value)
+                return !isColumnNotNull && Long256Impl.isNull(long256Value)
                         ? Integer.BYTES
                         : Integer.BYTES + Numbers.hexDigitsLong256(long256Value);
             case ColumnType.GEOBYTE:

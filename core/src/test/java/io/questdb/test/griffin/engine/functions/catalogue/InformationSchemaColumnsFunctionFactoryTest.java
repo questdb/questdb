@@ -124,9 +124,9 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
 
             assertQuery("information_schema.columns()")
@@ -134,7 +134,7 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     .noRandomAccess()
                     .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
-                            qdb\tpublic\ttest_rename\tts\t0\t\tyes\ttimestamp without time zone
+                            qdb\tpublic\ttest_rename\tts\t0\t\tno\ttimestamp without time zone
                             qdb\tpublic\ttest_rename\tx\t1\t\tyes\tinteger
                             """);
 
@@ -145,9 +145,9 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                             """);
 
             assertQuery("information_schema.columns()")
@@ -155,7 +155,7 @@ public class InformationSchemaColumnsFunctionFactoryTest extends AbstractCairoTe
                     .noRandomAccess()
                     .returns("""
                             table_catalog\ttable_schema\ttable_name\tcolumn_name\tordinal_position\tcolumn_default\tis_nullable\tdata_type
-                            qdb\tpublic\ttest_renamed\tts\t0\t\tyes\ttimestamp without time zone
+                            qdb\tpublic\ttest_renamed\tts\t0\t\tno\ttimestamp without time zone
                             qdb\tpublic\ttest_renamed\tx\t1\t\tyes\tinteger
                             """);
         });

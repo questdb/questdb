@@ -559,10 +559,10 @@ public class NotNullColumnTest extends AbstractCairoTest {
 
             assertSql(
                     """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\tfalse
-                            y\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            x\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\ttrue
+                            y\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
                             """,
                     "SHOW COLUMNS FROM t"
             );

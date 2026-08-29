@@ -6160,8 +6160,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slaveToFree.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
-                                            // splice join result does not have timestamp
-                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
+                                            // A splice result can synthesize a null record on either side.
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1, true, true),
                                             master,
                                             createRecordCopierMaster(masterMetadata),
                                             slaveToFree,
@@ -9476,7 +9476,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
                 TableColumnMetadata aliasedMeta = new TableColumnMetadata(
-                        Chars.toString(queryColumn.getAlias()),
+                        SqlUtil.toColumnName(queryColumn.getAlias()),
                         metadata.getColumnType(index),
                         metadata.getColumnIndexType(index),
                         metadata.getIndexValueBlockCapacity(index),
@@ -10767,7 +10767,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
                         TableColumnMetadata windowMeta = new TableColumnMetadata(
-                                Chars.toString(qc.getAlias()),
+                                SqlUtil.toColumnName(qc.getAlias()),
                                 m.getColumnType(),
                                 m.getIndexType(),
                                 m.getIndexValueBlockCapacity(),
@@ -10916,7 +10916,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
                         TableColumnMetadata windowMeta2 = new TableColumnMetadata(
-                                Chars.toString(qc.getAlias()),
+                                SqlUtil.toColumnName(qc.getAlias()),
                                 m.getColumnType(),
                                 m.getIndexType(),
                                 m.getIndexValueBlockCapacity(),

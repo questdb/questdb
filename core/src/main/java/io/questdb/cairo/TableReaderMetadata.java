@@ -478,7 +478,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                             stableIndex,
                             symbolIsCached,
                             symbolCapacity,
-                            existing != null ? existing.getOriginalWriterIndex() : writerIndex
+                            origWriterIndex
                     );
                     colMeta.setNotNullFlag(isNotNull);
                     columnMetadata.setQuick(outIndex, colMeta);

@@ -2845,6 +2845,9 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                         outColTxtInt(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.IPv4:
+                    case BINARY_TYPE_IPv4:
+                        // IPv4 is advertised as PG_VARCHAR, so both format codes use
+                        // the same textual payload, just like the geohash types below.
                         outColTxtIPv4(utf8Sink, record, colIndex, isColumnNotNull[colIndex]);
                         break;
                     case ColumnType.INTERVAL:

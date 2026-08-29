@@ -3417,7 +3417,7 @@ public class SqlParser {
 
         tok = tok(lexer, ") | , expected");
         if (isFieldTerm(tok) || isParquetKeyword(tok) || isNotKeyword(tok) || isNullKeyword(tok) || isPrecisionKeyword(tok)) {
-            model.setIndexType(IndexType.BITMAP, indexColumnPosition, configuration.getIndexValueBlockSize());
+            model.setIndexType(configuration.getDefaultSymbolIndexType(), indexColumnPosition, configuration.getIndexValueBlockSize());
             return tok;
         }
 

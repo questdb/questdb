@@ -79,6 +79,10 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         return arg.isNotNull() || value != Numbers.INT_NULL;
     }
 
+    private static boolean isNotNullIPv4Arg(Function arg, int value) {
+        return arg.isNotNull() || value != Numbers.IPv4_NULL;
+    }
+
     private static boolean isNotNullArg(Function arg, float value) {
         return arg.isNotNull() || Numbers.isFinite(value);
     }
@@ -503,7 +507,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         public int getIPv4(Record rec) {
             for (int i = 0; i < size; i++) {
                 int value = args.getQuick(i).getIPv4(rec);
-                if (isNotNullArg(args.getQuick(i), value)) {
+                if (isNotNullIPv4Arg(args.getQuick(i), value)) {
                     return value;
                 }
             }
@@ -973,7 +977,7 @@ public class CoalesceFunctionFactory implements FunctionFactory {
         @Override
         public int getIPv4(Record rec) {
             int value = args0.getIPv4(rec);
-            if (value != Numbers.IPv4_NULL) {
+            if (isNotNullIPv4Arg(args0, value)) {
                 return value;
             }
             return args1.getIPv4(rec);

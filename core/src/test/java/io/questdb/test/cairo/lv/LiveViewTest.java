@@ -2464,11 +2464,11 @@ public class LiveViewTest extends AbstractLiveViewTest {
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
                     "SELECT sym, price, ts, row_number() OVER w AS rn FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
-            assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\tfalse\t\t\n" +
-                    "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
-                    "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
+            assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t0\tfalse\tfalse\t\t\tfalse\n" +
+                    "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue\n" +
+                    "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n");
             // A live view is a physical WAL table that owns its symbol maps, so SHOW COLUMNS
             // opens a reader on the LV table itself and reports the real symbol table size.
             // A plain VIEW has no reader and always reports 0, so a non-zero size here proves
@@ -2482,11 +2482,11 @@ public class LiveViewTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
             }
-            assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
-                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\n" +
-                    "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
-                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\n" +
-                    "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n");
+            assertQuery("SHOW COLUMNS FROM lv").noLeakCheck().noRandomAccess().returns("column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull\n" +
+                    "sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t\tfalse\n" +
+                    "price\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n" +
+                    "ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue\n" +
+                    "rn\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse\n");
             execute("DROP LIVE VIEW lv");
         });
     }
