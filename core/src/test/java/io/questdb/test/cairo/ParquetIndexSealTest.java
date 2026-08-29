@@ -4626,16 +4626,17 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
      * How often the {@code _im} CRC is actually computed under a query
      * workload.
      * <p>
-     * The check covers the whole file, so at a million keys it is a 4 MB
-     * checksum, and a benchmark opening a reader per iteration measured it at
-     * 89% of bind cost. Whether that matters depends entirely on how often a
-     * bind happens, which is a property of TableReader's cache invalidation --
-     * several paths drop a cached index reader, and reading them is not proof.
-     * So this counts them.
+     * A bind checksums the file, so how much that costs depends on how often a
+     * bind happens -- a property of TableReader's cache lifetime, which several
+     * paths affect and which reading them is not enough to establish.
      * <p>
-     * Asserted as a RATE, not a total: what matters is whether repeated queries
-     * against an unchanging partition re-verify a file nothing touched. The
-     * absolute number depends on partition and column count.
+     * The measurement that matters is the POOLED one, and it is the one
+     * asserted: a reader taken from the pool binds once and serves many
+     * queries. The {@code assertQuery} figures are reported beside it as a
+     * caution, not as a finding -- that helper releases inactive readers, so it
+     * tears the pool down between queries and makes every one of them rebind.
+     * Read on its own it says a query costs a bind, which is false, and this
+     * test was briefly used to claim exactly that.
      */
     @Test
     public void testHowOftenTheImCrcIsVerifiedUnderAQueryWorkload() throws Exception {
@@ -4662,6 +4663,24 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             }
             final long steady = IndexMetaFileReader.CRC_VERIFICATIONS.get() - afterFirst;
 
+            // The same queries WITHOUT the harness tearing the reader pool down
+            // between them: one compiled factory, executed repeatedly, which is
+            // what a served query actually looks like. assertQuery releases
+            // inactive readers, and a reader closed between queries rebinds on
+            // the next one -- which is a property of the harness, not of the
+            // engine, and reporting it as the latter would be wrong.
+            final long pooled;
+            try (RecordCursorFactory factory = select(q)) {
+                final long before = IndexMetaFileReader.CRC_VERIFICATIONS.get();
+                for (int i = 0; i < queries; i++) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(cursor.hasNext());
+                        Assert.assertEquals(501, cursor.getRecord().getLong(0));
+                    }
+                }
+                pooled = IndexMetaFileReader.CRC_VERIFICATIONS.get() - before;
+            }
+
             // A commit to a DIFFERENT partition. The indexed one did not change,
             // so a bind here re-verifies a file nothing touched.
             execute("INSERT INTO " + PACKED_TABLE_NAME + " VALUES ('2024-01-02T00:00:01Z', 'q0', 2.0, 2)");
@@ -4675,9 +4694,11 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             System.out.printf(
                     "%n  _im CRC verifications%n"
                             + "    %d identical queries, nothing changed : %d  (%.2f per query)%n"
-                            + "    %d identical queries, after a commit  : %d  (%.2f per query)%n%n",
+                            + "    %d identical queries, after a commit  : %d  (%.2f per query)%n"
+                            + "    %d executions of ONE pooled factory     : %d  (%.2f per query)%n%n",
                     queries, steady, steady / (double) queries,
-                    queries, afterCommit, afterCommit / (double) queries);
+                    queries, afterCommit, afterCommit / (double) queries,
+                    queries, pooled, pooled / (double) queries);
 
             // Which of the two explanations is it: does the QUERY path rebind
             // every time, or does the reader merely churn through the pool
@@ -4699,14 +4720,15 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
             }
             System.out.printf("    %d index reads through ONE held reader   : %d%n%n", queries, held);
 
-            // The per-reader cache works: many lookups, one bind. So the
-            // per-query cost above is not this cache failing, it is the reader
-            // going through the pool -- goPassive marks every partition's
-            // columns closed, and the reopen drops the index reader with them.
-            // Pinned because it is the property a fix must PRESERVE while
-            // making the per-query number smaller.
             Assert.assertEquals(
                     "one bind should serve every lookup through a held reader", 1, held);
+            // The real invariant: repeated queries against an unchanging
+            // partition must NOT re-verify a file nothing touched. Bounded at
+            // one because the first execution binds.
+            Assert.assertTrue(
+                    "a pooled reader must not rebind per query [queries=" + queries
+                            + ", verifications=" + pooled + ']',
+                    pooled <= 1);
             Assert.assertTrue(
                     "the fixture must actually be verifying, or this counts nothing",
                     steady > 0);

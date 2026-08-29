@@ -130,15 +130,22 @@ public class IndexMetaFileReader implements QuietCloseable {
     /**
      * Whether to verify the {@code _im} CRC on every bind.
      * <p>
-     * The checksum covers the whole file, and the key directory dominates it:
-     * a million-key column has a 4 MB {@code _im}, so a bind costs a 4 MB
-     * checksum. A query that opens a reader and makes a few hundred lookups
-     * spends most of its time here -- it was 21.8% of a range-read profile.
+     * Left ON, and no longer a trade worth arguing about. The checksum used to
+     * cover the whole file, which the key directory dominates -- 4 MB at a
+     * million keys -- so a bind cost 649us against the native chain's 6.7us for
+     * an entire open. It is now split: this covers everything up to
+     * {@code KEY_DIR_OFFSET}, and the directory carries its own, checked on
+     * demand by {@link #verifyKeyDirectory()}. A bind is 74us at the same
+     * million keys and no longer grows with the key count.
      * <p>
-     * Left ON. The cost is per MAPPING, and a pooled TableReader maps once and
-     * serves many queries, so production amortises what a benchmark opening a
-     * reader per iteration pays every time. Turning corruption detection off to
-     * win a benchmark would be the wrong trade; the knob exists to measure it.
+     * A bind is NOT per query: a pooled TableReader binds once and serves many,
+     * measured at one verification across 20 executions of one compiled
+     * factory. It is per reader per partition, and again whenever
+     * {@code index_txn} moves, so an actively resealed partition rebinds as
+     * often as it reseals. The split is therefore justified by how BIG a bind
+     * was, not by how often one happens -- a distinction worth keeping, since
+     * a test harness that releases inactive readers makes every query rebind
+     * and can be misread as the latter.
      */
     /**
      * How many times the _im CRC has been computed, and over how many bytes.
