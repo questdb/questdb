@@ -55,6 +55,11 @@ import org.junit.Test;
  */
 public class IndexMetaFileReaderTest extends AbstractCairoTest {
 
+    /** Header offsets of the split-CRC fields; see IndexMetaFileReader. */
+    private static final int KEY_DIR_CRC_OFF = 96;
+    private static final int KEY_DIR_OFFSET_OFF = 88;
+
+
     private static final int CODEC_SNAPPY = 1;
     private static final int CODEC_ZSTD = 6;
     private static final int ENC_BYTE_STREAM_SPLIT = 1 << 5;
@@ -305,9 +310,14 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
             Assert.assertEquals(SAMPLE_PIDX_FOOTER_OFF, Unsafe.getUnsafe().getLong(addr + 64)); // PIDX_FOOTER_OFFSET
             Assert.assertEquals(SAMPLE_PIDX_FOOTER_LEN, Unsafe.getUnsafe().getInt(addr + 72)); // PIDX_FOOTER_LENGTH
             Assert.assertEquals(FIRST_COVER_COLUMN, Unsafe.getUnsafe().getInt(addr + 76)); // FIRST_COVER_COLUMN
+            // KEY_DIR_OFFSET at 88 and KEY_DIR_CRC at 96, spent out of RESERVED.
+            // This sample writes no key directory, so the boundary lands on the
+            // trailer and the directory checksum covers nothing.
+            Assert.assertEquals(1_192, Unsafe.getUnsafe().getLong(addr + KEY_DIR_OFFSET_OFF));
+            Assert.assertEquals(0, Unsafe.getUnsafe().getInt(addr + KEY_DIR_CRC_OFF));
             // RESERVED exists so the next field does not cost a format version,
             // and a zero there is what lets a later writer spend it.
-            for (long i = 80; i < 128; i++) {
+            for (long i = 100; i < 128; i++) {
                 Assert.assertEquals(0, Unsafe.getByte(addr + i));
             }
 
@@ -2283,7 +2293,13 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                     248, 256, 400, 448, 1_000, 1_048, 1_056, 1_172, 1_176,
                     1_180, 1_184, 1_188, 1_192
             }) {
-                assertTruncationRejected(len, "_im sections do not fit");
+                // A truncated file's recorded KEY_DIR_OFFSET points past what
+                // is left, which the boundary bound now catches BEFORE the
+                // section arithmetic runs. Either rejection is correct and the
+                // property under test is that it is rejected rather than
+                // dereferenced, so both are accepted here.
+                assertTruncationRejectedByAnyOf(
+                        len, "_im sections do not fit", "invalid _im KEY_DIR_OFFSET");
             }
             // Below the fixed header plus the trailer the reader refuses on the
             // size check, before it dereferences anything at all.
@@ -2494,6 +2510,61 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * The point of splitting the checksum: a bind does NOT cover the key
+     * directory, and the directory is still covered on demand.
+     * <p>
+     * Both halves are asserted because either alone would pass while the design
+     * was broken. If the bind still summed the directory, the corrupted file
+     * below would be rejected at {@code ofAddress} and the 649us-per-bind cost
+     * the split exists to remove would still be paid. If {@code KEY_DIR_CRC}
+     * were wrong or unwritten, the bind would succeed and the corruption would
+     * go undetected by anything at all.
+     */
+    @Test
+    public void testKeyDirectoryIsNotCheckedAtBindButIsOnDemand() throws Exception {
+        assertMemoryLeak(() -> withMutableBytes(IndexMetaFileReaderTest::buildKeyDirectorySample, (dataPtr, dataLen) -> {
+            final long keyDirOffset = Unsafe.getUnsafe().getLong(dataPtr + KEY_DIR_OFFSET_OFF);
+            final long crcEnd = dataLen - IndexMetaFileReader.IM_TRAILER_SIZE;
+            Assert.assertTrue(
+                    "the fixture must carry a key directory, or this proves nothing"
+                            + " [keyDirOffset=" + keyDirOffset + ", crcEnd=" + crcEnd + ']',
+                    crcEnd > keyDirOffset);
+
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                reader.verifyKeyDirectory();
+            }
+
+            // Flip a bit INSIDE the key directory.
+            final long at = dataPtr + keyDirOffset;
+            Unsafe.putByte(at, (byte) (Unsafe.getByte(at) ^ 1));
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                // Binds, because the trailer CRC stops before this byte.
+                reader.ofAddress(dataPtr, dataLen);
+                try {
+                    reader.verifyKeyDirectory();
+                    Assert.fail("expected the key directory checksum to catch the flipped bit");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "_im key directory CRC32 mismatch");
+                }
+            }
+            Unsafe.putByte(at, (byte) (Unsafe.getByte(at) ^ 1));
+
+            // And the cheap check still guards everything below the boundary:
+            // the same flip one byte EARLIER is caught at bind.
+            final long before = dataPtr + keyDirOffset - 1;
+            Unsafe.putByte(before, (byte) (Unsafe.getByte(before) ^ 1));
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                Assert.fail("expected the trailer checksum to catch a flip below KEY_DIR_OFFSET");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_im CRC32 mismatch");
+            }
+            Unsafe.putByte(before, (byte) (Unsafe.getByte(before) ^ 1));
+        }));
+    }
+
+    /**
      * An index with no row groups at all: every key is absent and only the
      * RG_FIRST_KEY sentinel is present.
      */
@@ -2537,6 +2608,46 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(namePtr, nameLen, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    /**
+     * As {@link #addKeyAndRowIdRowGroup} but carrying a KEY DIRECTORY, which no
+     * other fixture here does -- every one passes a null directory, so nothing
+     * exercised the section that dominates a real {@code _im}.
+     * <p>
+     * {@code keyRowOffsets} are the per-key starting ordinals within the group.
+     */
+    private static void addKeyDirRowGroup(
+            long writerPtr, int firstKey, long rows, long rowIdMin, long rowIdMax, int... keyRowOffsets
+    ) {
+        final long chunksSize = 2L * IndexMetaFileWriter.CHUNK_SIZE;
+        final long chunksPtr = Unsafe.calloc(chunksSize, MemoryTag.NATIVE_DEFAULT);
+        final long keyDirSize = (long) keyRowOffsets.length * Integer.BYTES;
+        final long keyDirPtr = Unsafe.malloc(keyDirSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            putKeyIdChunk(chunksPtr, 0, firstKey, firstKey + keyRowOffsets.length - 1, rows);
+            putRowIdChunk(chunksPtr, 1, rowIdMin, rowIdMax, rows);
+            for (int i = 0; i < keyRowOffsets.length; i++) {
+                Unsafe.getUnsafe().putInt(keyDirPtr + (long) i * Integer.BYTES, keyRowOffsets[i]);
+            }
+            IndexMetaFileWriter.addRowGroup(
+                    writerPtr, firstKey, rowIdMin, rowIdMax, rows, chunksPtr, chunksSize, 2,
+                    keyDirPtr, keyRowOffsets.length);
+        } finally {
+            Unsafe.free(keyDirPtr, keyDirSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(chunksPtr, chunksSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /** Two row groups that actually carry key directories. */
+    private static void buildKeyDirectorySample(long writerPtr) {
+        IndexMetaFileWriter.setPayload(writerPtr, IndexMetaFileWriter.PAYLOAD_ROW_PER_POSTING, 100);
+        IndexMetaFileWriter.setPidxFooter(writerPtr, 1_024, 128);
+        addColumn(writerPtr, "key_id", -1, TYPE_INT);
+        addColumn(writerPtr, "row_id", -1, TYPE_LONG);
+        addKeyDirRowGroup(writerPtr, 5, 10, 0, 99, 0, 3, 6, 8);
+        addKeyDirRowGroup(writerPtr, 9, 10, 100, 199, 0, 4, 7);
+        setDataRowGroupBoundaries(writerPtr, 0L, 20L);
     }
 
     private static void addKeyAndRowIdRowGroup(long writerPtr, int firstKey, long rows, long rowIdMin, long rowIdMax) {
@@ -3222,12 +3333,27 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
      * left to the size bound, with the checksum written where the untouched
      * file keeps it.
      */
+    /**
+     * Recomputes BOTH checksums after a crafted edit.
+     * <p>
+     * The trailer CRC stops at {@code KEY_DIR_OFFSET} and {@code KEY_DIR_CRC}
+     * covers from there to the trailer, so repairing only the first leaves an
+     * edit inside the key directory detectable -- right for a test that meant
+     * to corrupt the directory, wrong for one crafting a file the reader should
+     * accept. The boundary is clamped because callers truncate a file and
+     * re-commit it, which can leave the recorded boundary past what remains.
+     */
     private static void repairCrc(long ptr, long bufLen) {
         final long committed = Unsafe.getUnsafe().getLong(ptr);
         final boolean addressable = committed >= IndexMetaFileReader.IM_HEADER_SIZE + IndexMetaFileReader.IM_TRAILER_SIZE
                 && committed <= bufLen;
         final long crcEnd = (addressable ? committed : bufLen) - IndexMetaFileReader.IM_TRAILER_SIZE;
-        Unsafe.getUnsafe().putInt(ptr + crcEnd, Zip.crc32(0, ptr + 8, (int) (crcEnd - 8)));
+        final long keyDirOffset = Math.min(Unsafe.getUnsafe().getLong(ptr + KEY_DIR_OFFSET_OFF), crcEnd);
+        Unsafe.getUnsafe().putInt(
+                ptr + KEY_DIR_CRC_OFF,
+                Zip.crc32(0, ptr + keyDirOffset, (int) (crcEnd - keyDirOffset))
+        );
+        Unsafe.getUnsafe().putInt(ptr + crcEnd, Zip.crc32(0, ptr + 8, (int) (keyDirOffset - 8)));
     }
 
     private static void setDataRowGroupBoundaries(long writerPtr, long... boundaries) {
@@ -3546,6 +3672,23 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
      * test instead of failing the checksum first -- and asserts the reader
      * refuses to bind to the result, leaving nothing mapped.
      */
+    private void assertTruncationRejectedByAnyOf(int len, String... expectedMessages) {
+        withTruncatedBytes(IndexMetaFileReaderTest::buildSample, len, (dataPtr, dataLen) -> {
+            try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
+                reader.ofAddress(dataPtr, dataLen);
+                Assert.fail("expected CairoException from the truncation to " + len + " bytes");
+            } catch (CairoException e) {
+                final String actual = e.getFlyweightMessage().toString();
+                for (String expected : expectedMessages) {
+                    if (actual.contains(expected)) {
+                        return;
+                    }
+                }
+                Assert.fail("truncation to " + len + " was rejected with an unexpected reason: " + actual);
+            }
+        });
+    }
+
     private void assertTruncationRejected(int len, String expectedMessage) {
         withTruncatedBytes(IndexMetaFileReaderTest::buildSample, len, (dataPtr, dataLen) -> {
             try (IndexMetaFileReader reader = new IndexMetaFileReader()) {
@@ -3753,12 +3896,11 @@ public class IndexMetaFileReaderTest extends AbstractCairoTest {
                     Unsafe.putByte(copyPtr + crcOffset + i, SLACK_FILL);
                 }
                 // IM_FILE_SIZE is at 0 and is the committed length, so it grows
-                // with the file; the CRC then covers [8, paddedLen - 4).
+                // with the file. Both checksums are then restated: the slack
+                // sits past KEY_DIR_OFFSET, so it is KEY_DIR_CRC that moves,
+                // not the trailer's.
                 Unsafe.getUnsafe().putLong(copyPtr, paddedLen);
-                Unsafe.getUnsafe().putInt(
-                        copyPtr + paddedLen - 4,
-                        Zip.crc32(0, copyPtr + 8, (int) (paddedLen - 12))
-                );
+                repairCrc(copyPtr, paddedLen);
                 assertion.run(copyPtr, paddedLen);
             } finally {
                 Unsafe.free(copyPtr, paddedLen, MemoryTag.NATIVE_DEFAULT);

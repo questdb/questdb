@@ -54,7 +54,7 @@ pub const IM_HEADER_SIZE: usize = 128;
 /// Size of the header's `RESERVED` area, which the writer zero-fills. A reader
 /// must **not** reject a non-zero value: the spec lets a later writer spend
 /// these bytes without a version bump, provided zero means "absent".
-pub const IM_HEADER_RESERVED_SIZE: usize = 40;
+pub const IM_HEADER_RESERVED_SIZE: usize = 28;
 /// Current `_im` format version. Versions 1 and 2 are not readable; see the
 /// spec's "Versioning" section.
 pub const IM_FORMAT_VERSION: u32 = 4;
@@ -101,7 +101,26 @@ const OFF_KEY_DIR_ENTRY_COUNT: usize = 80;
 /// ABSENT -- the convention the RESERVED area is spent under. Arm N writes 0
 /// here and is byte-identical to a file written before this field existed.
 const OFF_ROW_ID_BLOB_COLUMN: usize = 84;
-const OFF_RESERVED: usize = 88;
+/// Absolute offset of the `KEY_ROW_OFFSET` section, and the CRC32 covering it.
+///
+/// The trailer CRC covers `[IM_CRC_AREA_OFF, KEY_DIR_OFFSET)` and this one
+/// covers `[KEY_DIR_OFFSET, crc_off)`, so between them every byte the whole-file
+/// CRC used to cover is still covered -- just by two checksums instead of one.
+///
+/// The split exists because the key directory is the only section whose size
+/// grows with the KEY COUNT: a million-key column has a 4 MB `_im`, and
+/// verifying all of it cost 649us per bind against the native chain's 6.7us
+/// TOTAL. A bind needs the header, the descriptors and the row-group tables to
+/// be trustworthy; it does not read the key directory at all.
+///
+/// The boundary is STORED rather than derived because the reader has to know
+/// where to stop checksumming before it may trust any header field it would
+/// derive it from. Corrupting the stored value moves the CRC range and so
+/// fails the CRC, and a reader additionally requires it to equal the offset it
+/// derives once the header is trusted.
+const OFF_KEY_DIR_OFFSET: usize = 88;
+const OFF_KEY_DIR_CRC: usize = 96;
+const OFF_RESERVED: usize = 100;
 
 /// Field offsets inside `_pm`'s 32-byte column descriptor, used to bound the
 /// name strings without materialising a descriptor before the layout has been
@@ -682,6 +701,12 @@ impl IndexMetaWriter {
             (self.row_id_blob_column as u32) + 1
         };
         buf.extend_from_slice(&blob_column_biased.to_le_bytes());
+        // KEY_DIR_OFFSET and KEY_DIR_CRC, both backpatched once the key
+        // directory has been emitted and its extent is known.
+        debug_assert_eq!(buf.len(), OFF_KEY_DIR_OFFSET);
+        buf.extend_from_slice(&0u64.to_le_bytes());
+        debug_assert_eq!(buf.len(), OFF_KEY_DIR_CRC);
+        buf.extend_from_slice(&0u32.to_le_bytes());
         // RESERVED, zero-filled: the spec lets a later writer spend these bytes
         // without a version bump, provided zero means "absent".
         debug_assert_eq!(buf.len(), OFF_RESERVED);
@@ -781,6 +806,10 @@ impl IndexMetaWriter {
                 })?;
         }
         align_to_8(&mut buf);
+        // Everything from here to the trailer is the key directory, and is
+        // covered by KEY_DIR_CRC rather than by the trailer CRC. See
+        // OFF_KEY_DIR_OFFSET.
+        let key_dir_off = buf.len();
         for rg in &self.row_groups {
             for offset in &rg.key_row_offsets {
                 buf.extend_from_slice(&offset.to_le_bytes());
@@ -789,12 +818,20 @@ impl IndexMetaWriter {
         align_to_8(&mut buf);
 
         let crc_end = buf.len();
+        // Both header fields sit below key_dir_off, so the trailer CRC covers
+        // them: neither can be tampered with without failing the cheap check.
+        buf[OFF_KEY_DIR_OFFSET..OFF_KEY_DIR_OFFSET + 8]
+            .copy_from_slice(&(key_dir_off as u64).to_le_bytes());
+        let key_dir_crc = crc32fast::hash(&buf[key_dir_off..crc_end]);
+        buf[OFF_KEY_DIR_CRC..OFF_KEY_DIR_CRC + 4].copy_from_slice(&key_dir_crc.to_le_bytes());
+
         buf.extend_from_slice(&0u32.to_le_bytes());
         let total = buf.len() as u64;
         buf[OFF_IM_FILE_SIZE..OFF_IM_FILE_SIZE + 8].copy_from_slice(&total.to_le_bytes());
         // The CRC starts at 8, so IM_FILE_SIZE is deliberately outside it: the
-        // commit patch must not invalidate the checksum.
-        let crc = crc32fast::hash(&buf[IM_CRC_AREA_OFF..crc_end]);
+        // commit patch must not invalidate the checksum. It ENDS at the key
+        // directory, which KEY_DIR_CRC covers instead.
+        let crc = crc32fast::hash(&buf[IM_CRC_AREA_OFF..key_dir_off]);
         buf[crc_end..crc_end + 4].copy_from_slice(&crc.to_le_bytes());
         Ok(buf)
     }
@@ -844,6 +881,8 @@ pub struct IndexMetaReader<'a> {
     data_boundary_off: usize,
     rg_key_dir_base_off: usize,
     key_row_offset_off: usize,
+    key_dir_crc: u32,
+    key_dir_crc_end: usize,
     key_dir_entry_count: usize,
 }
 
@@ -901,8 +940,22 @@ impl<'a> IndexMetaReader<'a> {
 
         // Nothing below this point may be trusted until the CRC agrees.
         let crc_off = end - IM_TRAILER_SIZE;
+        // Where the trailer CRC stops. Bounded before use because it is read
+        // from bytes nothing has checked yet: a value outside the file would
+        // panic the slice below. It cannot be moved WITHIN the file without
+        // detection either, since moving it changes the range being summed.
+        let key_dir_off = read_u64(data, OFF_KEY_DIR_OFFSET) as usize;
+        if key_dir_off < IM_HEADER_SIZE || key_dir_off > crc_off {
+            return Err(parquet_meta_err!(
+                ParquetMetaErrorKind::Truncated,
+                "_im KEY_DIR_OFFSET {} is outside [{}, {}]",
+                key_dir_off,
+                IM_HEADER_SIZE,
+                crc_off
+            ));
+        }
         let stored = read_u32(data, crc_off);
-        let computed = crc32fast::hash(&data[IM_CRC_AREA_OFF..crc_off]);
+        let computed = crc32fast::hash(&data[IM_CRC_AREA_OFF..key_dir_off]);
         if stored != computed {
             return Err(parquet_meta_err!(ParquetMetaErrorKind::ChecksumMismatch {
                 stored,
@@ -1014,6 +1067,15 @@ impl<'a> IndexMetaReader<'a> {
         // so this is `<=` and not equality: a writer may pad, and a reader that
         // demanded exactness would reject files the other reader accepts.
         if sections_end > crc_off {
+            return Err(truncated());
+        }
+        // The bind-time CRC covers [IM_CRC_AREA_OFF, KEY_DIR_OFFSET), and
+        // everything parsed above lives below key_row_offset_off, so a boundary
+        // BELOW that would leave metadata this reader trusts outside the
+        // checksum it just verified. Above is permitted and merely slower: the
+        // trailer CRC then also covers a prefix of the key directory, so no
+        // byte goes uncovered either way.
+        if key_dir_off < key_row_offset_off {
             return Err(truncated());
         }
 
@@ -1168,6 +1230,8 @@ impl<'a> IndexMetaReader<'a> {
             data_boundary_off,
             rg_key_dir_base_off,
             key_row_offset_off,
+            key_dir_crc: read_u32(data, OFF_KEY_DIR_CRC),
+            key_dir_crc_end: crc_off,
             key_dir_entry_count,
         })
     }
@@ -1221,6 +1285,25 @@ impl<'a> IndexMetaReader<'a> {
     /// column and binary searching it. A group's directory covers only the key
     /// ids it actually holds, so its length comes from the next group's base -
     /// or, for the last group, from `KEY_DIR_ENTRY_COUNT`.
+    /// Verifies the key directory against `KEY_DIR_CRC`.
+    ///
+    /// Deliberately NOT part of binding. The directory is the only section that
+    /// grows with the key count, and checking it on every bind cost 649us at a
+    /// million keys against the native chain's 6.7us for the whole open -- while
+    /// a bind does not read the directory at all, and a lookup reads a handful
+    /// of its entries. Callers that want the guarantee -- a scrub, a repair
+    /// tool, a test -- ask for it here.
+    pub fn verify_key_directory(&self) -> ParquetMetaResult<()> {
+        let computed = crc32fast::hash(&self.data[self.key_row_offset_off..self.key_dir_crc_end]);
+        if computed != self.key_dir_crc {
+            return Err(parquet_meta_err!(ParquetMetaErrorKind::ChecksumMismatch {
+                stored: self.key_dir_crc,
+                computed
+            }));
+        }
+        Ok(())
+    }
+
     pub fn key_row_range(&self, row_group: usize, key: u32) -> Option<(u32, u32)> {
         if row_group >= self.index_rg_count {
             return None;
@@ -1975,9 +2058,29 @@ mod tests {
         repair_crc(bytes);
     }
 
+    /// Recomputes BOTH checksums after a crafted edit.
+    ///
+    /// The trailer CRC stops at KEY_DIR_OFFSET and KEY_DIR_CRC covers from
+    /// there to the trailer, so repairing only the first leaves any edit inside
+    /// the key directory detectable -- which is right for a test that meant to
+    /// corrupt the directory, and wrong for one that meant to craft a valid
+    /// file. Both are repaired here; a test that wants a bad directory
+    /// corrupts it after calling this.
     fn repair_crc(bytes: &mut [u8]) {
         let crc_end = bytes.len() - IM_TRAILER_SIZE;
-        let crc = crc32fast::hash(&bytes[IM_CRC_AREA_OFF..crc_end]);
+        // Clamped: callers truncate a file and then re-commit it, so the
+        // recorded boundary can point past what is left. A truncated file is
+        // meant to be REJECTED by the reader, not to panic the helper that
+        // builds it.
+        let key_dir_off = (u64::from_le_bytes(
+            bytes[OFF_KEY_DIR_OFFSET..OFF_KEY_DIR_OFFSET + 8]
+                .try_into()
+                .unwrap(),
+        ) as usize)
+            .min(crc_end);
+        let key_dir_crc = crc32fast::hash(&bytes[key_dir_off..crc_end]);
+        bytes[OFF_KEY_DIR_CRC..OFF_KEY_DIR_CRC + 4].copy_from_slice(&key_dir_crc.to_le_bytes());
+        let crc = crc32fast::hash(&bytes[IM_CRC_AREA_OFF..key_dir_off]);
         bytes[crc_end..crc_end + 4].copy_from_slice(&crc.to_le_bytes());
     }
 
@@ -2306,7 +2409,13 @@ mod tests {
         assert_eq!(read_u64(&bytes, 64), SAMPLE_PIDX_FOOTER_OFF); // PIDX_FOOTER_OFFSET
         assert_eq!(read_u32(&bytes, 72), SAMPLE_PIDX_FOOTER_LEN); // PIDX_FOOTER_LENGTH
         assert_eq!(read_u32(&bytes, 76), 2); // FIRST_COVER_COLUMN
-        assert_eq!(&bytes[80..128], &[0u8; 48]); // RESERVED
+        // KEY_DIR_OFFSET at 88 and KEY_DIR_CRC at 96, then the RESERVED area
+        // they were spent from. This fixture writes no key directory, so the
+        // boundary lands on the trailer and the directory checksum covers
+        // nothing -- crc32 of an empty range is 0.
+        assert_eq!(read_u64(&bytes, 88), 1_192); // KEY_DIR_OFFSET
+        assert_eq!(read_u32(&bytes, 96), 0); // KEY_DIR_CRC, empty range
+        assert_eq!(&bytes[100..128], &[0u8; 28]); // RESERVED
 
         // Descriptors: 128 + 3 * 32 = 224.
         assert_eq!(read_u64(&bytes, 128), 224); // col 0 name offset

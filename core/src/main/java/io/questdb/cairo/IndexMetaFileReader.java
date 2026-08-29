@@ -65,7 +65,11 @@ import io.questdb.std.str.LPSZ;
  *   [64] PIDX_FOOTER_OFFSET    u64  (where the index parquet's own footer starts)
  *   [72] PIDX_FOOTER_LENGTH    u32  (length of that footer)
  *   [76] FIRST_COVER_COLUMN    u32  (descriptor index of cover slot 0)
- *   [80] RESERVED              48B  (zero means "absent", so a later writer may spend it)
+ *   [80] KEY_DIR_ENTRY_COUNT   u32  (total KEY_ROW_OFFSET entries)
+ *   [84] ROW_ID_BLOB_COLUMN    u32  (column + 1 under PAYLOAD_KIND 1, so 0 means absent)
+ *   [88] KEY_DIR_OFFSET        u64  (absolute offset of KEY_ROW_OFFSET; where the trailer CRC stops)
+ *   [96] KEY_DIR_CRC           u32  (CRC32 over [KEY_DIR_OFFSET, IM_FILE_SIZE - 4))
+ *   [100] RESERVED             28B  (zero means "absent", so a later writer may spend it)
  *
  *   [128..] column descriptors (32B each), then the UTF-8 name blob padded to 8 bytes
  *
@@ -80,7 +84,16 @@ import io.questdb.std.str.LPSZ;
  *   RG_ROW_ID_MIN     i64 x INDEX_RG_COUNT        smallest row id per row group
  *   RG_ROW_ID_MAX     i64 x INDEX_RG_COUNT        largest row id per row group
  *   DATA_RG_BOUNDARY  i64 x (DATA_RG_COUNT + 1)   cumulative data.parquet row counts
- *   CRC32             u32  over [8, IM_FILE_SIZE - 4)
+ *   CRC32             u32  over [8, KEY_DIR_OFFSET) -- NOT the whole file
+ *
+ * The checksum is SPLIT. The trailer CRC covers everything up to the key
+ * directory and KEY_DIR_CRC covers the directory itself, so between them every
+ * byte a single whole-file CRC covered is still covered. A bind verifies only
+ * the first: the directory is the one section that grows with the KEY COUNT --
+ * 4 MB at a million keys -- and a bind does not read it, while a lookup reads a
+ * handful of its entries. Verifying all of it per bind cost 649us against the
+ * native chain's 6.7us for an entire open, and a bind happens once per query
+ * per partition. Callers wanting the directory checked ask for it explicitly.
  * </pre>
  * <p>
  * The row-id zone maps are unconditional: under {@code PAYLOAD_KIND 1} there
@@ -212,6 +225,29 @@ public class IndexMetaFileReader implements QuietCloseable {
      * existed reads back as absent rather than as column 0.
      */
     private static final int OFF_ROW_ID_BLOB_COLUMN = 84;
+    /**
+     * Absolute offset of the {@code KEY_ROW_OFFSET} section, and the CRC32
+     * covering it.
+     * <p>
+     * The trailer CRC covers {@code [IM_CRC_AREA_OFF, KEY_DIR_OFFSET)} and this
+     * one covers {@code [KEY_DIR_OFFSET, crcEnd)}, so between them every byte
+     * the whole-file CRC used to cover is still covered -- by two checksums
+     * instead of one.
+     * <p>
+     * The key directory is the only section that grows with the KEY COUNT: a
+     * million-key column has a 4 MB {@code _im}, and verifying all of it cost
+     * 649us per bind against the native chain's 6.7us for an entire open. A
+     * bind does not read the directory at all, and a lookup reads a handful of
+     * its entries, so it is checked on demand instead -- see
+     * {@link #verifyKeyDirectory()}.
+     * <p>
+     * The boundary is STORED rather than derived because a reader must know
+     * where to stop checksumming before it may trust any header field it would
+     * derive it from. Moving it fails the CRC, since the range summed moves
+     * with it.
+     */
+    private static final int OFF_KEY_DIR_CRC = 96;
+    private static final int OFF_KEY_DIR_OFFSET = 88;
     private static final int OFF_KEY_SPACE_SIZE = 44;
     private static final int OFF_PAYLOAD_KIND = 28;
     private static final int OFF_PIDX_FOOTER_LENGTH = 72;
@@ -237,6 +273,9 @@ public class IndexMetaFileReader implements QuietCloseable {
     private long addr;
     private int columnCount;
     private long dataBoundaryOffset;
+    private int keyDirCrc;
+    private long keyDirCrcEnd;
+    private long keyDirCrcStart;
     private int keyDirEntryCount;
     private long keyRowOffsetOffset;
     private long rgKeyDirBaseOffset;
@@ -370,6 +409,9 @@ public class IndexMetaFileReader implements QuietCloseable {
         rgKeyDirBaseOffset = 0;
         keyRowOffsetOffset = 0;
         keyDirEntryCount = 0;
+        keyDirCrc = 0;
+        keyDirCrcStart = 0;
+        keyDirCrcEnd = 0;
         columnCount = 0;
         indexRowGroupCount = 0;
         dataRowGroupCount = 0;
@@ -1143,6 +1185,26 @@ public class IndexMetaFileReader implements QuietCloseable {
         return (size + BLOCK_ALIGNMENT - 1) & ~((long) BLOCK_ALIGNMENT - 1);
     }
 
+    /**
+     * Verifies the key directory against {@code KEY_DIR_CRC}.
+     * <p>
+     * Deliberately NOT part of binding. The directory is the only section that
+     * grows with the key count, and checking it on every bind cost 649us at a
+     * million keys -- against 6.7us for the native chain's entire open -- while
+     * a bind does not read the directory at all and a lookup reads a handful of
+     * its entries. Callers wanting the guarantee ask for it here.
+     *
+     * @throws CairoException when the directory does not match its checksum
+     */
+    public void verifyKeyDirectory() {
+        final int computed = crc32(addr + keyDirCrcStart, keyDirCrcEnd - keyDirCrcStart);
+        if (computed != keyDirCrc) {
+            throw CairoException.critical(0)
+                    .put("_im key directory CRC32 mismatch [stored=").put(keyDirCrc)
+                    .put(", computed=").put(computed).put(']');
+        }
+    }
+
     private static int crc32(long address, long len) {
         int crc = 0;
         long remaining = len;
@@ -1258,12 +1320,23 @@ public class IndexMetaFileReader implements QuietCloseable {
 
         // Nothing below this point may be trusted until the CRC agrees.
         final long crcEnd = size - IM_TRAILER_SIZE;
+        // Where the trailer CRC stops. Bounded before use because it is read
+        // from bytes nothing has checked yet; a value outside the mapping would
+        // checksum past the end. It cannot be moved WITHIN the file without
+        // detection either, since moving it moves the range being summed.
+        final long keyDirOffset = Unsafe.getLong(addr + OFF_KEY_DIR_OFFSET);
+        if (keyDirOffset < IM_HEADER_SIZE || keyDirOffset > crcEnd) {
+            throw CairoException.critical(0)
+                    .put("invalid _im KEY_DIR_OFFSET [keyDirOffset=").put(keyDirOffset)
+                    .put(", imHeaderSize=").put(IM_HEADER_SIZE)
+                    .put(", crcEnd=").put(crcEnd).put(']');
+        }
         final int storedCrc = Unsafe.getInt(addr + crcEnd);
         final int computedCrc;
         if (VERIFY_CRC) {
             CRC_VERIFICATIONS.incrementAndGet();
-            CRC_BYTES.addAndGet(crcEnd - IM_CRC_AREA_OFF);
-            computedCrc = crc32(addr + IM_CRC_AREA_OFF, crcEnd - IM_CRC_AREA_OFF);
+            CRC_BYTES.addAndGet(keyDirOffset - IM_CRC_AREA_OFF);
+            computedCrc = crc32(addr + IM_CRC_AREA_OFF, keyDirOffset - IM_CRC_AREA_OFF);
         } else {
             computedCrc = storedCrc;
         }
@@ -1338,6 +1411,15 @@ public class IndexMetaFileReader implements QuietCloseable {
         // so this is a bound and not equality: a writer may pad, and a reader
         // that demanded exactness would reject files the other reader accepts.
         if (sectionsEnd > crcEnd) {
+            throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
+        }
+        // The trailer CRC covers [IM_CRC_AREA_OFF, KEY_DIR_OFFSET), and
+        // everything parsed above lives below keyRowOffsetOffset, so a boundary
+        // BELOW that would leave metadata this reader trusts outside the
+        // checksum it just verified. Above is permitted and merely slower: the
+        // trailer CRC then also covers a prefix of the key directory, so no
+        // byte goes uncovered either way.
+        if (keyDirOffset < keyRowOffsetOffset) {
             throw truncated(indexSectionsOffset, columnCount, indexRowGroupCount, dataRowGroupCount);
         }
 
@@ -1480,6 +1562,9 @@ public class IndexMetaFileReader implements QuietCloseable {
         this.dataBoundaryOffset = dataBoundaryOffset;
         this.rgKeyDirBaseOffset = rgKeyDirBaseOffset;
         this.keyRowOffsetOffset = keyRowOffsetOffset;
+        this.keyDirCrc = Unsafe.getInt(addr + OFF_KEY_DIR_CRC);
+        this.keyDirCrcEnd = crcEnd;
+        this.keyDirCrcStart = keyDirOffset;
         this.keyDirEntryCount = keyDirEntryCount;
     }
 
