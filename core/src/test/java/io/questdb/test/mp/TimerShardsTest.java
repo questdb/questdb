@@ -139,7 +139,10 @@ public class TimerShardsTest {
 
             // Exhaust this shard's join budget once in shutdown(). halt() must
             // not apply a fresh budget to the same still-blocked thread.
-            shards.shutdown();
+            Assert.assertFalse(
+                    "shutdown did not exhaust the expired shard join budget",
+                    shards.shutdown(System.nanoTime() - 1)
+            );
             haltThread.start();
             Assert.assertTrue(
                     "halt repeated the expired shard join budget",
