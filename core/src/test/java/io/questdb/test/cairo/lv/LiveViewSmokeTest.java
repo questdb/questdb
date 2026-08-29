@@ -7894,7 +7894,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // that left the marking set would route the retry into rebuildInMemoryTier for the
                 // wrong reason and leave this test green and vacuous.
                 Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
-                                + " re-stamp below look legitimate", instance.isTierStale());
+                        + " re-stamp below look legitimate", instance.isTierStale());
                 final long committedSeqTxn = tracker.getSeqTxn();
 
                 // The writer is free again: the scan retries the apply and lands the backlog.
@@ -8136,7 +8136,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
                         2L, tracker.getSeqTxn() - tracker.getWriterTxn());
                 Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
-                                + " re-stamp below look legitimate", instance.isTierStale());
+                        + " re-stamp below look legitimate", instance.isTierStale());
 
                 // The writer is free, and a fresh base commit is queued BEFORE the job runs again,
                 // so the notification drain wins over the lagging-view scan and the cycle
@@ -8153,9 +8153,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     clock.stopDrifting();
                 }
                 Assert.assertEquals("the exhausted quota must stop flushLead's inline apply after"
-                                + " exactly one transaction", appliedBefore + 1, tracker.getWriterTxn());
+                        + " exactly one transaction", appliedBefore + 1, tracker.getWriterTxn());
                 Assert.assertEquals("the second backlog block and this flush's own block must stay"
-                                + " committed but unapplied", appliedBefore + 3, tracker.getSeqTxn());
+                        + " committed but unapplied", appliedBefore + 3, tracker.getSeqTxn());
                 Assert.assertFalse("a part-way apply must not suspend the LV table",
                         engine.getTableSequencerAPI().isSuspended(lvToken));
 
