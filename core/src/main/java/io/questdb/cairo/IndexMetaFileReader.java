@@ -127,6 +127,17 @@ public class IndexMetaFileReader implements QuietCloseable {
      * reader per iteration pays every time. Turning corruption detection off to
      * win a benchmark would be the wrong trade; the knob exists to measure it.
      */
+    /**
+     * How many times the _im CRC has been computed, and over how many bytes.
+     * <p>
+     * The check is per BIND and covers the whole file, so its cost depends
+     * entirely on how often a reader rebinds -- which is a property of
+     * TableReader's cache invalidation, not of this class. Counting it is the
+     * only way to answer that without tracing every path that drops a cached
+     * index reader.
+     */
+    public static final java.util.concurrent.atomic.AtomicLong CRC_BYTES = new java.util.concurrent.atomic.AtomicLong();
+    public static final java.util.concurrent.atomic.AtomicLong CRC_VERIFICATIONS = new java.util.concurrent.atomic.AtomicLong();
     private static final boolean VERIFY_CRC = !Boolean.getBoolean("questdb.idx.im.crc.skip");
     public static final int IM_HEADER_SIZE = 128;
     public static final int IM_TRAILER_SIZE = 4;
@@ -1248,9 +1259,14 @@ public class IndexMetaFileReader implements QuietCloseable {
         // Nothing below this point may be trusted until the CRC agrees.
         final long crcEnd = size - IM_TRAILER_SIZE;
         final int storedCrc = Unsafe.getInt(addr + crcEnd);
-        final int computedCrc = VERIFY_CRC
-                ? crc32(addr + IM_CRC_AREA_OFF, crcEnd - IM_CRC_AREA_OFF)
-                : storedCrc;
+        final int computedCrc;
+        if (VERIFY_CRC) {
+            CRC_VERIFICATIONS.incrementAndGet();
+            CRC_BYTES.addAndGet(crcEnd - IM_CRC_AREA_OFF);
+            computedCrc = crc32(addr + IM_CRC_AREA_OFF, crcEnd - IM_CRC_AREA_OFF);
+        } else {
+            computedCrc = storedCrc;
+        }
         if (storedCrc != computedCrc) {
             throw CairoException.critical(0)
                     .put("_im CRC32 mismatch [stored=").put(storedCrc)

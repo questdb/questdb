@@ -45,6 +45,7 @@ import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.CoveringCompressor;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.std.Unsafe;
@@ -4614,6 +4615,102 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             return sumIndexFiles(partitionPath(path, tableName).toString(), "sym.pidx.");
         }
+    }
+
+    /** Runs the indexed count query and requires the given answer. */
+    private void runIndexedCount(String sql, int expected) throws Exception {
+        assertQuery(sql).noRandomAccess().expectSize().returns("count\n" + expected + "\n");
+    }
+
+    /**
+     * How often the {@code _im} CRC is actually computed under a query
+     * workload.
+     * <p>
+     * The check covers the whole file, so at a million keys it is a 4 MB
+     * checksum, and a benchmark opening a reader per iteration measured it at
+     * 89% of bind cost. Whether that matters depends entirely on how often a
+     * bind happens, which is a property of TableReader's cache invalidation --
+     * several paths drop a cached index reader, and reading them is not proof.
+     * So this counts them.
+     * <p>
+     * Asserted as a RATE, not a total: what matters is whether repeated queries
+     * against an unchanging partition re-verify a file nothing touched. The
+     * absolute number depends on partition and column count.
+     */
+    @Test
+    public void testHowOftenTheImCrcIsVerifiedUnderAQueryWorkload() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
+            createPackedKeyTable();
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final String q = "select count() from " + PACKED_TABLE_NAME + " where sym = 'q0'";
+            // One query first, so what follows measures the STEADY state rather
+            // than first-touch binding.
+            runIndexedCount(q, 501);
+            final long afterFirst = IndexMetaFileReader.CRC_VERIFICATIONS.get();
+
+            final int queries = 20;
+            for (int i = 0; i < queries; i++) {
+                runIndexedCount(q, 501);
+            }
+            final long steady = IndexMetaFileReader.CRC_VERIFICATIONS.get() - afterFirst;
+
+            // A commit to a DIFFERENT partition. The indexed one did not change,
+            // so a bind here re-verifies a file nothing touched.
+            execute("INSERT INTO " + PACKED_TABLE_NAME + " VALUES ('2024-01-02T00:00:01Z', 'q0', 2.0, 2)");
+            drainWalQueue();
+            final long beforeCommitQueries = IndexMetaFileReader.CRC_VERIFICATIONS.get();
+            for (int i = 0; i < queries; i++) {
+                runIndexedCount(q, 502);
+            }
+            final long afterCommit = IndexMetaFileReader.CRC_VERIFICATIONS.get() - beforeCommitQueries;
+
+            System.out.printf(
+                    "%n  _im CRC verifications%n"
+                            + "    %d identical queries, nothing changed : %d  (%.2f per query)%n"
+                            + "    %d identical queries, after a commit  : %d  (%.2f per query)%n%n",
+                    queries, steady, steady / (double) queries,
+                    queries, afterCommit, afterCommit / (double) queries);
+
+            // Which of the two explanations is it: does the QUERY path rebind
+            // every time, or does the reader merely churn through the pool
+            // between queries? Holding one reader open across the same number
+            // of index reads separates them.
+            final long held;
+            try (TableReader reader = engine.getReader(engine.verifyTableName(PACKED_TABLE_NAME))) {
+                final int col = reader.getMetadata().getColumnIndex("sym");
+                final long before = IndexMetaFileReader.CRC_VERIFICATIONS.get();
+                for (int i = 0; i < queries; i++) {
+                    final IndexReader ir = reader.getIndexReader(0, col, IndexReader.DIR_FORWARD);
+                    try (RowCursor c = ir.getCursor(0, 0, Long.MAX_VALUE)) {
+                        while (c.hasNext()) {
+                            c.next();
+                        }
+                    }
+                }
+                held = IndexMetaFileReader.CRC_VERIFICATIONS.get() - before;
+            }
+            System.out.printf("    %d index reads through ONE held reader   : %d%n%n", queries, held);
+
+            // The per-reader cache works: many lookups, one bind. So the
+            // per-query cost above is not this cache failing, it is the reader
+            // going through the pool -- goPassive marks every partition's
+            // columns closed, and the reopen drops the index reader with them.
+            // Pinned because it is the property a fix must PRESERVE while
+            // making the per-query number smaller.
+            Assert.assertEquals(
+                    "one bind should serve every lookup through a held reader", 1, held);
+            Assert.assertTrue(
+                    "the fixture must actually be verifying, or this counts nothing",
+                    steady > 0);
+        });
     }
 
     /**
