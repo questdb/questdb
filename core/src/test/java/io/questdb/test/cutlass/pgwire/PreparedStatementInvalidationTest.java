@@ -73,7 +73,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testChangeBindVariableType_insert() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table change_var_type(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table change_var_type(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
             mayDrainWalQueue();
 
@@ -97,7 +97,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testChangeBindVariableType_select() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table change_var_type(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table change_var_type(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
                 statement.execute("insert into change_var_type (id, val, ts) values (42, 0, '1990-01-01')");
             }
             mayDrainWalQueue();
@@ -134,7 +134,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testInsertAfterDropAndRecreate() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table insert_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
             mayDrainWalQueue();
 
@@ -145,7 +145,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
                 try (Statement stmt = connection.createStatement()) {
                     stmt.execute("drop table insert_after_drop");
-                    stmt.execute("create table insert_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                    stmt.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
                 }
                 mayDrainWalQueue();
 
@@ -168,7 +168,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testInsertAllAfterColDropped() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table insert_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
             mayDrainWalQueue();
 
@@ -198,7 +198,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testInsertAllAfterColNameChange() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table insert_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
             mayDrainWalQueue();
 
@@ -210,7 +210,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
                 try (Statement stmt = connection.createStatement()) {
                     stmt.execute("drop table insert_after_drop");
-                    stmt.execute("create table insert_after_drop(id long, val2 int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                    stmt.execute("create table insert_after_drop(id long, val2 int, ts timestamp) timestamp(ts) partition by YEAR");
                 }
                 mayDrainWalQueue();
 
@@ -233,7 +233,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testInsertSpecificAfterColDropped() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table insert_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
             mayDrainWalQueue();
 
@@ -268,7 +268,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testInsertSpecificAfterColNameChange() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table insert_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
             mayDrainWalQueue();
 
@@ -387,8 +387,8 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
     @Test
     public void testPreparedStatementErrorConsistency() throws Exception {
-        assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
-            execute("create table abc(x double, y double, t timestamp NOT NULL) timestamp(t)");
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            execute("create table abc(x double, y double, t timestamp) timestamp(t)");
             try (PreparedStatement ps = connection.prepareStatement("select y from abc")) {
                 for (int i = 0; i < 10; i++) {
                     ps.execute();
@@ -433,7 +433,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testSelectAllAfterConcurrentColAddDrop() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table select_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table select_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
             mayDrainWalQueue();
 
@@ -996,7 +996,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testTxInsertSpecificAfterColNameChange() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.execute("create table insert_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.execute("create table insert_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
             mayDrainWalQueue();
 
@@ -1043,7 +1043,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateAfterDropAndRecreate() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
 
             try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
@@ -1055,7 +1055,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
 
             try (Statement stmt = connection.createStatement()) {
                 stmt.executeUpdate("drop table update_after_drop");
-                stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                stmt.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
 
             mayDrainWalQueue();
@@ -1071,7 +1071,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateAfterDroppingColumnNotUsedByTheUpdate() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
 
             try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {
@@ -1100,7 +1100,7 @@ public class PreparedStatementInvalidationTest extends BasePGTest {
     public void testUpdateAfterDroppingColumnUsedByTheUpdate() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             try (Statement statement = connection.createStatement()) {
-                statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp NOT NULL) timestamp(ts) partition by YEAR");
+                statement.executeUpdate("create table update_after_drop(id long, val int, ts timestamp) timestamp(ts) partition by YEAR");
             }
 
             try (PreparedStatement statement = connection.prepareStatement("update update_after_drop set id = ?")) {

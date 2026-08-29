@@ -1421,7 +1421,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             create table tab (
                                 tag symbol index,
                                 seq int,
-                                ts timestamp NOT NULL
+                                ts timestamp
                             ) timestamp(ts) partition by DAY""",
                     leftTableTimestampType.getTypeName()
             );
@@ -3633,7 +3633,7 @@ public class AsOfJoinTest extends AbstractCairoTest {
                                 side SYMBOL,
                                 price DOUBLE,
                                 amount DOUBLE,
-                                timestamp TIMESTAMP NOT NULL
+                                timestamp TIMESTAMP
                             ) timestamp(timestamp) PARTITION BY HOUR
                             """,
                     leftTableTimestampType.getTypeName());
@@ -6312,16 +6312,14 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     private void testExplicitTimestampIsNotNecessaryWhenJoining(String joinType, String timestamp) throws Exception {
-        assertQuery(
-                "ts\ty\tts1\ty1\n",
-                "select * from " +
-                        "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
-                        joinType +
-                        "(select * from x order by ts limit 5) b",
-                "create table x (ts timestamp NOT NULL, y int) timestamp(ts)",
-                timestamp,
-                false
-        );
+        assertQuery("select * from " +
+                "(select * from (select * from x where y = 10 order by ts desc limit 20) order by ts ) a " +
+                joinType +
+                "(select * from x order by ts limit 5) b")
+                .ddl("create table x (ts timestamp, y int) timestamp(ts)")
+                .timestamp(timestamp)
+                .noRandomAccess()
+                .returns("ts\ty\tts1\ty1\n");
     }
 
     private void testFullJoinDoesNotConvertSymbolKeyToString(String joinType) throws Exception {

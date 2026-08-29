@@ -242,7 +242,7 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
         execute("create table " + tableName + " (" +
                 "x long," +
                 "sym symbol," +
-                "ts timestamp NOT NULL," +
+                "ts timestamp," +
                 "sym2 symbol" +
                 ") timestamp(ts) partition by DAY" + (isWal ? " WAL" : ""));
     }

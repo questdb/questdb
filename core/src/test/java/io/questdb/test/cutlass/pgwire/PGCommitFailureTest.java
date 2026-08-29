@@ -47,7 +47,7 @@ public class PGCommitFailureTest extends BasePGTest {
     public void testExplicitCommitFailure() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-            execute("create table x (a int, t timestamp NOT NULL) timestamp(t) partition by hour wal");
+            execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -107,7 +107,7 @@ public class PGCommitFailureTest extends BasePGTest {
     public void testImplicitCommitFailure() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-            execute("create table x (a int, t timestamp NOT NULL) timestamp(t) partition by hour wal");
+            execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);
@@ -165,7 +165,7 @@ public class PGCommitFailureTest extends BasePGTest {
     public void testImplicitPipelineCommitFailure() throws Exception {
         assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-            execute("create table x (a int, t timestamp NOT NULL) timestamp(t) partition by hour wal");
+            execute("create table x (a int, t timestamp) timestamp(t) partition by hour wal");
             FilesFacade ffTmp = ff;
             try {
                 AtomicInteger counter = new AtomicInteger(2);

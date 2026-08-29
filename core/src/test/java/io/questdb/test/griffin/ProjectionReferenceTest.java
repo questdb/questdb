@@ -46,8 +46,8 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
 
     @Test
     public void testAsofJoinSimple() throws Exception {
-        execute("create table events (symbol string, value int, ts timestamp NOT NULL) timestamp(ts)");
-        execute("create table quotes (symbol string, quote int, ts timestamp NOT NULL) timestamp(ts)");
+        execute("create table events (symbol string, value int, ts timestamp) timestamp(ts)");
+        execute("create table quotes (symbol string, quote int, ts timestamp) timestamp(ts)");
 
         execute("insert into events values ('A', 100, '2025-01-01T10:00:00.000Z'), ('A', 200, '2025-01-01T10:05:00.000Z')");
         execute("insert into quotes values ('A', 10, '2025-01-01T09:59:00.000Z'), ('A', 20, '2025-01-01T10:03:00.000Z')");
@@ -288,7 +288,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     @Test
     public void testOrderBy() throws Exception {
         // note: ordering prioritises projected columns over base columns, this is intentional and is consistent with DuckDB
-        execute("create table trades (symbol string, price double, ts timestamp NOT NULL) timestamp(ts)");
+        execute("create table trades (symbol string, price double, ts timestamp) timestamp(ts)");
         execute("insert into trades values ('A', 1, '2025-01-01T10:00:00.000Z'), ('B', 2, '2025-01-01T10:05:00.000Z')");
         assertQuery("select symbol, price as orig_price, -price as price from trades order by price limit 10")
                 .expectSize()
@@ -691,7 +691,7 @@ public class ProjectionReferenceTest extends AbstractCairoTest {
     @Test
     public void testTopDownProjectionReferenceInSubquery() throws Exception {
         execute("CREATE TABLE core_price (" +
-                "    timestamp TIMESTAMP NOT NULL," +
+                "    timestamp TIMESTAMP," +
                 "    symbol SYMBOL," +
                 "    bid_price DOUBLE," +
                 "    bid_volume LONG," +

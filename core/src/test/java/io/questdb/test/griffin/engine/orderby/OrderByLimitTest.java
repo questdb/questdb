@@ -34,14 +34,14 @@ public class OrderByLimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE 'trades' (" +
-                            "  ts TIMESTAMP NOT NULL," +
+                            "  ts TIMESTAMP," +
                             "  price DOUBLE," +
                             "  size INT" +
                             ") TIMESTAMP(ts) PARTITION BY day;"
             );
             execute(
                     "CREATE TABLE 'order_book' (" +
-                            "  ts TIMESTAMP NOT NULL," +
+                            "  ts TIMESTAMP," +
                             "  bid_price DOUBLE," +
                             "  bid_size INT," +
                             "  task_price DOUBLE," +

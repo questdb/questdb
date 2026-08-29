@@ -39,7 +39,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateArray() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DOUBLE[], ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DOUBLE[], ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, ARRAY[1.0, 2.0], '2024-01-01T00:00:00.000000Z'),
@@ -72,7 +72,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateBool() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v BOOLEAN, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v BOOLEAN, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, true, '2024-01-01T00:00:00.000000Z'),
@@ -105,7 +105,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateByte() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v BYTE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v BYTE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 10, '2024-01-01T00:00:00.000000Z'),
@@ -138,7 +138,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateChar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v CHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v CHAR, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 'A', '2024-01-01T00:00:00.000000Z'),
@@ -171,7 +171,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateDate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DATE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DATE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '2024-01-01T00:00:00.000Z', '2024-01-01T00:00:00.000000Z'),
@@ -205,7 +205,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testDelegateDecimal128() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(30,2) uses DECIMAL128 storage (16 bytes, precision 19-38)
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(30,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(30,2), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '1.23', '2024-01-01T00:00:00.000000Z'),
@@ -239,7 +239,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testDelegateDecimal16() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(4,2) uses DECIMAL16 storage (2 bytes, precision 3-4)
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(4,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(4,2), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '12.34', '2024-01-01T00:00:00.000000Z'),
@@ -273,7 +273,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testDelegateDecimal256() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(50,2) uses DECIMAL256 storage (32 bytes, precision 39-76)
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(50,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(50,2), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '1.23', '2024-01-01T00:00:00.000000Z'),
@@ -307,7 +307,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testDelegateDecimal32() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(8,2) uses DECIMAL32 storage (4 bytes, precision 5-9)
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(8,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(8,2), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '1234.56', '2024-01-01T00:00:00.000000Z'),
@@ -341,7 +341,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testDelegateDecimal64() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(15,2) uses DECIMAL64 storage (8 bytes, precision 10-18)
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(15,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '1234567890.12', '2024-01-01T00:00:00.000000Z'),
@@ -375,7 +375,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testDelegateDecimal8() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(2,1) uses DECIMAL8 storage (1 byte, precision 1-2)
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(2,1), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '1.2', '2024-01-01T00:00:00.000000Z'),
@@ -408,7 +408,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateDouble() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 1.11, '2024-01-01T00:00:00.000000Z'),
@@ -441,7 +441,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateFloat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v FLOAT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v FLOAT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 1.5, '2024-01-01T00:00:00.000000Z'),
@@ -474,7 +474,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateGeoByte() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v GEOHASH(1c), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v GEOHASH(1c), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 's', '2024-01-01T00:00:00.000000Z'),
@@ -507,7 +507,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateGeoInt() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v GEOHASH(6c), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v GEOHASH(6c), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 'sp052w', '2024-01-01T00:00:00.000000Z'),
@@ -540,7 +540,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateGeoLong() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v GEOHASH(12c), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v GEOHASH(12c), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 'sp052w92p1p8', '2024-01-01T00:00:00.000000Z'),
@@ -573,7 +573,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateGeoShort() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v GEOHASH(3c), ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v GEOHASH(3c), ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 'sp0', '2024-01-01T00:00:00.000000Z'),
@@ -606,7 +606,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v IPv4, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v IPv4, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '192.168.1.1', '2024-01-01T00:00:00.000000Z'),
@@ -668,7 +668,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateLong128() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v UUID, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v UUID, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z'),
@@ -701,7 +701,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateLong256() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v LONG256, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v LONG256, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '0x01', '2024-01-01T00:00:00.000000Z'),
@@ -734,7 +734,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateShort() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v SHORT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v SHORT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 100, '2024-01-01T00:00:00.000000Z'),
@@ -767,7 +767,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateStr() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v STRING, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 'hello', '2024-01-01T00:00:00.000000Z'),
@@ -800,7 +800,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 'alpha', '2024-01-01T00:00:00.000000Z'),
@@ -833,7 +833,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '2024-06-01T12:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
@@ -866,7 +866,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testDelegateVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, 'hello', '2024-01-01T00:00:00.000000Z'),
@@ -900,7 +900,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeComplexIntExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (3, 10, 2, 1, '2024-01-01T00:00:00.000000Z'),
@@ -940,7 +940,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeDescending() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (3.0, 10.0, 2.0, 1.0, '2024-01-01T00:00:00.000000Z'),
@@ -974,7 +974,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeDoubleType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '2024-01-01T00:00:00.000000Z'),
@@ -1008,7 +1008,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
             assertQuery(query)
                     .noLeakCheck()
@@ -1030,7 +1030,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeFloatType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a FLOAT, b FLOAT, c FLOAT, d FLOAT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a FLOAT, b FLOAT, c FLOAT, d FLOAT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (2.0, 3.0, 1.0, 1.0, '2024-01-01T00:00:00.000000Z'),
@@ -1064,7 +1064,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeLongType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a LONG, b LONG, c LONG, d LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a LONG, b LONG, c LONG, d LONG, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (3, 10, 2, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1099,7 +1099,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeMixedSortKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (3, 10, 2, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1135,7 +1135,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeMultipleSortKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (1, 2, 10, 5, '2024-01-01T00:00:00.000000Z'),
@@ -1173,7 +1173,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeSingleRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (3.0, 10.0, 2.0, 1.0, '2024-01-01T00:00:00.000000Z')");
             String query = "SELECT (a + b) * (c + d) AS x FROM t ORDER BY x";
             // (3+10)*(2+1)=39.0
@@ -1200,7 +1200,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a INT, b INT, c INT, d INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (3, 10, 2, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1235,7 +1235,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testMaterializeWithSymbolSortKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (s SYMBOL, a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (s SYMBOL, a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('beta', 2.0, 3.0, 1.0, 1.0, '2024-01-01T00:00:00.000000Z'),
@@ -1274,7 +1274,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testNoMaterializeSimpleExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             // a + 1 has complexity ARITHMETIC(2) + COLUMN(1) + NONE(0) = 3,
             // at the default threshold (3) but not above → no materialization
             assertQuery("SELECT a + 1 AS x FROM t ORDER BY x")
@@ -1294,7 +1294,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testNoMaterializeVariableLengthType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a VARCHAR, b VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a VARCHAR, b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('c', 'c', '2024-01-01T00:00:00.000000Z'),
@@ -1328,7 +1328,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteBooleanMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a BOOLEAN, b BOOLEAN, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a BOOLEAN, b BOOLEAN, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (true, false, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1363,7 +1363,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteByteMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a BYTE, b BYTE, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a BYTE, b BYTE, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (10, 20, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1398,7 +1398,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteCharMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a CHAR, b CHAR, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a CHAR, b CHAR, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('x', 'a', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1433,7 +1433,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteDateMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (d1 DATE, d2 DATE, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (d1 DATE, d2 DATE, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('2024-01-01T00:00:01.000Z', '2024-01-01T00:00:04.000Z', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1469,7 +1469,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testRouteDecimal128Materialized() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(30,2) uses DECIMAL128 storage (16 bytes)
-            execute("CREATE TABLE t (a DECIMAL(30,2), b DECIMAL(30,2), e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DECIMAL(30,2), b DECIMAL(30,2), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('10.00', '20.00', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1504,7 +1504,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testRouteDecimal16Materialized() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(4,2) uses DECIMAL16 storage (2 bytes)
-            execute("CREATE TABLE t (a DECIMAL(4,2), b DECIMAL(4,2), e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DECIMAL(4,2), b DECIMAL(4,2), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('10.00', '20.00', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1538,7 +1538,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testRouteDecimal256Materialized() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(50,2) uses DECIMAL256 storage (32 bytes)
-            execute("CREATE TABLE t (a DECIMAL(50,2), b DECIMAL(50,2), e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DECIMAL(50,2), b DECIMAL(50,2), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('10.00', '20.00', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1573,7 +1573,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testRouteDecimal32Materialized() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(8,2) uses DECIMAL32 storage (4 bytes)
-            execute("CREATE TABLE t (a DECIMAL(8,2), b DECIMAL(8,2), e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DECIMAL(8,2), b DECIMAL(8,2), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('10.00', '20.00', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1607,7 +1607,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testRouteDecimal64Materialized() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(15,2) uses DECIMAL64 storage (8 bytes)
-            execute("CREATE TABLE t (a DECIMAL(15,2), b DECIMAL(15,2), e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DECIMAL(15,2), b DECIMAL(15,2), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('10.00', '20.00', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1642,7 +1642,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     public void testRouteDecimal8Materialized() throws Exception {
         assertMemoryLeak(() -> {
             // DECIMAL(2,1) uses DECIMAL8 storage (1 byte)
-            execute("CREATE TABLE t (a DECIMAL(2,1), b DECIMAL(2,1), e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DECIMAL(2,1), b DECIMAL(2,1), e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('1.0', '2.0', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1675,7 +1675,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteGeoHashByteMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (10.0, 20.0, 30.0, 10.0, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1712,7 +1712,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteGeoHashIntMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (10.0, 20.0, 30.0, 10.0, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1749,7 +1749,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteGeoHashLongMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (10.0, 20.0, 30.0, 10.0, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1786,7 +1786,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteGeoHashShortMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a DOUBLE, b DOUBLE, c DOUBLE, d DOUBLE, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (10.0, 20.0, 30.0, 10.0, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1823,7 +1823,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteIPv4NotMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ip1 IPv4, ip2 IPv4, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (ip1 IPv4, ip2 IPv4, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('1.1.1.1', '4.4.4.4', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1857,7 +1857,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteShortMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (a SHORT, b SHORT, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (a SHORT, b SHORT, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     (100, 200, 1, '2024-01-01T00:00:00.000000Z'),
@@ -1892,7 +1892,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteStringNotMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (s1 STRING, s2 STRING, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (s1 STRING, s2 STRING, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('hello', 'world', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1928,7 +1928,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteTimestampMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (t1 TIMESTAMP, t2 TIMESTAMP, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (t1 TIMESTAMP, t2 TIMESTAMP, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('2024-01-01T00:00:01.000000Z', '2024-01-01T00:00:04.000000Z', 1, '2024-01-01T00:00:00.000000Z'),
@@ -1964,7 +1964,7 @@ public class OrderBySortKeyMaterializationTest extends AbstractCairoTest {
     @Test
     public void testRouteUuidNotMaterialized() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (u1 UUID, u2 UUID, e INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t (u1 UUID, u2 UUID, e INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('11111111-1111-1111-1111-111111111111', '44444444-4444-4444-4444-444444444444', 1, '2024-01-01T00:00:00.000000Z'),

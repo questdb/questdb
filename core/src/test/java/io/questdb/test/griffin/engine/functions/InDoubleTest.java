@@ -34,17 +34,9 @@ public class InDoubleTest extends AbstractCairoTest {
 
 
     @Test
-    public void testBindVarConstants() throws SqlException {
-        execute("create table MovementLog(\n" +
-                "ts timestamp NOT NULL,\n" +
-                "initParticipantId long,\n" +
-                "initParticipantIdType symbol,\n" +
-                "movementBusinessDate date,\n" +
-                "slotId double\n" +
-                ") timestamp(ts) partition by day wal\n");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarConstants() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> bindVariableService.setDate(0, 1000L)
@@ -69,17 +61,9 @@ public class InDoubleTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testBindVarRuntimeConstants() throws SqlException {
-        execute("create table MovementLog(\n" +
-                "ts timestamp NOT NULL,\n" +
-                "initParticipantId long,\n" +
-                "initParticipantIdType symbol,\n" +
-                "movementBusinessDate date,\n" +
-                "slotId double\n" +
-                ") timestamp(ts) partition by day wal\n");
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarRuntimeConstants() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "runtime constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> {

@@ -2021,7 +2021,7 @@ public class AggregateTest extends AbstractCairoTest {
         engine.execute("insert into x values  (0::timestamp), (1::timestamp), ((3600L*1000000)::timestamp) ", sqlExecutionContext);
         engine.execute("alter table x add column k int", sqlExecutionContext);
         engine.execute("insert into x values ((1+3600L*1000000)::timestamp, 3), ((2*3600L*1000000)::timestamp, 4), ((1+2*3600L*1000000)::timestamp, 5), ((3*3600L*1000000)::timestamp, 0) ", sqlExecutionContext);
-        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp NOT NULL", sqlExecutionContext);
+        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
         engine.execute(
                 "insert into x values ((1+3*3600L*1000000)::timestamp,1, null,null, null, null,null), " +
                         " ((2+3*3600L*1000000)::timestamp,2, 8,8, 8.0, cast(8 as date), 8::timestamp)," +
@@ -2039,33 +2039,19 @@ public class AggregateTest extends AbstractCairoTest {
                         "count(d) cd, " +
                         "count(dat) cdat, " +
                         "count(ts) cts " +
-                        "from x order by k",
-                sqlExecutionContext
-        );
-        try {
-            // ts is NOT NULL: count(ts) includes column_top-backfilled rows
-            // (valid sentinel data per the PR contract) as well as rows
-            // whose ts value was explicitly stored.
-            assertCursor(
-                    """
-                            k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
-                            null\t3\t3\t0\t0\t0\t0\t3
-                            0\t1\t1\t0\t0\t0\t0\t1
-                            1\t1\t1\t0\t0\t0\t0\t1
-                            2\t1\t1\t1\t1\t1\t1\t1
-                            3\t2\t2\t0\t0\t0\t0\t2
-                            4\t2\t2\t1\t1\t1\t1\t2
-                            5\t1\t1\t0\t0\t0\t0\t1
-                            """,
-                    query.getRecordCursorFactory(),
-                    query.getRecordCursorFactory().recordCursorSupportsRandomAccess(),
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+                        "from x order by k")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        k\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
+                        null\t3\t3\t0\t0\t0\t0\t0
+                        0\t1\t1\t0\t0\t0\t0\t0
+                        1\t1\t1\t0\t0\t0\t0\t0
+                        2\t1\t1\t1\t1\t1\t1\t1
+                        3\t2\t2\t0\t0\t0\t0\t0
+                        4\t2\t2\t1\t1\t1\t1\t1
+                        5\t1\t1\t0\t0\t0\t0\t0
+                        """);
 
         assertQuery(engine, sqlExecutionContext,
                 "select hour(tstmp), " +
@@ -2090,7 +2076,7 @@ public class AggregateTest extends AbstractCairoTest {
     private static void runCountTestWithKeyColTops(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {
         engine.execute("create table x ( tstmp " + timestampTypeName + " ) timestamp (tstmp) partition by hour", sqlExecutionContext);
         engine.execute("insert into x values  (0::timestamp), (1::timestamp), ((3600L*1000000)::timestamp) ", sqlExecutionContext);
-        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp NOT NULL", sqlExecutionContext);
+        engine.execute("alter table x add column i int, l long, d double, dat date, ts timestamp", sqlExecutionContext);
         engine.execute("insert into x values ((1+3600L*1000000)::timestamp,null,null,null,null,null), ((2*3600L*1000000)::timestamp,5,5, 5.0, cast(5 as date), 5::timestamp)", sqlExecutionContext);
         engine.execute("alter table x add column k int", sqlExecutionContext);
         engine.execute("insert into x values ((1+2*3600L*1000000)::timestamp, null, null, null, null, null, 6)", sqlExecutionContext);
@@ -2120,29 +2106,15 @@ public class AggregateTest extends AbstractCairoTest {
                         "count(dat) cdat, " +
                         "count(ts) cts " +
                         "from x " +
-                        "order by 1",
-                sqlExecutionContext
-        );
-
-        try {
-            // ts is NOT NULL: count(ts) counts every row regardless of bit
-            // pattern, matching the PR contract that sentinels are valid data.
-            assertCursor(
-                    """
-                            hour\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
-                            0\t2\t2\t0\t0\t0\t0\t2
-                            1\t2\t2\t0\t0\t0\t0\t2
-                            2\t2\t2\t1\t1\t1\t1\t2
-                            """,
-                    query.getRecordCursorFactory(),
-                    true,
-                    true,
-                    false,
-                    sqlExecutionContext
-            );
-        } finally {
-            Misc.free(query.getRecordCursorFactory());
-        }
+                        "order by 1")
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        hour\tc1\tcstar\tci\tcl\tcd\tcdat\tcts
+                        0\t2\t2\t0\t0\t0\t0\t0
+                        1\t2\t2\t0\t0\t0\t0\t0
+                        2\t2\t2\t1\t1\t1\t1\t1
+                        """);
     }
 
     private static void runGroupByIntWithAgg(CairoEngine engine, SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, String timestampTypeName) throws Exception {

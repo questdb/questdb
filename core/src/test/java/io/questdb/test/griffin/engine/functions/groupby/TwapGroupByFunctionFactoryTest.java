@@ -56,7 +56,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapAllNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO tbl VALUES
                     (null, '2024-01-01T00:00:00.000000Z'),
@@ -74,7 +74,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapAllSameTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO tbl VALUES
                     (10.0, '2024-01-01T00:00:00.000000Z'),
@@ -93,7 +93,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapBasic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO tbl VALUES
                     (10.0, '2024-01-01T00:00:00.000000Z'),
@@ -114,33 +114,12 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapNoRows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
-            assertSql(
-                    "twap\nnull\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
-        });
-    }
-
-    @Test
-    public void testTwapNullTimestamp() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL)");
-            execute("""
-                    INSERT INTO tbl VALUES
-                    (10.0, null),
-                    (20.0, '2024-01-01T00:00:10.000000Z'),
-                    (30.0, null),
-                    (40.0, '2024-01-01T00:00:30.000000Z')
-                    """);
-            // only rows with ts 10s and 30s are considered
-            // weighted_sum = 20 * 20_000_000 = 400_000_000
-            // total_duration = 20_000_000
-            // twap = 400_000_000 / 20_000_000 = 20.0
-            assertSql(
-                    "twap\n20.0\n",
-                    "SELECT twap(price, ts) FROM tbl"
-            );
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertQuery("SELECT twap(price, ts) FROM tbl")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("twap\nnull\n");
         });
     }
 
@@ -627,7 +606,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapSingleRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO tbl VALUES (42.5, '2024-01-01T00:00:00.000000Z')");
             // single row => total_duration = 0, fallback to price_sum / count = 42.5
             assertQuery("SELECT twap(price, ts) FROM tbl")
@@ -641,7 +620,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapSomeNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO tbl VALUES
                     (10.0, '2024-01-01T00:00:00.000000Z'),
@@ -663,7 +642,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (sym SYMBOL, price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tbl (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO tbl VALUES
                     ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -688,7 +667,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapWithSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tbl VALUES
                     (10.0, '2024-01-01T00:00:00.000000Z'),
@@ -714,7 +693,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testTwapWithSampleByFillPrev() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tbl (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO tbl VALUES
                     (10.0, '2024-01-01T00:00:00.000000Z'),

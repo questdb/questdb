@@ -35,23 +35,25 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
     public void testAlterTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table \"table\" (a int)");
-            assertExceptionNoLeakCheck("alter table table add column b float", 12, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
-            assertSql(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            """,
-                    "table_columns('table')"
-            );
+            assertQuery("alter table table add column b float")
+                    .noLeakCheck()
+                    .fails(12, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"table\"");
+            assertQuery("table_columns('table')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
             execute("alter table \"table\" add column b float");
-            assertSql(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            b\tFLOAT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            """,
-                    "table_columns('table')"
-            );
+            assertQuery("table_columns('table')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            b\tFLOAT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 
@@ -61,13 +63,13 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("create table from (a int)")
                     .fails(13, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             execute("create table \"from\" (a int)");
-            assertSql(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            """,
-                    "table_columns('from')"
-            );
+            assertQuery("table_columns('from')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 
@@ -77,13 +79,13 @@ public class KeywordAsTableNameTest extends AbstractCairoTest {
             assertQuery("create table a (from int)")
                     .fails(16, "table and column names that are SQL keywords have to be enclosed in double quotes, such as \"from\"");
             execute("create table a (\"from\" int)");
-            assertSql(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            from\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            """,
-                    "table_columns('a')"
-            );
+            assertQuery("table_columns('a')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            from\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 

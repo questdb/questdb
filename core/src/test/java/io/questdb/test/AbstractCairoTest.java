@@ -572,7 +572,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void addColumn(TableWriterAPI writer, String columnName, int columnType) {
         AlterOperationBuilder addColumnBuilder = new AlterOperationBuilder().ofAddColumn(0, writer.getTableToken(), 0);
-        addColumnBuilder.ofAddColumn(columnName, 1, columnType, 0, false, false, 0, false);
+        addColumnBuilder.ofAddColumn(columnName, 1, columnType, 0, false, IndexType.NONE, 0);
         AlterOperation addColumnOp = addColumnBuilder.build();
         addColumnOp.withSecurityContext(AllowAllSecurityContext.INSTANCE);
         writer.apply(addColumnOp, true);
@@ -1064,6 +1064,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
      */
     protected QueryAssertion assertQuery(CharSequence query) {
         return new QueryAssertion(engine, sqlExecutionContext, this::prepareForQueryAssertion, query);
+    }
+
+    protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+        }
+    }
+
+    protected void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws Exception {
+        assertQuery(query).noLeakCheck().assertsPlan(expectedPlan);
     }
 
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {

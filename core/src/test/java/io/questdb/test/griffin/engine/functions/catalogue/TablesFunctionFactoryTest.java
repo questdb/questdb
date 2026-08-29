@@ -93,7 +93,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     public void testMemoryPressureColumn() throws Exception {
         assertMemoryLeak(() -> {
             // Create a WAL table
-            execute("CREATE TABLE test_mem_pressure (ts TIMESTAMP NOT NULL, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE test_mem_pressure (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Insert some data to initialize the tracker
             execute("INSERT INTO test_mem_pressure VALUES ('2024-01-01T00:00:00.000000Z', 1)");
@@ -114,7 +114,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     public void testMemoryPressureColumnNonWalTable() throws Exception {
         assertMemoryLeak(() -> {
             // Create a non-WAL table
-            execute("CREATE TABLE test_non_wal_mem (ts TIMESTAMP NOT NULL, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE test_non_wal_mem (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
 
             // Non-WAL tables should show null for table_memory_pressure_level
             assertQuery("select table_name, table_memory_pressure_level from tables() where table_name = 'test_non_wal_mem'")
@@ -243,7 +243,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     public void testNonWalTableTxnColumns() throws Exception {
         assertMemoryLeak(() -> {
             // Create a non-WAL table
-            execute("CREATE TABLE test_non_wal (ts TIMESTAMP NOT NULL, value INT) TIMESTAMP(ts) PARTITION BY NONE");
+            execute("CREATE TABLE test_non_wal (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY NONE");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -275,7 +275,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     public void testRowCountAndLastWriteTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             // Create a WAL table and write data to it
-            execute("CREATE TABLE test_writes (ts TIMESTAMP NOT NULL, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE test_writes (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -321,7 +321,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     public void testSuspendedColumn() throws Exception {
         assertMemoryLeak(() -> {
             // Create a WAL table
-            execute("CREATE TABLE test_suspended (ts TIMESTAMP NOT NULL, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE test_suspended (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             TableToken tableToken = engine.verifyTableName("test_suspended");
             TableSequencerAPI sequencerAPI = engine.getTableSequencerAPI();
@@ -369,7 +369,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     public void testSuspendedColumnNonWalTable() throws Exception {
         assertMemoryLeak(() -> {
             // Create a non-WAL table
-            execute("CREATE TABLE test_non_wal_suspended (ts TIMESTAMP NOT NULL, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE test_non_wal_suspended (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY");
 
             // Non-WAL tables should always show table_suspended=false
             assertQuery("select table_name, table_suspended from tables() where table_name = 'test_non_wal_suspended'")
@@ -432,7 +432,7 @@ public class TablesFunctionFactoryTest extends AbstractCairoTest {
     public void testTxnAndWalTimestampColumns() throws Exception {
         assertMemoryLeak(() -> {
             // Create a WAL table
-            execute("CREATE TABLE test_txn (ts TIMESTAMP NOT NULL, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE test_txn (ts TIMESTAMP, value INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();

@@ -406,10 +406,10 @@ public class IntervalFunctionTest extends AbstractCairoTest {
     @Test
     public void testIntrinsicsNonPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (k int, ts timestamp NOT NULL);");
-            assertPlanNoLeakCheck(
-                    "select * from x where ts in today() or ts in tomorrow() or ts in yesterday();",
-                    """
+            execute("create table x (k int, ts timestamp);");
+            assertQuery("select * from x where ts in today() or ts in tomorrow() or ts in yesterday();")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Async Filter workers: 1
                               filter: ((ts in today() or ts in tomorrow()) or ts in yesterday())
                                 PageFrame

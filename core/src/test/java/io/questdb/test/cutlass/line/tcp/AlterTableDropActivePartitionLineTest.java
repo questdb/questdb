@@ -115,7 +115,7 @@ public class AlterTableDropActivePartitionLineTest extends AbstractBootstrapTest
                                         "quantity INT, " +
                                         "ppu DOUBLE, " +
                                         "addressId STRING, " +
-                                        "timestamp TIMESTAMP NOT NULL" +
+                                        "timestamp TIMESTAMP" +
                                         ") TIMESTAMP(timestamp) PARTITION BY DAY " +
                                         "WITH maxUncommittedRows=1000, o3MaxLag=200000us" // 200 millis
                         )

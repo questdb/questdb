@@ -1323,7 +1323,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             execute("create table test (" +
                     "col ipv4, " +
-                    "ts timestamp NOT NULL " +
+                    "ts timestamp " +
                     ") timestamp(ts) partition by day");
 
             engine.releaseInactive();
@@ -1358,7 +1358,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             execute("create table test (" +
                     "col ipv4, " +
-                    "ts timestamp NOT NULL " +
+                    "ts timestamp " +
                     ") timestamp(ts) partition by day");
 
             engine.releaseInactive();
@@ -1391,7 +1391,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
             execute("create table test (" +
                     "col ipv4, " +
                     "coll ipv4, " +
-                    "ts timestamp NOT NULL " +
+                    "ts timestamp " +
                     ") timestamp(ts) partition by day");
 
             engine.releaseInactive();
@@ -1426,7 +1426,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             execute("create table test (" +
                     "col ipv4, " +
-                    "ts timestamp NOT NULL " +
+                    "ts timestamp " +
                     ") timestamp(ts) partition by day");
 
             engine.releaseInactive();
@@ -1459,7 +1459,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             execute("create table test (" +
                     "col ipv4, " +
-                    "ts timestamp NOT NULL " +
+                    "ts timestamp " +
                     ") timestamp(ts) partition by day");
 
             engine.releaseInactive();
@@ -1494,7 +1494,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
         assertMemoryLeak(() -> {
             execute("create table test (" +
                     "col ipv4, " +
-                    "ts timestamp NOT NULL " +
+                    "ts timestamp " +
                     ") timestamp(ts) partition by day");
 
             engine.releaseInactive();

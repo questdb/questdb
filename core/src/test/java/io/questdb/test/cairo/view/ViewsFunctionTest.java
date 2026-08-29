@@ -35,18 +35,16 @@ public class ViewsFunctionTest extends AbstractViewTest {
             createTable(TABLE1);
             final String query = "select ts, k, v+v doubleV, avg(v) from " + TABLE1 + " sample by 30s";
             createView("test", query, TABLE1);
-            assertQueryNoLeakCheck(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\tfalse
-                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            """,
-                    "show columns from test",
-                    null,
-                    false
-            );
+            assertQuery("show columns from test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            k\tSYMBOL\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            doubleV\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            avg\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 

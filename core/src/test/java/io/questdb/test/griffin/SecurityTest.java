@@ -292,7 +292,7 @@ public class SecurityTest extends AbstractCairoTest {
             execute("""
                      CREATE TABLE 'bench' (
                         symbol SYMBOL capacity 256 CACHE,
-                        timestamp TIMESTAMP NOT NULL,
+                        timestamp TIMESTAMP,
                         price DOUBLE,
                         amount DOUBLE
                     ) timestamp (timestamp) PARTITION BY DAY WAL;""");

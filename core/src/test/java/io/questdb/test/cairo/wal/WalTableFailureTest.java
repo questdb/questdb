@@ -115,7 +115,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 12,
                                 false,
                                 false,
-                                false,
                                 null
                         );
                         return 0;
@@ -174,7 +173,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 false,
                                 IndexType.NONE,
                                 12,
-                                false,
                                 false,
                                 false,
                                 null
@@ -483,7 +481,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 12,
                                 false,
                                 false,
-                                false,
                                 null
                         );
                         return 0;
@@ -542,7 +539,6 @@ public class WalTableFailureTest extends AbstractCairoTest {
                                 false,
                                 IndexType.NONE,
                                 12,
-                                false,
                                 false,
                                 false,
                                 null
@@ -1344,7 +1340,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
         };
         assertMemoryLeak(ff, () -> {
 
-            execute("create table tab (b boolean, ts timestamp NOT NULL, sym symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL");
             TableToken tt = engine.verifyTableName("tab");
 
             execute("insert into tab select true, (1)::timestamp, null from long_sequence(1)");
@@ -1568,7 +1564,9 @@ public class WalTableFailureTest extends AbstractCairoTest {
     @Test
     public void testWalMultipleColumnConversions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
+            Rnd rnd = TestUtils.generateRandom(LOG);
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
+            execute("create table abc (x0 symbol, x string, y string, y1 symbol, ts timestamp) timestamp(ts) partition by DAY WAL");
             execute("insert into abc values('aa', 'a', 'b', 'bb', '2022-02-24T01')");
             drainWalQueue();
 
@@ -2108,7 +2106,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                     "x long," +
                     "sym symbol," +
                     "str string," +
-                    "ts timestamp NOT NULL," +
+                    "ts timestamp," +
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 

@@ -407,7 +407,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByInsertNullSymbols() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
-            execute("create table t (ts timestamp NOT NULL, s symbol, s2 symbol) timestamp (ts) partition by month");
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month");
             execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
             execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
             assertQuery("select ts, s2, s from t " +
@@ -426,7 +426,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByInsertNullSymbolsOnWal() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
-            execute("create table t (ts timestamp NOT NULL, s symbol, s2 symbol) timestamp (ts) partition by month wal");
+            execute("create table t (ts timestamp, s symbol, s2 symbol) timestamp (ts) partition by month wal");
             execute("insert into t(ts) values ('2025-01-01'),('2025-01-02'),('2025-01-03')");
             execute("insert into t values ('2025-01-04', 'symSA', 'symS2A')");
             drainWalQueue();
@@ -474,7 +474,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByMultipleChangedColSymbols() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
-            execute("create table t (ts timestamp NOT NULL, s string, s2 string) timestamp (ts)" +
+            execute("create table t (ts timestamp, s string, s2 string) timestamp (ts)" +
                     " partition by month"
             );
             execute("insert into t values('2025-01-01', null, null), " +
@@ -499,7 +499,7 @@ public class LatestByTest extends AbstractCairoTest {
     public void testLatestByMultipleColTopSymbols() throws Exception {
         assertMemoryLeak(() -> {
             Assume.assumeTrue(ColumnType.isTimestampMicro(timestampType.getTimestampType()));
-            execute("create table t (ts timestamp NOT NULL) timestamp (ts)" +
+            execute("create table t (ts timestamp) timestamp (ts)" +
                     " partition by month"
             );
             execute("insert into t values('2025-01-01'), " +
@@ -1613,7 +1613,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithStaticNonExistingSymbolOnNonEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
             execute("""
                     insert into tab
                     select dateadd('h', -x::int, now()), rnd_symbol('ap', 'btc'), rnd_int(1,1000,0)
@@ -1634,7 +1634,7 @@ public class LatestByTest extends AbstractCairoTest {
     @Test
     public void testLatestByWithSymbolOnEmptyTableDoesNotThrowException() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
+            execute("CREATE TABLE tab (ts TIMESTAMP, id SYMBOL, value INT) timestamp (ts) PARTITION BY MONTH;\n");
 
             assertQuery("""
                     with r as (select id, value v from tab where id = 'apc' LATEST ON ts PARTITION BY id),

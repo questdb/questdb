@@ -141,8 +141,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
-                            " (ts timestamp NOT NULL, commit int, s symbol) " +
-                            " , index(s) timestamp(ts) partition by DAY WAL "
+                            " (ts timestamp, commit int, s symbol) " +
+                            " , index(s) timestamp(ts) partition by DAY " + (createAsParquet ? "FORMAT PARQUET " : "") + "WAL "
                             + " DEDUP UPSERT KEYS(ts, s)"
             );
 
@@ -158,7 +158,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
-                            " (ts timestamp NOT NULL, commit int) " +
+                            " (ts timestamp, commit int) " +
                             " timestamp(ts) partition by DAY WAL "
                             + " DEDUP UPSERT KEYS(ts)"
             );
@@ -176,8 +176,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
-                            " (ts timestamp NOT NULL, commit int, s varchar) " +
-                            " timestamp(ts) partition by DAY WAL "
+                            " (ts timestamp, commit int, s varchar) " +
+                            " timestamp(ts) partition by DAY " + (createAsParquet ? "FORMAT PARQUET " : "") + "WAL "
                             + " DEDUP UPSERT KEYS(ts, s)"
             );
 
@@ -194,7 +194,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableName = getTestName();
             execute(
                     "create table " + tableName +
-                            " (ts timestamp NOT NULL, commit int) " +
+                            " (ts timestamp, commit int) " +
                             " timestamp(ts) partition by DAY WAL "
                             + " DEDUP UPSERT KEYS(ts)"
             );
@@ -620,8 +620,9 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void createEmptyTable(String tableName, String dedupOption) throws SqlException {
-        execute("create table " + tableName + " (ts timestamp NOT NULL, commit int) timestamp(ts) partition by DAY WAL " + dedupOption
+    private void createEmptyTable(String tableName, String dedupOption, boolean createAsParquet) throws SqlException {
+        String format = createAsParquet ? "FORMAT PARQUET " : "";
+        execute("create table " + tableName + " (ts timestamp, commit int) timestamp(ts) partition by DAY " + format + "WAL " + dedupOption
                 , sqlExecutionContext);
     }
 

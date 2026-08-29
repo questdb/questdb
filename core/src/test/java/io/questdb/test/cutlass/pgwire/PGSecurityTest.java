@@ -100,7 +100,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testAllowsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL)");
+            execute("create table src (ts TIMESTAMP)");
             executeWithPg("select * from src");
         });
     }
@@ -130,7 +130,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowAddNewColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL)");
+            execute("create table src (ts TIMESTAMP)");
             assertQueryDisallowed("alter table src add column newCol string");
         });
     }
@@ -143,7 +143,7 @@ public class PGSecurityTest extends BasePGTest {
 
     @Test
     public void testDisallowCreateTable() throws Exception {
-        assertMemoryLeak(() -> assertQueryDisallowed("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY DAY"));
+        assertMemoryLeak(() -> assertQueryDisallowed("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY"));
     }
 
     @Test
@@ -151,7 +151,7 @@ public class PGSecurityTest extends BasePGTest {
         // we don't support DELETE yet. this test exists as a reminder to check read-only security context is honoured
         // when/if DELETE is implemented.
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL)");
+            execute("create table src (ts TIMESTAMP)");
             try {
                 executeWithPg("delete from src");
                 assertExceptionNoLeakCheck("It appears delete are implemented. Please change this test to check DELETE are refused with the read-only context");
@@ -165,7 +165,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowDrop() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL)");
+            execute("create table src (ts TIMESTAMP)");
             assertQueryDisallowed("drop table src");
         });
     }
@@ -173,7 +173,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowInsert() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY DAY");
+            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY");
             assertQueryDisallowed("insert into src values (now(), 'foo')");
         });
     }
@@ -181,7 +181,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowInsertAsSelect() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY DAY");
+            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY");
             execute("insert into src values (now(), 'foo')");
             assertQueryDisallowed("insert into src select now(), name from src");
         });
@@ -192,7 +192,7 @@ public class PGSecurityTest extends BasePGTest {
         // snapshot is not supported on Windows at all
         Assume.assumeTrue(Os.type != Os.WINDOWS);
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY day");
+            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
             execute("checkpoint create");
             try {
                 assertQueryDisallowed("checkpoint release");
@@ -206,7 +206,7 @@ public class PGSecurityTest extends BasePGTest {
     public void testDisallowSnapshotPrepare() throws Exception {
         // snapshot is not supported on Windows at all
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY day");
+            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
             assertQueryDisallowed("checkpoint create");
         });
     }
@@ -214,7 +214,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY day");
+            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
             execute("insert into src values (now(), 'foo')");
             assertQueryDisallowed("truncate table src");
         });
@@ -223,7 +223,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowUpdate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY DAY");
+            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY DAY");
             execute("insert into src values ('2022-04-12T17:30:45.145921Z', 'foo')");
 
             try {
@@ -249,7 +249,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testDisallowVacuum() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY day");
+            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
             assertQueryDisallowed("vacuum partitions src");
         });
     }
@@ -258,7 +258,7 @@ public class PGSecurityTest extends BasePGTest {
     @Ignore("This is failing, but repair is nop so that's ok")
     public void testDisallowsRepairTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL, name string) timestamp(ts) PARTITION BY day");
+            execute("create table src (ts TIMESTAMP, name string) timestamp(ts) PARTITION BY day");
             execute("insert into src values (now(), 'foo')");
             assertQueryDisallowed("repair table src");
         });
@@ -284,7 +284,7 @@ public class PGSecurityTest extends BasePGTest {
     @Test
     public void testReadOnlyUser() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts TIMESTAMP NOT NULL)");
+            execute("create table src (ts TIMESTAMP)");
             try (
                     final PGServer server = createPGServer(READ_ONLY_USER_CONF);
                     final WorkerPool workerPool = server.getWorkerPool()

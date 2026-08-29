@@ -262,9 +262,9 @@ public class DispatcherWriterQueueTest extends AbstractCairoTest {
             execute("CREATE TABLE foo ( a SYMBOL )");
             drainWalQueue();
 
-            String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n";
+            String header = "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n";
             String left = "a\tSYMBOL\tfalse\t256\t";
-            String right = "\t128\t0\tfalse\tfalse\tfalse\n";
+            String right = "\t128\t0\tfalse\tfalse\t\t\n";
 
             // check its true by default
             assertQuery("table_columns('foo')")

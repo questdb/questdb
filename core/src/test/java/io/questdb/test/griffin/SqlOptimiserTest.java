@@ -48,7 +48,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     private static final String orderByAdviceDdl = """
             CREATE TABLE t (
               s SYMBOL index,
-              ts TIMESTAMP NOT NULL
+              ts TIMESTAMP
             ) timestamp(ts) PARTITION BY DAY;""";
     private static final String orderByAdviceDml =
             "INSERT INTO t (s, ts) VALUES" +
@@ -68,14 +68,14 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
               side SYMBOL,
               price DOUBLE,
               amount DOUBLE,
-              timestamp TIMESTAMP NOT NULL
+              timestamp TIMESTAMP
             ) timestamp (timestamp) PARTITION BY DAY WAL;""";
     private static final String tripsDdl = """
             
             CREATE TABLE 'trips' (
               cab_type SYMBOL capacity 12,
               vendor_id SYMBOL capacity 8,
-              pickup_datetime TIMESTAMP NOT NULL
+              pickup_datetime TIMESTAMP
             ) timestamp (pickup_datetime) PARTITION BY MONTH WAL;""";
 
     @Before
@@ -231,7 +231,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasForFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) as ts1 from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
@@ -250,7 +250,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasForLastAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) as ts1 from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
@@ -269,7 +269,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasForMaxAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) as ts1 from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
@@ -288,7 +288,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testAliasForMinAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) as ts1 from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
@@ -309,7 +309,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("""
                     create table hits (
-                      URL string, ts timestamp NOT NULL
+                      URL string, ts timestamp
                     ) timestamp(ts) partition by day wal""");
 
             execute("insert into hits (URL, ts) values ('abc', 0), ('abc', 1), ('def', 2), ('ghi', 3)");
@@ -374,8 +374,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testDuplicateColumnsInWindowModel() throws SqlException {
-        execute("create table cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL) timestamp(ts);");
+    public void testDuplicateColumnsInWindowModel() throws Exception {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts timestamp) timestamp(ts);");
         execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp from long_sequence(3)");
         String q1 = "select rank() over(), t1.usage_system, t1.usage_system from cpu_ts t1 join cpu_ts t2 on t1.ts > t2.ts";
 
@@ -465,7 +465,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
@@ -484,7 +484,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testFirstAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(x) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
@@ -505,7 +505,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testFirstLastTimestampFunctionAsArgument() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             String queryTemplate = "select dateadd('m', -15, %s(ts)) from y";
             String[] functions = {"first", "last", "min", "max"};
             String[] scanDirection = {"forward", "backward", "forward", "backward"};
@@ -533,8 +533,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testFunctionColumnWithSameNameAsJoinModelColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (a INT, b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE t2 (a INT, c INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t1 (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t2 (a INT, c INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO t1 VALUES (1, 10, '2024-01-01T00:00:00.000000Z'), (2, 20, '2024-01-01T01:00:00.000000Z')");
             execute("INSERT INTO t2 VALUES (1, 100, '2024-01-01T00:00:00.000000Z'), (2, 200, '2024-01-01T01:00:00.000000Z')");
 
@@ -669,8 +669,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testHintsNotPropagatedToCte() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE left (sym SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR");
-            execute("CREATE TABLE right (sym SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE left (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE right (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
             String queryTemplate = """
                     EXPLAIN WITH cte AS (SELECT %s * FROM left ASOF JOIN right ON sym)
                     SELECT %s * FROM cte
@@ -731,9 +731,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
-            execute("create table y1 ( x int, ts timestamp NOT NULL) timestamp(ts);");
-            execute("create table y2 ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
+            execute("create table y1 ( x int, ts timestamp) timestamp(ts);");
+            execute("create table y2 ( x int, ts timestamp) timestamp(ts);");
             for (String joinType : outerJoinTypes) {
                 final String query = ("""
                         select  * from y\s
@@ -787,8 +787,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testJoinWithSingleCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y (x long, ts timestamp NOT NULL) timestamp(ts);");
-            execute("create table y1 (x long, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y (x long, ts timestamp) timestamp(ts);");
+            execute("create table y1 (x long, ts timestamp) timestamp(ts);");
             final String queryA = """
                     select * from y\s
                     inner join (select count_distinct(x) c from y1) as y1\s
@@ -838,7 +838,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testLastAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
@@ -857,7 +857,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testLastAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(x) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
@@ -878,7 +878,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testMaxAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select max(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
@@ -897,7 +897,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testMaxAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(x) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
@@ -918,7 +918,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testMinAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select min(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
@@ -937,7 +937,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testMinAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(x) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
@@ -1030,7 +1030,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testNestedFirstFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y)";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
@@ -1049,7 +1049,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testNestedLastFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select LAST(ts) from y)";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -1072,7 +1072,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testNestedMaxFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MAX(ts) from y)";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -1095,7 +1095,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testNestedMinFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MIN(ts) from y)";
             final IQueryModel model = compileModel(query);
             assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
@@ -1114,7 +1114,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testNestedUnionQueryOnForMinMaxFirstLastOnAggregateTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  " +
                     "union select max(ts) from y)";
             final IQueryModel model = compileModel(query);
@@ -1201,7 +1201,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     create table tab1 (
                         id int,
                         a int,\
-                        ts timestamp NOT NULL
+                        ts timestamp
                       ) timestamp(ts);
                     """);
 
@@ -1209,7 +1209,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     create table tab2 (
                         id int,
                         b int,\
-                        ts timestamp NOT NULL
+                        ts timestamp
                       ) timestamp(ts);""");
 
             // No top level sort needed, sort is by tab1.ts
@@ -1240,7 +1240,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     create table tab1 (
                         id int,
                         a int,\
-                        ts timestamp NOT NULL
+                        ts timestamp
                       ) timestamp(ts);
                     """);
 
@@ -1248,7 +1248,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     create table tab2 (
                         id int,
                         b int,\
-                        ts timestamp NOT NULL
+                        ts timestamp
                       ) timestamp(ts);""");
 
             // No top level sort needed, sort is by tab1.ts
@@ -1319,7 +1319,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     create table tab1 (
                         id int,
                         a int,
-                        ts timestamp NOT NULL
+                        ts timestamp
                       ) timestamp(ts);
                     """);
 
@@ -1359,7 +1359,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE 'WorkflowEvent' (
-                      CreateDate timestamp NOT NULL,
+                      CreateDate timestamp,
                       Id uuid,
                       TenantId int,
                       UserId int,
@@ -1368,7 +1368,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
 
             execute("""
                     CREATE TABLE 'WorkflowEventAction' (
-                      CreateDate TIMESTAMP NOT NULL,
+                      CreateDate TIMESTAMP,
                       WorkflowEventId UUID,
                       ActionTypeId INT,
                       Message STRING
@@ -2645,7 +2645,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByJoinCursorFuncNpe() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL);");
+            execute("CREATE TABLE tango (ts TIMESTAMP);");
             execute("insert into tango values(100000)");
             execute("insert into tango values(100001)");
             assertQuery("SELECT ts + x  FROM tango CROSS JOIN (SELECT x FROM long_sequence(1)) ORDER BY x;")
@@ -2662,7 +2662,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderByNotChooseByParent() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (f1 float, f2 float, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table tab (f1 float, f2 float, ts timestamp) timestamp(ts)");
             execute("insert into tab VALUES(1, 10, '2024-12-24T00:11:00.000Z'), (2, 20, '2024-12-24T00:11:00.000Z')");
             String q1 = "select f2 - f1 as p1, f1, f2 from tab order by ts desc";
             assertQuery(q1)
@@ -2709,7 +2709,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testOrderingOfSortsInSingleTimestampCase() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x::int as i, x::timestamp as ts from long_sequence(10000)");
 
             assertQuery("select * from " +
@@ -2802,7 +2802,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts FIRST from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
@@ -2821,7 +2821,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForFirstAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(x) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by FIRST(x) FIRST from (select [x] from y timestamp (ts))", model.toString0());
@@ -2843,9 +2843,9 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForJoinAndUnionQueryWithJoinOnDesignatedTimestampColumnWithLastFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
-            execute("create table y1 ( x int, ts timestamp NOT NULL) timestamp(ts);");
-            execute("create table y2 ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
+            execute("create table y1 ( x int, ts timestamp) timestamp(ts);");
+            execute("create table y2 ( x int, ts timestamp) timestamp(ts);");
             final String query = """
                     select  * from y\s
                     left join\s
@@ -2898,7 +2898,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForLastAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1", model.toString0());
@@ -2917,7 +2917,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForLastAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(x) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by LAST(x) LAST from (select [x] from y timestamp (ts))", model.toString0());
@@ -2939,7 +2939,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForMaxAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select max(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts max from (select [ts] from y timestamp (ts)) order by max desc limit 1", model.toString0());
@@ -2958,7 +2958,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForMaxAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(x) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MAX(x) MAX from (select [x] from y timestamp (ts))", model.toString0());
@@ -2980,7 +2980,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForMinAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select min(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts min from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
@@ -2999,7 +2999,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForMinAggregateFunctionOnNonDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(x) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MIN(x) MIN from (select [x] from y timestamp (ts))", model.toString0());
@@ -3021,7 +3021,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForNestedFirstFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y)";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose FIRST from (select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
@@ -3040,7 +3040,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForNestedLastFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select LAST(ts) from y)";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose LAST from (select-choose [ts LAST] ts LAST from (select [ts] from y timestamp (ts)) order by LAST desc limit 1)", model.toString0());
@@ -3059,7 +3059,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForNestedMaxFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MAX(ts) from y)";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose MAX from (select-choose [ts MAX] ts MAX from (select [ts] from y timestamp (ts)) order by MAX desc limit 1)", model.toString0());
@@ -3078,7 +3078,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForNestedMinFunctionOptimisationOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select MIN(ts) from y)";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose MIN from (select-choose [ts MIN] ts MIN from (select [ts] from y timestamp (ts)) limit 1)", model.toString0());
@@ -3097,7 +3097,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForNestedUnionQueryOnForMinMaxFirstLastOnAggregateTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select * from (select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  " +
                     "union select max(ts) from y)";
             final IQueryModel model = compileModel(query);
@@ -3139,7 +3139,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForSelectingMultipleColumnsIncludingFirstFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, FIRST(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
@@ -3161,7 +3161,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForSelectingMultipleColumnsIncludingLastFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, LAST(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
@@ -3183,17 +3183,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForSelectingMultipleColumnsIncludingMaxFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MAX(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Async Group By workers: 1
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [max(ts)]
-                              filter: null
+                              values: [max_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -3205,17 +3204,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForSelectingMultipleColumnsIncludingMinFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MIN(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Async Group By workers: 1
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [min(ts)]
-                              filter: null
+                              values: [min_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -3227,7 +3225,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForUnionQueryOnForMinMaxFirstLastOnAggregateTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  union select max(ts) from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose [ts FIRST] ts FIRST from (select [ts] from y timestamp (ts))" +
@@ -3269,7 +3267,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForWhereClauseOnNestedModelWithFirstAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from (select * from y where x = 3)";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by FIRST(ts) FIRST from (select-choose [ts] x, ts from " +
@@ -3292,7 +3290,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForWhereClauseOnNestedModelWithLastAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from (select * from y where x = 3)";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by LAST(ts) LAST from (select-choose [ts] x, ts from " +
@@ -3315,7 +3313,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForWhereClauseOnNestedModelWithMaxAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from (select * from y where x = 3)";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MAX(ts) MAX from (select-choose [ts] x, ts from " +
@@ -3338,7 +3336,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForWhereClauseOnNestedModelWithMinAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from (select * from y where x = 3)";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-group-by MIN(ts) MIN from (select-choose [ts] x, ts from " +
@@ -3361,7 +3359,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForWhereClauseWithFirstAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y where x = 3";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts FIRST from " +
@@ -3383,7 +3381,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForWhereClauseWithLastAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y where x = 3";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts LAST from " +
@@ -3406,7 +3404,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForWhereClauseWithMaxAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from y where x = 3";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts MAX from " +
@@ -3429,7 +3427,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanForWhereClauseWithMinAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from y where x = 3";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts MIN from " +
@@ -3451,7 +3449,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanWithAliasForFirstAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) as ts1 from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
@@ -3470,7 +3468,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanWithAliasForLastAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) as ts1 from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
@@ -3489,7 +3487,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanWithAliasForMaxAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) as ts1 from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) order by ts1 desc limit 1", model.toString0());
@@ -3508,7 +3506,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testQueryPlanWithAliasForMinAggregateFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) as ts1 from y";
             final IQueryModel model = compileModel(query);
             TestUtils.assertEquals("select-choose ts ts1 from (select [ts] from y timestamp (ts)) limit 1", model.toString0());
@@ -3533,7 +3531,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       side SYMBOL capacity 256 CACHE,
                       price DOUBLE,
                       amount DOUBLE,
-                      timestamp TIMESTAMP NOT NULL
+                      timestamp TIMESTAMP
                     ) timestamp (timestamp) PARTITION BY DAY WAL;""");
             drainWalQueue();
 
@@ -3955,7 +3953,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             CREATE TABLE x (
                                 id0 long,
                                 id1 long,
-                                ts timestamp NOT NULL
+                                ts timestamp
                             ) TIMESTAMP(ts) PARTITION BY DAY;"""
             );
             execute("INSERT INTO x VALUES(1, 1, '2021-01-01T12:34:00');");
@@ -4001,7 +3999,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             CREATE TABLE x (
                                 id long,
-                                ts timestamp NOT NULL
+                                ts timestamp
                             ) TIMESTAMP(ts) PARTITION BY DAY;"""
             );
             execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
@@ -4059,7 +4057,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             CREATE TABLE x (
                                 id long,
-                                ts timestamp NOT NULL
+                                ts timestamp
                             ) TIMESTAMP(ts) PARTITION BY DAY;"""
             );
             execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
@@ -4117,7 +4115,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             CREATE TABLE x (
                                 id long,
-                                ts timestamp NOT NULL
+                                ts timestamp
                             ) TIMESTAMP(ts) PARTITION BY DAY;"""
             );
             execute("INSERT INTO x VALUES(1, '2021-01-01T12:34:00');");
@@ -4172,7 +4170,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testSampleByExpressionDependOtherColumn() throws Exception {
         execute("""
                 create table t (
-                  timestamp TIMESTAMP NOT NULL,
+                  timestamp TIMESTAMP,
                   symbol SYMBOL capacity 256 CACHE,
                   side SYMBOL CAPACITY 256 CACHE,
                   price double
@@ -4502,7 +4500,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             execute(
                     "CREATE TABLE 't' (" +
                             "  name SYMBOL capacity 256 CACHE," +
-                            "  timestamp TIMESTAMP NOT NULL" +
+                            "  timestamp TIMESTAMP" +
                             ") timestamp (timestamp) PARTITION BY DAY;"
             );
             execute(
@@ -5464,7 +5462,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         assertMemoryLeak(() -> {
             execute("""
                     create table tbl (
-                      ts timestamp NOT NULL,
+                      ts timestamp,
                       price double
                     ) timestamp(ts) partition by day wal;""");
             drainWalQueue();
@@ -5624,7 +5622,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       side SYMBOL capacity 256 CACHE,
                       price DOUBLE,
                       amount DOUBLE,
-                      timestamp TIMESTAMP NOT NULL
+                      timestamp TIMESTAMP
                     ) timestamp (timestamp) PARTITION BY DAY WAL;""");
 
             assertQuery("""
@@ -5717,7 +5715,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSampleByTimezone() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y (x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y (x int, ts timestamp) timestamp(ts);");
             final String query = "select ts, avg(x) from y\n" +
                     "sample by 5d from '2017-12-20' align to calendar time zone 'Europe/London' with offset '10:00'";
 
@@ -5758,7 +5756,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectMultipleColumnsIncludingLastFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, LAST(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-group-by x, LAST(ts) LAST from (select [x, ts] from y timestamp (ts))", model.toString0());
@@ -5779,17 +5777,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectMultipleColumnsIncludingMaxFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MAX(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-group-by x, MAX(ts) MAX from (select [x, ts] from y timestamp (ts))", model.toString0());
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Async Group By workers: 1
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [max(ts)]
-                              filter: null
+                              values: [max_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -5800,17 +5797,16 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectMultipleColumnsIncludingMinFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, MIN(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-group-by x, MIN(ts) MIN from (select [x, ts] from y timestamp (ts))", model.toString0());
-            assertPlanNoLeakCheck(
-                    query,
-                    """
-                            Async Group By workers: 1
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            GroupBy vectorized: true workers: 1
                               keys: [x]
-                              values: [min(ts)]
-                              filter: null
+                              values: [min_designated(ts)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: y
@@ -5821,7 +5817,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSelectingMultipleColumnsIncludingFirstFunctionOnDesignatedTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select x, FIRST(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals("select-group-by x, FIRST(ts) FIRST from (select [x, ts] from y timestamp (ts))", model.toString0());
@@ -5842,7 +5838,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testSingleCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y (x int, ts timestamp NOT NULL) timestamp(ts) partition by day;");
+            execute("create table y (x int, ts timestamp) timestamp(ts) partition by day;");
             final String queryA = "select count_distinct(x) from y;";
             final String queryB = "select count(distinct x) from y;";
             String expectedModel = "select-group-by count() count_distinct from (select-group-by x from (select [x] from y timestamp (ts) where null != x))";
@@ -5873,7 +5869,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         // Verify basic dateadd query works correctly and timestamp is auto-detected
         // The dateadd on the designated timestamp is recognized and 'ts' becomes the timestamp column
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
             execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
             execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
             execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
@@ -5899,7 +5895,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampOffsetRewriteModelBasic() throws Exception {
         // Test that and_offset wrapper appears in the model when pushing predicates through offset models
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
 
             final String query = """
                     SELECT * FROM (
@@ -5924,7 +5920,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampOffsetRewriteModelDaysUnit() throws Exception {
         // Test and_offset with day units
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
 
             final String query = """
                     SELECT * FROM (
@@ -5949,7 +5945,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampOffsetRewriteModelNoOffsetNoPush() throws Exception {
         // Test that without dateadd, predicates are NOT wrapped in and_offset
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
 
             // Query without dateadd - just column rename
             final String query = """
@@ -5972,7 +5968,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampOffsetRewriteModelNonConstantNotWrapped() throws Exception {
         // Test that non-constant dateadd offsets do NOT get and_offset wrapper
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, offset_val int, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, offset_val int, timestamp timestamp) timestamp(timestamp);");
 
             // Query with non-constant offset
             final String query = """
@@ -5995,7 +5991,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampOffsetRewriteModelWithPositiveOffset() throws Exception {
         // Test and_offset with positive offset (+1 hour in dateadd means -1 in and_offset)
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
 
             final String query = """
                     SELECT * FROM (
@@ -6017,7 +6013,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampPredicateNotPushedWithoutOffset() throws Exception {
         // Test that regular timestamp predicates still work normally
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
             execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
             execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
             execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
@@ -6047,7 +6043,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampPredicatePushdownMultiplePredicates() throws Exception {
         // Test with multiple timestamp predicates
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
             execute("insert into trades values (100, 10, '2022-01-01T10:00:00.000000Z');");
             execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
             execute("insert into trades values (200, 30, '2022-12-31T23:00:00.000000Z');");
@@ -6076,7 +6072,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampPredicatePushdownNonConstantOffsetNotPushed() throws Exception {
         // Test that non-constant dateadd offsets are not pushed
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, offset_val int, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, offset_val int, timestamp timestamp) timestamp(timestamp);");
             execute("insert into trades values (100, 10, 1, '2022-01-01T00:00:00.000000Z');");
 
             // Query with non-constant offset (should not be pushed)
@@ -6104,7 +6100,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampPredicatePushdownWithDateaddOffset() throws Exception {
         // Basic test: predicate on virtual timestamp column derived from dateadd should be pushed down
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
             execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
             execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
             execute("insert into trades values (200, 30, '2023-01-01T00:00:00.000000Z');");
@@ -6141,7 +6137,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampPredicatePushdownWithDateaddOffsetDays() throws Exception {
         // Test with day offset
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
             execute("insert into trades values (100, 10, '2022-01-05T00:00:00.000000Z');");
             execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
             execute("insert into trades values (200, 30, '2022-12-30T00:00:00.000000Z');");
@@ -6173,7 +6169,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     public void testTimestampPredicatePushdownWithDateaddOffsetNegative() throws Exception {
         // Test with positive offset (dateadd adds time)
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, amount double, timestamp timestamp NOT NULL) timestamp(timestamp);");
+            execute("create table trades (price double, amount double, timestamp timestamp) timestamp(timestamp);");
             execute("insert into trades values (100, 10, '2022-01-01T00:00:00.000000Z');");
             execute("insert into trades values (150, 20, '2022-06-15T12:00:00.000000Z');");
             execute("insert into trades values (200, 30, '2022-12-31T23:00:00.000000Z');");
@@ -6224,7 +6220,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testUnionQueryOnForMinMaxFirstLastOnAggregateTimestampColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y union select LAST(ts) from y union select min(ts) from y  union select max(ts) from y";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6311,7 +6307,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClauseOnNestedModelWithFirstAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from (select * from y where x = 3)";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6337,7 +6333,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClauseOnNestedModelWithLastAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from (select * from y where x = 3)";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6363,7 +6359,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClauseOnNestedModelWithMaxAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from (select * from y where x = 3)";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6389,7 +6385,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClauseOnNestedModelWithMinAggregateFunctionOnParentModel() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from (select * from y where x = 3)";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6415,7 +6411,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClauseWithFirstAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select FIRST(ts) from y where x = 3";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6440,7 +6436,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClauseWithLastAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select LAST(ts) from y where x = 3";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6466,7 +6462,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClauseWithMaxAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MAX(ts) from y where x = 3";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6496,7 +6492,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWhereClauseWithMinAggregateFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table y ( x int, ts timestamp) timestamp(ts);");
             final String query = "select MIN(ts) from y where x = 3";
             final IQueryModel model = compileModel(query);
             assertEquals(
@@ -6527,7 +6523,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
         // to windowModel but doesn't register them in windowFunctionHashMap, causing
         // findDuplicateWindowFunction() to miss them when processing later identical windows.
         assertMemoryLeak(() -> {
-            execute("create table t ( x int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table t ( x int, ts timestamp) timestamp(ts);");
             execute("insert into t select x, x::timestamp from long_sequence(3)");
 
             // Case 1: Window function nested in expression appears BEFORE the same top-level window function
@@ -6592,13 +6588,11 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     @Test
     public void testWindowJoinNotSupportGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
-            assertException(
-                    """
-                             select a as a0, sum(b), ts from x window join x x1 range between 2 second preceding and 2 second following sample by 2m align to calendar time zone 'Europe/Paris'
-                            """,
-                    118,
-                    "SAMPLE BY cannot be used with WINDOW JOIN");
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
+            assertQuery("""
+                     select a as a0, sum(b), ts from x window join x x1 range between 2 second preceding and 2 second following sample by 2m align to calendar time zone 'Europe/Paris'
+                    """)
+                    .fails(118, "SAMPLE BY cannot be used with WINDOW JOIN");
 
             assertQuery("""
                      select x.a, sum(x1.b), x.ts from x window join x x1 range between 2 second preceding and 2 second following group by x.a
@@ -6608,8 +6602,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
     }
 
     @Test
-    public void testWindowRangeFrameDependOnSubqueryOrderBy() throws SqlException {
-        execute("create table cpu_ts ( hostname symbol, usage_system double, ts1 timestamp NOT NULL, ts2 timestamp) timestamp(ts1);");
+    public void testWindowRangeFrameDependOnSubqueryOrderBy() throws Exception {
+        execute("create table cpu_ts ( hostname symbol, usage_system double, ts1 timestamp, ts2 timestamp) timestamp(ts1);");
         execute("insert into cpu_ts select rnd_symbol('A', 'B', 'C'), x, x::timestamp, x::timestamp + 6000000 from long_sequence(10)");
         String q1 = "SELECT * from " +
                 "( " +
@@ -6845,7 +6839,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     """
                             CREATE TABLE hits (
                                 ClientIP ipv4,
-                                EventTime timestamp NOT NULL
+                                EventTime timestamp
                             ) TIMESTAMP(EventTime) PARTITION BY DAY;"""
             );
             execute("INSERT INTO hits VALUES('198.162.0.11', '2021-01-01T12:34:00');");

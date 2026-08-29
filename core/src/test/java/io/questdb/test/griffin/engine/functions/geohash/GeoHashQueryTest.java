@@ -86,12 +86,14 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 execute(String.format("alter table %s add hash geohash(%sb)", tableName, l));
 
                 String columnType = l % 5 == 0 ? (l / 5) + "c" : l + "b";
-                assertSql(
-                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
-                                "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
-                                String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n", columnType),
-                        "show columns from " + tableName
-                );
+                assertQuery("show columns from " + tableName)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(
+                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                        String.format("hash\tGEOHASH(%s)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n", columnType)
+                        );
             }
         });
     }
@@ -193,12 +195,14 @@ public class GeoHashQueryTest extends AbstractCairoTest {
                 String tableName = "pos" + l;
                 execute(String.format("create table %s(x long)", tableName));
                 execute(String.format("alter table %s add hash geohash(%sc)", tableName, l));
-                assertSql(
-                        "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey\n" +
-                                "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
-                                String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n", l),
-                        "show columns from " + tableName
-                );
+                assertQuery("show columns from " + tableName)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(
+                                "column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\n" +
+                                        "x\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                        String.format("hash\tGEOHASH(%sc)\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n", l)
+                        );
             }
         });
     }

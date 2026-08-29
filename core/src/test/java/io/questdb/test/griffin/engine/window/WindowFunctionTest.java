@@ -242,7 +242,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Verify that both the alias (p) and the original column name (price)
         // can be used in CASE branches alongside a window function.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO trades VALUES
                         ('2024-01-01', 100.0),
@@ -277,7 +277,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // When a CASE/WHEN contains a window function and the SELECT aliases a column,
         // the original column name should still be usable in THEN/ELSE branches.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO trades VALUES
                         ('2024-01-01', 100.0),
@@ -923,7 +923,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // standalone SELECT column. It must still be propagated through the
         // window model so that the outer virtual model can reference it.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO trades VALUES
                         ('2024-01-01', 100.0),
@@ -2579,7 +2579,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Test similar to testMaxDoubleOverPartitionedRangeWithLargeFrame but for first_value(double)
             // This tests boundary conditions with large ranges that trigger buffer growth
-            execute("create table tab (ts timestamp NOT NULL, i long, j long, s symbol, d double) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
 
             // Trigger per-partition buffers growth and free list usage
             execute("insert into tab select " +
@@ -4416,7 +4416,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
             executeWithRewriteTimestamp("create table nodts(ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR)", timestampType.getTypeName());
 
             //table with designated timestamp
-            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR, otherTs timestamp NOT NULL) timestamp(ts) partition by month", timestampType.getTypeName());
+            executeWithRewriteTimestamp("create table tab (ts #TIMESTAMP, i long, j long, s symbol, d double, c VARCHAR, otherTs timestamp) timestamp(ts) partition by month", timestampType.getTypeName());
 
             for (int i = 0, size = FRAME_FUNCTIONS.size(); i < size; i++) {
                 String func = FRAME_FUNCTIONS.get(i);
@@ -5625,7 +5625,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testInlineOverWithTableAlias() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades (symbol symbol, price double, side symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table trades (symbol symbol, price double, side symbol, ts timestamp) timestamp(ts)");
             execute("insert into trades values ('BTC', 100, 'buy', 0)");
             execute("insert into trades values ('BTC', 101, 'buy', 1000000)");
             execute("insert into trades values ('ETH', 200, 'sell', 2000000)");
@@ -5649,7 +5649,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testInlineOverWithTableAliasAndKeywordColumns() throws Exception {
         assertMemoryLeak(() -> {
             // Use 'timestamp' designated column name matching real fx_trades schema
-            execute("create table fx_trades (symbol symbol, price double, side symbol, timestamp timestamp NOT NULL) timestamp(timestamp)");
+            execute("create table fx_trades (symbol symbol, price double, side symbol, timestamp timestamp) timestamp(timestamp)");
             execute("insert into fx_trades values ('BTC', 100, 'buy', 0)");
             execute("insert into fx_trades values ('BTC', 101, 'buy', 1000000)");
             execute("insert into fx_trades values ('ETH', 200, 'sell', 2000000)");
@@ -5687,7 +5687,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Test that ORDER BY columns in INLINE windows don't need to be in SELECT list
         // This is the baseline - if this works, then named windows should also work
         assertMemoryLeak(() -> {
-            execute("create table t (x int, y int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 1, 0)");
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 3, 2000000)");
@@ -7444,7 +7444,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Test similar to testMaxTimestampOverPartitionedRangeWithLargeFrame but for max(double)
             // This tests boundary conditions with large ranges that trigger buffer growth
-            execute("create table tab (ts timestamp NOT NULL, i long, j long, s symbol, d double) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
 
             // Trigger per-partition buffers growth and free list usage
             execute("insert into tab select " +
@@ -7573,7 +7573,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxNonDesignatedTimestampWithManyNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, other_ts timestamp, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, other_ts timestamp, val long, grp symbol) timestamp(ts)");
 
             // Create large dataset with many nulls to test null handling in max()
             execute("insert into tab select " +
@@ -7653,7 +7653,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxNonDesignatedTimestampWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, other_ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, other_ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', null, 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', '2021-01-03T08:00:00.000000Z', 3, 'A')");
@@ -7697,7 +7697,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampOnNonDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, other_ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, other_ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-05T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', '2021-01-04T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', '2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -7737,7 +7737,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Test similar to testFrameFunctionOverPartitionedRangeWithLargeFrame but for max(timestamp)
             // This tests boundary conditions with large ranges that trigger buffer growth
-            execute("create table tab (ts timestamp NOT NULL, i long, j long, s symbol, d double) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
 
             // Trigger per-partition buffers growth and free list usage
             execute("insert into tab select " +
@@ -7869,7 +7869,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -7894,7 +7894,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeFrameBufferOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
             // Create many partitions (>40) with dense timestamps to trigger deque resize
             // Each partition will have many overlapping frames requiring deque growth
@@ -7924,7 +7924,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeFrameDequeOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
             // Create scenario that will trigger deque overflow in bounded range frames
             execute("insert into tab select " +
@@ -7952,7 +7952,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeFrameEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
             // Create edge case scenario: overlapping time ranges, identical timestamps
             execute("insert into tab values " +
@@ -7988,7 +7988,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeFrameWithManyPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
             // Create many partitions to test Map resizing and partition management
             execute("insert into tab select " +
@@ -8016,7 +8016,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeOnNonDesignatedTimestampFails() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, other_ts timestamp, val int) timestamp(ts)");
+            execute("create table tab (ts timestamp, other_ts timestamp, val int) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1)");
 
             // This should fail because we're using RANGE with ORDER BY on a non-designated timestamp
@@ -8029,7 +8029,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeWithBoundedFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T01:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-01T02:00:00.000000Z', 3, 'A')");
@@ -8058,7 +8058,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeWithLargerTimeIntervals() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8089,7 +8089,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeWithMicrosecondPrecision() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T00:00:00.000100Z', 2, 'A')");
             execute("insert into tab values ('2021-01-01T00:00:00.000200Z', 3, 'A')");
@@ -8116,7 +8116,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeWithPartitionAndSpecificBounds() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
@@ -8145,7 +8145,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeWithPartitionedBoundedFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T01:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-01T02:00:00.000000Z', 3, 'A')");
@@ -8174,7 +8174,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRangeWithSpecificBounds() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
@@ -8203,7 +8203,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRowsCurrentRowOnly() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8230,7 +8230,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRowsFrameCombinations() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8260,7 +8260,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRowsUnboundedPrecedingToCurrentRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8287,7 +8287,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRowsUnboundedWithoutPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8314,7 +8314,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampRowsWholePartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8340,7 +8340,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithComplexFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8372,7 +8372,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithDuplicateTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'A')");
@@ -8397,7 +8397,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithEmptyPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
 
             assertQuery("SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab")
                     .timestamp("ts")
@@ -8410,8 +8410,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab1 (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
-            execute("create table tab2 (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab1 (ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("create table tab2 (ts timestamp, val int, grp symbol) timestamp(ts)");
 
             execute("insert into tab1 values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab1 values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
@@ -8454,7 +8454,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithLargeDataset() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab select timestamp_sequence(0, 1000000), x, rnd_symbol('A','B','C','D','E') from long_sequence(100000)");
 
             assertQuery("SELECT count(*) as cnt FROM (SELECT ts, max(ts) OVER (PARTITION BY grp) as max_ts FROM tab)")
@@ -8471,7 +8471,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithMixedFrames() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
@@ -8504,7 +8504,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithMultiplePartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp1 symbol, grp2 symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp1 symbol, grp2 symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A', 'X')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A', 'Y')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'B', 'X')");
@@ -8531,7 +8531,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol, other_ts timestamp) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol, other_ts timestamp) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A', '2021-01-01T12:00:00.000000Z')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A', null)");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A', '2021-01-03T12:00:00.000000Z')");
@@ -8556,7 +8556,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 5, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 7, 'A')");
@@ -8582,7 +8582,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithOrderByDesc() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8608,7 +8608,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8633,7 +8633,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithPartitionByAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8661,7 +8661,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithRangeBetween() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 3, 'A')");
@@ -8687,7 +8687,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithRowsBetween() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8713,7 +8713,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithRowsPrecedingOnly() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8739,7 +8739,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithSingleRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
 
             assertQuery("SELECT ts, val, grp, max(ts) OVER () as max_ts FROM tab")
@@ -8756,7 +8756,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8778,7 +8778,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxTimestampWithUnboundedPreceding() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -8832,7 +8832,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Test similar to testMaxDoubleOverPartitionedRangeWithLargeFrame but for min(double)
             // This tests boundary conditions with large ranges that trigger buffer growth
-            execute("create table tab (ts timestamp NOT NULL, i long, j long, s symbol, d double) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long, s symbol, d double) timestamp(ts)");
 
             // Trigger per-partition buffers growth and free list usage
             execute("insert into tab select " +
@@ -8897,7 +8897,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinNonDesignatedTimestampWithManyNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, other_ts timestamp, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, other_ts timestamp, val long, grp symbol) timestamp(ts)");
 
             execute("insert into tab select " +
                     "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
@@ -8934,7 +8934,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinNonDesignatedTimestampWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, other_ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, other_ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', null, 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', '2021-01-03T08:00:00.000000Z', 3, 'A')");
@@ -8976,7 +8976,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampOnNonDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, other_ts timestamp, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, other_ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-05T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', '2021-01-04T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', '2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -9014,7 +9014,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -9039,7 +9039,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRangeFrameBufferOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
             execute("insert into tab select " +
                     "dateadd('s', ((x-1) * 10)::int, '2021-01-01T00:00:00.000000Z'::timestamp) as ts, " +
@@ -9065,7 +9065,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRangeFrameDequeOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
             execute("insert into tab select " +
                     "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
@@ -9091,7 +9091,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRangeFrameEdgeCases() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
             execute("insert into tab values " +
                     "('2021-01-01T12:00:00.000000Z', 1, 'A'), " +
@@ -9125,7 +9125,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRangeFrameWithManyPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
 
             execute("insert into tab select " +
                     "dateadd('s', x::int, '2021-01-01T00:00:00.000000Z')::timestamp as ts, " +
@@ -9151,7 +9151,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRangeOnNonDesignatedTimestampFails() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, other_ts timestamp, val int) timestamp(ts)");
+            execute("create table tab (ts timestamp, other_ts timestamp, val int) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', '2021-01-01T12:00:00.000000Z', 1)");
 
             assertQuery("SELECT ts, other_ts, val, min(ts) OVER (ORDER BY other_ts RANGE BETWEEN '1' HOUR PRECEDING AND CURRENT ROW) FROM tab")
@@ -9163,7 +9163,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRangeWithBoundedFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T01:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-01T02:00:00.000000Z', 3, 'A')");
@@ -9191,7 +9191,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRangeWithPartitionAndSpecificBounds() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-01T06:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-01T12:00:00.000000Z', 3, 'A')");
@@ -9219,7 +9219,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRowsCurrentRowOnly() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -9245,7 +9245,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRowsUnboundedPrecedingToCurrentRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -9271,7 +9271,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampRowsWholePartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -9296,7 +9296,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMinTimestampWithPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val int, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val int, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 1, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 2, 'B')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 3, 'A')");
@@ -9321,7 +9321,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMultipleNamedWindows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'B', 1000000)");
             execute("insert into t values (3, 'A', 2000000)");
@@ -9350,7 +9350,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // This test reproduces a bug where defining the partitioned window FIRST
         // caused both windows to use the same partition specification
         assertMemoryLeak(() -> {
-            execute("create table t (x int, side symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, side symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'sell', 0)");
             execute("insert into t values (2, 'buy', 1000000)");
             execute("insert into t values (3, 'buy', 2000000)");
@@ -9380,7 +9380,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowBasic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, y int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 10, 0)");
             execute("insert into t values (2, 20, 1000000)");
             execute("insert into t values (3, 30, 2000000)");
@@ -9429,7 +9429,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowCaseInsensitive() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
 
@@ -9450,7 +9450,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowCumulativeSum() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -9473,7 +9473,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowDeduplicatesWithInlineWindow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -9510,7 +9510,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowDoesNotDeduplicateDifferentSpecs() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'A', 1000000)");
             execute("insert into t values (3, 'B', 2000000)");
@@ -9546,7 +9546,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowDuplicateNameError() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
 
             // Duplicate window name
@@ -9559,7 +9559,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowEmptySpec() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -9584,7 +9584,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowExplainPlanMatchesInline() throws Exception {
         // Verify that named windows produce identical execution plans to inline windows
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // Expected plan for window function with ORDER BY ts
             // Note: Default frame is ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
@@ -9611,7 +9611,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowKeywordAsName() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
 
             // SQL keyword as window name should fail
@@ -9624,7 +9624,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowLongName() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
 
@@ -9644,7 +9644,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowMissingNameInOverClause() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // End of input after OVER - no name or '('
             assertQuery("SELECT sum(x) OVER")
@@ -9656,7 +9656,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowMissingNameInWindowClause() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // WINDOW AS (...) - missing window name
             assertQuery("SELECT sum(x) OVER w FROM t WINDOW AS (ORDER BY ts)")
@@ -9674,7 +9674,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowMultipleDistinctWindows() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'A', 1000000)");
             execute("insert into t values (3, 'B', 2000000)");
@@ -9701,7 +9701,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowNameCollisionWithColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
 
@@ -9721,7 +9721,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowNestedWindowFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -9744,7 +9744,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowNumberAsName() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
 
             // Number as window name should fail in OVER clause
@@ -9763,7 +9763,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowOrderByNotInSelect() throws Exception {
         // Test that ORDER BY columns in named windows don't need to be in SELECT list
         assertMemoryLeak(() -> {
-            execute("create table t (x int, y int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 1, 0)");
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 3, 2000000)");
@@ -9789,7 +9789,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowPartitionByNotInSelect() throws Exception {
         // Test that PARTITION BY columns in named windows don't need to be in SELECT list
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'B', 1000000)");
             execute("insert into t values (3, 'A', 2000000)");
@@ -9814,7 +9814,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowQuotedKeywordAsName() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
 
@@ -9834,7 +9834,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowQuotedNameResolution() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
 
@@ -9865,7 +9865,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowRankDenseRank() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (1, 1000000)");
             execute("insert into t values (2, 2000000)");
@@ -9890,7 +9890,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowReuseByMultipleFunctions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -9913,7 +9913,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowRowNumber() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'B', 1000000)");
             execute("insert into t values (3, 'A', 2000000)");
@@ -9938,7 +9938,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowScopeDoesNotLeakToSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
 
             // Named window defined in outer query should not be visible in subquery
@@ -9951,7 +9951,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowSpecialCharactersAsName() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // Special character as window name in OVER clause
             assertQuery("SELECT sum(x) OVER @w FROM t")
@@ -9968,7 +9968,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowUndefinedError() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
 
             // Reference to undefined window name
@@ -9981,7 +9981,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowUnicodeName() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
 
@@ -10001,7 +10001,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWindowKeywordAsName() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
 
@@ -10034,7 +10034,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithCte() throws Exception {
         // Test that WINDOW clause works with CTEs
         assertMemoryLeak(() -> {
-            execute("create table t (x int, y int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 1, 0)");
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 3, 2000000)");
@@ -10057,7 +10057,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithCteAndPartitionBy() throws Exception {
         // Test that WINDOW clause with PARTITION BY works with CTEs
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 'A', 0)");
             execute("insert into t values (20, 'B', 1000000)");
             execute("insert into t values (30, 'A', 2000000)");
@@ -10082,7 +10082,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithCteAndWhere() throws Exception {
         // Test that WINDOW clause works with CTEs and WHERE clause
         assertMemoryLeak(() -> {
-            execute("create table t (x int, y int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 1, 0)");
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 1, 2000000)");
@@ -10104,7 +10104,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithCteReferenceInExpression() throws Exception {
         // Test that WINDOW clause works when CTE is used in a more complex expression
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 0)");
             execute("insert into t values (20, 1000000)");
             execute("insert into t values (30, 2000000)");
@@ -10126,7 +10126,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithExcludeCurrentRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -10152,7 +10152,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithFrameSpec() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -10179,7 +10179,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithGroupBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'A', 1000000)");
             execute("insert into t values (3, 'B', 2000000)");
@@ -10200,7 +10200,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithInlineWindowInSameQuery() throws Exception {
         // Test that both named window and inline window can be used in the same query with subquery
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 0)");
             execute("insert into t values (20, 1000000)");
             execute("insert into t values (30, 2000000)");
@@ -10223,7 +10223,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -10245,8 +10245,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithMultipleCtes() throws Exception {
         // Test that WINDOW clause works with multiple CTEs
         assertMemoryLeak(() -> {
-            execute("create table t1 (x int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table t2 (y int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t1 (x int, ts timestamp) timestamp(ts)");
+            execute("create table t2 (y int, ts timestamp) timestamp(ts)");
             execute("insert into t1 values (10, 0)");
             execute("insert into t1 values (20, 1000000)");
             execute("insert into t2 values (100, 0)");
@@ -10270,7 +10270,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithNestedSubqueries() throws Exception {
         // Test that WINDOW clause works with deeply nested subqueries
         assertMemoryLeak(() -> {
-            execute("create table t (x int, y int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 1, 0)");
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 3, 2000000)");
@@ -10291,7 +10291,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithOrderByAfterWindowClause() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -10313,7 +10313,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, y int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, y int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 10, 'A', 0)");
             execute("insert into t values (2, 20, 'B', 1000000)");
             execute("insert into t values (3, 30, 'A', 2000000)");
@@ -10340,7 +10340,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithPartitionByExplainPlan() throws Exception {
         // Verify explain plan for named window with PARTITION BY
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
 
             // Note: Default frame is ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
             String expectedPlan = """
@@ -10366,7 +10366,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithRangeFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, '2024-01-01T00:00:00.000000Z')");
             execute("insert into t values (2, '2024-01-01T00:00:01.000000Z')");
             execute("insert into t values (3, '2024-01-01T00:00:02.000000Z')");
@@ -10408,7 +10408,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithRowsFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, '2024-01-01T00:00:00.000000Z')");
             execute("insert into t values (2, '2024-01-01T00:00:01.000000Z')");
             execute("insert into t values (3, '2024-01-01T00:00:02.000000Z')");
@@ -10447,7 +10447,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithSubquery() throws Exception {
         // Test that WINDOW clause works with subqueries (similar structure to CTE)
         assertMemoryLeak(() -> {
-            execute("create table t (x int, y int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, y int, ts timestamp) timestamp(ts)");
             execute("insert into t values (10, 1, 0)");
             execute("insert into t values (20, 2, 1000000)");
             execute("insert into t values (30, 3, 2000000)");
@@ -10469,7 +10469,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void testNamedWindowWithSubqueryProjection() throws Exception {
         // Test that WINDOW clause works with a subquery projection
         assertMemoryLeak(() -> {
-            execute("create table t1 (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t1 (x int, ts timestamp) timestamp(ts)");
             execute("insert into t1 values (10, 0)");
             execute("insert into t1 values (20, 1000000)");
 
@@ -10488,7 +10488,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithTableAlias() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades (symbol symbol, price double, side symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table trades (symbol symbol, price double, side symbol, ts timestamp) timestamp(ts)");
             execute("insert into trades values ('BTC', 100, 'buy', 0)");
             execute("insert into trades values ('BTC', 101, 'buy', 1000000)");
             execute("insert into trades values ('ETH', 200, 'sell', 2000000)");
@@ -10511,7 +10511,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithTableAliasAndKeywordColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table fx_trades (symbol symbol, price double, side symbol, timestamp timestamp NOT NULL) timestamp(timestamp)");
+            execute("create table fx_trades (symbol symbol, price double, side symbol, timestamp timestamp) timestamp(timestamp)");
             execute("insert into fx_trades values ('BTC', 100, 'buy', 0)");
             execute("insert into fx_trades values ('BTC', 101, 'buy', 1000000)");
             execute("insert into fx_trades values ('ETH', 200, 'sell', 2000000)");
@@ -10549,12 +10549,12 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithUnion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t1 (x int, ts timestamp) timestamp(ts)");
             execute("insert into t1 values (1, 0)");
             execute("insert into t1 values (2, 1000000)");
             execute("insert into t1 values (3, 2000000)");
 
-            execute("create table t2 (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t2 (x int, ts timestamp) timestamp(ts)");
             execute("insert into t2 values (10, 0)");
             execute("insert into t2 values (20, 1000000)");
             execute("insert into t2 values (30, 2000000)");
@@ -10581,8 +10581,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testNamedWindowWithWindowJoinDisallowed() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table trades (price double, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table quotes (bid double, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table trades (price double, ts timestamp) timestamp(ts)");
+            execute("create table quotes (bid double, ts timestamp) timestamp(ts)");
 
             // WINDOW functions (named or inline) are not allowed in WINDOW JOIN queries
             assertQuery("SELECT price, bid, avg(price) OVER w as avg_price " +
@@ -17410,7 +17410,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Using split_part with 3 args - without the fix, this fails with:
         // "there is no matching function `split_part` with the argument types: (INT, CHAR, VARCHAR)"
         assertMemoryLeak(() -> {
-            execute("create table t (sym varchar, ts timestamp NOT NULL) timestamp(ts) partition by day");
+            execute("create table t (sym varchar, ts timestamp) timestamp(ts) partition by day");
             execute("insert into t values ('A-1', '2024-01-01T00:00:00.000000Z')");
             execute("insert into t values ('A-2', '2024-01-01T00:00:01.000000Z')");
             execute("insert into t values ('B-1', '2024-01-01T00:00:02.000000Z')");
@@ -21313,8 +21313,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Derived join emits aliases built on top of other aliases. Window ORDER BY should
         // be able to follow the alias chain back to base columns.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab1 (ts TIMESTAMP NOT NULL, grp SYMBOL) TIMESTAMP(ts)");
-            execute("CREATE TABLE tab2 (ts TIMESTAMP NOT NULL, score INT, grp SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab1 (ts TIMESTAMP, grp SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, score INT, grp SYMBOL) TIMESTAMP(ts)");
 
             execute("""
                     INSERT INTO tab1 VALUES
@@ -21356,7 +21356,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Alias coming from a joined table is only referenced in the window ORDER BY clause.
         // Even though it is not part of the final projection, it still must be resolvable.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab2 (ts TIMESTAMP NOT NULL, score INT, grp SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, score INT, grp SYMBOL) TIMESTAMP(ts)");
 
             execute("""
                     INSERT INTO tab2 VALUES
@@ -21388,8 +21388,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
         // Regression test: A column coming from a joined table can be aliased in SELECT
         // and referenced via that alias inside a window ORDER BY clause.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab1 (ts TIMESTAMP NOT NULL, val INT, grp SYMBOL) TIMESTAMP(ts)");
-            execute("CREATE TABLE tab2 (ts TIMESTAMP NOT NULL, score INT, grp SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab1 (ts TIMESTAMP, val INT, grp SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE tab2 (ts TIMESTAMP, score INT, grp SYMBOL) TIMESTAMP(ts)");
 
             execute("""
                     INSERT INTO tab1 VALUES
@@ -21632,7 +21632,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceBaseNotFoundError() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // Base window 'nonexistent' is not defined
             assertQuery("SELECT sum(x) OVER w2 FROM t WINDOW w2 AS (nonexistent ORDER BY ts)")
@@ -21644,7 +21644,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceBaseOnlyRef() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -21667,7 +21667,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceBasic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -21690,7 +21690,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceChain() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'B', 1000000)");
             execute("insert into t values (3, 'A', 2000000)");
@@ -21717,7 +21717,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceCircularReferenceError() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // Circular reference: w1 references w2, w2 references w1
             // w1 is parsed first, references w2 which doesn't exist yet -> forward reference error
@@ -21730,7 +21730,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceForwardReferenceError() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             // Forward reference: w1 references w2 which is defined later
             assertQuery("SELECT sum(x) OVER w1 FROM t WINDOW w1 AS (w2 ORDER BY ts), w2 AS (ORDER BY ts)")
@@ -21742,7 +21742,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceInSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -21767,7 +21767,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceMultipleFunctionsSharing() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -21790,7 +21790,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceOverrideFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -21814,7 +21814,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritanceOverrideOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 0)");
             execute("insert into t values (2, 1000000)");
             execute("insert into t values (3, 2000000)");
@@ -21836,7 +21836,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritancePartitionByAndAddOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'B', 1000000)");
             execute("insert into t values (3, 'A', 2000000)");
@@ -21861,7 +21861,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritancePartitionByInChildError() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
 
             // SQL standard: PARTITION BY not allowed in child window when base is specified
             assertQuery("SELECT sum(x) OVER w2 FROM t " +
@@ -21874,7 +21874,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowInheritancePartitionByOrderByAddFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, category symbol, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, category symbol, ts timestamp) timestamp(ts)");
             execute("insert into t values (1, 'A', 0)");
             execute("insert into t values (2, 'B', 1000000)");
             execute("insert into t values (3, 'A', 2000000)");
@@ -22184,120 +22184,90 @@ public class WindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testWindowSpecErrorCurrentWithoutRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ROWS BETWEEN CURRENT xyz AND 1 FOLLOWING) FROM t",
-                    41,
-                    "'row' expected after 'current'"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (ROWS BETWEEN CURRENT xyz AND 1 FOLLOWING) FROM t")
+                    .fails(41, "'row' expected after 'current'");
         });
     }
 
     @Test
     public void testWindowSpecErrorEmptySpec() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (",
-                    19,
-                    "')' or window specification expected"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (")
+                    .fails(19, "')' or window specification expected");
         });
     }
 
     @Test
     public void testWindowSpecErrorExcludeCurrentWithoutRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT xyz) FROM t",
-                    85,
-                    "'row' expected after 'current'"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT xyz) FROM t")
+                    .fails(85, "'row' expected after 'current'");
         });
     }
 
     @Test
     public void testWindowSpecErrorExcludeNoWithoutOthers() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO xyz) FROM t",
-                    80,
-                    "'others' expected after 'no'"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE NO xyz) FROM t")
+                    .fails(80, "'others' expected after 'no'");
         });
     }
 
     @Test
     public void testWindowSpecErrorOrderByEndOfInput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ORDER BY ts",
-                    29,
-                    "')' expected to close window specification"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (ORDER BY ts")
+                    .fails(29, "')' expected to close window specification");
         });
     }
 
     @Test
     public void testWindowSpecErrorOrderWithoutBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ORDER xyz) FROM t",
-                    26,
-                    "'by' expected after 'order'"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (ORDER xyz) FROM t")
+                    .fails(26, "'by' expected after 'order'");
         });
     }
 
     @Test
     public void testWindowSpecErrorPartitionByEndOfInput() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (PARTITION BY x",
-                    33,
-                    "'order', ',' or ')' expected"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (PARTITION BY x")
+                    .fails(33, "'order', ',' or ')' expected");
         });
     }
 
     @Test
     public void testWindowSpecErrorPartitionWithoutBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (PARTITION xyz) FROM t",
-                    30,
-                    "'by' expected after 'partition'"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (PARTITION xyz) FROM t")
+                    .fails(30, "'by' expected after 'partition'");
         });
     }
 
     @Test
     public void testWindowSpecErrorUnboundedWithoutDirection() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED xyz AND CURRENT ROW) FROM t",
-                    43,
-                    "'preceding' or 'following' expected after 'unbounded'"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (ROWS BETWEEN UNBOUNDED xyz AND CURRENT ROW) FROM t")
+                    .fails(43, "'preceding' or 'following' expected after 'unbounded'");
         });
     }
 
     @Test
     public void testWindowSpecErrorUnclosedAfterFrame() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
-            assertException(
-                    "SELECT sum(x) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW xyz) FROM t",
-                    81,
-                    "')' expected to close window specification"
-            );
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
+            assertQuery("SELECT sum(x) OVER (ORDER BY ts ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW xyz) FROM t")
+                    .fails(81, "')' expected to close window specification");
         });
     }
 

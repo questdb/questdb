@@ -365,13 +365,13 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                                 FROM long_sequence(11)
                             )"""
             );
-            // -Infinity and Infinity are now preserved as distinct values.
-            // Sort order: -Infinity < finite < Infinity < NaN.
-            // All non-finite values display as "null" in nullable columns.
-            assertQueryNoLeakCheck(
-                    """
+            // Signed zeros tie under the canonicalizing encoder, so their order is
+            // the rowId tiebreak: 0.0 (row 4) ahead of -0.0 (row 5).
+            assertQuery("SELECT * FROM x ORDER BY d ASC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             d
-                            null
                             -1.0000000000000004
                             -1.0000000000000002
                             -0.0
@@ -382,12 +382,14 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             null
                             null
                             null
-                            """,
-                    "SELECT * FROM x ORDER BY d ASC"
-            );
-            assertQueryNoLeakCheck(
-                    """
+                            null
+                            """);
+            assertQuery("SELECT * FROM x ORDER BY d DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
                             d
+                            null
                             null
                             null
                             null
@@ -398,9 +400,24 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
                             -0.0
                             -1.0000000000000002
                             -1.0000000000000004
-                            null
-                            """,
-                    "SELECT * FROM x ORDER BY d DESC"
+                            """);
+        });
+    }
+
+    @Test
+    public void testOrderByFixedKeyOver32Bytes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x AS (
+                                SELECT
+                                    x % 2 AS a,
+                                    x % 3 AS b,
+                                    x * 0 AS c,
+                                    x * 0 AS d,
+                                    x AS e
+                                FROM long_sequence(10)
+                            )"""
             );
             assertQuery("SELECT * FROM x ORDER BY a, b, c, d, e DESC")
                     .noLeakCheck()

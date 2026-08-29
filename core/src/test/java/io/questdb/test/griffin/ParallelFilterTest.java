@@ -188,7 +188,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  a double[][], " +
                                     "  b double[][] " +
                                     ") timestamp (ts) PARTITION BY DAY;",
@@ -277,7 +277,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  ts2 TIMESTAMP," +
                                     "  id long" +
                                     ") timestamp (ts) PARTITION BY DAY;",
@@ -420,7 +420,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  id long" +
                                     ") timestamp (ts) PARTITION BY DAY;",
                             sqlExecutionContext
@@ -464,7 +464,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE 'test1' " +
-                                    "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP NOT NULL) " +
+                                    "(column1 SYMBOL capacity 256 CACHE index capacity 256, timestamp TIMESTAMP) " +
                                     "timestamp (timestamp) PARTITION BY HOUR",
                             sqlExecutionContext
                     );
@@ -542,7 +542,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             engine.execute(
-                    "CREATE TABLE 'x' (ts timestamp NOT NULL, id long) TIMESTAMP(ts) PARTITION BY DAY;",
+                    "CREATE TABLE 'x' (ts timestamp, id long) TIMESTAMP(ts) PARTITION BY DAY;",
                     sqlExecutionContext
             );
             // We want tasks from different queries to interleave within the queue,
@@ -827,7 +827,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  type SYMBOL," +
                                     "  value DOUBLE" +
                                     ") timestamp (ts) PARTITION BY DAY;",
@@ -971,14 +971,14 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  type SYMBOL," +
                                     "  value DOUBLE" +
                                     ") timestamp (ts) PARTITION BY DAY;",
                             sqlExecutionContext
                     );
                     engine.execute("insert into price select x::timestamp, 't' || (x%5), rnd_double() from long_sequence(100000)", sqlExecutionContext);
-                    engine.execute("CREATE TABLE mapping (id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp NOT NULL) timestamp(ts)", sqlExecutionContext);
+                    engine.execute("CREATE TABLE mapping (id SYMBOL, ext SYMBOL, ext_in SYMBOL, ts timestamp) timestamp(ts)", sqlExecutionContext);
                     engine.execute("insert into mapping select 't' || x, 's' || x, 's' || x, x::timestamp  from long_sequence(5)", sqlExecutionContext);
                     if (convertToParquet) {
                         execute(
@@ -1010,7 +1010,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE x (\n" +
-                                    "  ts timestamp NOT NULL," +
+                                    "  ts timestamp," +
                                     "  i8 byte," +
                                     "  i16 short," +
                                     "  i32 int," +
@@ -1177,7 +1177,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, _, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  val DECIMAL(30, 2)" +
                                     ") TIMESTAMP (ts) PARTITION BY DAY;",
                             sqlExecutionContext
@@ -1209,7 +1209,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  type INT," +
                                     "  value SYMBOL) timestamp (ts) PARTITION BY DAY;",
                             sqlExecutionContext
@@ -1250,7 +1250,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  preciseTs TIMESTAMP," +
                                     "  type INT," +
                                     "  value SYMBOL) timestamp (ts) PARTITION BY DAY;",
@@ -1298,7 +1298,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE tab (\n" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  preciseTs TIMESTAMP," +
                                     "  type INT," +
                                     "  value SYMBOL) timestamp (ts) PARTITION BY DAY;",
@@ -1451,7 +1451,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     engine.execute(
                             "CREATE TABLE price (\n" +
-                                    "  ts TIMESTAMP NOT NULL," +
+                                    "  ts TIMESTAMP," +
                                     "  type " + columnType + "," +
                                     "  value DOUBLE) timestamp (ts) PARTITION BY DAY;",
                             sqlExecutionContext

@@ -173,13 +173,11 @@ public class CountDistinctLong256GroupByFunctionFactoryTest extends AbstractCair
     public void testMappingZeroToNulls() throws Exception {
         assertMemoryLeak(() -> {
             // this is to ensure that long256s with nulls and zeros don't map to the same values
-            assertQueryNoLeakCheck(
-                    "a\ts\tts\n",
-                    "select * from x",
-                    "create table x ( a SYMBOL, s long256, ts TIMESTAMP NOT NULL ) timestamp(ts)",
-                    "ts",
-                    true
-            );
+            assertQuery("select * from x")
+                    .noLeakCheck()
+                    .ddl("create table x ( a SYMBOL, s long256, ts TIMESTAMP ) timestamp(ts)")
+                    .timestamp("ts")
+                    .returns("a\ts\tts\n");
 
             execute("insert into x values ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, 0, 5, 5), '2021-05-21'), ('a', to_long256(5, null, 5, 5), '2021-05-21'), ('a', to_long256(0, 5, 5, 5), '2021-05-21'), ('a', to_long256(null, 5, 5, 5), '2021-05-21')"
                     + ", ('a', to_long256(5, 5, 0, 5), '2021-05-21'), ('a', to_long256(5, 5, null, 5), '2021-05-21'), ('a', to_long256(5, 5, 5, 0), '2021-05-21'), ('a', to_long256(5, 5, 5, null), '2021-05-21')" +

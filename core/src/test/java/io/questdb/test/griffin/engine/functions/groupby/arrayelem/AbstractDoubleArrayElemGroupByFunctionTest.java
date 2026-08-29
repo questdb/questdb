@@ -91,29 +91,10 @@ public abstract class AbstractDoubleArrayElemGroupByFunctionTest extends Abstrac
                     execute("INSERT INTO tab VALUES (" + group[0] + ", " + group[i] + ")");
                 }
             }
-            assertQueryNoLeakCheck(
-                    expected,
-                    "SELECT grp, " + funcName() + "(arr) arr FROM tab ORDER BY grp",
-                    null, true, true
-            );
-        });
-    }
-
-    protected void assertSampleBy(String expected, String[][] timestampedRows) throws Exception {
-        assertSampleByTyped("DOUBLE[]", expected, timestampedRows);
-    }
-
-    protected void assertSampleByTyped(String columnType, String expected, String[][] timestampedRows) throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (ts TIMESTAMP NOT NULL, arr " + columnType + ") TIMESTAMP(ts) PARTITION BY DAY");
-            for (String[] row : timestampedRows) {
-                execute("INSERT INTO tab VALUES ('" + row[0] + "', " + row[1] + ")");
-            }
-            assertQueryNoLeakCheck(
-                    expected,
-                    "SELECT ts, " + funcName() + "(arr) arr FROM tab SAMPLE BY 1h",
-                    "ts", true, true
-            );
+            assertQuery("SELECT grp, " + funcName() + "(arr) arr FROM tab ORDER BY grp")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("grp\tarr\n1\t[2.0,4.0]\n2\t[null,4.0]\n");
         });
     }
 }

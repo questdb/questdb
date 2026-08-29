@@ -492,7 +492,7 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE weather ( \
-                    timestamp TIMESTAMP NOT NULL, windDir INT, windSpeed INT, windGust INT,\s
+                    timestamp TIMESTAMP, windDir INT, windSpeed INT, windGust INT,\s
                     cloudCeiling INT, skyCover SYMBOL, visMiles DOUBLE, tempF INT,\s
                     dewpF INT, rain1H DOUBLE, rain6H DOUBLE, rain24H DOUBLE, snowDepth INT) \
                     timestamp (timestamp)""");
@@ -1302,12 +1302,30 @@ public class GroupByTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByInvalidOrderByExpression() throws Exception {
-        assertException(
-                "SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;",
-                "CREATE TABLE x (ts TIMESTAMP NOT NULL, event SHORT, origin SHORT) TIMESTAMP(ts);",
-                69,
-                "Invalid date"
-        );
+        assertQuery("SELECT ts AS ref0 FROM x WHERE 1=1 GROUP BY ts ORDER BY (ts) NOT IN ('{}') LIMIT 1;")
+                .ddl("CREATE TABLE x (ts TIMESTAMP, event SHORT, origin SHORT) TIMESTAMP(ts);")
+                .fails(69, "Invalid date");
+    }
+
+    @Test
+    public void testGroupByMixedRealKeyAndConstantBind() throws Exception {
+        // Real column key plus constant bind projection: the bind goes to
+        // the outer virtual projection while the real column stays in the
+        // inner GROUP BY key set. Both keyed and non-empty input flow.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (c STRING)");
+            execute("INSERT INTO t VALUES ('A'), ('A'), ('B')");
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "X");
+            assertQuery("SELECT :b0 AS e0, c, count() AS a0 FROM t GROUP BY c ORDER BY c")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            e0\tc\ta0
+                            X\tA\t2
+                            X\tB\t1
+                            """);
+        });
     }
 
     @Test
@@ -1372,7 +1390,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table t (vch varchar, l long, ts timestamp NOT NULL) timestamp(ts) partition by day;");
+            execute("create table t (vch varchar, l long, ts timestamp) timestamp(ts) partition by day;");
             execute("""
                     insert into t values\s
                     ('USD', 1, '2021-11-17T17:00:00.000000Z'),
@@ -2031,7 +2049,7 @@ public class GroupByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE foo (
-                      timestamp TIMESTAMP NOT NULL,
+                      timestamp TIMESTAMP,
                       bar INT
                     ) TIMESTAMP (timestamp)
                     PARTITION BY DAY;""");
@@ -2058,7 +2076,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table t (s1 symbol, s2 symbol, l long, ts timestamp NOT NULL) timestamp(ts) partition by day;");
+            execute("create table t (s1 symbol, s2 symbol, l long, ts timestamp) timestamp(ts) partition by day;");
             execute(
                     "insert into t values " +
                             "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
@@ -2093,7 +2111,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp NOT NULL) timestamp(ts) partition by day;");
+            execute("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
             execute(
                     "insert into t values " +
                             "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
@@ -2131,7 +2149,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp NOT NULL) timestamp(ts) partition by day;");
+            execute("create table t (s1 symbol index, s2 symbol index, l long, ts timestamp) timestamp(ts) partition by day;");
             execute(
                     "insert into t values " +
                             "('a', 'c', 11, '2021-11-17T17:35:01.000000Z')," +
@@ -2166,7 +2184,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table x ( a int, b int, c symbol, ts timestamp NOT NULL ) timestamp(ts) partition by DAY WAL;");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
@@ -2201,7 +2219,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect10() throws Exception {
         // test that it properly handles max(ts) ts on lhs and data.ts ts on rhs
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
             execute("insert into tab " +
                     "select (100000+x)::timestamp, " +
                     "rnd_long(1,20,10), " +
@@ -2341,7 +2359,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect11() throws Exception {
         // test output naming
         assertMemoryLeak(() -> {
-            execute("create table x ( a int, b int, c symbol, ts timestamp NOT NULL ) timestamp(ts) partition by DAY WAL;");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
@@ -2376,7 +2394,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect12() throws Exception {
         // test output naming
         assertMemoryLeak(() -> {
-            execute("create table x ( a int, b int, c symbol, ts timestamp NOT NULL ) timestamp(ts) partition by DAY WAL;");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
@@ -2413,7 +2431,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table x ( a int, b int, c symbol, ts timestamp NOT NULL ) timestamp(ts) partition by DAY WAL;");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
@@ -2452,7 +2470,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table x ( a int, b int, c symbol, ts timestamp NOT NULL ) timestamp(ts) partition by DAY WAL;");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             drainWalQueue();
             String query =
@@ -2624,7 +2642,7 @@ public class GroupByTest extends AbstractCairoTest {
     public void testLiftAliasesFromInnerSelect5() throws Exception {
         // Test aliasing a function name
         assertMemoryLeak(() -> {
-            execute("create table x ( a int, b int, c symbol, ts timestamp NOT NULL ) timestamp(ts) partition by DAY WAL;");
+            execute("create table x ( a int, b int, c symbol, ts timestamp ) timestamp(ts) partition by DAY WAL;");
             execute("insert into x values (1,2,'3', now()), (2,3, '3', now()), (5,6,'4', now())");
             execute("insert into x values (1, 5, '4', now()), (1, 3, '1', now())");
             drainWalQueue();
@@ -2675,7 +2693,7 @@ public class GroupByTest extends AbstractCairoTest {
                         TraficSourceID int,
                         SearchEngineID short,
                         AdvEngineID short,
-                        EventTime timestamp NOT NULL,
+                        EventTime timestamp,
                         CounterID int,
                         IsRefresh short
                     ) TIMESTAMP(EventTime) PARTITION BY DAY;""");
@@ -2874,7 +2892,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table x (sym symbol, ts timestamp NOT NULL) timestamp(ts) partition by day;");
+            execute("create table x (sym symbol, ts timestamp) timestamp(ts) partition by day;");
             execute("insert into x values ('1','2023-01-01T00:00:00'),('1','2023-01-01T00:00:01'),('2','2023-01-01T00:00:03')");
             assertQuery("SELECT sym, first((0::timestamp)::long) latest " +
                     "FROM x " +
@@ -3163,7 +3181,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedVectorizedAllBatchEligible() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     """
                             INSERT INTO t VALUES
@@ -3200,7 +3218,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedVectorizedAllNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     """
                             INSERT INTO t(ts) VALUES
@@ -3222,7 +3240,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedVectorizedColumnTops() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     """
                             INSERT INTO t VALUES
@@ -3250,7 +3268,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedVectorizedEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
             assertQuery("SELECT sum(v), min(v), max(v), count(*), avg(v), first(v), last(v) FROM t")
                     .noRandomAccess()
@@ -3266,7 +3284,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedVectorizedFirstLastNotNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     """
                             INSERT INTO t VALUES
@@ -3304,7 +3322,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedVectorizedHybridPath() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     """
                             INSERT INTO t VALUES
@@ -3344,7 +3362,7 @@ public class GroupByTest extends AbstractCairoTest {
                     """
                             CREATE TABLE t (
                                 vi INT, vl LONG, vd DOUBLE, vf FLOAT, vs SHORT,
-                                ts TIMESTAMP NOT NULL
+                                ts TIMESTAMP
                             ) TIMESTAMP(ts) PARTITION BY DAY"""
             );
             execute(
@@ -3369,7 +3387,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedVectorizedNotEligible() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     """
                             INSERT INTO t VALUES
@@ -3404,7 +3422,7 @@ public class GroupByTest extends AbstractCairoTest {
     @Test
     public void testNonKeyedVectorizedWithFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (v INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute(
                     """
                             INSERT INTO t VALUES
@@ -3444,10 +3462,10 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table tst ( ts timestamp NOT NULL ) timestamp(ts);");
+            execute("create table tst ( ts timestamp ) timestamp(ts);");
             execute("insert into tst values ('2023-05-29T15:30:00.000000Z')");
 
-            execute("create table data ( dts timestamp NOT NULL, s symbol ) timestamp(dts);");
+            execute("create table data ( dts timestamp, s symbol ) timestamp(dts);");
             execute("insert into data values ('2023-05-29T15:29:59.000000Z', 'USD')");
 
             // single table
@@ -3518,7 +3536,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table tab (created timestamp NOT NULL, i int) timestamp(created)");
+            execute("create table tab (created timestamp, i int) timestamp(created)");
             execute("insert into tab select x::timestamp, x from long_sequence(3)");
             drainWalQueue();
 
@@ -3535,9 +3553,9 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [created]
-                                    Async Group By workers: 1
+                                    Async JIT Group By workers: 1
                                       keys: [created]
-                                      filter: null
+                                      filter: null!=created
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
@@ -3562,7 +3580,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table tab (created timestamp NOT NULL, i int) timestamp(created)");
+            execute("create table tab (created timestamp, i int) timestamp(created)");
             execute("insert into tab select x::timestamp, x from long_sequence(3)");
             drainWalQueue();
 
@@ -3580,9 +3598,9 @@ public class GroupByTest extends AbstractCairoTest {
                               keys: [ref0]
                                 VirtualRecord
                                   functions: [dateadd('h',1,created)]
-                                    Async Group By workers: 1
+                                    Async JIT Group By workers: 1
                                       keys: [created]
-                                      filter: null
+                                      filter: null!=created
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: tab
@@ -3607,7 +3625,7 @@ public class GroupByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table tab (created timestamp NOT NULL, i int) timestamp(created)");
+            execute("create table tab (created timestamp, i int) timestamp(created)");
             execute("insert into tab select x::timestamp, x from long_sequence(3)");
             drainWalQueue();
 
@@ -3622,9 +3640,9 @@ public class GroupByTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Encode sort light
                               keys: [created]
-                                Async Group By workers: 1
+                                Async JIT Group By workers: 1
                                   keys: [created]
-                                  filter: null
+                                  filter: null!=created
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: tab
@@ -3652,7 +3670,7 @@ public class GroupByTest extends AbstractCairoTest {
             execute("create table x (" +
                     "    sym symbol," +
                     "    bid double, " +
-                    "    ts timestamp NOT NULL " +
+                    "    ts timestamp " +
                     ") timestamp(ts) partition by DAY");
             execute("insert into x " +
                     " select rnd_symbol('A', 'B'), rnd_double(), dateadd('m', x::int, 0::timestamp) " +

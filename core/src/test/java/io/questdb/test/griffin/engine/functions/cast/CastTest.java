@@ -5600,15 +5600,13 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolColumnToSymbolInGroupBy1() throws Exception {
-        assertQuery(
-                "timestamp\tID\tEvt1\n",
-                "SELECT cast(timestamp as LONG) AS timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
-                        "FROM 'trades'" +
-                        "ORDER BY 1",
-                "create table trades (timestamp timestamp NOT NULL, symbol symbol, price double) timestamp(timestamp)",
-                null,
-                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
-                """
+        assertQuery("SELECT cast(timestamp as LONG) AS timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
+                "FROM 'trades'" +
+                "ORDER BY 1")
+                .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
+                .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
+                .expectSize()
+                .returns("timestamp\tID\tEvt1\n", """
                         timestamp\tID\tEvt1
                         1\t1\t1
                         2\t2\t2
@@ -5625,15 +5623,13 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolColumnToSymbolInGroupBy2() throws Exception {
-        assertQuery(
-                "cast\tavg\n",
-                "SELECT cast(symbol as SYMBOL), avg(price) " +
-                        "FROM 'trades' " +
-                        "ORDER BY avg(price)",
-                "create table trades (timestamp timestamp NOT NULL, symbol symbol, price double) timestamp(timestamp)",
-                null,
-                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
-                """
+        assertQuery("SELECT cast(symbol as SYMBOL), avg(price) " +
+                "FROM 'trades' " +
+                "ORDER BY avg(price)")
+                .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
+                .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
+                .expectSize()
+                .returns("cast\tavg\n", """
                         cast\tavg
                         1\t1.0
                         2\t2.0
@@ -5650,15 +5646,13 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolColumnToSymbolInGroupBy3() throws Exception {
-        assertQuery(
-                "coalesce\tavg\n",
-                "SELECT coalesce(cast(symbol as SYMBOL), 'foobar'), avg(price)" +
-                        "FROM 'trades' " +
-                        "ORDER BY coalesce(cast(symbol as SYMBOL), 'foobar')",
-                "create table trades (timestamp timestamp NOT NULL, symbol symbol, price double) timestamp(timestamp)",
-                null,
-                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
-                """
+        assertQuery("SELECT coalesce(cast(symbol as SYMBOL), 'foobar'), avg(price)" +
+                "FROM 'trades' " +
+                "ORDER BY coalesce(cast(symbol as SYMBOL), 'foobar')")
+                .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
+                .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
+                .expectSize()
+                .returns("coalesce\tavg\n", """
                         coalesce\tavg
                         1\t1.0
                         10\t10.0
@@ -5675,15 +5669,13 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolColumnToSymbolInGroupBy4() throws Exception {
-        assertQuery(
-                "i\ts\tmax\n",
-                "SELECT i::int i, symbol::symbol s, max(price)" +
-                        "FROM 'trades'" +
-                        "ORDER BY 1",
-                "create table trades (timestamp timestamp NOT NULL, i int, symbol symbol, price double) timestamp(timestamp)",
-                null,
-                "insert into trades select x::timestamp, x, x::string, x from long_sequence(10)",
-                """
+        assertQuery("SELECT i::int i, symbol::symbol s, max(price)" +
+                "FROM 'trades'" +
+                "ORDER BY 1")
+                .ddl("create table trades (timestamp timestamp, i int, symbol symbol, price double) timestamp(timestamp)")
+                .mutateWith("insert into trades select x::timestamp, x, x::string, x from long_sequence(10)")
+                .expectSize()
+                .returns("i\ts\tmax\n", """
                         i\ts\tmax
                         1\t1\t1.0
                         2\t2\t2.0
@@ -5700,15 +5692,14 @@ public class CastTest extends AbstractCairoTest {
 
     @Test
     public void testSymbolColumnToSymbolInSampleBy() throws Exception {
-        assertQuery(
-                "timestamp\tID\tEvt1\n",
-                "SELECT timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
-                        "FROM 'trades'" +
-                        "SAMPLE BY 1h",
-                "create table trades (timestamp timestamp NOT NULL, symbol symbol, price double) timestamp(timestamp)",
-                "timestamp",
-                "insert into trades select x::timestamp, x::string, x from long_sequence(10)",
-                """
+        assertQuery("SELECT timestamp, symbol::SYMBOL AS \"ID\", round(avg(price))::LONG AS \"Evt1\" " +
+                "FROM 'trades'" +
+                "SAMPLE BY 1h")
+                .ddl("create table trades (timestamp timestamp, symbol symbol, price double) timestamp(timestamp)")
+                .timestamp("timestamp")
+                .mutateWith("insert into trades select x::timestamp, x::string, x from long_sequence(10)")
+                .expectSize()
+                .returns("timestamp\tID\tEvt1\n", """
                         timestamp\tID\tEvt1
                         1970-01-01T00:00:00.000000Z\t1\t1
                         1970-01-01T00:00:00.000000Z\t2\t2

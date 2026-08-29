@@ -6019,7 +6019,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
                       symbol SYMBOL capacity 256 CACHE,
                       price DOUBLE,
                       amount DOUBLE,
-                      timestamp TIMESTAMP NOT NULL
+                      timestamp TIMESTAMP
                     ) timestamp (timestamp) PARTITION BY DAY;""");
 
             execute("""

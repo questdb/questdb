@@ -1031,7 +1031,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     engine.execute(
                             "create table trips (" +
                                     "Col1 STRING," +
-                                    "Pickup_DateTime TIMESTAMP NOT NULL," +
+                                    "Pickup_DateTime TIMESTAMP," +
                                     "DropOff_datetime VARCHAR" +
                                     ") timestamp(Pickup_DateTime) partition by DAY WAL",
                             sqlExecutionContext
@@ -1282,7 +1282,7 @@ public class ImportIODispatcherTest extends AbstractTest {
                     setupSql(engine);
                     engine.execute(
                             "create table trips(" +
-                                    "timestamp TIMESTAMP NOT NULL," +
+                                    "timestamp TIMESTAMP," +
                                     "str STRING," +
                                     "i STRING" +
                                     ") timestamp(timestamp)", this.sqlExecutionContext

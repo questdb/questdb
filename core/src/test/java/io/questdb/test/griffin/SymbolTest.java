@@ -60,7 +60,7 @@ public class SymbolTest extends AbstractCairoTest {
     @Test
     public void testNullIsReturnedAfterReaderReload() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (sym SYMBOL INDEX, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             final String query = "select * from x where sym not in ('foo', 'bar')";
             // Load table reader on empty table.
             assertQuery(query)
@@ -89,7 +89,7 @@ public class SymbolTest extends AbstractCairoTest {
     @Test
     public void testNullIsReturnedAfterReaderReload2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (sym SYMBOL INDEX, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (sym SYMBOL INDEX, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             final String query = "select * from x where sym not in ('foo', 'bar')";
             // Load table reader on empty table.
             assertQuery(query)
@@ -121,7 +121,7 @@ public class SymbolTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (" +
                     " sym SYMBOL capacity 256 CACHE index capacity 256," +
-                    " timestamp TIMESTAMP NOT NULL" +
+                    " timestamp TIMESTAMP" +
                     ") timestamp (timestamp)");
             execute("insert into x select" +
                     " rnd_symbol(100, 2, 4, 2) sym," +

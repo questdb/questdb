@@ -363,7 +363,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE trades (
-                                                ts TIMESTAMP NOT NULL,
+                                                ts TIMESTAMP,
                                                 sym SYMBOL
                                         ) TIMESTAMP(ts) PARTITION BY HOUR;
                                         """,
@@ -381,7 +381,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE prices0 (
-                                            ts TIMESTAMP NOT NULL,
+                                            ts TIMESTAMP,
                                             sym SYMBOL CAPACITY 128,
                                             bid DOUBLE
                                         ) TIMESTAMP(ts) PARTITION BY HOUR;
@@ -401,7 +401,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE prices1 (
-                                            ts TIMESTAMP NOT NULL,
+                                            ts TIMESTAMP,
                                             ask DOUBLE
                                         ) TIMESTAMP(ts) PARTITION BY HOUR;
                                         """,
@@ -526,7 +526,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE IF NOT EXISTS trades (
-                                                ts TIMESTAMP NOT NULL,
+                                                ts TIMESTAMP,
                                                 sym SYMBOL,
                                                 side SYMBOL,
                                                 price DOUBLE,
@@ -552,7 +552,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE prices (
-                                            ts TIMESTAMP NOT NULL,
+                                            ts TIMESTAMP,
                                             sym SYMBOL CAPACITY 1024,
                                             bid DOUBLE,
                                             ask DOUBLE
@@ -639,7 +639,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE prices (
-                                            ts TIMESTAMP NOT NULL,
+                                            ts TIMESTAMP,
                                             sym SYMBOL,
                                             bid DOUBLE,
                                             ask DOUBLE
@@ -664,7 +664,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE trades (
-                                            ts TIMESTAMP NOT NULL,
+                                            ts TIMESTAMP,
                                             sym SYMBOL
                                         ) TIMESTAMP(ts) PARTITION BY HOUR;
                                         """,
@@ -813,7 +813,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE IF NOT EXISTS trades (
-                                                ts TIMESTAMP NOT NULL,
+                                                ts TIMESTAMP,
                                                 sym SYMBOL,
                                                 side SYMBOL,
                                                 price DOUBLE,
@@ -837,7 +837,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                         for (int s = 0; s < slaveCount; s++) {
                             engine.execute(
                                     "CREATE TABLE prices" + s + " ("
-                                            + "    ts TIMESTAMP NOT NULL,"
+                                            + "    ts TIMESTAMP,"
                                             + "    sym SYMBOL CAPACITY 1024,"
                                             + "    bid DOUBLE,"
                                             + "    ask DOUBLE"

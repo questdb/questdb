@@ -117,7 +117,7 @@ public class ViewQueryTest extends AbstractViewTest {
         // Test: DECLARE + ASOF JOIN between two VIEWs with different parameters
         assertMemoryLeak(() -> {
             // Quotes table - bid/ask prices
-            execute("CREATE TABLE quotes (ts TIMESTAMP NOT NULL, symbol SYMBOL, bid DOUBLE, ask DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, symbol SYMBOL, bid DOUBLE, ask DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO quotes VALUES " +
                     "('2024-01-01T00:00:00.000000Z', 'AAPL', 149.0, 150.0), " +
                     "('2024-01-01T00:00:05.000000Z', 'AAPL', 149.5, 150.5), " +
@@ -126,7 +126,7 @@ public class ViewQueryTest extends AbstractViewTest {
             drainWalQueue();
 
             // Trades table
-            execute("CREATE TABLE trade_log (ts TIMESTAMP NOT NULL, symbol SYMBOL, price DOUBLE, side SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trade_log (ts TIMESTAMP, symbol SYMBOL, price DOUBLE, side SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO trade_log VALUES " +
                     "('2024-01-01T00:00:02.000000Z', 'AAPL', 149.8, 'BUY'), " +
                     "('2024-01-01T00:00:08.000000Z', 'AAPL', 150.2, 'SELL'), " +
@@ -441,7 +441,7 @@ public class ViewQueryTest extends AbstractViewTest {
     public void testDeclareLatestByInView() throws Exception {
         // Test: DECLARE + LATEST BY - parameterized latest record per symbol
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, symbol SYMBOL, price DOUBLE, qty INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE trades (ts TIMESTAMP, symbol SYMBOL, price DOUBLE, qty INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO trades VALUES " +
                     "('2024-01-01T00:00:00.000000Z', 'AAPL', 150.0, 100), " +
                     "('2024-01-01T00:01:00.000000Z', 'GOOG', 140.0, 50), " +
@@ -641,7 +641,7 @@ public class ViewQueryTest extends AbstractViewTest {
         // Test: DECLARE + SAMPLE BY - parameterized time-series sampling
         assertMemoryLeak(() -> {
             // Create table with more granular timestamps for SAMPLE BY testing
-            execute("CREATE TABLE samples (ts TIMESTAMP NOT NULL, sensor SYMBOL, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE samples (ts TIMESTAMP, sensor SYMBOL, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO samples VALUES " +
                     "('2024-01-01T00:00:00.000000Z', 'A', 10.0), " +
                     "('2024-01-01T00:00:30.000000Z', 'A', 20.0), " +
@@ -1049,7 +1049,7 @@ public class ViewQueryTest extends AbstractViewTest {
     public void testDeclareWithNullValues() throws Exception {
         // Test: DECLARE with NULL values and NULL comparisons
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE nullable_data (ts TIMESTAMP NOT NULL, category SYMBOL, value INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE nullable_data (ts TIMESTAMP, category SYMBOL, value INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO nullable_data VALUES " +
                     "('2024-01-01T00:00:00.000000Z', 'A', 10), " +
                     "('2024-01-01T00:01:00.000000Z', 'B', NULL), " +
@@ -1098,7 +1098,7 @@ public class ViewQueryTest extends AbstractViewTest {
     public void testJoinWithViewAlias() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (" +
-                    "ts TIMESTAMP NOT NULL, " +
+                    "ts TIMESTAMP, " +
                     "ticker SYMBOL, " +
                     "price DOUBLE" +
                     ") TIMESTAMP(ts) PARTITION BY DAY");
@@ -1213,7 +1213,7 @@ public class ViewQueryTest extends AbstractViewTest {
     @Test
     public void testQueryViewInQuotesJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE " + TABLE1 + " (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE " + TABLE1 + " (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("INSERT INTO " + TABLE1 + " VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
             drainWalQueue();
             createView(VIEW1, "SELECT * FROM " + TABLE1);
@@ -1244,7 +1244,7 @@ public class ViewQueryTest extends AbstractViewTest {
     public void testSampleByOrdeByForceDesignatedTimestampMix() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE eq_equities_market_data (" +
-                    "timestamp TIMESTAMP NOT NULL, " +
+                    "timestamp TIMESTAMP, " +
                     "symbol SYMBOL, " +
                     "venue SYMBOL, " +
                     "asks DOUBLE[][], bids DOUBLE[][]" +

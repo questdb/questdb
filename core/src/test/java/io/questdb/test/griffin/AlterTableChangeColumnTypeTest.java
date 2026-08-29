@@ -383,37 +383,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testChangeDecimalToString() throws Exception {
-        // DECIMAL64 -> STRING
-        assertChangeDecimalToVar("123456789012345678m", "123456789012345678", "decimal(18, 0)", "STRING");
-        assertChangeDecimalToVar("12345678901234.5678m", "12345678901234.5678", "decimal(18, 4)", "STRING");
-    }
-
-    @Test
-    public void testChangeDecimalToStringWithNull() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP NOT NULL, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345.6789m)", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', -99.9999m)", sqlExecutionContext);
-            drainWalQueue();
-
-            execute("ALTER TABLE x ALTER COLUMN col TYPE STRING", sqlExecutionContext);
-            drainWalQueue();
-
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t12345.6789\n" +
-                    "2024-05-14T16:00:01.000000Z\t\n" +
-                    "2024-05-14T16:00:02.000000Z\t-99.9999\n", "x");
-
-            execute("DROP TABLE x");
-        });
-    }
-
-    @Test
     public void testChangeDecimalToVarcharWithNull() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP NOT NULL, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("CREATE TABLE x (ts TIMESTAMP, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
             execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345.6789m)", sqlExecutionContext);
             execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
             execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', -99.9999m)", sqlExecutionContext);
@@ -467,12 +439,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeDoubleToDecimalMatchesCast() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP NOT NULL, col STRING) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', 'abc')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:03.000000Z', '12.34.56')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:04.000000Z', NULL)", sqlExecutionContext);
+            execute("CREATE TABLE x (ts TIMESTAMP, col DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 0.0),
+                    ('2024-05-14T16:00:01.000000Z', 1.5),
+                    ('2024-05-14T16:00:02.000000Z', -1.5),
+                    ('2024-05-14T16:00:03.000000Z', 3.14159265358979),
+                    ('2024-05-14T16:00:04.000000Z', -0.000123456),
+                    ('2024-05-14T16:00:05.000000Z', 1234567.891),
+                    ('2024-05-14T16:00:06.000000Z', NULL)""", sqlExecutionContext);
             drainWalQueue();
 
             execute("CREATE TABLE expected AS (SELECT ts, col::DECIMAL(18,4) col FROM x)", sqlExecutionContext);
@@ -521,13 +497,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeVarcharToIntRejectsMalformedUtf8() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP NOT NULL, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', 'abc')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:03.000000Z', '12.34.56')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:04.000000Z', NULL)", sqlExecutionContext);
-            drainWalQueue();
+            execute("CREATE TABLE x (ts TIMESTAMP, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
 
             try (TableWriter writer = getWriter("x")) {
                 TableWriter.Row row = writer.newRow(0);
@@ -589,10 +559,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeDoubleToDecimalRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP NOT NULL, col VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', '12345.6789')", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', '-99.9999')", sqlExecutionContext);
+            execute("CREATE TABLE x (ts TIMESTAMP, col DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 0.0),
+                    ('2024-05-14T16:00:01.000000Z', 1.5),
+                    ('2024-05-14T16:00:02.000000Z', -1234.5678),
+                    ('2024-05-14T16:00:03.000000Z', NULL)""", sqlExecutionContext);
             drainWalQueue();
 
             execute("ALTER TABLE x ALTER COLUMN col TYPE DECIMAL(38,4)", sqlExecutionContext);
@@ -645,10 +618,16 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeFloatToDecimalMatchesCast() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP NOT NULL, col DECIMAL(18, 4)) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', 12345.6789m)", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:01.000000Z', NULL)", sqlExecutionContext);
-            execute("INSERT INTO x VALUES('2024-05-14T16:00:02.000000Z', -99.9999m)", sqlExecutionContext);
+            execute("CREATE TABLE x (ts TIMESTAMP, col FLOAT) TIMESTAMP(ts) PARTITION BY DAY WAL", sqlExecutionContext);
+            execute("""
+                    INSERT INTO x VALUES
+                    ('2024-05-14T16:00:00.000000Z', 0.0),
+                    ('2024-05-14T16:00:01.000000Z', 1.5),
+                    ('2024-05-14T16:00:02.000000Z', -1.5),
+                    ('2024-05-14T16:00:03.000000Z', 0.1),
+                    ('2024-05-14T16:00:04.000000Z', 3.14159),
+                    ('2024-05-14T16:00:05.000000Z', -0.000123456),
+                    ('2024-05-14T16:00:06.000000Z', NULL)""", sqlExecutionContext);
             drainWalQueue();
 
             execute("CREATE TABLE expected AS (SELECT ts, col::DECIMAL(18,4) col FROM x)", sqlExecutionContext);
@@ -775,7 +754,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeDoubleToFloat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp NOT NULL, col double) timestamp(ts) partition by day wal", sqlExecutionContext);
+            execute("create table x (ts timestamp, col double) timestamp(ts) partition by day wal", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:02.000000Z', 3.1)", sqlExecutionContext);
@@ -829,7 +808,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testChangeFloatToDouble() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (ts timestamp NOT NULL, col float) timestamp(ts) partition by day wal", sqlExecutionContext);
+            execute("create table x (ts timestamp, col float) timestamp(ts) partition by day wal", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:00.000000Z', 0.0)", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:01.000000Z', 0.1)", sqlExecutionContext);
             execute("insert into x values('2024-05-14T16:00:02.000000Z', 3.1)", sqlExecutionContext);
@@ -1130,13 +1109,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            assertSql(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\tfalse
-                            """,
-                    "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
-            );
+            assertQuery("(SHOW COLUMNS FROM x) WHERE column = 'ik'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\tBITMAP\t
+                            """);
 
             execute("alter table x alter column ik symbol capacity 1000", sqlExecutionContext);
 
@@ -1147,13 +1126,13 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     "select ik from x"
             );
 
-            assertSql(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\tfalse
-                            """,
-                    "(SHOW COLUMNS FROM x) WHERE column = 'ik'"
-            );
+            assertQuery("(SHOW COLUMNS FROM x) WHERE column = 'ik'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\tBITMAP\t
+                            """);
         });
     }
 
@@ -2046,8 +2025,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testIntOverflowConversions() throws SqlException {
-        execute("create table x (a long, timestamp timestamp NOT NULL) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
+    public void testIntOverflowConversions() throws Exception {
+        execute("create table x (a long, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR" + (walEnabled ? " WAL" : " BYPASS WAL"));
         execute("insert into x(a, timestamp) values(-7178801693176412875L, '2024-02-04T00:00:00.000Z')", sqlExecutionContext);
         drainWalQueue();
 
@@ -2306,7 +2285,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
     @Test
     public void testWalConversionFromVarToFixedDoesNotLeaveAuxFiles() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (s string, timestamp timestamp NOT NULL) timestamp (timestamp) PARTITION BY HOUR WAL;");
+            execute("create table x (s string, timestamp timestamp) timestamp (timestamp) PARTITION BY HOUR WAL;");
             execute("alter table x alter column s type int;");
 
             TableToken xTbl = engine.verifyTableName("x");
@@ -2658,7 +2637,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     private void assertChangeDecimal(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
         assertMemoryLeak(() -> {
-            execute(String.format("create table x (ts timestamp NOT NULL, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
+            execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
             execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
             drainWalQueue();
 
@@ -2676,29 +2655,9 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
         });
     }
 
-    private void assertChangeDecimalFails(CharSequence initial, CharSequence expected, CharSequence fromType, int toType) throws Exception {
+    private void assertChangeDecimalToNull(CharSequence initial, CharSequence fromType, CharSequence toType) throws Exception {
         assertMemoryLeak(() -> {
-            execute(String.format("create table x (ts timestamp NOT NULL, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
-            execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
-            drainWalQueue();
-
-            try (TableWriter writer = getWriter("x")) {
-                writer.changeColumnType("col", toType, 0, false, false, 0, false, null);
-                Assert.fail();
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "column conversion failed, see logs for details");
-            }
-
-            assertSql("ts\tcol\n" +
-                    "2024-05-14T16:00:00.000000Z\t" + expected + "\n", "x");
-
-            execute("drop table x");
-        });
-    }
-
-    private void assertChangeIntToDecimal(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
-        assertMemoryLeak(() -> {
-            execute(String.format("create table x (ts timestamp NOT NULL, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
+            execute(String.format("create table x (ts timestamp, col %s) timestamp(ts) partition by day wal", fromType), sqlExecutionContext);
             execute(String.format("insert into x values('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
             drainWalQueue();
 
@@ -2722,7 +2681,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     private void assertChangeDecimalToVar(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
         assertMemoryLeak(() -> {
-            execute(String.format("CREATE TABLE x (ts TIMESTAMP NOT NULL, col %s) TIMESTAMP(ts) PARTITION BY DAY WAL", fromType), sqlExecutionContext);
+            execute(String.format("CREATE TABLE x (ts TIMESTAMP, col %s) TIMESTAMP(ts) PARTITION BY DAY WAL", fromType), sqlExecutionContext);
             execute(String.format("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
             drainWalQueue();
 
@@ -2762,7 +2721,7 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
 
     private void assertChangeVarToDecimal(CharSequence initial, CharSequence expected, CharSequence fromType, CharSequence toType) throws Exception {
         assertMemoryLeak(() -> {
-            execute(String.format("CREATE TABLE x (ts TIMESTAMP NOT NULL, col %s) TIMESTAMP(ts) PARTITION BY DAY WAL", fromType), sqlExecutionContext);
+            execute(String.format("CREATE TABLE x (ts TIMESTAMP, col %s) TIMESTAMP(ts) PARTITION BY DAY WAL", fromType), sqlExecutionContext);
             execute(String.format("INSERT INTO x VALUES('2024-05-14T16:00:00.000000Z', %s)", initial), sqlExecutionContext);
             drainWalQueue();
 

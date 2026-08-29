@@ -95,7 +95,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "create table " + tableName + " (" +
                             "x long," +
                             "sym symbol," +
-                            "ts timestamp NOT NULL," +
+                            "ts timestamp," +
                             "sym2 symbol" +
                             ") timestamp(ts) partition by DAY WAL"
             );
@@ -145,7 +145,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                             "x long," +
                             "sym symbol," +
                             "str string," +
-                            "ts timestamp NOT NULL," +
+                            "ts timestamp," +
                             "sym2 symbol" +
                             ") timestamp(ts) partition by DAY WAL"
             );
@@ -191,7 +191,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
-                    "ts timestamp NOT NULL," +
+                    "ts timestamp," +
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
@@ -231,7 +231,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
-                    "ts timestamp NOT NULL," +
+                    "ts timestamp," +
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
@@ -273,7 +273,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
-                    "ts timestamp NOT NULL," +
+                    "ts timestamp," +
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
@@ -339,7 +339,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             Rnd rnd = TestUtils.generateRandom(LOG);
             execute("create table " + tableName + " (" +
                     "x long," +
-                    "ts timestamp NOT NULL" +
+                    "ts timestamp" +
                     ") timestamp(ts) partition by HOUR WAL WITH maxUncommittedRows=" + rnd.nextInt(20));
 
             int count = rnd.nextInt(22);
@@ -386,7 +386,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "create table " + tableName + " (" +
                             "x long," +
                             "sym symbol," +
-                            "ts timestamp NOT NULL," +
+                            "ts timestamp," +
                             "sym2 symbol" +
                             ") timestamp(ts) partition by DAY WAL"
             );
@@ -1073,7 +1073,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                               city SYMBOL capacity 256,
                               temperature DOUBLE,
                               humidity DOUBLE,
-                              timestamp TIMESTAMP NOT NULL,
+                              timestamp TIMESTAMP,
                               country SYMBOL capacity 256 CACHE
                             ) timestamp (timestamp) PARTITION BY DAY WAL"""
             );
@@ -1359,7 +1359,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             String tableName = testName.getMethodName();
             execute("create table " + tableName + " (" +
                     "A INT," +
-                    "ts TIMESTAMP NOT NULL)" +
+                    "ts TIMESTAMP)" +
                     " timestamp(ts) partition by DAY WAL");
 
             execute("truncate table " + tableName);
@@ -1420,7 +1420,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "x long," +
                     "sym symbol," +
                     "str string," +
-                    "ts timestamp NOT NULL," +
+                    "ts timestamp," +
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
@@ -1540,7 +1540,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "x long," +
                     "sym symbol," +
                     "str string," +
-                    "ts timestamp NOT NULL," +
+                    "ts timestamp," +
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
@@ -1881,7 +1881,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "x long," +
                     "sym symbol," +
                     "str string," +
-                    "ts timestamp NOT NULL," +
+                    "ts timestamp," +
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
@@ -1993,7 +1993,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
             execute("create table " + tableName + " (" +
                     "x long," +
                     "sym symbol," +
-                    "ts timestamp NOT NULL," +
+                    "ts timestamp," +
                     "sym2 symbol" +
                     ") timestamp(ts) partition by DAY WAL");
 
@@ -2254,7 +2254,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                     "  nrb DOUBLE,\n" +
                     "  ntb DOUBLE,\n" +
                     "  dup DOUBLE,\n" +
-                    "  timestamp TIMESTAMP NOT NULL\n" +
+                    "  timestamp TIMESTAMP\n" +
                     ") " + destTableCreateAttr + ";");
 
             execute("""
@@ -2264,7 +2264,7 @@ public class WalTableSqlTest extends AbstractCairoTest {
                       hst STRING,
                       slt LONG,
                       vvv STRING,
-                      timestamp TIMESTAMP NOT NULL,
+                      timestamp TIMESTAMP,
                       ise BOOLEAN
                     ) timestamp (timestamp) PARTITION BY DAY BYPASS WAL;""");
 

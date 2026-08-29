@@ -446,8 +446,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a asof join b on ts where a.i = b.ts::int")
                     .noLeakCheck()
@@ -468,8 +468,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin0a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select ts, ts1, i, i1 from (select * from a asof join b on ts ) where i/10 = i1")
                     .noLeakCheck()
@@ -490,8 +490,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a asof join b on ts")
                     .noLeakCheck()
@@ -511,8 +511,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a asof join (select * from b limit 10) on ts")
                     .noLeakCheck()
@@ -533,8 +533,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a asof join ((select * from b order by ts, i ) timestamp(ts))  on ts")
                     .noLeakCheck()
@@ -556,8 +556,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * " + "from a " + "asof join b on ts " + "asof join a c on ts")
                     .noLeakCheck()
@@ -581,8 +581,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // where clause predicate can't be pushed to join clause because asof is and outer join
     public void testAsOfJoin5() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * " + "from a " + "asof join b " + "where a.i = b.i")
                     .noLeakCheck()
@@ -643,8 +643,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
                 assertQuery("select * " + "from a " + "asof join b on a.i = b.i")
@@ -668,8 +668,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a asof join b where a.i > 0")
                     .noLeakCheck()
@@ -705,8 +705,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a asof join b")
                     .noLeakCheck()
@@ -726,8 +726,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a asof join b on(ts)")
                     .noLeakCheck()
@@ -747,8 +747,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testAsOfJoinNoKeyFast3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (ts timestamp NOT NULL, i int) timestamp(ts)");
-            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a (ts timestamp, i int) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a asof join b on(ts)")
                     .noLeakCheck()
@@ -851,10 +851,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testConstantReassociationBindVariable() throws Exception {
-        assertPlan(
-                "create table tab (d double, ts timestamp NOT NULL);",
-                "select * from tab where d + $1 + 4 > 10",
-                """
+        assertQuery("select * from tab where d + $1 + 4 > 10")
+                .ddl("create table tab (d double, ts timestamp);")
+                .assertsPlan("""
                         Async JIT Filter workers: 1
                           filter: 10<d+$0::double+4
                             PageFrame
@@ -864,11 +863,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantReassociationFoldsAddition() throws Exception {
-        assertPlan(
-                "create table tab (d double, ts timestamp NOT NULL);",
-                "select * from tab where d + 1 + 4 > 10",
-                """
+    public void testConstantReassociationDoesNotFoldAddition() throws Exception {
+        assertQuery("select * from tab where d + 1 + 4 > 10")
+                .ddl("create table tab (d double, ts timestamp);")
+                .assertsPlan("""
                         Async JIT Filter workers: 1
                           filter: 10<d+1+4
                             PageFrame
@@ -878,11 +876,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantReassociationFoldsBitwiseAnd() throws Exception {
-        assertPlan(
-                "create table tab (l long, ts timestamp NOT NULL);",
-                "select * from tab where l & 3 & 5 > 0",
-                """
+    public void testConstantReassociationDoesNotFoldBitwiseAnd() throws Exception {
+        assertQuery("select * from tab where l & 3 & 5 > 0")
+                .ddl("create table tab (l long, ts timestamp);")
+                .assertsPlan("""
                         Async Filter workers: 1
                           filter: 0<l&3&5
                             PageFrame
@@ -892,11 +889,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testConstantReassociationFoldsCommutativePattern() throws Exception {
-        assertPlan(
-                "create table tab (d double, ts timestamp NOT NULL);",
-                "select * from tab where 4 + (d + 1) > 10",
-                """
+    public void testConstantReassociationDoesNotFoldCommutativePattern() throws Exception {
+        assertQuery("select * from tab where 4 + (d + 1) > 10")
+                .ddl("create table tab (d double, ts timestamp);")
+                .assertsPlan("""
                         Async JIT Filter workers: 1
                           filter: 10<4+d+1
                             PageFrame
@@ -907,17 +903,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testCountOfColumnsVectorized() throws Exception {
-        assertPlan("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp NOT NULL " + ")", "select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x", """
-                VirtualRecord
-                  functions: [k,c1,c1,ci,cl,cd,cdat,cts]
-                    Async Group By workers: 1
-                      keys: [k]
-                      values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]
-                      filter: null
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
-                """);
+        assertQuery("select k, count(1) c1, " + "count(*) cstar, " + "count(i) ci, " + "count(l) cl, " + "count(d) cd, " + "count(dat) cdat, " + "count(ts) cts " + "from x")
+                .ddl("create table x " + "(" + " k int, " + " i int, " + " l long, " + " f float, " + " d double, " + " dat date, " + " ts timestamp " + ")")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [k,c1,c1,ci,cl,cd,cdat,cts]
+                            GroupBy vectorized: true workers: 1
+                              keys: [k]
+                              values: [count(*),count(i),count(l),count(d),count(dat),count(ts)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                        """);
     }
 
     @Test
@@ -985,7 +982,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 cross join t t2 order by t1.ts", "select * from (select * from t order by ts desc) t1 cross join t t2 order by t1.ts"};
             for (String query : queries) {
@@ -1021,7 +1018,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
 
             String query = "select * from " + "((select * from t order by ts desc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc";
@@ -1045,7 +1042,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc")
                     .noLeakCheck()
@@ -1066,7 +1063,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts desc")
                     .noLeakCheck()
@@ -1089,7 +1086,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testCrossJoinWithSort5() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from " + "((select * from t order by ts asc) limit 10) t1 " + "cross join t t2 " + "order by t1.ts asc")
                     .noLeakCheck()
@@ -1110,7 +1107,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testDateaddIntrinsic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (id long, ts timestamp NOT NULL, ts2 timestamp NOT NULL) timestamp(ts) partition by hour;");
+            execute("create table x (id long, ts timestamp, ts2 timestamp) timestamp(ts) partition by hour;");
 
             assertQuery("select * from x where id = 42 and dateadd('h', -1, ts) = '2020-01-01T00:01'")
                     .noLeakCheck()
@@ -1208,121 +1205,139 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testDistinctTsWithLimit1() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di order by 1 limit 10", """
-                Long Top K lo: 10
-                  keys: [ts asc]
-                    Async Group By workers: 1
-                      keys: [ts]
-                      filter: null
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select distinct ts from di order by 1 limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Long Top K lo: 10
+                          keys: [ts asc]
+                            Async Group By workers: 1
+                              keys: [ts]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
     public void testDistinctTsWithLimit2() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di order by 1 desc limit 10", """
-                Long Top K lo: 10
-                  keys: [ts desc]
-                    Async Group By workers: 1
-                      keys: [ts]
-                      filter: null
-                        PageFrame
-                            Row backward scan
-                            Frame backward scan on: di
-                """);
+        assertQuery("select distinct ts from di order by 1 desc limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Long Top K lo: 10
+                          keys: [ts desc]
+                            Async Group By workers: 1
+                              keys: [ts]
+                              filter: null
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: di
+                        """);
     }
 
     @Test
     public void testDistinctTsWithLimit3() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di limit 10", """
-                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                    Async Group By workers: 1
-                      keys: [ts]
-                      filter: null
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select distinct ts from di limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            Async Group By workers: 1
+                              keys: [ts]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
     public void testDistinctTsWithLimit4() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di limit -10", """
-                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                    Async Group By workers: 1
-                      keys: [ts]
-                      filter: null
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select distinct ts from di limit -10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                            Async Group By workers: 1
+                              keys: [ts]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
     public void testDistinctTsWithLimit5a() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where y = 5 limit 10", """
-                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                    Async JIT Group By workers: 1
-                      keys: [ts]
-                      filter: y=5
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select distinct ts from di where y = 5 limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            Async JIT Group By workers: 1
+                              keys: [ts]
+                              filter: y=5
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
     public void testDistinctTsWithLimit5b() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where y = 5 limit -10", """
-                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                    Async JIT Group By workers: 1
-                      keys: [ts]
-                      filter: y=5
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select distinct ts from di where y = 5 limit -10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                            Async JIT Group By workers: 1
+                              keys: [ts]
+                              filter: y=5
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
     public void testDistinctTsWithLimit6a() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10", """
-                Limit value: 10 skip-rows-max: 0 take-rows-max: 10
-                    Async Group By workers: 1
-                      keys: [ts]
-                      filter: abs(y)=5
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select distinct ts from di where abs(y) = 5 limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Limit value: 10 skip-rows-max: 0 take-rows-max: 10
+                            Async Group By workers: 1
+                              keys: [ts]
+                              filter: abs(y)=5
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
     public void testDistinctTsWithLimit6b() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit -10", """
-                Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
-                    Async Group By workers: 1
-                      keys: [ts]
-                      filter: abs(y)=5
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select distinct ts from di where abs(y) = 5 limit -10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Limit value: -10 skip-rows: baseRows-10 take-rows-max: 10
+                            Async Group By workers: 1
+                              keys: [ts]
+                              filter: abs(y)=5
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
     public void testDistinctTsWithLimit7() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select distinct ts from di where abs(y) = 5 limit 10, 20", """
-                Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
-                    Async Group By workers: 1
-                      keys: [ts]
-                      filter: abs(y)=5
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select distinct ts from di where abs(y) = 5 limit 10, 20")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Limit left: 10 right: 20 skip-rows-max: 10 take-rows-max: 10
+                            Async Group By workers: 1
+                              keys: [ts]
+                              filter: abs(y)=5
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
@@ -1497,7 +1512,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts desc")
                     .noLeakCheck()
@@ -1518,7 +1533,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts asc")
                     .noLeakCheck()
@@ -1539,7 +1554,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts desc limit 10) except (select * from a) order by ts asc")
                     .noLeakCheck()
@@ -1562,7 +1577,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExceptAndSort4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts asc limit 10) except (select * from a) order by ts desc")
                     .noLeakCheck()
@@ -1584,19 +1599,21 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainCreateMatView() throws Exception {
-        assertPlan("create table tab (ts timestamp NOT NULL, k symbol, v long) timestamp(ts) partition by day wal", "create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day", """
-                Create materialized view: test
-                    Encode sort light
-                      keys: [ts]
-                        Async Group By workers: 1
-                          keys: [ts,k]
-                          keyFunctions: [timestamp_floor_utc('30s',ts)]
-                          values: [avg(v)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: tab
-                """);
+        assertQuery("create materialized view test as (select ts, k, avg(v) from tab sample by 30s) partition by day")
+                .ddl("create table tab (ts timestamp, k symbol, v long) timestamp(ts) partition by day wal")
+                .assertsPlan("""
+                        Create materialized view: test
+                            Encode sort light
+                              keys: [ts]
+                                Async Group By workers: 1
+                                  keys: [ts,k]
+                                  keyFunctions: [timestamp_floor_utc('30s',ts)]
+                                  values: [avg(v)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tab
+                        """);
     }
 
     @Test
@@ -1627,7 +1644,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     create table tab\s
                     (
                        id symbol index,
-                       ts timestamp NOT NULL,
+                       ts timestamp,
                        val double \s
                     ) timestamp(ts);""");
             execute("insert into tab values ( 'XXX', 0::timestamp, 1 );");
@@ -1667,7 +1684,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       symbol SYMBOL index,
                       instrumentType SYMBOL index,
                       referencePriceType SYMBOL index,
-                      ts TIMESTAMP NOT NULL,
+                      ts TIMESTAMP,
                       referencePrice DOUBLE
                     ) timestamp (ts)""");
 
@@ -1681,7 +1698,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                           symbol SYMBOL index,
                           instrumentType SYMBOL index,
                           referencePriceType SYMBOL index,
-                          ts TIMESTAMP NOT NULL,
+                          ts TIMESTAMP,
                           referencePrice DOUBLE
                         ) timestamp (ts)""", executionContext);
 
@@ -1891,10 +1908,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         "symbol symbol, " +
                         "price double, " +
                         "amount int, " +
-                        "ts timestamp NOT NULL" +
-                        ") timestamp(ts) partition by day WAL",
-                "update trades set amount = 0 where ts in '2022-11-11'",
-                """
+                        "ts timestamp" +
+                        ") timestamp(ts) partition by day WAL")
+                .assertsPlan("""
                         Update table: trades
                             VirtualRecord
                               functions: [0]
@@ -1906,23 +1922,25 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testExplainUpdateWithFilter() throws Exception {
         allowFunctionMemoization();
-        assertPlan("create table a ( l long, d double, ts timestamp NOT NULL) timestamp(ts)", "update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );", """
-                Update table: a
-                    VirtualRecord
-                      functions: [20,memoize(d+rnd_double())]
-                        Async Filter workers: 1
-                          filter: d<100.0
-                            PageFrame
-                                Row forward scan
-                                Interval forward scan on: a
-                                  intervals: [("1970-01-02T00:00:00.000001Z","MAX")]
-                """);
+        assertQuery("update a set l = 20, d = d+rnd_double() " + "where d < 100.0d and ts > dateadd('d', 1, now()  );")
+                .ddl("create table a ( l long, d double, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Update table: a
+                            VirtualRecord
+                              functions: [20,memoize(d+rnd_double())]
+                                Async Filter workers: 1
+                                  filter: d<100.0
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: a
+                                          intervals: [("1970-01-02T00:00:00.000001Z","MAX")]
+                        """);
     }
 
     @Test
     public void testExplainWindowFunctionWithCharConstantFrameBounds() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab ( key int, value double, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table tab ( key int, value double, ts timestamp) timestamp(ts)");
 
             assertQuery("select avg(value) over (PARTITION BY key ORDER BY ts RANGE BETWEEN '1' MINUTES PRECEDING AND CURRENT ROW) from tab")
                     .noLeakCheck()
@@ -2200,31 +2218,33 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testExplainWithQueryInParentheses5() throws Exception {
-        assertPlan("""
-                CREATE TABLE trades (
-                  symbol SYMBOL,
-                  side SYMBOL,
-                  price DOUBLE,
-                  amount DOUBLE,
-                  timestamp TIMESTAMP NOT NULL
-                ) timestamp (timestamp) PARTITION BY DAY""", "((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))", """
-                SelectedRecord
-                    Async JIT Group By workers: 1
-                      vectorized: false
-                      values: [last(timestamp),last(price)]
-                      filter: symbol='BTC-USD'
-                        PageFrame
-                            Row forward scan
-                            Interval forward scan on: trades
-                              intervals: [("1969-12-31T23:30:00.000001Z","MAX")]
-                """);
+        assertQuery("((select last(timestamp) as x, last(price) as btcusd " + "from trades " + "where symbol = 'BTC-USD' " + "and timestamp > dateadd('m', -30, now())) " + "timestamp(x))")
+                .ddl("""
+                        CREATE TABLE trades (
+                          symbol SYMBOL,
+                          side SYMBOL,
+                          price DOUBLE,
+                          amount DOUBLE,
+                          timestamp TIMESTAMP
+                        ) timestamp (timestamp) PARTITION BY DAY""")
+                .assertsPlan("""
+                        SelectedRecord
+                            Async JIT Group By workers: 1
+                              vectorized: false
+                              values: [last(timestamp),last(price)]
+                              filter: symbol='BTC-USD'
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("1969-12-31T23:30:00.000001Z","MAX")]
+                        """);
     }
 
     @Test
     public void testFilterOnExcludedIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("drop table if exists trips");
-            execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP NOT NULL) " + "timestamp(ts) partition by month");
+            execute("CREATE TABLE trips (l long, s symbol index capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
 
             assertQuery("select s, count() from trips where s is not null order by count desc")
                     .noLeakCheck()
@@ -2374,7 +2394,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testFilterOnExcludedNonIndexedSymbolManyValues() throws Exception {
         assertMemoryLeak(() -> {
             execute("drop table if exists trips");
-            execute("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP NOT NULL) " + "timestamp(ts) partition by month");
+            execute("CREATE TABLE trips(l long, s symbol capacity 5, ts TIMESTAMP) " + "timestamp(ts) partition by month");
 
             assertQuery("select s, count() from trips where s is not null")
                     .noLeakCheck()
@@ -2516,7 +2536,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       instrumentType SYMBOL index,
                       referencePriceType SYMBOL index,
                       resolutionType SYMBOL ,
-                      ts TIMESTAMP NOT NULL,
+                      ts TIMESTAMP,
                       referencePrice DOUBLE
                     ) timestamp (ts)""");
 
@@ -3132,50 +3152,57 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // special case
     public void testGroupByHour() throws Exception {
-        assertPlan("create table a (ts timestamp NOT NULL, d double)", "select hour(ts), min(d) from a group by hour(ts)", """
-                GroupBy vectorized: true workers: 1
-                  keys: [ts]
-                  values: [min(d)]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select hour(ts), min(d) from a group by hour(ts)")
+                .ddl("create table a (ts timestamp, d double)")
+                .assertsPlan("""
+                        GroupBy vectorized: true workers: 1
+                          keys: [ts]
+                          values: [min(d)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testGroupByHourAndFilterIsParallel() throws Exception {
-        assertPlan("create table a (ts timestamp NOT NULL, d double)", "select hour(ts), min(d) from a where d > 0 group by hour(ts)", """
-                Async JIT Group By workers: 1
-                  keys: [hour]
-                  keyFunctions: [hour(ts)]
-                  values: [min(d)]
-                  filter: 0<d
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select hour(ts), min(d) from a where d > 0 group by hour(ts)")
+                .ddl("create table a (ts timestamp, d double)")
+                .assertsPlan("""
+                        Async JIT Group By workers: 1
+                          keys: [hour]
+                          keyFunctions: [hour(ts)]
+                          values: [min(d)]
+                          filter: 0<d
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testGroupByHourNonTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (ts timestamp NOT NULL, d double)");
-            assertException("select hour(d), min(d) from a", 12, "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE");
+            execute("create table a (ts timestamp, d double)");
+            assertQuery("select hour(d), min(d) from a")
+                    .fails(12, "argument type mismatch for function `hour` at #1 expected: TIMESTAMP, actual: DOUBLE");
         });
     }
 
     @Test
     public void testGroupByHourUnorderedColumns() throws Exception {
-        assertPlan("create table a (ts timestamp NOT NULL, d double)", "select min(d), hour(ts) from a group by hour(ts)", """
-                VirtualRecord
-                  functions: [min,hour]
-                    GroupBy vectorized: true workers: 1
-                      keys: [ts]
-                      values: [min(d)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                """);
+        assertQuery("select min(d), hour(ts) from a group by hour(ts)")
+                .ddl("create table a (ts timestamp, d double)")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [min,hour]
+                            GroupBy vectorized: true workers: 1
+                              keys: [ts]
+                              values: [min(d)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -3244,26 +3271,30 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByKeyedAliased() throws Exception {
-        assertPlan("create table a (s symbol, ts timestamp NOT NULL) timestamp(ts) partition by year;", "select s as symbol, count() from a", """
-                GroupBy vectorized: true workers: 1
-                  keys: [s]
-                  values: [count(*)]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select s as symbol, count() from a")
+                .ddl("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;")
+                .assertsPlan("""
+                        GroupBy vectorized: true workers: 1
+                          keys: [s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testGroupByKeyedNoAlias() throws Exception {
-        assertPlan("create table a (s symbol, ts timestamp NOT NULL) timestamp(ts) partition by year;", "select s, count() from a", """
-                GroupBy vectorized: true workers: 1
-                  keys: [s]
-                  values: [count(*)]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select s, count() from a")
+                .ddl("create table a (s symbol, ts timestamp) timestamp(ts) partition by year;")
+                .assertsPlan("""
+                        GroupBy vectorized: true workers: 1
+                          keys: [s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -3902,35 +3933,39 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit15() throws Exception {
-        assertPlan("create table di (y long, ts timestamp NOT NULL)", "select y, c from (select ts, y, count(*) c from di) order by ts limit 13", """
-                SelectedRecord
-                    Long Top K lo: 13
-                      keys: [ts asc]
-                        Async Group By workers: 1
-                          keys: [y,ts]
-                          values: [count(*)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: di
-                """);
+        assertQuery("select y, c from (select ts, y, count(*) c from di) order by ts limit 13")
+                .ddl("create table di (y long, ts timestamp)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Long Top K lo: 13
+                              keys: [ts asc]
+                                Async Group By workers: 1
+                                  keys: [y,ts]
+                                  values: [count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
+                        """);
     }
 
     @Test
     public void testGroupByWithLimit16() throws Exception {
-        assertPlan("create table di (ts timestamp NOT NULL)", "select ts, 42, count(*) c from di order by ts limit 2", """
-                Long Top K lo: 2
-                  keys: [ts asc]
-                    VirtualRecord
-                      functions: [ts,42,c]
-                        Async Group By workers: 1
-                          keys: [ts]
-                          values: [count(*)]
-                          filter: null
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: di
-                """);
+        assertQuery("select ts, 42, count(*) c from di order by ts limit 2")
+                .ddl("create table di (ts timestamp)")
+                .assertsPlan("""
+                        Long Top K lo: 2
+                          keys: [ts asc]
+                            VirtualRecord
+                              functions: [ts,42,c]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  values: [count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: di
+                        """);
     }
 
     @Test
@@ -4077,17 +4112,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testGroupByWithLimit8() throws Exception {
-        assertPlan("create table di (x int, y long, ts timestamp NOT NULL) timestamp(ts)", "select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10", """
-                Long Top K lo: 10
-                  keys: [ts desc]
-                    Async JIT Group By workers: 1
-                      keys: [ts]
-                      values: [count(*)]
-                      filter: y=5
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: di
-                """);
+        assertQuery("select ts, count(*) from di where y = 5 group by ts order by ts desc limit 10")
+                .ddl("create table di (x int, y long, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Long Top K lo: 10
+                          keys: [ts desc]
+                            Async JIT Group By workers: 1
+                              keys: [ts]
+                              values: [count(*)]
+                              filter: y=5
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: di
+                        """);
     }
 
     @Test
@@ -4117,9 +4154,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // inner hash join maintains order metadata and can be part of asof join
     public void testHashInnerJoinWithAsOf() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table taba (a1 int, ts1 timestamp NOT NULL) timestamp(ts1)");
+            execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
             execute("create table tabb (b1 int, b2 long)");
-            execute("create table tabc (c1 int, c2 long, ts3 timestamp NOT NULL) timestamp(ts3)");
+            execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
@@ -4217,13 +4254,102 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testInUuid() throws Exception {
-        assertPlan("create table a (u uuid, ts timestamp NOT NULL) timestamp(ts);", "select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')", """
-                Async JIT Filter workers: 1
-                  filter: u in ['22222222-2222-2222-2222-222222222222','11111111-1111-1111-1111-111111111111','33333333-3333-3333-3333-333333333333']
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select u, ts from a where u in ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', '33333333-3333-3333-3333-333333333333')")
+                .ddl("create table a (u uuid, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: u in ['33333333-3333-3333-3333-333333333333','11111111-1111-1111-1111-111111111111','22222222-2222-2222-2222-222222222222']
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
+    }
+
+    @Test
+    public void testInnerJoinFilterOnSecondTablePushedThroughView() throws Exception {
+        // A subquery wraps an INNER join. The WHERE filters by the SECOND (slave) table's join key.
+        // The predicate reaches the slave scan (tb: index scan, filter bkey='x'), but the first table
+        // stays a full scan - a constant pinned to the slave side is not propagated back to the
+        // master. This matches the plan of the equivalent inline query: the optimiser behaves the
+        // same with or without the enclosing view.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS ka, b.bkey AS kb, b.bv
+                  FROM ta a JOIN tb b ON b.bkey = a.akey
+                ) WHERE kb = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey='x'
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testInnerJoinFilterPushedThroughView() throws Exception {
+        // Same fix as the LEFT-join case, for an INNER join wrapped in a subquery. The WHERE filters
+        // by the FIRST (master) table's key (aliased as k). The optimiser pushes it into the master
+        // scan (ta) and derives the transitive filter for the second table (tb), so both sides become
+        // keyed lookups instead of full scans.
+        assertQuery("""
+                SELECT * FROM (
+                  SELECT a.akey AS k, a.av, b.bv
+                  FROM ta a JOIN tb b ON b.bkey = a.akey
+                ) WHERE k = 'x'""")
+                .ddl("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)", "CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)")
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Join Light
+                              condition: b.bkey=a.akey
+                              symbolKeyJoin: true
+                                DeferredSingleSymbolFilterPageFrame
+                                    Index forward scan on: akey deferred: true
+                                      filter: akey='x'
+                                    Frame forward scan on: ta
+                                Hash
+                                    DeferredSingleSymbolFilterPageFrame
+                                        Index forward scan on: bkey deferred: true
+                                          filter: bkey='x'
+                                        Frame forward scan on: tb
+                        """);
+    }
+
+    @Test
+    public void testInnerJoinFilterPushedThroughViewReturnsCorrectRows() throws Exception {
+        // Row-level guard for testInnerJoinFilterPushedThroughView with distinct master/slave tables.
+        // withPlanContaining is what proves the optimisation: a plan that forgot to derive the slave
+        // filter would still return the right rows (the post-join WHERE k='x' filters correctly either
+        // way), so the bkey fragment guards the transitive push, while .returns confirms exactly the
+        // surviving master row is kept and the 'y' row excluded. With data present, 'x' resolves to
+        // symbol key 1, so both filters render by resolved key (akey=1/bkey=1) rather than the
+        // deferred ='x' form the no-data plan-only sibling shows - exercising the resolved-key path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
+            execute("INSERT INTO ta VALUES ('x', 'ax'), ('y', 'ay')");
+            execute("INSERT INTO tb VALUES ('x', 'bx'), ('y', 'by')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.akey AS k, a.av, b.bv
+                      FROM ta a JOIN tb b ON b.bkey = a.akey
+                    ) WHERE k = 'x'""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("filter: akey=1", "filter: bkey=1")
+                    .returns("""
+                            k\tav\tbv
+                            x\tax\tbx
+                            """);
+        });
     }
 
     @Test
@@ -4279,7 +4405,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts desc")
                     .noLeakCheck()
@@ -4300,7 +4426,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts asc")
                     .noLeakCheck()
@@ -4321,7 +4447,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts desc limit 10) intersect (select * from a) order by ts asc")
                     .noLeakCheck()
@@ -4344,7 +4470,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testIntersectAndSort4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts asc limit 10) intersect (select * from a) order by ts desc")
                     .noLeakCheck()
@@ -4389,7 +4515,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("""
                     create table maps
                     (
-                      timestamp timestamp NOT NULL,\s
+                      timestamp timestamp,\s
                       cluster symbol,\s
                       alias symbol,\s
                       octets int,\s
@@ -4470,47 +4596,53 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn0() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select i from a latest on ts partition by i", """
-                LatestByAllFiltered
-                    Row backward scan
-                    Frame backward scan on: a
-                """);
+        assertQuery("select i from a latest on ts partition by i")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByAllFiltered
+                            Row backward scan
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn0a() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select i from (select * from a where i = 10 union select * from a where i =20) latest on ts partition by i", """
-                SelectedRecord
-                    LatestBy
-                        Union
-                            Async JIT Filter workers: 1
-                              filter: i=10
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                            Async JIT Filter workers: 1
-                              filter: i=20
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                """);
+        assertQuery("select i from (select * from a where i = 10 union select * from a where i =20) latest on ts partition by i")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestBy
+                                Union
+                                    Async JIT Filter workers: 1
+                                      filter: i=10
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                    Async JIT Filter workers: 1
+                                      filter: i=20
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn0b() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select ts,i from a where s in ('ABC') and i > 0 latest on ts partition by s", """
-                SelectedRecord
-                    LatestByValueDeferredFiltered
-                      filter: 0<i
-                      symbolFilter: s='ABC'
-                        Frame backward scan on: a
-                """);
+        assertQuery("select ts,i from a where s in ('ABC') and i > 0 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestByValueDeferredFiltered
+                              filter: 0<i
+                              symbolFilter: s='ABC'
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn0c() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertQuery("select ts,i from a where s in ('a1') and i > 0 latest on ts partition by s")
@@ -4529,7 +4661,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn0d() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table a ( i int, s symbol, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertQuery("select ts,i from a where s in ('a1') latest on ts partition by s")
@@ -4547,7 +4679,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn0e() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select 10-x, 'a' || x, x::timestamp from long_sequence(10)");
 
             assertQuery("select ts,i, s from a where s in ('a1') and i > 0 latest on ts partition by s")
@@ -4563,188 +4695,218 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select * from a latest on ts partition by i", """
-                LatestByAllFiltered
-                    Row backward scan
-                    Frame backward scan on: a
-                """);
+        assertQuery("select * from a latest on ts partition by i")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByAllFiltered
+                            Row backward scan
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test // TODO: should use index
     public void testLatestOn10() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s", """
-                LatestByDeferredListValuesFiltered
-                  filter: (s='S1' or s='S2')
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByDeferredListValuesFiltered
+                          filter: (s='S1' or s='S2')
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn11() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s", """
-                LatestByDeferredListValuesFiltered
-                  includedSymbols: ['S1','S2']
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s, i, ts from a where s in ('S1', 'S2') latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByDeferredListValuesFiltered
+                          includedSymbols: ['S1','S2']
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn12() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
-                LatestBySubQuery
-                    Subquery
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                    Row backward scan on: s
-                      filter: length(s)=2
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s, i, ts from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBySubQuery
+                            Subquery
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                            Row backward scan on: s
+                              filter: length(s)=2
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn12a() throws Exception {
-        assertPlan("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s", """
-                LatestBySubQuery
-                    Subquery
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                    Row backward scan on: s
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s, i, ts from a where s in (select distinct s from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBySubQuery
+                            Subquery
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                            Row backward scan on: s
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn13() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s", """
-                LatestBySubQuery
-                    Subquery
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                    Index backward scan on: s
-                      filter: length(s)=2
-                    Frame backward scan on: a
-                """);
+        assertQuery("select i, ts, s from a where s in (select distinct s from a) and length(s) = 2 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBySubQuery
+                            Subquery
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                            Index backward scan on: s
+                              filter: length(s)=2
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn13a() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s", """
-                LatestBySubQuery
-                    Subquery
-                        GroupBy vectorized: true workers: 1
-                          keys: [s]
-                          values: [count(*)]
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                    Index backward scan on: s
-                    Frame backward scan on: a
-                """);
+        assertQuery("select i, ts, s from a where s in (select distinct s from a) latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBySubQuery
+                            Subquery
+                                GroupBy vectorized: true workers: 1
+                                  keys: [s]
+                                  values: [count(*)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                            Index backward scan on: s
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test // TODO: should use one or two indexes
     public void testLatestOn14() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp NOT NULL) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2", """
-                LatestByAllSymbolsFiltered
-                  filter: (s1 in [S1,S2] and s2='S3' and 0<i)
-                    Row backward scan
-                      expectedSymbolsCount: 2
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' and i > 0 latest on ts partition by s1,s2")
+                .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByAllSymbolsFiltered
+                          filter: (s1 in [S1,S2] and s2='S3' and 0<i)
+                            Row backward scan
+                              expectedSymbolsCount: 2
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test // TODO: should use one or two indexes
     public void testLatestOn15() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp NOT NULL) timestamp(ts);", "select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2", """
-                LatestByAllSymbolsFiltered
-                  filter: (s1 in [S1,S2] and s2='S3')
-                    Row backward scan
-                      expectedSymbolsCount: 2
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s1, s2, i, ts from a where s1 in ('S1', 'S2') and s2 = 'S3' latest on ts partition by s1,s2")
+                .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByAllSymbolsFiltered
+                          filter: (s1 in [S1,S2] and s2='S3')
+                            Row backward scan
+                              expectedSymbolsCount: 2
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn16() throws Exception {
-        assertPlan("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp NOT NULL) timestamp(ts);", "select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2", """
-                LatestByAllSymbolsFiltered
-                  filter: s1='S1'
-                    Row backward scan
-                      expectedSymbolsCount: 2147483647
-                    Interval backward scan on: a
-                      intervals: [("1970-01-01T00:00:00.000001Z","MAX")]
-                """);
+        assertQuery("select s1, s2, i, ts from a where s1 = 'S1' and ts > 0::timestamp latest on ts partition by s1,s2")
+                .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByAllSymbolsFiltered
+                          filter: s1='S1'
+                            Row backward scan
+                              expectedSymbolsCount: 2147483647
+                            Interval backward scan on: a
+                              intervals: [("1970-01-01T00:00:00.000001Z","MAX")]
+                        """);
     }
 
     @Test
     public void testLatestOn1a() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1", """
-                LatestBy light order_by_timestamp: true
-                    SelectedRecord
-                        Async JIT Filter workers: 1
-                          filter: (0<i and i<10)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                """);
+        assertQuery("select * from (select ts, i as i1, i as i2 from a ) where 0 < i1 and i2 < 10 latest on ts partition by i1")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestBy light order_by_timestamp: true
+                            SelectedRecord
+                                Async JIT Filter workers: 1
+                                  filter: (0<i and i<10)
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn1b() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i", """
-                SelectedRecord
-                    LatestByAllFiltered
-                        Row backward scan
-                          filter: (0<i and i<10)
-                        Frame backward scan on: a
-                """);
+        assertQuery("select ts, i as i1, i as i2 from a where 0 < i and i < 10 latest on ts partition by i")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestByAllFiltered
+                                Row backward scan
+                                  filter: (0<i and i<10)
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn2() throws Exception {
-        assertPlan("create table a ( i int, d double, ts timestamp NOT NULL) timestamp(ts);", "select ts, d from a latest on ts partition by i", """
-                SelectedRecord
-                    LatestByAllFiltered
-                        Row backward scan
-                        Frame backward scan on: a
-                """);
+        assertQuery("select ts, d from a latest on ts partition by i")
+                .ddl("create table a ( i int, d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        SelectedRecord
+                            LatestByAllFiltered
+                                Row backward scan
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn3() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select * from a latest on ts partition by s", """
-                LatestByAllIndexed
-                    Async index backward scan on: s workers: 2
-                    Frame backward scan on: a
-                """);
+        assertQuery("select * from a latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        LatestByAllIndexed
+                            Async index backward scan on: s workers: 2
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn4() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s  = 'S1' latest on ts partition by s", """
-                PageFrame
-                    Index backward scan on: s deferred: true
-                      filter: s='S1'
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s, i, ts from a where s  = 'S1' latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Index backward scan on: s deferred: true
+                              filter: s='S1'
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn5a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertQuery("select s, i, ts from a where s  in ('def1', 'def2') latest on ts partition by s")
@@ -4760,7 +4922,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn5b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertQuery("select s, i, ts from a where s  in ('1', 'deferred') latest on ts partition by s")
@@ -4776,7 +4938,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLatestOn5c() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x, x::symbol, x::timestamp from long_sequence(10) ");
 
             assertQuery("select s, i, ts from a where s  in ('1', '2') latest on ts partition by s")
@@ -4791,28 +4953,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testLatestOn6() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and i > 0 latest on ts partition by s", """
-                Index backward scan on: s
-                  filter: 0<i
-                  symbolFilter: s in ['S1','S2']
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s, i, ts from a where s  in ('S1', 'S2') and i > 0 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Index backward scan on: s
+                          filter: 0<i
+                          symbolFilter: s in ['S1','S2']
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn7() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s  in ('S1', 'S2') and length(s)<10 latest on ts partition by s", """
-                Index backward scan on: s
-                  filter: length(s)<10
-                  symbolFilter: s in ['S1','S2']
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s, i, ts from a where s  in ('S1', 'S2') and length(s)<10 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Index backward scan on: s
+                          filter: length(s)<10
+                          symbolFilter: s in ['S1','S2']
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn8() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertQuery("select s, i, ts from a where s  in ('s1') latest on ts partition by s")
@@ -4829,7 +4995,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // key outside list of symbols
     public void testLatestOn8a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select x::int, 's' ||(x%10), x::timestamp from long_sequence(1000)");
 
             assertQuery("select s, i, ts from a where s in ('bogus_key') latest on ts partition by s")
@@ -4845,28 +5011,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // columns in order different to table's
     public void testLatestOn9() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
-                Index backward scan on: s
-                  filter: length(s)=10
-                  symbolFilter: s='S1'
-                    Frame backward scan on: a
-                """);
+        assertQuery("select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Index backward scan on: s
+                          filter: length(s)=10
+                          symbolFilter: s='S1'
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test // columns in table's order
     public void testLatestOn9a() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);", "select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s", """
-                Index backward scan on: s
-                  filter: length(s)=10
-                  symbolFilter: s='S1'
-                    Frame backward scan on: a
-                """);
+        assertQuery("select i, s, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Index backward scan on: s
+                          filter: length(s)=10
+                          symbolFilter: s='S1'
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testLatestOn9b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);");
             execute("insert into a select x::int, 'S' || x, x::timestamp from long_sequence(10)");
 
             assertQuery("select s, i, ts from a where s  in ('S1') and length(s) = 10 latest on ts partition by s")
@@ -5384,7 +5554,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLeftJoinWithPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab ( created timestamp NOT NULL, value int ) timestamp(created)");
+            execute("CREATE TABLE tab ( created timestamp, value int ) timestamp(created)");
 
             String[] joinTypes = {"LEFT", "RIGHT", "FULL", "LT", "ASOF"};
             String[] joinFactoryTypes = {"Hash Left Outer Join Light", "Hash Right Outer Join Light", "Hash Full Outer Join Light", "Lt Join Fast", "AsOf Join Fast"};
@@ -5470,8 +5640,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select ts1, ts2, i1, i2 from (select a.i as i1, a.ts as ts1, b.i as i2, b.ts as ts2 from a lt join b on ts) where ts1::long*i1<ts2::long*i2")
                     .noLeakCheck()
@@ -5492,8 +5662,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join b on ts")
                     .noLeakCheck()
@@ -5515,8 +5685,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // lt join guarantees that a.ts > b.ts [join cond is not an equality predicate]
         // CONCLUSION: a join b on X can't always be translated to a join b on a.X = b.X
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join b on ts where a.i = b.ts")
                     .noLeakCheck()
@@ -5537,8 +5707,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join b on ts where a.i = b.ts")
                     .noLeakCheck()
@@ -5559,8 +5729,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin1c() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join b where a.i = b.ts")
                     .noLeakCheck()
@@ -5581,8 +5751,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join (select * from b limit 10) on ts")
                     .noLeakCheck()
@@ -5603,8 +5773,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinFullFat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(true);
@@ -5629,8 +5799,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join b where a.i > 0")
                     .noLeakCheck()
@@ -5652,8 +5822,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join b")
                     .noLeakCheck()
@@ -5673,8 +5843,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a (i int, ts timestamp) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join b on(ts)")
                     .noLeakCheck()
@@ -5694,8 +5864,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtJoinNoKey4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a (ts timestamp NOT NULL, i int) timestamp(ts)");
-            execute("create table b (i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a (ts timestamp, i int) timestamp(ts)");
+            execute("create table b (i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join b on(ts)")
                     .noLeakCheck()
@@ -5715,8 +5885,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtOfJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a lt join ((select * from b order by ts, i ) timestamp(ts))  on ts")
                     .noLeakCheck()
@@ -5738,8 +5908,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testLtOfJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * " + "from a " + "lt join b on ts " + "lt join a c on ts")
                     .noLeakCheck()
@@ -5843,7 +6013,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNestedLoopLeftJoinWithSort1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
             String[] queries = {"select * from t t1 left join t t2 on t1.x*t2.x>0 order by t1.ts", "select * from (select * from t order by ts desc) t1 left join t t2 on t1.x*t2.x>0 order by t1.ts"};
             for (String query : queries) {
@@ -5879,7 +6049,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNestedLoopLeftJoinWithSort2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (x int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t (x int, ts timestamp) timestamp(ts)");
             execute("insert into t select x, x::timestamp from long_sequence(2)");
 
             String query = "select * from " + "((select * from t order by ts desc) limit 10) t1 " + "left join t t2 on t1.x*t2.x > 0 " + "order by t1.ts desc";
@@ -5904,7 +6074,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testNoArgFalseConstantExpressionUsedInJoinIsOptimizedAway() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (b boolean, ts timestamp NOT NULL)");
+            execute("create table tab (b boolean, ts timestamp)");
             // true
             assertQuery("update tab t1 set b=true from tab t2 where 1>2 and t1.b = t2.b")
                     .noLeakCheck()
@@ -5940,10 +6110,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // the optimizer keeps the compile-time false in constWhereClause and the
         // code generator folds it to Empty table.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP NOT NULL)");
-            assertPlanNoLeakCheck(
-                    "SELECT * FROM tab T1 INNER JOIN tab T2 ON T1.b = T2.b WHERE 1 > 10 AND NOW() = NOW()",
-                    """
+            execute("CREATE TABLE tab (b BOOLEAN, ts TIMESTAMP)");
+            assertQuery("SELECT * FROM tab T1 INNER JOIN tab T2 ON T1.b = T2.b WHERE 1 > 10 AND NOW() = NOW()")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Empty table
                             """);
@@ -5954,27 +6124,29 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testNoArgNonConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
 
-        assertPlan("create table tab (b boolean, ts timestamp NOT NULL)", "update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b", """
-                Update table: tab
-                    VirtualRecord
-                      functions: [true]
-                        Filter filter: not (sleep(60000))
-                            Hash Join Light
-                              condition: t2.b=t1.b
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: tab
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: tab
-                """);
+        assertQuery("update tab t1 set b=true from tab t2 where not sleep(60000) and t1.b = t2.b")
+                .ddl("create table tab (b boolean, ts timestamp)")
+                .assertsPlan("""
+                        Update table: tab
+                            VirtualRecord
+                              functions: [true]
+                                Filter filter: not (sleep(60000))
+                                    Hash Join Light
+                                      condition: t2.b=t1.b
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: tab
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testNoArgRuntimeConstantExpressionUsedInJoinClauseIsUsedAsPostJoinFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (b boolean, ts timestamp NOT NULL)");
+            execute("create table tab (b boolean, ts timestamp)");
 
             // true
             assertQuery("update tab t1 set b=true from tab t2 where now()::long > -1 and t1.b = t2.b")
@@ -6018,13 +6190,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testNonKeyedGroupByMinMaxTimestamp() throws Exception {
-        assertPlan(
-                "create table x (ts timestamp NOT NULL, ts1 timestamp NOT NULL) timestamp(ts) partition by day;",
-                "select min(ts), max(ts), min(ts1), max(ts1) from x",
-                """
+        assertQuery("select min(ts), max(ts), min(ts1), max(ts1) from x")
+                .ddl("create table x (ts timestamp, ts1 timestamp) timestamp(ts) partition by day;")
+                .assertsPlan("""
                         Async Group By workers: 1
-                          vectorized: false
-                          values: [min(ts),max(ts),min(ts1),max(ts1)]
+                          vectorized: true
+                          values: [min_designated(ts),max_designated(ts),min(ts1),max(ts1)]
                           filter: null
                             PageFrame
                                 Row forward scan
@@ -6040,7 +6211,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // if order by is via alias of designated timestamp
 
         assertMemoryLeak(() -> {
-            execute("create table device_data " + "( " + "  timestamp timestamp NOT NULL, " + "  val double, " + "  id symbol " + ") timestamp(timestamp)");
+            execute("create table device_data " + "( " + "  timestamp timestamp, " + "  val double, " + "  id symbol " + ") timestamp(timestamp)");
 
             execute("insert into device_data select x::timestamp, x, '12345678' from long_sequence(10)");
 
@@ -6256,7 +6427,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInLtAndAsofSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table gas_prices (timestamp TIMESTAMP NOT NULL, galon_price DOUBLE ) timestamp (timestamp);");
+            execute("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
 
             for (String joinType : Arrays.asList("AsOf", "Lt")) {
                 String query = "with gp as \n" + "(\n" + "selecT * from (\n" + "selecT * from gas_prices order by timestamp asc, galon_price desc\n" + ") timestamp(timestamp))\n" + "selecT * from gp gp1 \n" + joinType + " join gp gp2 \n" + "order by gp1.timestamp; ";
@@ -6273,7 +6444,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInSpliceSubqueries() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table gas_prices (timestamp TIMESTAMP NOT NULL, galon_price DOUBLE ) timestamp (timestamp);");
+            execute("create table gas_prices (timestamp TIMESTAMP, galon_price DOUBLE ) timestamp (timestamp);");
 
             String query = """
                     with gp as (
@@ -6310,7 +6481,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testOrderByIsMaintainedInSubquery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table gas_prices " + "(timestamp TIMESTAMP NOT NULL, " + "galon_price DOUBLE) " + "timestamp (timestamp);");
+            execute("create table gas_prices " + "(timestamp TIMESTAMP, " + "galon_price DOUBLE) " + "timestamp (timestamp);");
 
             String query = """
                     WITH full_range AS ( \s
@@ -6354,24 +6525,28 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByTimestampAndOtherColumns1() throws Exception {
-        assertPlan("create table tab (i int, ts timestamp NOT NULL) timestamp(ts)", "select * from (select * from tab order by ts, i desc limit 10) order by ts", """
-                Sort light lo: 10 partiallySorted: true
-                  keys: [ts, i desc]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from (select * from tab order by ts, i desc limit 10) order by ts")
+                .ddl("create table tab (i int, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Encode sort light lo: 10 partiallySorted: true
+                          keys: [ts, i desc]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testOrderByTimestampAndOtherColumns2() throws Exception {
-        assertPlan("create table tab (i int, ts timestamp NOT NULL) timestamp(ts)", "select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc", """
-                Sort light lo: 10 partiallySorted: true
-                  keys: [ts desc, i]
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from (select * from tab order by ts desc, i asc limit 10) order by ts desc")
+                .ddl("create table tab (i int, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Encode sort light lo: 10 partiallySorted: true
+                          keys: [ts desc, i]
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
@@ -6618,7 +6793,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     JOIN ( SELECT * FROM test ) as T2 ON T1.event < T2.event
                     JOIN test as T3 ON T2.created = T3.created""";
 
-            execute("create table test (event int, created timestamp NOT NULL)");
+            execute("create table test (event int, created timestamp)");
             execute("insert into test values (1, 1), (2, 2)");
 
             assertQuery(query)
@@ -7377,7 +7552,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE hits
                     (
-                        EventTime timestamp NOT NULL,
+                        EventTime timestamp,
                         ResolutionWidth int,
                         ResolutionHeight int
                     ) TIMESTAMP(EventTime) PARTITION BY DAY;""");
@@ -7401,7 +7576,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteAggregatesOnJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE hits1" + "(" + "    EventTime timestamp NOT NULL, " + "    ResolutionWidth int, " + "    ResolutionHeight int, " + "    id int" + ")");
+            execute("CREATE TABLE hits1" + "(" + "    EventTime timestamp, " + "    ResolutionWidth int, " + "    ResolutionHeight int, " + "    id int" + ")");
             execute("create table hits2 as (select * from hits1)");
 
             assertQuery("SELECT sum(h1.resolutIONWidth), count(h1.resolutionwIDTH), SUM(h2.ResolutionWidth), sum(h2.ResolutionWidth) + count(), " + "SUM(h1.ResolutionWidth+1),SUM(h2.ResolutionWidth*2),sUM(h1.ResolutionWidth), count()\n" + "FROM hits1 h1 " + "join hits2 h2 on (id)")
@@ -7428,7 +7603,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testRewriteSelectCountDistinct() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test(s string, x long, ts timestamp NOT NULL, substring string) timestamp(ts) partition by day");
+            execute("create table test(s string, x long, ts timestamp, substring string) timestamp(ts) partition by day");
             execute("insert into test " + "select 's' || (x%10), " + " x, " + " (x*86400000000)::timestamp, " + " 'substring' " + "from long_sequence(10)");
 
             // multiple count_distinct, no re-write
@@ -7641,22 +7816,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleBy() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h align to first observation", """
-                    Sample By
-                      fill: none
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
-
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h align to calendar", """
-                    SelectedRecord
-                        Encode sort light
-                          keys: [ts]
-                            Async Group By workers: 1
-                              keys: [ts]
-                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+            assertQuery("select first(i) from a sample by 1h align to first observation")
+                    .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: none
                               values: [first(i)]
                                 PageFrame
                                     Row forward scan
@@ -7684,7 +7849,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByAliasesAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertQuery("select x1.a, sum(x1.b) from x x1 sample by 2m align to first observation order by x1.a")
                     .noLeakCheck()
@@ -7835,10 +8000,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByDuplicateKeys() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table x ( a double, b symbol, k timestamp, ts timestamp NOT NULL) timestamp(ts);", "select b, sum(a), k k1, k from x sample by 3h", """
-                    SelectedRecord
-                        Encode sort light
-                          keys: [ts]
+            assertQuery("select b, sum(a), k k1, k from x sample by 3h")
+                    .ddl("create table x ( a double, b symbol, k timestamp, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
                                   keys: [ts]
@@ -7875,14 +8040,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillLinear() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h fill(linear) align to first observation", """
-                    Sample By
-                      fill: linear
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select first(i) from a sample by 1h fill(linear) align to first observation")
+                    .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: linear
+                              values: [first(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select first(i) from a sample by 1h fill(linear) align to calendar")
                     .noLeakCheck()
@@ -7900,14 +8068,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillNull() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h fill(null) align to first observation", """
-                    Sample By
-                      fill: null
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select first(i) from a sample by 1h fill(null) align to first observation")
+                    .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: null
+                              values: [first(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select first(i) from a sample by 1h fill(null) align to calendar with offset '10:00'")
                     .noLeakCheck()
@@ -7953,15 +8124,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillPrevKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, first(i) from a sample by 1h fill(prev) align to first observation", """
-                    Sample By
-                      fill: prev
-                      keys: [s]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select s, first(i) from a sample by 1h fill(prev) align to first observation")
+                    .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: prev
+                              keys: [s]
+                              values: [first(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select s, first(i) from a sample by 1h fill(prev) align to calendar")
                     .noLeakCheck()
@@ -8014,30 +8188,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillPrevNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h fill(prev) align to first observation", """
-                    Sample By
-                      fill: prev
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
-
-            assertPlanNoLeakCheck("select first(i) from a sample by 1h fill(prev) align to calendar", """
-                    Sample By
-                      fill: prev
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
-
-            assertPlanNoLeakCheck("select first(a1.i) from a a1 asof join a a2 sample by 1h fill(prev) align to calendar", """
-                    Sample By
-                      fill: prev
-                      values: [first(i)]
-                        SelectedRecord
-                            AsOf Join Fast
+            assertQuery("select first(i) from a sample by 1h fill(prev) align to first observation")
+                    .ddl("create table a (i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: prev
+                              values: [first(i)]
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: a
@@ -8116,15 +8273,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillValueKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, s symbol, ts timestamp NOT NULL) timestamp(ts);", "select s, first(i) from a sample by 1h fill(1) align to first observation", """
-                    Sample By
-                      fill: value
-                      keys: [s]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select s, first(i) from a sample by 1h fill(1) align to first observation")
+                    .ddl("create table a ( i int, s symbol, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: value
+                              keys: [s]
+                              values: [first(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select s, first(i) from a sample by 1h fill(1) align to calendar")
                     .noLeakCheck()
@@ -8150,14 +8310,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFillValueNotKeyed() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, ts timestamp NOT NULL) timestamp(ts);", "select first(i) from a sample by 1h fill(1) align to first observation", """
-                    Sample By
-                      fill: value
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select first(i) from a sample by 1h fill(1) align to first observation")
+                    .ddl("create table a (i int, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: value
+                              values: [first(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select first(i) from a sample by 1h fill(1) align to calendar with offset '10:00'")
                     .noLeakCheck()
@@ -8257,24 +8420,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByFirstLast() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp NOT NULL) timestamp(ts) partition by day;", "select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to first observation", """
-                    SampleByFirstLast
-                      keys: [sym]
-                      values: [first(i), last(s), first(l)]
-                        DeferredSingleSymbolFilterPageFrame
-                            Index forward scan on: sym deferred: true
-                              filter: sym='S'
-                            Interval forward scan on: a
-                              intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000099Z")]
-                    """);
-
-            assertPlanNoLeakCheck("select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to calendar", """
-                    SelectedRecord
-                        Encode sort light
-                          keys: [ts]
-                            GroupBy vectorized: false
-                              keys: [sym,ts]
-                              values: [first(i),last(s),first(l)]
+            assertQuery("select sym, first(i), last(s), first(l) " + "from a " + "where sym in ('S') " + "and   ts > 0::timestamp and ts < 100::timestamp " + "sample by 1h align to first observation")
+                    .ddl("create table a ( l long, s symbol, sym symbol index, i int, ts timestamp) timestamp(ts) partition by day;")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SampleByFirstLast
+                              keys: [sym]
+                              values: [first(i), last(s), first(l)]
                                 DeferredSingleSymbolFilterPageFrame
                                     Index forward scan on: sym deferred: true
                                       filter: sym='S'
@@ -8303,7 +8455,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByJoinAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertQuery("select x1.a, sum(x1.b) from x x1 asof join x x2 sample by 2m align to first observation order by x1.a")
                     .noLeakCheck()
@@ -8464,22 +8616,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed0() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
-                    Sample By
-                      keys: [l,i]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
-
-            assertPlanNoLeakCheck("select l, i, first(i) from a sample by 1h align to calendar", """
-                    SelectedRecord
-                        Encode sort light
-                          keys: [ts]
-                            Async Group By workers: 1
-                              keys: [l,i,ts]
-                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+            assertQuery("select l, i, first(i) from a sample by 1h align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              keys: [l,i]
                               values: [first(i)]
                                 PageFrame
                                     Row forward scan
@@ -8507,22 +8649,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed1() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, i, first(i) from a sample by 1h align to first observation", """
-                    Sample By
-                      keys: [l,i]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
-
-            assertPlanNoLeakCheck("select l, i, first(i) from a sample by 1h align to calendar", """
-                    SelectedRecord
-                        Encode sort light
-                          keys: [ts]
-                            Async Group By workers: 1
-                              keys: [l,i,ts]
-                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+            assertQuery("select l, i, first(i) from a sample by 1h align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              keys: [l,i]
                               values: [first(i)]
                                 PageFrame
                                     Row forward scan
@@ -8550,15 +8682,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed2() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, first(i) from a sample by 1h fill(null) align to first observation", """
-                    Sample By
-                      fill: null
-                      keys: [l]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select l, first(i) from a sample by 1h fill(null) align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: null
+                              keys: [l]
+                              values: [first(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select l, first(i) from a sample by 1h fill(null) align to calendar")
                     .noLeakCheck()
@@ -8584,15 +8719,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed3() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a (i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, first(i) from a sample by 1d fill(linear) align to first observation", """
-                    Sample By
-                      fill: linear
-                      keys: [l]
-                      values: [first(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select l, first(i) from a sample by 1d fill(linear) align to first observation")
+                    .ddl("create table a (i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: linear
+                              keys: [l]
+                              values: [first(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select l, first(i) from a sample by 1d fill(linear) align to calendar")
                     .noLeakCheck()
@@ -8641,15 +8779,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed4() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation", """
-                    Sample By
-                      fill: value
-                      keys: [l]
-                      values: [first(i),last(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select l, first(i), last(i) from a sample by 1d fill(1,2) align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: value
+                              keys: [l]
+                              values: [first(i),last(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select l, first(i), last(i) from a sample by 1d fill(1,2) align to calendar")
                     .noLeakCheck()
@@ -8675,15 +8816,18 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByKeyed5() throws Exception {
         assertMemoryLeak(() -> {
-            assertPlanNoLeakCheck("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts);", "select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation", """
-                    Sample By
-                      fill: value
-                      keys: [l]
-                      values: [first(i),last(i)]
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                    """);
+            assertQuery("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to first observation")
+                    .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts);")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By
+                              fill: value
+                              keys: [l]
+                              values: [first(i),last(i)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                            """);
 
             assertQuery("select l, first(i), last(i) from a sample by 1d fill(prev,prev) align to calendar")
                     .noLeakCheck()
@@ -8709,7 +8853,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertQuery("select a, sum(b) from x sample by 2m align to first observation order by a")
                     .noLeakCheck()
@@ -8861,7 +9005,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSampleByOrderByTimestampFunction() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertQuery("select a, sum(b), to_timezone(ts, 'Europe/Berlin') berlin_ts from x sample by 2m order by berlin_ts desc")
                     .noLeakCheck()
@@ -8935,11 +9079,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelect0() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a", """
-                PageFrame
-                    Row forward scan
-                    Frame forward scan on: a
-                """);
+        assertQuery("select * from a")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -8982,67 +9128,77 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // TODO: should return count on first table instead
     public void testSelectCount11() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL ) timestamp(ts)", "select count(*) from (select * from a lt join a b) ", """
-                Count
-                    SelectedRecord
-                        Lt Join Fast
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                """);
+        assertQuery("select count(*) from (select * from a lt join a b) ")
+                .ddl("create table a ( i int, ts timestamp ) timestamp(ts)")
+                .assertsPlan("""
+                        Count
+                            SelectedRecord
+                                Lt Join Fast
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                        """);
     }
 
     @Test // TODO: should return count on first table instead
     public void testSelectCount12() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL ) timestamp(ts)", "select count(*) from (select * from a asof join a b) ", """
-                Count
-                    SelectedRecord
-                        AsOf Join Fast
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                """);
+        assertQuery("select count(*) from (select * from a asof join a b) ")
+                .ddl("create table a ( i int, ts timestamp ) timestamp(ts)")
+                .assertsPlan("""
+                        Count
+                            SelectedRecord
+                                AsOf Join Fast
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                        """);
     }
 
     @Test // TODO: should return count(first table)*count(second_table) instead
     public void testSelectCount13() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL ) timestamp(ts)", "select count(*) from (select * from a cross join a b) ", """
-                Count
-                    SelectedRecord
-                        Cross Join
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                """);
+        assertQuery("select count(*) from (select * from a cross join a b) ")
+                .ddl("create table a ( i int, ts timestamp ) timestamp(ts)")
+                .assertsPlan("""
+                        Count
+                            SelectedRecord
+                                Cross Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectCount14() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts)", "select * from a where s = 'S1' order by ts desc ", """
-                DeferredSingleSymbolFilterPageFrame
-                    Index backward scan on: s deferred: true
-                      filter: s='S1'
-                    Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s = 'S1' order by ts desc ")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        DeferredSingleSymbolFilterPageFrame
+                            Index backward scan on: s deferred: true
+                              filter: s='S1'
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectCount15() throws Exception {
-        assertPlan("create table a ( i int, s symbol index, ts timestamp NOT NULL) timestamp(ts)", "select * from a where s = 'S1' order by ts asc", """
-                DeferredSingleSymbolFilterPageFrame
-                    Index forward scan on: s deferred: true
-                      filter: s='S1'
-                    Frame forward scan on: a
-                """);
+        assertQuery("select * from a where s = 'S1' order by ts asc")
+                .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        DeferredSingleSymbolFilterPageFrame
+                            Index forward scan on: s deferred: true
+                              filter: s='S1'
+                            Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -9196,8 +9352,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp NOT NULL);", "select count_distinct(s) from tab", expected);
-        assertPlan("select count(distinct s) from tab", expected);
+        assertQuery("select count_distinct(s) from tab")
+                .ddl("create table tab (s symbol, ts timestamp);")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct s) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -9209,8 +9368,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol index, ts timestamp NOT NULL);", "select count_distinct(s) from tab", expected);
-        assertPlan("select count(distinct s) from tab", expected);
+        assertQuery("select count_distinct(s) from tab")
+                .ddl("create table tab (s symbol index, ts timestamp);")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct s) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -9296,8 +9458,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp NOT NULL);", "select count_distinct(s) from tab where s = 'foobar'", expected);
-        assertPlan("select count(distinct s) from tab where s = 'foobar'", expected);
+        assertQuery("select count_distinct(s) from tab where s = 'foobar'")
+                .ddl("create table tab (s symbol, ts timestamp);")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct s) from tab where s = 'foobar'")
+                .assertsPlan(expected);
     }
 
     @Test
@@ -9311,115 +9476,136 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         Row forward scan
                         Frame forward scan on: tab
                 """;
-        assertPlan("create table tab (s symbol, ts timestamp NOT NULL);", "select count_distinct(s), first(s) from tab", expected);
-        assertPlan("select count(distinct s), first(s) from tab", expected);
+        assertQuery("select count_distinct(s), first(s) from tab")
+                .ddl("create table tab (s symbol, ts timestamp);")
+                .assertsPlan(expected);
+        assertQuery("select count(distinct s), first(s) from tab")
+                .assertsPlan(expected);
     }
 
     @Test
     public void testSelectDesc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts desc", """
-                PageFrame
-                    Row backward scan
-                    Frame backward scan on: a
-                """);
+        assertQuery("select * from a order by ts desc")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        PageFrame
+                            Row backward scan
+                            Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectDesc2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) ;", "select * from a order by ts desc", """
-                Encode sort light
-                  keys: [ts desc]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a order by ts desc")
+                .ddl("create table a ( i int, ts timestamp) ;")
+                .assertsPlan("""
+                        Encode sort light
+                          keys: [ts desc]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectDescMaterialized() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) ;", "select * from (select i, ts from a union all select 1, null ) order by ts desc", """
-                Encode sort
-                  keys: [ts desc]
-                    Union All
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                        VirtualRecord
-                          functions: [1,null]
-                            long_sequence count: 1
-                """);
+        assertQuery("select * from (select i, ts from a union all select 1, null ) order by ts desc")
+                .ddl("create table a ( i int, ts timestamp) ;")
+                .assertsPlan("""
+                        Encode sort
+                          keys: [ts desc]
+                            Union All
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                                VirtualRecord
+                                  functions: [1,null]
+                                    long_sequence count: 1
+                        """);
     }
 
     @Test
     public void testSelectDistinct0() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select distinct l, ts from tab", """
-                Async Group By workers: 1
-                  keys: [l,ts]
-                  filter: null
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select distinct l, ts from tab")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async Group By workers: 1
+                          keys: [l,ts]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Ignore
     @Test // FIXME: somehow only ts gets included, pg returns record type
     public void testSelectDistinct0a() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select distinct (l, ts) from tab", """
-                DistinctTimeSeries
-                  keys: l,ts
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select distinct (l, ts) from tab")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        DistinctTimeSeries
+                          keys: l,ts
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectDistinct1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select distinct(l) from tab", """
-                Async Group By workers: 1
-                  keys: [l]
-                  filter: null
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select distinct(l) from tab")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Group By workers: 1
+                          keys: [l]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectDistinct2() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select distinct(s) from tab", """
-                GroupBy vectorized: true workers: 1
-                  keys: [s]
-                  values: [count(*)]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select distinct(s) from tab")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
+                        GroupBy vectorized: true workers: 1
+                          keys: [s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectDistinct3() throws Exception {
-        assertPlan("create table tab ( s symbol index, ts timestamp NOT NULL);", "select distinct(s) from tab", """
-                GroupBy vectorized: true workers: 1
-                  keys: [s]
-                  values: [count(*)]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select distinct(s) from tab")
+                .ddl("create table tab ( s symbol index, ts timestamp);")
+                .assertsPlan("""
+                        GroupBy vectorized: true workers: 1
+                          keys: [s]
+                          values: [count(*)]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectDistinct4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select distinct ts, l  from tab", """
-                Async Group By workers: 1
-                  keys: [ts,l]
-                  filter: null
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select distinct ts, l  from tab")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Group By workers: 1
+                          keys: [ts,l]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
@@ -9451,64 +9637,76 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // there's no interval scan because sysdate is evaluated per-row
     public void testSelectDynamicTsInterval1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > sysdate()", """
-                Async Filter workers: 1
-                  filter: sysdate()<ts
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where ts > sysdate()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: sysdate()<ts
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // there's no interval scan because systimestamp is evaluated per-row
     public void testSelectDynamicTsInterval2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > systimestamp()", """
-                Async Filter workers: 1
-                  filter: systimestamp()<ts
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where ts > systimestamp()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: systimestamp()<ts
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectDynamicTsInterval3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > now()", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: tab
-                      intervals: [("1970-01-01T00:00:00.000001Z","MAX")]
-                """);
+        assertQuery("select * from tab where ts > now()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("1970-01-01T00:00:00.000001Z","MAX")]
+                        """);
     }
 
     @Test
     public void testSelectDynamicTsInterval4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > dateadd('d', -1, now()) and ts < now()", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: tab
-                      intervals: [("1969-12-31T00:00:00.000001Z","1969-12-31T23:59:59.999999Z")]
-                """);
+        assertQuery("select * from tab where ts > dateadd('d', -1, now()) and ts < now()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("1969-12-31T00:00:00.000001Z","1969-12-31T23:59:59.999999Z")]
+                        """);
     }
 
     @Test
     public void testSelectDynamicTsInterval5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now()", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: tab
-                      intervals: [("2022-01-01T00:00:00.000001Z","MAX")]
-                """);
+        assertQuery("select * from tab where ts > '2022-01-01' and ts > now()")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("2022-01-01T00:00:00.000001Z","MAX")]
+                        """);
     }
 
     @Test
     public void testSelectDynamicTsInterval6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > '2022-01-01' and ts > now() order by ts desc", """
-                PageFrame
-                    Row backward scan
-                    Interval backward scan on: tab
-                      intervals: [("2022-01-01T00:00:00.000001Z","MAX")]
-                """);
+        assertQuery("select * from tab where ts > '2022-01-01' and ts > now() order by ts desc")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row backward scan
+                            Interval backward scan on: tab
+                              intervals: [("2022-01-01T00:00:00.000001Z","MAX")]
+                        """);
     }
 
     @Test
@@ -9534,12 +9732,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectFromTableColumns() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp NOT NULL)", "select * from table_columns('tab')", "show_columns of: tab\n");
+        assertQuery("select * from table_columns('tab')")
+                .ddl("create table tab ( s string, sy symbol, i int, ts timestamp)")
+                .assertsPlan("show_columns of: tab\n");
     }
 
     @Test
     public void testSelectFromTablePartitions() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp NOT NULL)", "select * from table_partitions('tab')", "show_partitions of: tab\n");
+        assertQuery("select * from table_partitions('tab')")
+                .ddl("create table tab ( s string, sy symbol, i int, ts timestamp)")
+                .assertsPlan("show_partitions of: tab\n");
     }
 
     @Test
@@ -9551,46 +9753,54 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscNotPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
-                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                    DeferredSingleSymbolFilterPageFrame
-                        Index backward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s = 'S1' order by ts desc limit 1 ")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                            DeferredSingleSymbolFilterPageFrame
+                                Index backward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsAscPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
-                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                    DeferredSingleSymbolFilterPageFrame
-                        Index backward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s = 'S1' order by ts desc limit 1 ")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;")
+                .assertsPlan("""
+                        Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                            DeferredSingleSymbolFilterPageFrame
+                                Index backward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescNotPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
-                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                    DeferredSingleSymbolFilterPageFrame
-                        Index backward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s = 'S1' order by ts desc limit 1 ")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                            DeferredSingleSymbolFilterPageFrame
+                                Index backward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbolWithLimitLoOrderByTsDescPartitioned() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by day;", "select * from a where s = 'S1' order by ts desc limit 1 ", """
-                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                    DeferredSingleSymbolFilterPageFrame
-                        Index backward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s = 'S1' order by ts desc limit 1 ")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day;")
+                .assertsPlan("""
+                        Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                            DeferredSingleSymbolFilterPageFrame
+                                Index backward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
@@ -9607,7 +9817,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     public void testSelectIndexedSymbols01b() throws Exception {
         // if query is ordered by symbol and there's more than partition to scan, then sort is necessary even if we use cursor order scan
         assertMemoryLeak(() -> {
-            execute("create table a ( s symbol index, ts timestamp NOT NULL)  timestamp(ts) partition by hour");
+            execute("create table a ( s symbol index, ts timestamp)  timestamp(ts) partition by hour");
             execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
             String queryDesc = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
@@ -9660,77 +9870,88 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols01c() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1", "Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
-                "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
+        assertQuery("select ts, s from a where s in ('S1', 'S2') and length(s) = 2 order by s desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("Limit value: 1 skip-rows-max: 0 take-rows-max: 1\n" + "    FilterOnValues symbolOrder: desc\n" + "        Cursor-order scan\n" + //actual order is S2, S1
+                        "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S2'\n" + "              filter: length(s)=2\n" + "            Index forward scan on: s deferred: true\n" + "              symbolFilter: s='S1'\n" + "              filter: length(s)=2\n" + "        Frame forward scan on: a\n");
     }
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols02() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = $1 or s = $2 order by ts desc limit 1", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: (s=$0::string or s=$1::string)
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s = $1 or s = $2 order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: (s=$0::string or s=$1::string)
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test // TODO: sql is same as in testSelectIndexedSymbols1 but doesn't use index !
     public void testSelectIndexedSymbols03() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: (s='S1' or s='S2')
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s = 'S1' or s = 'S2' order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: (s='S1' or s='S2')
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbols04() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1", """
-                Limit value: 1 skip-rows: 0 take-rows: 0
-                    Encode sort
-                      keys: [ts desc]
-                        Empty table
-                """);
+        assertQuery("select * from a where s = 'S1' and s = 'S2' order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Encode sort light lo: 1
+                          keys: [ts desc]
+                            Empty table
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbols05() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1", """
-                Sort light lo: 1
-                  keys: [ts desc]
-                    FilterOnSubQuery
-                        Union All
-                            VirtualRecord
-                              functions: ['S1']
-                                long_sequence count: 1
-                            VirtualRecord
-                              functions: ['S2']
-                                long_sequence count: 1
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s in (select 'S1' union all select 'S2') order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Encode sort light lo: 1
+                          keys: [ts desc]
+                            FilterOnSubQuery
+                                Union All
+                                    VirtualRecord
+                                      functions: ['S1']
+                                        long_sequence count: 1
+                                    VirtualRecord
+                                      functions: ['S2']
+                                        long_sequence count: 1
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbols05a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1", """
-                Sort light lo: 1
-                  keys: [ts desc]
-                    FilterOnSubQuery
-                      filter: length(s)=2
-                        Union All
-                            VirtualRecord
-                              functions: ['S1']
-                                long_sequence count: 1
-                            VirtualRecord
-                              functions: ['S2']
-                                long_sequence count: 1
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a where s in (select 'S1' union all select 'S2') and length(s) = 2 order by ts desc limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Encode sort light lo: 1
+                          keys: [ts desc]
+                            FilterOnSubQuery
+                              filter: length(s)=2
+                                Union All
+                                    VirtualRecord
+                                      functions: ['S1']
+                                        long_sequence count: 1
+                                    VirtualRecord
+                                      functions: ['S2']
+                                        long_sequence count: 1
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
@@ -9748,14 +9969,16 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols06a() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by day", "select * from a where s = 'S1' order by s asc limit 10", """
-                Sort light lo: 10
-                  keys: [s]
-                    DeferredSingleSymbolFilterPageFrame
-                        Index forward scan on: s deferred: true
-                          filter: s='S1'
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a where s = 'S1' order by s asc limit 10")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day")
+                .assertsPlan("""
+                        Encode sort light lo: 10
+                          keys: [s]
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s deferred: true
+                                  filter: s='S1'
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -9781,7 +10004,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols07Partitioned() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by day");
+            execute("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by day");
 
             String query = "select * from a where s != 'S1' and length(s) = 2 and ts in '2023-03-15' order by s #ORDER#";
             String expectedPlan = """
@@ -9885,27 +10108,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols09() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year ;", "select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc", """
-                SortedSymbolIndex
-                    Index forward scan on: s
-                      symbolOrder: asc
-                    Interval forward scan on: a
-                      intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.000099Z")]
-                """);
+        assertQuery("select * from a where ts >= 0::timestamp and ts < 100::timestamp order by s asc")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) partition by year ;")
+                .assertsPlan("""
+                        SortedSymbolIndex
+                            Index forward scan on: s
+                              symbolOrder: asc
+                            Interval forward scan on: a
+                              intervals: [("1970-01-01T00:00:00.000000Z","1970-01-01T00:00:00.000099Z")]
+                        """);
     }
 
     @Test
     public void testSelectIndexedSymbols10() throws Exception {
-        assertPlan("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a where s in ('S1', 'S2') limit 1", """
-                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                    FilterOnValues
-                        Table-order scan
-                            Index forward scan on: s deferred: true
-                              filter: s='S2'
-                            Index forward scan on: s deferred: true
-                              filter: s='S1'
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a where s in ('S1', 'S2') limit 1")
+                .ddl("create table a ( s symbol index, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                            FilterOnValues
+                                Table-order scan
+                                    Index forward scan on: s deferred: true
+                                      filter: s='S2'
+                                    Index forward scan on: s deferred: true
+                                      filter: s='S1'
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -9919,7 +10146,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols11() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( s symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
 
             assertQuery("select * from a where s in ('S1', 'S2') and length(s) = 2 limit 1")
@@ -9940,7 +10167,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols12() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertQuery("select * from a where s1 in ('S1', 'S2') and s2 in ('S2') limit 1")
                     .noLeakCheck()
@@ -9957,7 +10184,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols13() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( s1 symbol index, s2 symbol index, ts timestamp) timestamp(ts)");
             execute("insert into a select 'S' || x, 'S' || x, x::timestamp from long_sequence(10)");
             assertQuery("select * from a where s1 in ('S1')  order by ts desc")
                     .noLeakCheck()
@@ -9973,7 +10200,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols14() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year;");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertQuery("select * from a where s1 = 'S1'  order by ts desc")
                     .noLeakCheck()
@@ -9989,7 +10216,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // backward index scan is triggered only if query uses a single partition and orders by key column and ts desc
     public void testSelectIndexedSymbols15() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year;");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertQuery("select * from a " + "where s1 = 'S1' " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
                     .noLeakCheck()
@@ -10006,7 +10233,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols16() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year;");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertQuery("select * from a " + "where s1 in ('S1', 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
                     .noLeakCheck()
@@ -10026,7 +10253,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: should use the same plan as above
     public void testSelectIndexedSymbols17() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by year;");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by year;");
             execute("insert into a select 'S' || x, x::timestamp from long_sequence(10)");
             assertQuery("select * from a " + "where (s1 = 'S1' or s1 = 'S2') " + "and ts > 0::timestamp and ts < 9::timestamp  " + "order by s1,ts desc")
                     .noLeakCheck()
@@ -10046,7 +10273,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectIndexedSymbols18() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( s1 symbol index, ts timestamp NOT NULL) timestamp(ts) partition by hour;");
+            execute("create table a ( s1 symbol index, ts timestamp) timestamp(ts) partition by hour;");
             execute("insert into a select 'S' || (6-x), dateadd('m', 20*x::int, 0::timestamp) from long_sequence(5)");
             String query = "select * from " + "(" + "  select * from a " + "  where s1 not in ('S1', 'S2') " + "  order by ts asc " + "  limit 5" + ") order by ts asc";
             assertQuery(query)
@@ -10079,13 +10306,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectIndexedSymbols7b() throws Exception {
-        assertPlan("create table a ( ts timestamp NOT NULL, s symbol index) timestamp(ts);", "select s from a where s != 'S1' and length(s) = 2 order by s ", """
-                FilterOnExcludedValues symbolOrder: asc
-                  symbolFilter: s not in ['S1']
-                  filter: length(s)=2
-                    Cursor-order scan
-                    Frame forward scan on: a
-                """);
+        assertQuery("select s from a where s != 'S1' and length(s) = 2 order by s ")
+                .ddl("create table a ( ts timestamp, s symbol index) timestamp(ts);")
+                .assertsPlan("""
+                        FilterOnExcludedValues symbolOrder: asc
+                          symbolFilter: s not in ['S1']
+                          filter: length(s)=2
+                            Cursor-order scan
+                            Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -10118,7 +10347,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectNoOrderByWithNegativeLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertQuery("select * from a limit -5")
@@ -10135,7 +10364,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectNoOrderByWithNegativeLimitArithmetic() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertQuery("select * from a limit -10+2")
@@ -10151,27 +10380,31 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsAsIndexDescNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts);", "select * from a order by 2 desc limit -10", """
-                Limit value: -10 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a order by 2 desc limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Limit value: -10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectOrderByTsAsc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts asc", """
-                PageFrame
-                    Row forward scan
-                    Frame forward scan on: a
-                """);
+        assertQuery("select * from a order by ts asc")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectOrderByTsAscAndDesc() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertQuery("select * from (select * from a order by ts asc limit 5) order by ts desc")
@@ -10190,7 +10423,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSelectOrderByTsDescAndAsc() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertQuery("select * from (select * from a order by ts desc limit 5) order by ts asc")
@@ -10232,28 +10465,32 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderByTsDescNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
-                Limit value: -10 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a order by ts desc limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: -10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectOrderByTsWithNegativeLimit() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)", "select * from a order by ts  limit -5", """
-                Limit value: -5 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a order by ts  limit -5")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts)")
+                .assertsPlan("""
+                        Limit value: -5 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectOrderByTsWithNegativeLimit1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
             execute("insert into a select x,x::timestamp from long_sequence(10)");
 
             assertQuery("select ts, count(*)  from a sample by 1s ALIGN TO FIRST OBSERVATION limit -5")
@@ -10308,35 +10545,41 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectOrderedAsc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by i asc", """
-                Encode sort light
-                  keys: [i]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a order by i asc")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Encode sort light
+                          keys: [i]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectOrderedDesc() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by i desc", """
-                Encode sort light
-                  keys: [i desc]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a order by i desc")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Encode sort light
+                          keys: [i desc]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectOrderedWithLimitLoHi() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by i limit 10, 100", """
-                Sort light lo: 10 hi: 100
-                  keys: [i]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a order by i limit 10, 100")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Encode sort light lo: 10 hi: 100
+                          keys: [i]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -10353,52 +10596,61 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectStaticTsInterval1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts > '2020-03-01'", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: tab
-                      intervals: [("2020-03-01T00:00:00.000001Z","MAX")]
-                """);
+        assertQuery("select * from tab where ts > '2020-03-01'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("2020-03-01T00:00:00.000001Z","MAX")]
+                        """);
     }
 
     @Test
     public void testSelectStaticTsInterval10() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ", """
-                Encode sort light
-                  keys: [l desc]
-                    PageFrame
-                        Row forward scan
-                        Interval forward scan on: tab
-                          intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
-                """);
+        assertQuery("select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Encode sort light
+                          keys: [l desc]
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: tab
+                                  intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
+                        """);
     }
 
     @Test
     public void testSelectStaticTsInterval10a() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ", """
-                Encode sort light
-                  keys: [l desc, ts desc]
-                    PageFrame
-                        Row forward scan
-                        Interval forward scan on: tab
-                          intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
-                """);
+        assertQuery("select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by l desc, ts desc ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Encode sort light
+                          keys: [l desc, ts desc]
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: tab
+                                  intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
+                        """);
     }
 
     @Test
     public void testSelectStaticTsInterval2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-03-01'", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: tab
-                      intervals: [("2020-03-01T00:00:00.000000Z","2020-03-01T23:59:59.999999Z")]
-                """);
+        assertQuery("select * from tab where ts in '2020-03-01'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("2020-03-01T00:00:00.000000Z","2020-03-01T23:59:59.999999Z")]
+                        """);
     }
 
     @Test
     public void testSelectStaticTsInterval3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-03-01' or ts in '2020-03-10'",
-                """
+        assertQuery("select * from tab where ts in '2020-03-01' or ts in '2020-03-10'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
                         PageFrame
                             Row forward scan
                             Interval forward scan on: tab
@@ -10408,75 +10660,91 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test // ranges don't overlap so result is empty
     public void testSelectStaticTsInterval4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-03-01' and ts in '2020-03-10'", "Empty table\n");
+        assertQuery("select * from tab where ts in '2020-03-01' and ts in '2020-03-10'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("Empty table\n");
     }
 
     @Test // only 2020-03-10->2020-03-31 needs to be scanned
     public void testSelectStaticTsInterval5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-03' and ts > '2020-03-10'", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: tab
-                      intervals: [("2020-03-10T00:00:00.000001Z","2020-03-31T23:59:59.999999Z")]
-                """);
+        assertQuery("select * from tab where ts in '2020-03' and ts > '2020-03-10'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("2020-03-10T00:00:00.000001Z","2020-03-31T23:59:59.999999Z")]
+                        """);
     }
 
     @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ", """
-                Async JIT Filter workers: 1
-                  filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z))
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where (ts > '2020-03-01' and ts < '2020-03-10') or (ts > '2020-04-01' and ts < '2020-04-10') ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: ((2020-03-01T00:00:00.000000Z<ts and ts<2020-03-10T00:00:00.000000Z) or (2020-04-01T00:00:00.000000Z<ts and ts<2020-04-10T00:00:00.000000Z))
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // TODO: this should use interval scan with two ranges !
     public void testSelectStaticTsInterval7() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ", """
-                Async Filter workers: 1
-                  filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where (ts between '2020-03-01' and '2020-03-10') or (ts between '2020-04-01' and '2020-04-10') ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: (ts between 1583020800000000 and 1583798400000000 or ts between 1585699200000000 and 1586476800000000)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectStaticTsInterval8() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: tab
-                      intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
-                """);
+        assertQuery("select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' ")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: tab
+                              intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
+                        """);
     }
 
     @Test
     public void testSelectStaticTsInterval9() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc", """
-                PageFrame
-                    Row backward scan
-                    Interval backward scan on: tab
-                      intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
-                """);
+        assertQuery("select * from tab where ts in '2020-01-01T03:00:00;1h;24h;3' order by ts desc")
+                .ddl("create table tab ( l long, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        PageFrame
+                            Row backward scan
+                            Interval backward scan on: tab
+                              intervals: [("2020-01-01T03:00:00.000000Z","2020-01-01T03:59:59.999999Z"),("2020-01-02T03:00:00.000000Z","2020-01-02T03:59:59.999999Z"),("2020-01-03T03:00:00.000000Z","2020-01-03T03:59:59.999999Z")]
+                        """);
     }
 
     @Test
     public void testSelectStaticTsIntervalOnTabWithoutDesignatedTimestamp() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where ts > '2020-03-01'", """
-                Async JIT Filter workers: 1
-                  filter: 2020-03-01T00:00:00.000000Z<ts
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where ts > '2020-03-01'")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: 2020-03-01T00:00:00.000000Z<ts
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWalTransactions() throws Exception {
-        assertPlan("create table tab ( s string, sy symbol, i int, ts timestamp NOT NULL) timestamp(ts) partition by day WAL", "select * from wal_transactions('tab')", "wal_transactions of: tab\n");
+        assertQuery("select * from wal_transactions('tab')")
+                .ddl("create table tab ( s string, sy symbol, i int, ts timestamp) timestamp(ts) partition by day WAL")
+                .assertsPlan("wal_transactions of: tab\n");
     }
 
     @Test
@@ -10695,101 +10963,119 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 ", """
-                Async JIT Filter workers: 1
-                  filter: 100<l
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l > 100 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: 100<l
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter10() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select * from tab where s in ( 'A', 'B' )", """
-                Async JIT Filter workers: 1
-                  filter: s in [A,B]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where s in ( 'A', 'B' )")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: s in [A,B]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // TODO: this one should interval scan without filter
     public void testSelectWithJittedFilter11() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select * from tab where ts in ( '2020-01-01', '2020-01-02' )", """
-                Async JIT Filter workers: 1
-                  filter: ts in [1577836800000000,1577923200000000]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where ts in ( '2020-01-01', '2020-01-02' )")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: ts in [1577836800000000,1577923200000000]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter12() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'", """
-                Async JIT Filter workers: 1
-                  filter: (ts in [1577836800000000,1578009600000000] and s='ABC')
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where ts in ( '2020-01-01', '2020-01-03' ) and s = 'ABC'")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: (ts in [1577836800000000,1578009600000000] and s='ABC')
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // TODO: this one should interval scan with jit filter
     public void testSelectWithJittedFilter13() throws Exception {
-        assertPlan("create table tab ( s symbol, ts timestamp NOT NULL);", "select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'", """
-                Async JIT Filter workers: 1
-                  filter: (ts in [1577836800000000,1577923199999999] and s='ABC')
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where ts in ( '2020-01-01' ) and s = 'ABC'")
+                .ddl("create table tab ( s symbol, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: (ts in [1577836800000000,1577923199999999] and s='ABC')
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter14() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 12 or l = 15 ", """
-                Async JIT Filter workers: 1
-                  filter: (l=12 or l=15)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = 12 or l = 15 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: (l=12 or l=15)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter15() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 12.345 ", """
-                Async JIT Filter workers: 1
-                  filter: l=12.345
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = 12.345 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: l=12.345
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter16() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp NOT NULL);", "select * from tab where b = false ", """
-                Async JIT Filter workers: 1
-                  filter: b=false
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where b = false ")
+                .ddl("create table tab ( b boolean, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: b=false
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter17() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp NOT NULL);", "select * from tab where not(b = false or ts = 123) ", """
-                Async JIT Filter workers: 1
-                  filter: (b!=false and 123!=ts)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where not(b = false or ts = 123) ")
+                .ddl("create table tab ( b boolean, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: (b!=false and 123!=ts)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
@@ -10820,13 +11106,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 and l < 1000 ", """
-                Async JIT Filter workers: 1
-                  filter: (100<l and l<1000)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l > 100 and l < 1000 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: (100<l and l<1000)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
@@ -10844,384 +11132,452 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithJittedFilter21() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = $1 ", """
-                Async JIT Filter workers: 1
-                  filter: l=$0::long
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = $1 ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: l=$0::long
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter22() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL);", "select * from tab where d = 1024.1 + 1 ", """
-                Async JIT Filter workers: 1
-                  filter: d=1025.1
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1024.1 + 1 ")
+                .ddl("create table tab ( d double, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: d=1025.1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter23() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL);", "select * from tab where d = null ", """
-                Async JIT Filter workers: 1
-                  filter: d is null
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where d = null ")
+                .ddl("create table tab ( d double, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: d is null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter24a() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit 1 ", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: d=1.2
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1.2 order by ts limit 1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: d=1.2
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter24b() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: d=1.2
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1.2 order by ts limit -1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: d=1.2
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter24b2() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: d=1.2
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1.2 limit -1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: d=1.2
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter24c() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: d=1.2
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1.2 order by ts desc limit 1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: d=1.2
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter24d() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 limit -1 ", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: d=1.2
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1.2 limit -1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: d=1.2
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter24e() throws Exception {
         bindVariableService.setInt("maxRows", -1);
 
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 limit :maxRows ", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: d=1.2
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1.2 limit :maxRows ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: d=1.2
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter25() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts desc limit 1 ", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: d=1.2
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1.2 order by ts desc limit 1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: d=1.2
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter26() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL) timestamp(ts);", "select * from tab where d = 1.2 order by ts limit -1 ", """
-                Async JIT Filter workers: 1
-                  limit: 1
-                  filter: d=1.2
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1.2 order by ts limit -1 ")
+                .ddl("create table tab ( d double, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          limit: 1
+                          filter: d=1.2
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter27() throws Exception {
-        assertPlan("create table tab (s string, ts timestamp NOT NULL);", "select * from tab where s = null ", """
-                Async JIT Filter workers: 1
-                  filter: s is null
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where s = null ")
+                .ddl("create table tab (s string, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: s is null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter28() throws Exception {
-        assertPlan("create table tab (v varchar, ts timestamp NOT NULL);", "select * from tab where v = null ", """
-                Async JIT Filter workers: 1
-                  filter: v is null
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where v = null ")
+                .ddl("create table tab (v varchar, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: v is null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ", """
-                Async JIT Filter workers: 1
-                  filter: (100<l and l<1000 and 2022-01-01T00:00:00.000000Z=ts) [pre-touch]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select /*+ ENABLE_PRE_TOUCH(tab) */ * from tab where l > 100 and l < 1000 and ts = '2022-01-01' ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: (100<l and l<1000 and 2022-01-01T00:00:00.000000Z=ts) [pre-touch]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter4() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 and l < 1000 and l = 20", """
-                Async JIT Filter workers: 1
-                  filter: (100<l and l<1000 and l=20)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l > 100 and l < 1000 and l = 20")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: (100<l and l<1000 and l=20)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 and l < 1000 or l = 20", """
-                Async JIT Filter workers: 1
-                  filter: ((100<l and l<1000) or l=20)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l > 100 and l < 1000 or l = 20")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: ((100<l and l<1000) or l=20)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l > 100 and l < 1000 or ts = 123", """
-                Async JIT Filter workers: 1
-                  filter: ((100<l and l<1000) or 123=ts)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l > 100 and l < 1000 or ts = 123")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: ((100<l and l<1000) or 123=ts)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter7() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp (ts);", "select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'", """
-                Async JIT Filter workers: 1
-                  filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l > 100 and l < 1000 or ts > '2021-01-01'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp (ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: ((100<l and l<1000) or 2021-01-01T00:00:00.000000Z<ts)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter8() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL) timestamp (ts);", "select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'", """
-                Async JIT Filter workers: 1
-                  filter: (100<l and l<1000)
-                    PageFrame
-                        Row forward scan
-                        Interval forward scan on: tab
-                          intervals: [("2021-01-01T00:00:00.000000Z","2021-01-01T23:59:59.999999Z")]
-                """);
+        assertQuery("select * from tab where l > 100 and l < 1000 and ts in '2021-01-01'")
+                .ddl("create table tab ( l long, ts timestamp) timestamp (ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: (100<l and l<1000)
+                            PageFrame
+                                Row forward scan
+                                Interval forward scan on: tab
+                                  intervals: [("2021-01-01T00:00:00.000000Z","2021-01-01T23:59:59.999999Z")]
+                        """);
     }
 
     @Test
     public void testSelectWithJittedFilter9() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l in ( 100, 200 )", """
-                Async JIT Filter workers: 1
-                  filter: l in [100,200]
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l in ( 100, 200 )")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: l in [100,200]
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithLimitLo() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a limit 10", """
-                Limit value: 10 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a limit 10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithLimitLoHi() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a limit 10, 100", """
-                Limit left: 10 right: 100 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a limit 10, 100")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit left: 10 right: 100 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithLimitLoHiNegative() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a limit -10, -100", """
-                Limit left: -10 right: -100 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a limit -10, -100")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit left: -10 right: -100 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithLimitLoNegative() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a limit -10", """
-                Limit value: -10 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: -10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter1() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 12::short ", """
-                Async Filter workers: 1
-                  filter: l=12
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = 12::short ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: l=12
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter10() throws Exception {
-        assertPlan("create table tab ( s short, ts timestamp NOT NULL);", "select * from tab where s = 1::short ", """
-                Async Filter workers: 1
-                  filter: s=1
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where s = 1::short ")
+                .ddl("create table tab ( s short, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: s=1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // TODO: should run with jitted filter just like b = true
     public void testSelectWithNonJittedFilter11() throws Exception {
-        assertPlan("create table tab ( b boolean, ts timestamp NOT NULL);", "select * from tab where b = true::boolean ", """
-                Async Filter workers: 1
-                  filter: b=true
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where b = true::boolean ")
+                .ddl("create table tab ( b boolean, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: b=true
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // TODO: should run with jitted filter just like l = 1024
     public void testSelectWithNonJittedFilter12() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 1024::long ", """
-                Async Filter workers: 1
-                  filter: l=1024L
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = 1024::long ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: l=1024L
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // TODO: should run with jitted filter just like d = 1024.1
     public void testSelectWithNonJittedFilter13() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL);", "select * from tab where d = 1024.1::double ", """
-                Async Filter workers: 1
-                  filter: d=1024.1
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where d = 1024.1::double ")
+                .ddl("create table tab ( d double, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: d=1024.1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // TODO: should run with jitted filter just like d = null
     public void testSelectWithNonJittedFilter14() throws Exception {
-        assertPlan("create table tab ( d double, ts timestamp NOT NULL);", "select * from tab where d = null::double ", """
-                Async Filter workers: 1
-                  filter: d is null
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where d = null::double ")
+                .ddl("create table tab ( d double, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: d is null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter15() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l | l) > 0  ", """
-                Async Filter workers: 1
-                  filter: 0<l|l
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where (l | l) > 0  ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: 0<l|l
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter16() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l & l) > 0  ", """
-                Async Filter workers: 1
-                  filter: 0<l&l
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where (l & l) > 0  ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: 0<l&l
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // jit doesn't work for bitwise operators
     public void testSelectWithNonJittedFilter17() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l ^ l) > 0  ", """
-                Async Filter workers: 1
-                  filter: 0<l^l
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where (l ^ l) > 0  ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: 0<l^l
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithNonJittedFilter18() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l ^ l) > 0 limit -1", """
-                Async Filter workers: 1
-                  limit: 1
-                  filter: 0<l^l
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where (l ^ l) > 0 limit -1")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          limit: 1
+                          filter: 0<l^l
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test
@@ -11229,184 +11585,216 @@ public class ExplainPlanTest extends AbstractCairoTest {
         bindVariableService.clear();
         bindVariableService.setLong("maxRows", -1);
 
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where (l ^ l) > 0 limit :maxRows", """
-                Async Filter workers: 1
-                  limit: 1
-                  filter: 0<l^l
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: tab
-                """);
+        assertQuery("select * from tab where (l ^ l) > 0 limit :maxRows")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          limit: 1
+                          filter: 0<l^l
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: tab
+                        """);
     }
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter2() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = 12::byte ", """
-                Async Filter workers: 1
-                  filter: l=12
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = 12::byte ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: l=12
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // jit is not used due to type mismatch
     public void testSelectWithNonJittedFilter3() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = '123' ", """
-                Async Filter workers: 1
-                  filter: l='123'
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = '123' ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: l='123'
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // jit is not because rnd_long() value is not stable
     public void testSelectWithNonJittedFilter4() throws Exception {
         // Async filter function doesn't support memoization.
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = rnd_long() ", """
-                Async Filter workers: 1
-                  filter: l=rnd_long()
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = rnd_long() ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: l=rnd_long()
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithNonJittedFilter5() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ", """
-                Async Filter workers: 1
-                  filter: l=case([0<l,1,l=0,0,-1])
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = case when l > 0 then 1 when l = 0 then 0 else -1 end ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: l=case([0<l,1,l=0,0,-1])
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // interval scan is not used because of type mismatch
     public void testSelectWithNonJittedFilter6() throws Exception {
-        assertPlan("create table tab ( l long, ts timestamp NOT NULL);", "select * from tab where l = $1::string ", """
-                Async Filter workers: 1
-                  filter: l=$0::string
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where l = $1::string ")
+                .ddl("create table tab ( l long, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: l=$0::string
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // jit filter doesn't work for string type
     public void testSelectWithNonJittedFilter7() throws Exception {
-        assertPlan("create table tab ( s string, ts timestamp NOT NULL);", "select * from tab where s = 'test' ", """
-                Async Filter workers: 1
-                  filter: s='test'
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where s = 'test' ")
+                .ddl("create table tab ( s string, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: s='test'
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test // jit filter doesn't work with type casts
     public void testSelectWithNonJittedFilter9() throws Exception {
-        assertPlan("create table tab ( b byte, ts timestamp NOT NULL);", "select * from tab where b = 1::byte ", """
-                Async Filter workers: 1
-                  filter: b=1
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tab
-                """);
+        assertQuery("select * from tab where b = 1::byte ")
+                .ddl("create table tab ( b byte, ts timestamp);")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: b=1
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tab
+                        """);
     }
 
     @Test
     public void testSelectWithNotOperator() throws Exception {
-        assertPlan("CREATE TABLE tst ( timestamp TIMESTAMP NOT NULL );", "select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ", """
-                Async Filter workers: 1
-                  filter: not (timestamp between 1609459200000000 and 1610236800000000)
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: tst
-                """);
+        assertQuery("select * from tst where timestamp not between '2021-01-01' and '2021-01-10' ")
+                .ddl("CREATE TABLE tst ( timestamp TIMESTAMP );")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: not (timestamp between 1609459200000000 and 1610236800000000)
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tst
+                        """);
     }
 
     @Test
     public void testSelectWithOrderByTsDescLimitLo() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts desc limit 10", """
-                Limit value: 10 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a order by ts desc limit 10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: 10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithOrderByTsDescLimitLoNegative1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts desc limit -10", """
-                Limit value: -10 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row backward scan
-                        Frame backward scan on: a
-                """);
+        assertQuery("select * from a order by ts desc limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: -10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row backward scan
+                                Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithOrderByTsDescLimitLoNegative2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select i from a order by ts desc limit -10", """
-                SelectedRecord
-                    Limit value: -10 skip-rows: 0 take-rows: 0
-                        PageFrame
-                            Row backward scan
-                            Frame backward scan on: a
-                """);
+        assertQuery("select i from a order by ts desc limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        SelectedRecord
+                            Limit value: -10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row backward scan
+                                    Frame backward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithOrderByTsLimitLoNegative1() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select * from a order by ts limit -10", """
-                Limit value: -10 skip-rows: 0 take-rows: 0
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select * from a order by ts limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Limit value: -10 skip-rows: 0 take-rows: 0
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithOrderByTsLimitLoNegative2() throws Exception {
-        assertPlan("create table a ( i int, ts timestamp NOT NULL) timestamp(ts) ;", "select i from a order by ts limit -10", """
-                SelectedRecord
-                    Limit value: -10 skip-rows: 0 take-rows: 0
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                """);
+        assertQuery("select i from a order by ts limit -10")
+                .ddl("create table a ( i int, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        SelectedRecord
+                            Limit value: -10 skip-rows: 0 take-rows: 0
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithReorder1() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select ts, l, i from a where l<i", """
-                Async JIT Filter workers: 1
-                  filter: l<i
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select ts, l, i from a where l<i")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: l<i
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithReorder2() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select ts, l, i from a where l::short<i", """
-                Async Filter workers: 1
-                  filter: l::short<i
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select ts, l, i from a where l::short<i")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: l::short<i
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithReorder2a() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "where l::short<i " + "limit 100) " + "where l1*i2 != 0", """
-                SelectedRecord
-                    Filter filter: l1*i2!=0
+        assertQuery("select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "where l::short<i " + "limit 100) " + "where l1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
                         SelectedRecord
                             Filter filter: l1*i2!=0
                                 SelectedRecord
@@ -11421,11 +11809,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2b() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
-                Filter filter: i1*i2!=0
-                    SelectedRecord
-                        Sort light lo: 100 partiallySorted: true
-                          keys: [ts, l1]
+        assertQuery("select i2, i1, ts1 from " + "(select ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Filter filter: i1*i2!=0
                             SelectedRecord
                                 Encode sort light lo: 100 partiallySorted: true
                                   keys: [ts, l1]
@@ -11438,79 +11825,115 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testSelectWithReorder2c() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0", """
-                SelectedRecord
-                    Filter filter: i1*i2!=0
-                        Sort light lo: 100 partiallySorted: true
-                          keys: [ts, l1]
-                            SelectedRecord
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                """);
+        assertQuery("select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by ts, l1 " + "limit 100 ) " + "where i1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        SelectedRecord
+                            Filter filter: i1*i2!=0
+                                Encode sort light lo: 100 partiallySorted: true
+                                  keys: [ts, l1]
+                                    SelectedRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithReorder2d() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 1, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
-                SelectedRecord
-                    Filter filter: i1*i2!=0
-                        Sort light lo: 100 partiallySorted: true
-                          keys: [ts, l1]
-                            SelectedRecord
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                """);
+        assertQuery("select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 1, 3 " + "limit 100 ) " + "where i1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        SelectedRecord
+                            Filter filter: i1*i2!=0
+                                Encode sort light lo: 100 partiallySorted: true
+                                  keys: [ts, l1]
+                                    SelectedRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithReorder2e() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 2, 3 " + "limit 100 ) " + "where i1*i2 != 0", """
-                SelectedRecord
-                    Filter filter: i1*i2!=0
-                        Sort light lo: 100 partiallySorted: true
-                          keys: [ts1, l1]
-                            SelectedRecord
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: a
-                """);
+        assertQuery("select i2, i1, ts, ts1 from " + "(select ts, ts as ts1, l as l1, i as i1, i as i2 " + "from a " + "order by 2, 3 " + "limit 100 ) " + "where i1*i2 != 0")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        SelectedRecord
+                            Filter filter: i1*i2!=0
+                                Encode sort light lo: 100 partiallySorted: true
+                                  keys: [ts1, l1]
+                                    SelectedRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithReorder3() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ", """
-                GroupBy vectorized: false
-                  keys: [k]
-                  values: [max(ts)]
-                    SelectedRecord
-                        Async Filter workers: 1
-                          filter: (l::short<i and l<0)
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: a
-                """);
+        assertQuery("select k, max(ts) from ( select ts, l as k, i from a where l::short<i ) where k < 0 ")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        GroupBy vectorized: false
+                          keys: [k]
+                          values: [max(ts)]
+                            SelectedRecord
+                                Async Filter workers: 1
+                                  filter: (l::short<i and l<0)
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: a
+                        """);
     }
 
     @Test
     public void testSelectWithReorder4() throws Exception {
-        assertPlan("create table a ( i int, l long, ts timestamp NOT NULL) timestamp(ts) ;", "select mil, k, minl, mini from " + "( select ts as k, max(i*l) as mil, min(i) as mini, min(l) as minl  " + "from a where l::short<i ) " + "where mil + mini> 1 ", """
-                Filter filter: 1<mil+mini
-                    Async Group By workers: 1
-                      keys: [k]
-                      values: [max(i*l),min(l),min(i)]
-                      filter: l::short<i
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: a
-                """);
+        assertQuery("select mil, k, minl, mini from " + "( select ts as k, max(i*l) as mil, min(i) as mini, min(l) as minl  " + "from a where l::short<i ) " + "where mil + mini> 1 ")
+                .ddl("create table a ( i int, l long, ts timestamp) timestamp(ts) ;")
+                .assertsPlan("""
+                        Filter filter: 1<mil+mini
+                            Async Group By workers: 1
+                              keys: [k]
+                              values: [max(i*l),min(l),min(i)]
+                              filter: l::short<i
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: a
+                        """);
+    }
+
+    @Test
+    public void testSelfJoinFilterPushedThroughView() throws Exception {
+        // Regression lock-in for a self-join wrapped in a subquery: both join instances reference the
+        // same table and the same column name 'k'. The constant pinned to the master instance
+        // (a.k='x') must propagate to the slave instance (b.k) without conflating the two
+        // identically-named columns - addTransitiveFilters matches on both name AND join-model index,
+        // so only the slave's own key is filtered. ORDER BY makes the hash-join output deterministic.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL INDEX, v STRING)");
+            execute("INSERT INTO t VALUES ('x', 'x1'), ('x', 'x2'), ('y', 'y1')");
+            assertQuery("""
+                    SELECT * FROM (
+                      SELECT a.k AS ka, a.v AS av, b.v AS bv
+                      FROM t a JOIN t b ON b.k = a.k
+                    ) WHERE ka = 'x' ORDER BY av, bv""")
+                    .noLeakCheck()
+                    .returns("""
+                            ka\tav\tbv
+                            x\tx1\tx1
+                            x\tx1\tx2
+                            x\tx2\tx1
+                            x\tx2\tx2
+                            """);
+        });
     }
 
     @Test
     public void testSortAscLimitAndSortAgain1a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts asc limit 10) order by ts asc")
                     .noLeakCheck()
@@ -11526,7 +11949,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain1b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts desc, l desc limit 10) order by ts desc")
                     .noLeakCheck()
@@ -11543,7 +11966,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts asc, l limit 10) lt join (select * from a) order by ts asc")
                     .noLeakCheck()
@@ -11565,7 +11988,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain3a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from " + "(select * from (select * from a order by ts asc, l) limit 10) " + "lt join " + "(select * from a) order by ts asc")
                     .noLeakCheck()
@@ -11588,7 +12011,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain3b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from " + "(select * from (select * from a order by ts desc, l desc) limit 10) " + "order by ts asc")
                     .noLeakCheck()
@@ -11608,7 +12031,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain4a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts asc, l  " + " limit 10" + ") " + "lt join (select * from a) " + "order by ts asc")
                     .noLeakCheck()
@@ -11636,7 +12059,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortAgain4b() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from " + "(select * from " + "   (select * from a) " + "    cross join " + "   (select * from a) " + " order by ts desc " + " limit 10" + ") " + "order by ts desc")
                     .noLeakCheck()
@@ -11657,7 +12080,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortAscLimitAndSortDesc() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts asc limit 10) order by ts desc")
                     .noLeakCheck()
@@ -11675,7 +12098,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortDescLimitAndSortAgain() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts desc limit 10) order by ts desc")
                     .noLeakCheck()
@@ -11691,7 +12114,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSortDescLimitAndSortAsc1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from (select * from a order by ts desc limit 10) order by ts asc")
                     .noLeakCheck()
@@ -11709,7 +12132,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long)");
+            execute("create table a ( i int, ts timestamp, l long)");
 
             assertQuery("select * from (select * from a order by ts, l limit 10) order by ts, l")
                     .noLeakCheck()
@@ -11729,7 +12152,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test // TODO: sorting by ts, l again is not necessary
     public void testSortDescLimitAndSortAsc3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long)");
+            execute("create table a ( i int, ts timestamp, l long)");
 
             assertQuery("select * from (select * from a order by ts, l limit 10,-10) order by ts, l")
                     .noLeakCheck()
@@ -11749,8 +12172,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin0() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from a splice join b on ts where a.i = b.ts")
                     .noLeakCheck()
@@ -11772,8 +12195,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin0a() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL, l long) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp, l long) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp, l long) timestamp(ts)");
 
             assertQuery("select * from a splice join b on ts where a.i + b.i = 1")
                     .noLeakCheck()
@@ -11795,8 +12218,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a splice join b on ts")
                     .noLeakCheck()
@@ -11817,8 +12240,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a splice join (select * from b limit 10) on ts")
                     .noLeakCheck()
@@ -11840,8 +12263,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a splice join ((select * from b order by ts, i ) timestamp(ts))  on ts")
                     .noLeakCheck()
@@ -11864,8 +12287,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testSpliceJoin4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table a ( i int, ts timestamp NOT NULL) timestamp(ts)");
-            execute("create table b ( i int, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table a ( i int, ts timestamp) timestamp(ts)");
+            execute("create table b ( i int, ts timestamp) timestamp(ts)");
 
             assertQuery("select * from a splice join b where a.i = b.i")
                     .noLeakCheck()
@@ -11907,86 +12330,98 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testTimestampEqSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts = (select min(ts) from x)", """
-                Async Filter workers: 1
-                  filter: ts=cursor\s
-                    Async Group By workers: 1
-                      vectorized: false
-                      values: [min(ts)]
-                      filter: null
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: x
-                """);
+        assertQuery("select * from x where ts = (select min(ts) from x)")
+                .ddl("create table x (l long, ts timestamp)")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: ts=cursor\s
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [min(ts)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                        """);
     }
 
     @Test
     public void testTimestampEqSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp NOT NULL) timestamp(ts) partition by day", "select * from x where ts = (select min(ts) from x)", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: x
-                      intervals: []
-                """);
+        assertQuery("select * from x where ts = (select min(ts) from x)")
+                .ddl("create table x (l long, ts timestamp) timestamp(ts) partition by day")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: x
+                              intervals: []
+                        """);
     }
 
     @Test
     public void testTimestampGtSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts > (select min(ts) from x)", """
-                Async Filter workers: 1
-                  filter: ts [thread-safe] > cursor\s
-                    Async Group By workers: 1
-                      vectorized: false
-                      values: [min(ts)]
-                      filter: null
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: x
-                """);
+        assertQuery("select * from x where ts > (select min(ts) from x)")
+                .ddl("create table x (l long, ts timestamp)")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: ts [thread-safe] > cursor\s
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [min(ts)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                        """);
     }
 
     @Test
     public void testTimestampGtSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp NOT NULL) timestamp(ts) partition by day", "select * from x where ts > (select min(ts) from x)", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: x
-                      intervals: []
-                """);
+        assertQuery("select * from x where ts > (select min(ts) from x)")
+                .ddl("create table x (l long, ts timestamp) timestamp(ts) partition by day")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: x
+                              intervals: []
+                        """);
     }
 
     @Test
     public void testTimestampLtSubQueryFilter1() throws Exception {
-        assertPlan("create table x (l long, ts timestamp NOT NULL)", "select * from x where ts < (select max(ts) from x)", """
-                Async Filter workers: 1
-                  filter: ts [thread-safe] < cursor\s
-                    Async Group By workers: 1
-                      vectorized: false
-                      values: [max(ts)]
-                      filter: null
-                        PageFrame
-                            Row forward scan
-                            Frame forward scan on: x
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: x
-                """);
+        assertQuery("select * from x where ts < (select max(ts) from x)")
+                .ddl("create table x (l long, ts timestamp)")
+                .assertsPlan("""
+                        Async Filter workers: 1
+                          filter: ts [thread-safe] < cursor\s
+                            Async Group By workers: 1
+                              vectorized: true
+                              values: [max(ts)]
+                              filter: null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: x
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: x
+                        """);
     }
 
     @Test
     public void testTimestampLtSubQueryFilter2() throws Exception {
-        assertPlan("create table x (l long, ts timestamp NOT NULL) timestamp(ts) partition by day", "select * from x where ts < (select max(ts) from x)", """
-                PageFrame
-                    Row forward scan
-                    Interval forward scan on: x
-                      intervals: []
-                """);
+        assertQuery("select * from x where ts < (select max(ts) from x)")
+                .ddl("create table x (l long, ts timestamp) timestamp(ts) partition by day")
+                .assertsPlan("""
+                        PageFrame
+                            Row forward scan
+                            Interval forward scan on: x
+                              intervals: []
+                        """);
     }
 
     @Test
@@ -12022,7 +12457,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWhereOrderByTsLimit1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t ( x long, ts timestamp NOT NULL) timestamp(ts)");
+            execute("create table t ( x long, ts timestamp) timestamp(ts)");
 
             String query = "select * from t where x < 100 order by ts desc limit -5";
             assertQuery(query)
@@ -12055,13 +12490,15 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testWhereUuid() throws Exception {
-        assertPlan("create table a (u uuid, ts timestamp NOT NULL) timestamp(ts);", "select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'", """
-                Async JIT Filter workers: 1
-                  filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')
-                    PageFrame
-                        Row forward scan
-                        Frame forward scan on: a
-                """);
+        assertQuery("select u, ts from a where u = '11111111-1111-1111-1111-111111111111' or u = '22222222-2222-2222-2222-222222222222' or u = '33333333-3333-3333-3333-333333333333'")
+                .ddl("create table a (u uuid, ts timestamp) timestamp(ts);")
+                .assertsPlan("""
+                        Async JIT Filter workers: 1
+                          filter: ((u='11111111-1111-1111-1111-111111111111' or u='22222222-2222-2222-2222-222222222222') or u='33333333-3333-3333-3333-333333333333')
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: a
+                        """);
     }
 
     @Test
@@ -12112,7 +12549,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindow3() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, i long, j long) timestamp(ts)");
+            execute("create table tab (ts timestamp, i long, j long) timestamp(ts)");
 
             assertQuery("select ts, i, j, " + "avg(j) over (order by i, j rows unbounded preceding), " + "sum(j) over (order by i, j rows unbounded preceding), " + "first_value(j) over (order by i, j rows unbounded preceding), " + "from tab")
                     .noLeakCheck()
@@ -12169,7 +12606,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowJoinAndOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table x (a int, b int, ts timestamp NOT NULL) timestamp(ts);");
+            execute("create table x (a int, b int, ts timestamp) timestamp(ts);");
 
             assertQuery("select x1.a, sum(x1.b) from x x1 window join x x2 range between 1 second preceding and 2 second following order by x1.a")
                     .noLeakCheck()
@@ -12309,7 +12746,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowModelOrderByIsNotIgnored() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             assertQuery("""
                     select sum(avg), sum(sum), sum(first_value) from (
@@ -12377,7 +12814,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowOrderByUnderWindowModelIsPreserved() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             assertQuery("select sum(avg), sum(sum), first(first_value) from ( " + "select ts, hostname, usage_system, " + "avg(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over (partition by hostname order by ts desc rows between 100 preceding and current row) first_value " + "from cpu_ts " + "order by ts desc" + ") ")
                     .noLeakCheck()
@@ -12433,7 +12870,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowParentModelOrderPushdownIsBlockedWhenWindowModelSpecifiesOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             assertQuery("select * from " + "( " + "select ts, hostname, usage_system, " + "avg(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) avg, " + "sum(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) sum, " + "first_value(usage_system) over(partition by hostname order by ts desc rows between 100 preceding and current row) first_value, " + "from cpu_ts " + "order by ts desc " + ") order by ts asc")
                     .noLeakCheck()
@@ -12582,7 +13019,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @Test
     public void testWindowParentModelOrderPushdownIsDoneWhenNestedModelsSpecifyNoneOrMatchingOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp NOT NULL ) timestamp(ts);");
+            execute("create table  cpu_ts ( hostname symbol, usage_system double, ts timestamp ) timestamp(ts);");
 
             String expectedForwardPlan = """
                     Window
@@ -12869,7 +13306,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     create table table_1 (
-                              ts timestamp NOT NULL,
+                              ts timestamp,
                               name string,
                               age int,
                               member boolean
@@ -12881,7 +13318,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
             execute("""
                     create table table_2 (
-                              ts timestamp NOT NULL,
+                              ts timestamp,
                               name string,
                               age int,
                               address string
@@ -12894,9 +13331,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     // left join maintains order metadata and can be part of asof join
     private void testHashAndAsOfJoin(SqlCompiler compiler, boolean isLight, boolean isFastAsOfJoin) throws Exception {
-        execute("create table taba (a1 int, ts1 timestamp NOT NULL) timestamp(ts1)");
-        execute("create table tabb (b1 int, b2 long, ts2 timestamp NOT NULL) timestamp(ts2)");
-        execute("create table tabc (c1 int, c2 long, ts3 timestamp NOT NULL) timestamp(ts3)");
+        execute("create table taba (a1 int, ts1 timestamp) timestamp(ts1)");
+        execute("create table tabb (b1 int, b2 long, ts2 timestamp) timestamp(ts2)");
+        execute("create table tabc (c1 int, c2 long, ts3 timestamp) timestamp(ts3)");
 
         String asofJoinType = isFastAsOfJoin ? " Fast" : (isLight ? "Light" : "");
         assertQuery("select * " + "from taba " + "left join tabb on a1=b1 " + "asof join tabc on b1=c1")
@@ -12915,7 +13352,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     private void testSelectIndexedSymbol(String timestampAndPartitionByClause) throws Exception {
         execute("drop table if exists a");
-        execute("create table a ( s symbol index, ts timestamp NOT NULL) " + timestampAndPartitionByClause);
+        execute("create table a ( s symbol index, ts timestamp) " + timestampAndPartitionByClause);
         execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
         String query = "select * from a where s in (:s1, :s2) order by s desc limit 5";
@@ -12976,7 +13413,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
     @SuppressWarnings("SameParameterValue")
     private void testSelectIndexedSymbolWithIntervalFilter() throws Exception {
         execute("drop table if exists a");
-        execute("create table a ( s symbol index, ts timestamp NOT NULL) " + "timestamp(ts) partition by day");
+        execute("create table a ( s symbol index, ts timestamp) " + "timestamp(ts) partition by day");
         execute("insert into a values ('S2', 0), ('S1', 1), ('S3', 2+3600000000), ( 'S2' ,3+3600000000)");
 
         String query = "select * from a where s in (:s1, :s2) and ts in '1970-01-01' order by s desc limit 5";
@@ -13038,7 +13475,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     private void testSelectIndexedSymbols10WithOrder(String partitionByClause) throws Exception {
         execute("drop table if exists a");
-        execute("create table a ( s symbol index, ts timestamp NOT NULL) timestamp(ts)" + partitionByClause);
+        execute("create table a ( s symbol index, ts timestamp) timestamp(ts)" + partitionByClause);
         execute("insert into a values ('S2', 1), ('S3', 2),('S1', 3+3600000000),('S2', 4+3600000000), ('S1', 5+3600000000);");
 
         bindVariableService.clear();

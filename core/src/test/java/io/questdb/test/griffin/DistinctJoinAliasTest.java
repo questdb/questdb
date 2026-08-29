@@ -354,7 +354,7 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
             execute(
                     "create table historical (" +
                             "  account_id INT," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp(ts);"
             );
             execute(
@@ -498,13 +498,13 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                     "create table sensors (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp (ts) partition by day;"
             );
             execute(
                     "create table samples (" +
                             "  sensor_id SYMBOL," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -530,13 +530,13 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                     "create table sensors (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp (ts) partition by day;"
             );
             execute(
                     "create table samples (" +
                             "  sensor_id SYMBOL," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -562,13 +562,13 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                     "create table sensors (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp (ts) partition by day;"
             );
             execute(
                     "create table samples (" +
                             "  sensor_id SYMBOL," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -594,13 +594,13 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                     "create table sensors (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp (ts) partition by day;"
             );
             execute(
                     "create table samples (" +
                             "  sensor_id SYMBOL," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -628,13 +628,13 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                     "create table sensors (" +
                             "  sensor_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp (ts) partition by day;"
             );
             execute(
                     "create table samples (" +
                             "  sensor_id SYMBOL," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp(ts) partition by day;"
             );
 
@@ -756,7 +756,7 @@ public class DistinctJoinAliasTest extends AbstractCairoTest {
                             "  sensor_id SYMBOL," +
                             "  parent_id SYMBOL," +
                             "  apptype INT," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") timestamp (ts) partition by day;"
             );
 

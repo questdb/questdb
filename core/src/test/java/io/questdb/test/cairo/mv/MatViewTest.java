@@ -498,7 +498,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp NOT NULL" +
+                            "  sym symbol, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = 0;
@@ -2233,7 +2233,7 @@ public class MatViewTest extends AbstractCairoTest {
             // recreate the base table with a different timestamp type
             executeWithRewriteTimestamp(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp NOT NULL" +
+                            "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -3360,7 +3360,7 @@ public class MatViewTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             execute(
                     "CREATE TABLE Samples (" +
-                            "  Time TIMESTAMP NOT NULL," +
+                            "  Time TIMESTAMP," +
                             "  DeviceId INT," +
                             "  Register SYMBOL INDEX," +
                             "  Value DOUBLE" +
@@ -3913,7 +3913,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "sym symbol, price double, ts timestamp NOT NULL" +
+                            "sym symbol, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -4029,7 +4029,7 @@ public class MatViewTest extends AbstractCairoTest {
 
             execute(
                     "create table base_price (" +
-                            "sym symbol, price double, ts timestamp NOT NULL" +
+                            "sym symbol, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 
@@ -4548,7 +4548,7 @@ public class MatViewTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, TestUtils.randomSymbolIndexTypeName(rnd));
             execute(
                     "CREATE TABLE Samples (" +
-                            "  Time TIMESTAMP NOT NULL," +
+                            "  Time TIMESTAMP," +
                             "  DeviceId INT," +
                             "  Register SYMBOL INDEX," +
                             "  Value DOUBLE" +
@@ -4898,7 +4898,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "  sym varchar, price double, ts timestamp NOT NULL" +
+                            "  sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             currentMicros = parseFloorPartialTimestamp("2001-01-01T01:00:00.000000Z");
@@ -5159,7 +5159,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "  sym symbol, price double, ts timestamp NOT NULL" +
+                            "  sym symbol, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -5524,7 +5524,7 @@ public class MatViewTest extends AbstractCairoTest {
         // replace txns that deletes some rows, the subsequent initial refresh may leave some dangling
         // deleted rows in the view since it only considers min/max timestamps from the table reader.
         assertMemoryLeak(() -> {
-            execute("create table x (i int, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
+            execute("create table x (i int, ts timestamp) timestamp(ts) partition by DAY WAL");
             currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
             execute(
                     "create materialized view x_10s refresh immediate deferred period (sample by interval) as " +
@@ -5662,7 +5662,7 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testQueryTimestampMixedWithAggregates() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL;");
+            execute("CREATE TABLE x (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL;");
             execute("INSERT INTO x VALUES ('2010-01-01T01'),('2010-01-01T01'),('2020-01-01T01'),('2030-01-01T01');");
             drainWalQueue();
 
@@ -8892,12 +8892,12 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp NOT NULL" +
+                            "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
                     "create table base_price2 (" +
-                            "sym varchar, price double, ts timestamp NOT NULL" +
+                            "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -8952,12 +8952,12 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp NOT NULL" +
+                            "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
                     "create table base_price2 (" +
-                            "sym varchar, price double, ts timestamp NOT NULL" +
+                            "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             execute(
@@ -9543,7 +9543,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "sym varchar, price double, amount int, ts timestamp NOT NULL" +
+                            "sym varchar, price double, amount int, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             if (runBeforeMatViewCreate != null) {
@@ -9586,7 +9586,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "CREATE TABLE base_price (" +
-                            "  sym VARCHAR, price DOUBLE, amount INT, ts TIMESTAMP NOT NULL" +
+                            "  sym VARCHAR, price DOUBLE, amount INT, ts TIMESTAMP" +
                             ") TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym);"
             );
 
@@ -9634,7 +9634,7 @@ public class MatViewTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table base_price (" +
-                            "sym varchar, price double, ts timestamp NOT NULL" +
+                            "sym varchar, price double, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
 

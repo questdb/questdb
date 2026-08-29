@@ -241,7 +241,7 @@ public class IODispatcherTest extends AbstractTest {
     @Test
     public void testBadImplicitStrToLongCast() throws Exception {
         getSimpleTester().run((_, _) -> {
-            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp NOT NULL) timestamp(ts) partition by day bypass wal;");
+            testHttpClient.assertGet("{\"ddl\":\"OK\"}", "create table tab (value int, when long, ts timestamp) timestamp(ts) partition by day bypass wal;");
             testHttpClient.assertGet("{\"dml\":\"OK\"}", "insert into tab values(1, now(), now());");
             testHttpClient.assertGet("{\"query\":\"select * from tab where when = '2023-10-17';\",\"error\":\"inconvertible value: `2023-10-17` [STRING -> LONG]\",\"position\":0}", "select * from tab where when = '2023-10-17';");
         });
@@ -1236,7 +1236,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportAfterColumnWasDropped() throws Exception {
         new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                engine.execute("create table test (col_a int, col_b long, ts timestamp NOT NULL) timestamp(ts) partition by week", executionContext);
+                engine.execute("create table test (col_a int, col_b long, ts timestamp) timestamp(ts) partition by week", executionContext);
                 engine.execute("alter table test drop column col_b", executionContext);
 
                 sendAndReceive(NetworkFacadeImpl.INSTANCE, """
@@ -1658,7 +1658,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testImportEpochTimestamp() throws Exception {
         new HttpQueryTestBuilder().withTempFolder(root).withWorkerCount(2).withHttpServerConfigBuilder(new HttpServerConfigurationBuilder().withNetwork(NetworkFacadeImpl.INSTANCE).withDumpingTraffic(false).withAllowDeflateBeforeSend(false).withHttpProtocolVersion("HTTP/1.1 ").withServerKeepAlive(true)).run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                engine.execute("create table test (ts timestamp NOT NULL, value int) timestamp(ts) partition by DAY", executionContext);
+                engine.execute("create table test (ts timestamp, value int) timestamp(ts) partition by DAY", executionContext);
 
                 sendAndReceive(NetworkFacadeImpl.INSTANCE, """
                         POST /upload?name=test HTTP/1.1\r
@@ -5527,7 +5527,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
         getSimpleTester().run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                engine.execute("CREATE TABLE 'trades' ( " + " symbol SYMBOL, " + " side SYMBOL, " + " price DOUBLE, " + " amount DOUBLE, " + " timestamp TIMESTAMP NOT NULL " + ") timestamp(timestamp) PARTITION BY DAY;", executionContext);
+                engine.execute("CREATE TABLE 'trades' ( " + " symbol SYMBOL, " + " side SYMBOL, " + " price DOUBLE, " + " amount DOUBLE, " + " timestamp TIMESTAMP " + ") timestamp(timestamp) PARTITION BY DAY;", executionContext);
                 engine.execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');", executionContext);
 
                 testHttpClient.setKeepConnection(true);
@@ -6536,7 +6536,7 @@ public class IODispatcherTest extends AbstractTest {
     public void testTextQueryImplicitCastExceptionInWindowFunctionFirstRecord() throws Exception {
         getSimpleTester().run((engine, _) -> {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
-                engine.execute("CREATE TABLE 'trades' ( " + " symbol SYMBOL, " + " side SYMBOL, " + " price DOUBLE, " + " amount DOUBLE, " + " timestamp TIMESTAMP NOT NULL " + ") timestamp(timestamp) PARTITION BY DAY;", executionContext);
+                engine.execute("CREATE TABLE 'trades' ( " + " symbol SYMBOL, " + " side SYMBOL, " + " price DOUBLE, " + " amount DOUBLE, " + " timestamp TIMESTAMP " + ") timestamp(timestamp) PARTITION BY DAY;", executionContext);
                 engine.execute("INSERT INTO trades VALUES ('ETH-USD', 'sell', 2615.54, 0.00044, '2022-03-08T18:03:57.609765Z');", executionContext);
 
                 testHttpClient.setKeepConnection(true);
@@ -6688,8 +6688,8 @@ public class IODispatcherTest extends AbstractTest {
                     Content-Type: application/json; charset=utf-8\r
                     Keep-Alive: timeout=5, max=10000\r
                     \r
-                    0278\r
-                    {"query":"show columns from balances","columns":[{"name":"column","type":"STRING"},{"name":"type","type":"STRING"},{"name":"indexed","type":"BOOLEAN"},{"name":"indexBlockCapacity","type":"INT"},{"name":"symbolCached","type":"BOOLEAN"},{"name":"symbolCapacity","type":"INT"},{"name":"symbolTableSize","type":"INT"},{"name":"designated","type":"BOOLEAN"},{"name":"notNull","type":"BOOLEAN"},{"name":"upsertKey","type":"BOOLEAN"}],"timestamp":-1,"dataset":[["cust_id","INT",false,0,false,0,0,false,false,false],["ccy","SYMBOL",false,256,true,128,0,false,false,false],["balance","DOUBLE",false,0,false,0,0,false,false,false]],"count":3}\r
+                    02a1\r
+                    {"query":"show columns from balances","columns":[{"name":"column","type":"STRING"},{"name":"type","type":"STRING"},{"name":"indexed","type":"BOOLEAN"},{"name":"indexBlockCapacity","type":"INT"},{"name":"symbolCached","type":"BOOLEAN"},{"name":"symbolCapacity","type":"INT"},{"name":"symbolTableSize","type":"INT"},{"name":"designated","type":"BOOLEAN"},{"name":"upsertKey","type":"BOOLEAN"},{"name":"indexType","type":"STRING"},{"name":"indexInclude","type":"STRING"}],"timestamp":-1,"dataset":[["cust_id","INT",false,0,false,0,0,false,false,"",""],["ccy","SYMBOL",false,256,true,128,0,false,false,"",""],["balance","DOUBLE",false,0,false,0,0,false,false,"",""]],"count":3}\r
                     00\r
                     \r
                     """, 1, 0, false);
@@ -7111,7 +7111,7 @@ public class IODispatcherTest extends AbstractTest {
             try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
                 engine.getQueryRegistry().setListener(registryListener);
 
-                engine.execute("create table tab (b boolean, ts timestamp NOT NULL, sym symbol) timestamp(ts) partition by DAY WAL", executionContext);
+                engine.execute("create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL", executionContext);
                 engine.execute("insert into tab select true, (86400000000*x)::timestamp, null from long_sequence(1000)", executionContext);
                 drainWalQueue(engine);
 
@@ -7232,7 +7232,7 @@ public class IODispatcherTest extends AbstractTest {
                     DelayedWALListener registryListener = new DelayedWALListener();
                     engine.getQueryRegistry().setListener(registryListener);
 
-                    String ddl = "create table tab (b boolean, ts timestamp NOT NULL, sym symbol) timestamp(ts) partition by DAY WAL";
+                    String ddl = "create table tab (b boolean, ts timestamp, sym symbol) timestamp(ts) partition by DAY WAL";
                     final String command = "update tab set b=false where b=true and sleep(1)";
 
                     engine.execute(ddl, executionContext);
@@ -7577,7 +7577,7 @@ public class IODispatcherTest extends AbstractTest {
     private void testExecuteAndCancelSqlCommands(final String url) throws Exception {
         final long TIMEOUT = 240_000;
 
-        String baseTable = "create table tab (b boolean, ts timestamp NOT NULL, sym symbol)";
+        String baseTable = "create table tab (b boolean, ts timestamp, sym symbol)";
         String walTable = baseTable + " timestamp(ts) partition by DAY WAL";
         ObjList<String> ddls = new ObjList<>(baseTable, baseTable + " timestamp(ts)", baseTable + " timestamp(ts) partition by DAY BYPASS WAL"
                 // walTable // TODO: ban cancellation of queries inside WAL Apply job

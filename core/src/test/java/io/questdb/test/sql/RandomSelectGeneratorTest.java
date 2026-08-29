@@ -110,7 +110,7 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
                     "name STRING, " +
                     "age INT, " +
                     "active BOOLEAN, " +
-                    "created TIMESTAMP NOT NULL" +
+                    "created TIMESTAMP" +
                     ") TIMESTAMP(created) PARTITION BY DAY");
 
             // Insert some test data
@@ -143,7 +143,7 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
                     "temperature DOUBLE, " +
                     "humidity INT, " +
                     "location SYMBOL, " +
-                    "measured_at TIMESTAMP NOT NULL" +
+                    "measured_at TIMESTAMP" +
                     ") TIMESTAMP(measured_at) PARTITION BY HOUR");
 
             // Insert test data
@@ -240,7 +240,7 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
                     "order_id INT, " +
                     "product_id INT, " +
                     "quantity INT, " +
-                    "order_date TIMESTAMP NOT NULL" +
+                    "order_date TIMESTAMP" +
                     ") TIMESTAMP(order_date) PARTITION BY MONTH");
 
             // Insert test data
@@ -284,7 +284,7 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
                     "double_col DOUBLE, " +
                     "string_col STRING, " +
                     "symbol_col SYMBOL, " +
-                    "timestamp_col TIMESTAMP NOT NULL, " +
+                    "timestamp_col TIMESTAMP, " +
                     "char_col CHAR" +
                     ") TIMESTAMP(timestamp_col)");
 
@@ -381,7 +381,7 @@ public class RandomSelectGeneratorTest extends AbstractCairoTest {
     public void testSampleByOrderEnforcesAscWithLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE sample_table (" +
-                    "ts TIMESTAMP NOT NULL, " +
+                    "ts TIMESTAMP, " +
                     "v INT" +
                     ") TIMESTAMP(ts)");
 

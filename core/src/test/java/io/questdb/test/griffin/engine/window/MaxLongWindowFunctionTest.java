@@ -48,7 +48,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongLargeValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 9223372036854775806L, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 9223372036854775807L, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', -9223372036854775807L, 'A')");
@@ -69,7 +69,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongOverPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 100, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 300, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 200, 'A')");
@@ -96,7 +96,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongOverPartitionOrderBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 100, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 300, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 200, 'A')");
@@ -124,7 +124,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongOverPartitionRowsBetween() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 100, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 300, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 200, 'A')");
@@ -150,7 +150,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongOverPartitionRowsCurrentRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 100, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 300, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 200, 'A')");
@@ -172,7 +172,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongOverWholeResultSet() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 100, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 300, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 200, 'B')");
@@ -195,7 +195,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongWithEmptyPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 100, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 200, 'A')");
 
@@ -214,7 +214,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongWithManyNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, other_val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, other_val long, grp symbol) timestamp(ts)");
 
             // Create large dataset with many nulls to test null handling in max()
             execute("insert into tab select " +
@@ -254,7 +254,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongWithNegativeValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', -100, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', -300, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', -50, 'A')");
@@ -279,7 +279,7 @@ public class MaxLongWindowFunctionTest extends AbstractCairoTest {
     @Test
     public void testMaxLongWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table tab (ts timestamp NOT NULL, val long, other_val long, grp symbol) timestamp(ts)");
+            execute("create table tab (ts timestamp, val long, other_val long, grp symbol) timestamp(ts)");
             execute("insert into tab values ('2021-01-01T00:00:00.000000Z', 100, 500, 'A')");
             execute("insert into tab values ('2021-01-02T00:00:00.000000Z', 200, null, 'A')");
             execute("insert into tab values ('2021-01-03T00:00:00.000000Z', 300, 800, 'A')");

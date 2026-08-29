@@ -55,7 +55,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_bool_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -91,7 +91,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             execute("""
                     CREATE TABLE tc_bool_num (
                         b BYTE, s SHORT, i INT, l LONG, f FLOAT, d DOUBLE,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -152,7 +152,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_bool_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -187,7 +187,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_char_char (" +
                     "col CHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -224,7 +224,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec128_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -259,7 +259,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec128_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -294,7 +294,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec256_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -329,7 +329,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec256_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -364,7 +364,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec_dec128 (" +
                     "col DECIMAL(34, 8), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -399,7 +399,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec_dec256 (" +
                     "col DECIMAL(64, 16), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -434,7 +434,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec_dec64 (" +
                     "col DECIMAL(16, 4), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -469,7 +469,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec_smdec (" +
                     "col DECIMAL(8, 2), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -504,7 +504,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -539,7 +539,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dec_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -574,7 +574,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_dec128 (" +
                     "col DECIMAL(34, 8), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -609,7 +609,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_dec256 (" +
                     "col DECIMAL(64, 16), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -644,7 +644,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_dec64 (" +
                     "col DECIMAL(16, 4), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -679,7 +679,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_flt (" +
                     "col FLOAT, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -714,7 +714,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_int (" +
                     "col INT, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -749,7 +749,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_smdec (" +
                     "col DECIMAL(8, 2), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -784,7 +784,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -819,7 +819,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_sym (" +
                     "col SYMBOL, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -857,7 +857,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_dbl_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -892,7 +892,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_geo_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -931,7 +931,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_geo_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -970,7 +970,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_dec128 (" +
                     "col DECIMAL(34, 8), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1005,7 +1005,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_dec256 (" +
                     "col DECIMAL(64, 16), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1040,7 +1040,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_dec64 (" +
                     "col DECIMAL(16, 4), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1079,7 +1079,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
             String table = "tc_long_designated_ts_micro";
             execute("CREATE TABLE " + table + " (" +
                     "value LONG, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1159,7 +1159,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_dbl (" +
                     "col DOUBLE, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1194,7 +1194,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_short (" +
                     "col SHORT, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1229,7 +1229,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_smdec (" +
                     "col DECIMAL(8, 2), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1264,7 +1264,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1299,7 +1299,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_sym (" +
                     "col SYMBOL, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1337,7 +1337,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_ts (" +
                     "col TIMESTAMP, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1375,7 +1375,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_long_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1410,7 +1410,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_bool (" +
                     "col BOOLEAN, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1445,7 +1445,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_char (" +
                     "col CHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1480,7 +1480,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_dec128 (" +
                     "col DECIMAL(34, 8), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1515,7 +1515,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_dec256 (" +
                     "col DECIMAL(64, 16), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1550,7 +1550,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_dec64 (" +
                     "col DECIMAL(16, 4), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1585,7 +1585,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_geo (" +
                     "col GEOHASH(4c), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1620,7 +1620,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_int (" +
                     "col INT, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1655,7 +1655,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_l256 (" +
                     "col LONG256, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1697,7 +1697,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_long (" +
                     "col LONG, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1732,7 +1732,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_smdec (" +
                     "col DECIMAL(8, 2), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1767,7 +1767,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_sym (" +
                     "col SYMBOL, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1805,7 +1805,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_ts (" +
                     "col TIMESTAMP, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1840,7 +1840,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_str_uuid (" +
                     "col UUID, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1875,7 +1875,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_sym_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1910,7 +1910,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_sym_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1945,7 +1945,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_ts_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -1983,7 +1983,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_ts_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -2021,7 +2021,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_uuid_str (" +
                     "col STRING, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {
@@ -2061,7 +2061,7 @@ public class QwpWebSocketTypeConversionE2ETest extends AbstractQwpWebSocketTest 
         runInContext((port) -> {
             execute("CREATE TABLE tc_uuid_vc (" +
                     "col VARCHAR, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (Sender sender = Sender.fromConfig("ws::addr=localhost:" + port + ";")) {

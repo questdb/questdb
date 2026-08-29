@@ -197,7 +197,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointCompleteDeletesCheckpointDir() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             execute("checkpoint create");
             execute("checkpoint release");
 
@@ -209,7 +209,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointCompleteWithoutPrepareIsIgnored() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             // Verify that checkpoint release doesn't return errors.
             execute("checkpoint release");
         });
@@ -219,7 +219,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointCreate() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'f'; i++) {
-                execute("create table " + i + " (ts timestamp NOT NULL, name symbol, val int)");
+                execute("create table " + i + " (ts timestamp, name symbol, val int)");
             }
 
             execute("checkpoint create");
@@ -255,11 +255,11 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointDbWithWalTable() throws Exception {
         assertMemoryLeak(() -> {
             for (char i = 'a'; i < 'd'; i++) {
-                execute("create table " + i + " (ts timestamp NOT NULL, name symbol, val int)");
+                execute("create table " + i + " (ts timestamp, name symbol, val int)");
             }
 
             for (char i = 'd'; i < 'f'; i++) {
-                execute("create table " + i + " (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by DAY WAL");
+                execute("create table " + i + " (ts timestamp, name symbol, val int) timestamp(ts) partition by DAY WAL");
             }
 
             execute("checkpoint create");
@@ -293,11 +293,11 @@ public class CheckpointTest extends AbstractCairoTest {
 
         try (TestServerMain server = startServerMainWithListener(dir.getAbsolutePath(), listener)) {
             // Create WAL tables
-            server.execute("CREATE TABLE wal_table1 (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            server.execute("CREATE TABLE wal_table2 (y LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            server.execute("CREATE TABLE wal_table1 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            server.execute("CREATE TABLE wal_table2 (y LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Create non-WAL table (should NOT appear in callback)
-            server.execute("CREATE TABLE non_wal_table (z INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            server.execute("CREATE TABLE non_wal_table (z INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
 
             // Create a view on a WAL table (should appear in callback)
             server.execute("CREATE VIEW test_view AS SELECT * FROM wal_table1 WHERE x > 0");
@@ -436,7 +436,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
         // Server 1: Create checkpoint (without custom listener - not needed here)
         try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
-            server1.execute("CREATE TABLE test_table (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            server1.execute("CREATE TABLE test_table (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             server1.execute("INSERT INTO test_table VALUES (1, '2024-01-01T00:00:00.000000Z')");
             TestUtils.drainWalQueue(server1.getEngine());
 
@@ -518,7 +518,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointPrepareCheckMatViewMetaFiles() throws Exception {
         assertMemoryLeak(() -> {
             testCheckpointCreateCheckTableMetadataFiles(
-                    "create table base_price (sym varchar, price double, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL",
+                    "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
                     null,
                     "base_price"
             );
@@ -602,7 +602,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointPrepareCheckTableMetadataFilesForWalSystemTable() throws Exception {
         final String sysTableName = configuration.getSystemTableNamePrefix() + "test_wal";
         assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
-                "create table '" + sysTableName + "' (ts timestamp NOT NULL, a symbol, b double, c long) timestamp(ts) partition by day wal;",
+                "create table '" + sysTableName + "' (ts timestamp, a symbol, b double, c long) timestamp(ts) partition by day wal;",
                 null,
                 sysTableName
         ));
@@ -613,7 +613,7 @@ public class CheckpointTest extends AbstractCairoTest {
         final String tableName = "test";
         assertMemoryLeak(() -> testCheckpointCreateCheckTableMetadataFiles(
                 "create table " + tableName +
-                        " (a symbol, b double, c long, ts timestamp NOT NULL) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
+                        " (a symbol, b double, c long, ts timestamp) timestamp(ts) partition by hour with maxUncommittedRows=250000, o3MaxLag = 240s",
                 null,
                 tableName
         ));
@@ -646,7 +646,7 @@ public class CheckpointTest extends AbstractCairoTest {
             path.trimTo(rootLen).concat("test.txt").$();
             Assert.assertTrue(Files.touch(path.$()));
 
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             execute("checkpoint create", sqlExecutionContext);
 
             // The test file should be deleted by checkpoint-create.
@@ -660,7 +660,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointPrepareFailsOnCorruptedTable() throws Exception {
         assertMemoryLeak(() -> {
             String tableName = "t";
-            execute("create table " + tableName + " (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table " + tableName + " (ts timestamp, name symbol, val int)");
 
             // Corrupt the table by removing _txn file.
             FilesFacade ff = configuration.getFilesFacade();
@@ -678,7 +678,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointPrepareFailsOnLockedTableReader() throws Exception {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
 
             TableToken tableToken = engine.getTableTokenIfExists("test");
             engine.lockReadersByTableToken(tableToken);
@@ -697,7 +697,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareFailsOnSyncError() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
 
             testFilesFacade.errorOnSync = true;
             assertQuery("checkpoint create")
@@ -752,7 +752,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareSubsequentCallFails() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
 
             circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
                 @Override
@@ -781,7 +781,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPrepareSubsequentCallFailsWithLock() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             execute("checkpoint create");
             assertQuery("checkpoint create")
                     .fails(0, "Waiting for CHECKPOINT RELEASE to be called");
@@ -792,7 +792,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPreventsNonWalTableDeletion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             execute("checkpoint create;");
 
@@ -809,7 +809,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPreventsNonWalTableRenaming() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             execute("checkpoint create;");
 
@@ -826,7 +826,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointPreventsNonWalTableTruncation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day bypass wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day bypass wal;");
             execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             execute("checkpoint create;");
 
@@ -1971,7 +1971,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             // 1. Create base table with data
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
             drainWalQueue();
 
@@ -1983,7 +1983,7 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
             drainPurgeJob();
 
-            execute("create table tiesto (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
 
 
             // 4. Restore from the checkpoint - rmdir for tiesto will fail but restore should complete
@@ -2094,7 +2094,7 @@ public class CheckpointTest extends AbstractCairoTest {
                         dummy DOUBLE,
                         val DOUBLE,
                         sym SYMBOL INDEX,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -2279,7 +2279,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     CREATE TABLE t1 (
                         sym SYMBOL INDEX,
                         val DOUBLE,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -2294,7 +2294,7 @@ public class CheckpointTest extends AbstractCairoTest {
                     CREATE TABLE t2 (
                         tag SYMBOL INDEX,
                         x LONG,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -3155,7 +3155,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             drainWalQueue();
 
@@ -3219,7 +3219,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             drainWalQueue();
 
@@ -3319,7 +3319,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testCheckpointRestoresMatViewMetaFiles() throws Exception {
         assertMemoryLeak(() -> {
             testCheckpointCreateCheckTableMetadataFiles(
-                    "create table base_price (sym varchar, price double, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL",
+                    "create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL",
                     null,
                     "base_price"
             );
@@ -3379,7 +3379,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             // 1. Create base table with data
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
             execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
             execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
@@ -3544,7 +3544,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             drainWalQueue();
 
@@ -3598,7 +3598,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values (now(), 'foobar', 42);");
             drainWalQueue();
 
@@ -3637,7 +3637,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             // 1. Create base table with data
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
             execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
             execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
@@ -3702,7 +3702,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
             execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
             drainWalQueue();
@@ -3862,19 +3862,16 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testCheckpointUnknownSubOptionFails() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
-            assertException(
-                    "checkpoint commit",
-                    11,
-                    "'create' or 'release' expected"
-            );
+            execute("create table test (ts timestamp, name symbol, val int)");
+            assertQuery("checkpoint commit")
+                    .fails(11, "'create' or 'release' expected");
         });
     }
 
     @Test
     public void testCheckpointViewMetadataFiles() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("create view test_view as select * from test;");
 
             execute("checkpoint create;");
@@ -3909,7 +3906,7 @@ public class CheckpointTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
             // 1. Create base table with data
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:00:00.000000Z', 'a', 10);");
             execute("insert into test values ('2023-09-20T13:00:00.000000Z', 'b', 20);");
             execute("insert into test values ('2023-09-20T14:00:00.000000Z', 'c', 30);");
@@ -3923,7 +3920,7 @@ public class CheckpointTest extends AbstractCairoTest {
             drainWalQueue();
             drainPurgeJob();
 
-            execute("create table tiesto (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table tiesto (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
 
             // 4. Restore from the checkpoint
             engine.clear();
@@ -3959,7 +3956,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, snapshotId);
 
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int) timestamp(ts) partition by day wal;");
+            execute("create table test (ts timestamp, name symbol, val int) timestamp(ts) partition by day wal;");
             execute("insert into test values ('2023-09-20T12:39:01.933062Z', 'foobar', 42);");
             execute("create view v as select * from test where val > 0;");
             drainWalAndViewQueues();
@@ -4153,7 +4150,7 @@ public class CheckpointTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
 
             // Create base table and mat view
-            execute("create table base_price (sym varchar, price double, ts timestamp NOT NULL) timestamp(ts) partition by DAY WAL");
+            execute("create table base_price (sym varchar, price double, ts timestamp) timestamp(ts) partition by DAY WAL");
             String viewSql = "select sym, last(price) as price, ts from base_price sample by 1h";
             execute("create materialized view price_1h as (" + viewSql + ") partition by DAY");
             drainWalQueue();
@@ -4427,7 +4424,7 @@ public class CheckpointTest extends AbstractCairoTest {
     public void testRunWalPurgeJobLockTimeout() throws Exception {
         configureCircuitBreakerTimeoutOnFirstCheck(); // trigger timeout on first check
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             SOCountDownLatch latch1 = new SOCountDownLatch(1);
             SOCountDownLatch latch2 = new SOCountDownLatch(1);
 
@@ -4599,7 +4596,7 @@ public class CheckpointTest extends AbstractCairoTest {
     @Test
     public void testViewDoesNotObstructCheckpointCreation() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test (ts timestamp NOT NULL, name symbol, val int)");
+            execute("create table test (ts timestamp, name symbol, val int)");
             execute("create view test_view as select * from test");
             execute("checkpoint create");
             execute("checkpoint release");
@@ -5239,7 +5236,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
             // Server 1: Create data + checkpoint
             try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
-                server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP NOT NULL) " +
+                server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP) " +
                         "TIMESTAMP(ts) PARTITION BY YEAR WAL");
                 server1.execute("INSERT INTO t SELECT 'SYM', x, timestamp_sequence(0, 100000000000) " +
                         "FROM long_sequence(10)");
@@ -5349,7 +5346,7 @@ public class CheckpointTest extends AbstractCairoTest {
 
         // Server 1: Create data + checkpoint + more data
         try (TestServerMain server1 = startServerMain(dir1.getAbsolutePath())) {
-            server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP NOT NULL) " +
+            server1.execute("CREATE TABLE t (sym SYMBOL INDEX, x LONG, ts TIMESTAMP) " +
                     "TIMESTAMP(ts) PARTITION BY YEAR WAL");
             server1.execute("INSERT INTO t SELECT 'OLD_SYM', x, timestamp_sequence(0, 100000000000) " +
                     "FROM long_sequence(10)");

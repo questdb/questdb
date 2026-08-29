@@ -43,7 +43,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE test_date (" +
                     "event_date DATE, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = connectWs(port)) {
@@ -165,7 +165,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE omit_date (" +
                     "col DATE, " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = connectWs(port)) {
@@ -206,7 +206,7 @@ public class QwpSenderLowLevelTest extends AbstractQwpWebSocketTest {
         runInContext((port) -> {
             execute("CREATE TABLE omit_geohash (" +
                     "col GEOHASH(5b), " +
-                    "ts TIMESTAMP NOT NULL" +
+                    "ts TIMESTAMP" +
                     ") TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             try (QwpWebSocketSender sender = connectWs(port)) {

@@ -39,7 +39,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE prices (
-                        price_ts TIMESTAMP NOT NULL,
+                        price_ts TIMESTAMP,
                         sym SYMBOL,
                         price DOUBLE)
                     TIMESTAMP(price_ts) PARTITION BY HOUR
@@ -53,7 +53,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
 
             execute("""
                     CREATE TABLE orders (
-                        order_ts TIMESTAMP NOT NULL,
+                        order_ts TIMESTAMP,
                         sym SYMBOL
                     ) TIMESTAMP(order_ts)
                     """);
@@ -96,7 +96,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testDuplicateTimestampsInMaster() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                         (1, 0::TIMESTAMP),
@@ -133,7 +133,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testEligibleQueriesDetected() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             assertHintUsedAndResultSameAsWithoutHint("""
                     SELECT /*+ markout_horizon(orders offsets) */ id, order_ts + usec_offs AS ts
                     FROM orders CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(3)) offsets
@@ -169,7 +169,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testEmptyMasterCursor() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             // Insert nothing
 
             String sql = """
@@ -192,7 +192,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testEmptySlaveCursor() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
 
             String sql = """
@@ -216,7 +216,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE orders (
                         id INT,
-                        order_ts TIMESTAMP NOT NULL
+                        order_ts TIMESTAMP
                     ) TIMESTAMP(order_ts)
                     """);
             execute("CREATE TABLE offsets (usec_offs LONG)");
@@ -283,7 +283,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
         // the code path where the very last iterator block is kept around. Then it gets reused as
         // iterator blocks are needed again in the second "burst" in the master table.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders SELECT x, (x * 1_000)::TIMESTAMP FROM long_sequence(10_000)");
             execute("INSERT INTO orders SELECT x, (20_000_000 + x * 1_000)::TIMESTAMP FROM long_sequence(10_000)");
 
@@ -311,7 +311,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testMasterWithFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                         (1, '1970-01-01T00:00:00.000000Z'),
@@ -346,7 +346,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testMultipleMasterRowsHighlyInterleaved() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             // Master rows close together (100ms apart)
             execute("""
                     INSERT INTO orders VALUES
@@ -388,7 +388,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testMultipleMasterRowsInterleaved() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                         (1, '1970-01-01T00:00:00.000000Z'),
@@ -435,7 +435,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testMultipleMasterRowsNonOverlapping() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                         (1, '1970-01-01T00:00:00.000000Z'),
@@ -476,7 +476,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testMultipleOrderByColumnsRejected() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             String query = """
                     WITH offsets AS (
                         SELECT 1_000_000 * (x-1) usec_offs
@@ -493,7 +493,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testNegativeOffsets() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:05.000000Z')");
 
             assertQuery("""
@@ -525,7 +525,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE orders (
                         id INT,
-                        ts TIMESTAMP NOT NULL,
+                        ts TIMESTAMP,
                         other_ts TIMESTAMP
                     ) TIMESTAMP(ts)
                     """);
@@ -550,7 +550,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testReexecution() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                         (1, '1970-01-01T00:00:00.000000Z'),
@@ -605,7 +605,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
                     CREATE TABLE sensor_readings (
                         sensor_id INT,
                         temperature DOUBLE,
-                        reading_ts TIMESTAMP NOT NULL
+                        reading_ts TIMESTAMP
                     ) TIMESTAMP(reading_ts)
                     """);
 
@@ -659,7 +659,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testSingleMasterRowLargeSequence() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, '1970-01-01T00:10:00.000000Z')");
 
             // Test the real-world markout offset sequence: 1201 offsets centered on zero
@@ -706,7 +706,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testSingleMasterRowSmallSequence() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("INSERT INTO orders VALUES (1, '1970-01-01T00:00:00.000000Z')");
 
             String query = """
@@ -736,7 +736,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testSingleSlaveCursorRow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                         (1, '1970-01-01T00:00:00.000000Z'),
@@ -767,7 +767,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testVeryCloseTimestamps() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             // Timestamps 1 microsecond apart
             execute("""
                     INSERT INTO orders VALUES
@@ -802,7 +802,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testWithAdditionalColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, customer STRING, amount DOUBLE, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, customer STRING, amount DOUBLE, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                      (1, 'Alice', 100.50, '1970-01-01T00:00:00.000000Z'),
@@ -835,7 +835,7 @@ public class MarkoutHorizonCrossJoinTest extends AbstractCairoTest {
     @Test
     public void testWithSlaveColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP NOT NULL) TIMESTAMP(order_ts)");
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
             execute("""
                     INSERT INTO orders VALUES
                         (1, '1970-01-01T00:00:00.000000Z'),

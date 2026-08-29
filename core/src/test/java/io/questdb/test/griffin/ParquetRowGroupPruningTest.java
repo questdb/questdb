@@ -218,7 +218,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testBloomFilterBackwardScan() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 100_000)
@@ -279,7 +279,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterByte() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -332,7 +332,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterChar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('A', '2024-01-01T00:00:00.000000Z'),
@@ -358,7 +358,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterDate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DATE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('2020-01-01'::DATE, '2024-01-01T00:00:00.000000Z'),
@@ -390,7 +390,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterDecimal128() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(30,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(30,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1000000000000.10', '2024-01-01T00:00:00.000000Z'),
@@ -416,7 +416,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterDecimal16() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(4,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(4,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('10.10', '2024-01-01T00:00:00.000000Z'),
@@ -442,7 +442,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterDecimal256() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(50,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(50,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('100000000000000000000.10', '2024-01-01T00:00:00.000000Z'),
@@ -469,7 +469,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterDecimal32() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(8,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(8,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                      INSERT INTO x VALUES
                      ('1000.10', '2024-01-01T00:00:00.000000Z'),
@@ -496,7 +496,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterDecimal64() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1000000.10', '2024-01-01T00:00:00.000000Z'),
@@ -523,7 +523,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterDecimal8() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(2,1), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1.1', '2024-01-01T00:00:00.000000Z'),
@@ -557,7 +557,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         // OnBloomFilter covers the magnitude at which the band holds the bound alone and the bloom
         // filter comes back.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1.11, '2024-01-01T00:00:00.000000Z'),
@@ -659,7 +659,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterFloat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1.0, '2024-01-01T00:00:00.000000Z'),
@@ -686,7 +686,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
@@ -725,7 +725,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterInt() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -761,7 +761,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterIntBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -798,7 +798,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterIntInList() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -825,7 +825,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterLong() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -852,7 +852,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterLong128() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val LONG128, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (to_long128(0, 1), '2024-01-01T00:00:00.000000Z'),
@@ -880,7 +880,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterMultipleColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (a INT, b VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (a INT, b VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, 'aaa', '2024-01-01T00:00:00.000000Z'),
@@ -913,7 +913,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterShort() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (100, '2024-01-01T00:00:00.000000Z'),
@@ -967,7 +967,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterString() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('aaa', '2024-01-01T00:00:00.000000Z'),
@@ -994,7 +994,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('alpha', '2024-01-01T00:00:00.000000Z'),
@@ -1063,7 +1063,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('2020-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
@@ -1104,7 +1104,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterUuid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val UUID, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z'),
@@ -1164,7 +1164,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('abc', '2024-01-01T00:00:00.000000Z'),
@@ -1191,7 +1191,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterVarcharBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('abc', '2024-01-01T00:00:00.000000Z'),
@@ -1220,7 +1220,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testBloomFilterWithColumnTop() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1650,7 +1650,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testColumnTopDouble() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1691,7 +1691,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testColumnTopInt() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1734,7 +1734,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testColumnTopLong() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1768,7 +1768,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testColumnTopString() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1809,7 +1809,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testColumnTopVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (id INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (id INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1850,7 +1850,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testCombinedFilters() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
@@ -1877,7 +1877,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testHasParquetPartitionsFlagAfterConvertBackToNative() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1897,7 +1897,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testHasParquetPartitionsFlagAfterDetachPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1916,7 +1916,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testHasParquetPartitionsFlagAfterDropPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1935,7 +1935,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testHasParquetPartitionsFlagAfterTruncate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1953,7 +1953,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testHasParquetPartitionsFlagMixedPartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1976,7 +1976,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testInListWithNullDouble() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1.11, '2024-01-01T00:00:00.000000Z'),
@@ -1998,7 +1998,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testInListWithNullInt() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2034,7 +2034,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testInListWithNullLong() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (100_000, '2024-01-01T00:00:00.000000Z'),
@@ -2057,7 +2057,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testInListWithNullString() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('aaa', '2024-01-01T00:00:00.000000Z'),
@@ -2079,7 +2079,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testInListWithNullVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('hello', '2024-01-01T00:00:00.000000Z'),
@@ -2180,7 +2180,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testIsNotNullAllNullsRowGroup() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT NULL, timestamp_sequence('2024-01-01', 600_000_000)
@@ -2206,7 +2206,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testIsNotNullFilter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (NULL, '2024-01-01T00:00:00.000000Z'),
@@ -2319,7 +2319,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testIsNullFilter() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
@@ -2339,7 +2339,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testIsNullNoNullsRowGroup() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
@@ -2559,7 +2559,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningByte() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -2635,7 +2635,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningChar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('A', '2024-01-01T00:00:00.000000Z'),
@@ -2666,7 +2666,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningDate() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DATE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('2020-01-01'::DATE, '2024-01-01T00:00:00.000000Z'),
@@ -2693,7 +2693,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningDecimal128() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(30,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(30,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1000000000000.10', '2024-01-01T00:00:00.000000Z'),
@@ -2719,7 +2719,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningDecimal16() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(4,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(4,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('10.10', '2024-01-01T00:00:00.000000Z'),
@@ -2745,7 +2745,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningDecimal256() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(50,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(50,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('100000000000000000000.10', '2024-01-01T00:00:00.000000Z'),
@@ -2771,7 +2771,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningDecimal32() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(8,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(8,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1000.10', '2024-01-01T00:00:00.000000Z'),
@@ -2797,7 +2797,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningDecimal64() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(15,2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1000000.10', '2024-01-01T00:00:00.000000Z'),
@@ -2823,7 +2823,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningDecimal8() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DECIMAL(2,1), ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DECIMAL(2,1), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1.1', '2024-01-01T00:00:00.000000Z'),
@@ -2995,7 +2995,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningDouble() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1.11, '2024-01-01T00:00:00.000000Z'),
@@ -3023,7 +3023,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningFloat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1.5, '2024-01-01T00:00:00.000000Z'),
@@ -3148,7 +3148,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
@@ -3195,7 +3195,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningInt() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (10_000, '2024-01-01T00:00:00.000000Z'),
@@ -3223,7 +3223,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningIntBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (10_000, '2024-01-01T00:00:00.000000Z'),
@@ -3262,7 +3262,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningIntInList() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (10_000, '2024-01-01T00:00:00.000000Z'),
@@ -3291,7 +3291,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningLong() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (100_000, '2024-01-01T00:00:00.000000Z'),
@@ -3319,7 +3319,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningLong128() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val LONG128, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (to_long128(0, 1), '2024-01-01T00:00:00.000000Z'),
@@ -3345,7 +3345,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningShort() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (100, '2024-01-01T00:00:00.000000Z'),
@@ -3422,7 +3422,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningString() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('abc', '2024-01-01T00:00:00.000000Z'),
@@ -3450,7 +3450,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningSymbol() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('alpha', '2024-01-01T00:00:00.000000Z'),
@@ -3479,7 +3479,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('2020-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
@@ -3505,7 +3505,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningUuid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val UUID, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z'),
@@ -3531,7 +3531,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMinMaxPruningVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('hello', '2024-01-01T00:00:00.000000Z'),
@@ -3559,7 +3559,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMixedParquetAndNativePartitions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3590,7 +3590,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testMultipleAndConditions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (a INT, b STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (a INT, b STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, 'aaa', '2024-01-01T00:00:00.000000Z'),
@@ -3619,7 +3619,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullColumnPruning() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (null, '2024-01-01T00:00:00.000000Z'),
@@ -3648,7 +3648,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningByte() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3670,7 +3670,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningDouble() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1.11, '2024-01-01T00:00:00.000000Z'),
@@ -3692,7 +3692,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningFloat() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1.5, '2024-01-01T00:00:00.000000Z'),
@@ -3823,7 +3823,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningInt() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3845,7 +3845,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningLong() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -3867,7 +3867,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningShort() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (100, '2024-01-01T00:00:00.000000Z'),
@@ -3889,7 +3889,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningString() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('aaa', '2024-01-01T00:00:00.000000Z'),
@@ -3911,7 +3911,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningUuid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val UUID, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val UUID, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('11111111-1111-1111-1111-111111111111', '2024-01-01T00:00:00.000000Z'),
@@ -3933,7 +3933,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testNullPruningVarchar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('hello', '2024-01-01T00:00:00.000000Z'),
@@ -3955,7 +3955,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testOrConditionNoPruning() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (a INT, b INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (a INT, b INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (1, 10, '2024-01-01T00:00:00.000000Z'),
@@ -3990,7 +3990,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testOrEqualityFilter() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
@@ -4068,7 +4068,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testOrEqualityFilterString() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('alice', '2024-01-01T00:00:00.000000Z'),
@@ -4112,7 +4112,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testOrEqualityFilterWithNulls() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (NULL, '2024-01-01T00:00:00.000000Z'),
@@ -4176,7 +4176,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
                         v_timestamp TIMESTAMP,
                         v_uuid UUID,
                         v_ipv4 IPv4,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -4292,7 +4292,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             sqlExecutionContext.setParquetRowGroupPruningEnabled(false);
             try {
-                execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+                execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
                 execute("""
                         INSERT INTO x VALUES
                         (1, '2024-01-01T00:00:00.000000Z'),
@@ -4316,7 +4316,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testPruningUnsupportedTypesFallback() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (v_bool BOOLEAN, v_geo GEOHASH(4c), v_l256 LONG256, v_int INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (v_bool BOOLEAN, v_geo GEOHASH(4c), v_l256 LONG256, v_int INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     (true, #u33d, CAST(1 AS LONG256), 10, '2024-01-01T00:00:00.000000Z'),
@@ -4346,7 +4346,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterBetween() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
@@ -4380,7 +4380,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testRangeFilterBoundaryConditions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 60_000_000)
@@ -4439,7 +4439,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterByte() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val BYTE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS BYTE), timestamp_sequence('2024-01-01', 1200_000_000)
@@ -4545,7 +4545,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testRangeFilterChar() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('A', '2024-01-01T00:00:00.000000Z'),
@@ -4593,7 +4593,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterDate() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DATE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DATE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(timestamp_sequence('2020-01-01', 86400_000_000) AS DATE), timestamp_sequence('2024-01-01', 600_000_000)
@@ -4626,7 +4626,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterDouble() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS DOUBLE) * 0.1, timestamp_sequence('2024-01-01', 600_000_000)
@@ -4659,7 +4659,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterFloat() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val FLOAT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS FLOAT) * 0.1, timestamp_sequence('2024-01-01', 600_000_000)
@@ -4691,7 +4691,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testRangeFilterIPv4() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('1.1.1.1', '2024-01-01T00:00:00.000000Z'),
@@ -4787,7 +4787,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testRangeFilterIPv4HighValues() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val IPv4, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('200.0.0.1', '2024-01-01T00:00:00.000000Z'),
@@ -4832,7 +4832,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterInt() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS INT), timestamp_sequence('2024-01-01', 600_000_000)
@@ -4880,7 +4880,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterLong() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT x, timestamp_sequence('2024-01-01', 600_000_000)
@@ -4920,7 +4920,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterNegativeToPositive() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x - 101 AS INT), timestamp_sequence('2024-01-01', 600_000_000)
@@ -4967,7 +4967,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterShort() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val SHORT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT CAST(x AS SHORT), timestamp_sequence('2024-01-01', 600_000_000)
@@ -5097,7 +5097,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     @Test
     public void testRangeFilterString() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (name STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x VALUES
                     ('alice', '2024-01-01T00:00:00.000000Z'),
@@ -5125,7 +5125,7 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     public void testRangeFilterTimestamp() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE x (val TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO x
                     SELECT timestamp_sequence('2020-01-01', 600_000_000), timestamp_sequence('2024-01-01', 600_000_000)

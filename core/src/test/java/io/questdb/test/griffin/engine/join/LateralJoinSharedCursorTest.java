@@ -62,8 +62,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testAsyncKeyedGroupByOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, region SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, region SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 'US', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -163,8 +163,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
         Assume.assumeTrue(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, "1");
-            execute("CREATE TABLE orders (id INT, region SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, region SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
 
             StringBuilder sb = new StringBuilder("INSERT INTO orders VALUES ");
             for (int hour = 0; hour < 4; hour++) {
@@ -209,8 +209,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testAsyncNotKeyedGroupByOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (x DOUBLE, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (x DOUBLE, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1.0, 2.0, '2024-01-01T00:00:00.000000Z'),
@@ -242,8 +242,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testExpressionKeyGroupByOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -279,8 +279,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testKeyedGroupByOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -315,8 +315,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testKeyedGroupByOuterAggregateBeforeKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -351,8 +351,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testKeyedGroupByOuterEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO rates VALUES
                     (10.0, 0.1, '2024-01-01T00:00:00.000000Z')
@@ -377,8 +377,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testKeyedGroupByOuterLeftJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -412,8 +412,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testKeyedGroupByOuterNullAggregatedColumn() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -448,8 +448,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testKeyedStringAggGroupByOuter() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, item STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, item STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 'apple', '2024-01-01T00:00:00.000000Z'),
@@ -488,9 +488,9 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testMultipleLateralJoinsSharingOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE discounts (min_amount DOUBLE, discount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE discounts (min_amount DOUBLE, discount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -529,8 +529,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedGroupByOuter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id INT, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id INT, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -563,8 +563,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testNotKeyedGroupByOuterLeftJoin() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1.0, '2024-01-01T00:00:00.000000Z')
@@ -640,8 +640,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testNotKeyedStringAggGroupByOuter() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (item STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (item STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('apple', '2024-01-01T00:00:00.000000Z'),
@@ -675,8 +675,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testSharedApproxPercentile() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE items (lval LONG, dval DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (lval LONG, dval DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_val DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO items VALUES
                     (10, 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -859,8 +859,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testSharedCountDistinct() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE items (name STRING, vname VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_cnt INT, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (name STRING, vname VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_cnt INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO items VALUES
                     ('a', 'x', '2024-01-01T00:00:00.000000Z'),
@@ -896,8 +896,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testSharedCursorCrossedColumnOrder() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -947,8 +947,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testSharedCursorLongTopK() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, id LONG, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_id LONG, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, id LONG, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_id LONG, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 1, 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -989,8 +989,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testSharedCursorSymbolTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (category SYMBOL, status SYMBOL, amount DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (category SYMBOL, status SYMBOL, amount DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_amount DOUBLE, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('A', 'open', 10.0, '2024-01-01T00:00:00.000000Z'),
@@ -1029,8 +1029,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testSharedCursorUnordered8Map() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (id LONG, item STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (id LONG, item STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 'apple', '2024-01-01T00:00:00.000000Z'),
@@ -1084,8 +1084,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testSharedCursorUnorderedVarcharMap() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (name VARCHAR, item STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (name VARCHAR, item STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     ('alice', 'apple', '2024-01-01T00:00:00.000000Z'),
@@ -1125,8 +1125,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testSharedStringAggVarchar() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE items (name VARCHAR, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (name VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO items VALUES
                     ('abc', '2024-01-01T00:00:00.000000Z'),
@@ -1157,8 +1157,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testSharedStringDistinctAgg() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE items (name STRING, vname VARCHAR, sname SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE items (name STRING, vname VARCHAR, sname SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO items VALUES
                     ('a', 'x', 'p', '2024-01-01T00:00:00.000000Z'),
@@ -1197,8 +1197,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testVectorizedKeyedGroupByOuter() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (group_id INT, qty LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_qty LONG, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (group_id INT, qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_qty LONG, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (1, 100, '2024-01-01T00:00:00.000000Z'),
@@ -1234,8 +1234,8 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     public void testVectorizedNotKeyedGroupByOuter() throws Exception {
         Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE orders (qty LONG, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE rates (min_qty LONG, rate DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE orders (qty LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE rates (min_qty LONG, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO orders VALUES
                     (100, '2024-01-01T00:00:00.000000Z'),

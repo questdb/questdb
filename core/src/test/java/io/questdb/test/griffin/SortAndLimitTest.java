@@ -355,14 +355,15 @@ public class SortAndLimitTest extends AbstractCairoTest {
 
     private void prepareRandomOrderTable() throws Exception {
         runQueries(
-                "CREATE TABLE sorttest (l long, ts TIMESTAMP NOT NULL) timestamp(ts) partition by year;",
-                "insert into sorttest \n" +
-                        "  select x,\n" +
-                        "  rnd_timestamp(\n" +
-                        "    to_timestamp('2015', 'yyyy'),\n" +
-                        "    to_timestamp('2016', 'yyyy'),\n" +
-                        "    0)\n" +
-                        "  from long_sequence(1000);"
+                "CREATE TABLE sorttest (l long, ts TIMESTAMP) timestamp(ts) partition by year;",
+                """
+                        insert into sorttest\s
+                          select x,
+                          rnd_timestamp(
+                            to_timestamp('2015', 'yyyy'),
+                            to_timestamp('2016', 'yyyy'),
+                            0)
+                          from long_sequence(1000);"""
         );
     }
 

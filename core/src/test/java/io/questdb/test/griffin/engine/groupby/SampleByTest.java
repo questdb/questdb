@@ -104,7 +104,7 @@ public class SampleByTest extends AbstractCairoTest {
             """;
     private static final Log LOG = LogFactory.getLog(SampleByTest.class);
     private static final String SYS_TELEMETRY_WAL_DDL = "CREATE TABLE IF NOT EXISTS 'sys.telemetry_wal' ( " +
-            "created TIMESTAMP NOT NULL, " +
+            "created TIMESTAMP, " +
             "event SHORT, " +
             "tableId INT, " +
             "walId INT, " +
@@ -182,42 +182,9 @@ public class SampleByTest extends AbstractCairoTest {
         // NumericException in CairoException. If it were the only validation,
         // this test would get CairoException (position=0) instead of
         // SqlException (position=85 pointing at the timezone token).
-        assertException(
-                "SELECT count(), ts FROM x SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'",
-                "CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY",
-                85,
-                "invalid timezone: Invalid/TZ"
-        );
-    }
-
-    @Test
-    public void testBadTimezoneSubDayNoFrom() throws Exception {
-        // Sub-day stride + timezone without FROM: the timezone is passed to
-        // timestamp_floor_utc which validates it in AbstractTimestampFloorFromOffsetFunctionFactory.
-        assertException(
-                "SELECT count(), ts FROM x SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'",
-                "CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY",
-                67,
-                "invalid timezone: Invalid/TZ"
-        );
-    }
-
-    @Test
-    public void testBadInterval() throws Exception {
-        assertException(
-                "select b, sum(a), k from x sample by 1hour",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(172800000000, 3600000000) k" +
-                        " from" +
-                        " long_sequence(20)" +
-                        ") timestamp(k) partition by NONE",
-                37,
-                "Invalid unit: 1hour"
-        );
+        assertQuery("SELECT count(), ts FROM x SAMPLE BY 1h FROM '2021-03-27' ALIGN TO CALENDAR TIME ZONE 'Invalid/TZ'")
+                .ddl("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY")
+                .fails(85, "invalid timezone: Invalid/TZ");
     }
 
     @Test
@@ -391,52 +358,45 @@ public class SampleByTest extends AbstractCairoTest {
         // by the classic keyed SAMPLE BY (SampleByFillRecord) did not implement getLong256*,
         // so it fell through to Record's default throwing impl.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (" +
-                    "  symbol SYMBOL," +
-                    "  side SYMBOL," +
-                    "  price DOUBLE," +
-                    "  amount DOUBLE," +
-                    "  timestamp TIMESTAMP NOT NULL" +
-                    ") TIMESTAMP(timestamp) PARTITION BY DAY");
-
-            execute("INSERT INTO trades VALUES" +
-                    "('BTC', 'buy',  100.0, 10.0, '2026-03-31T02:00:00.000000Z')," +
-                    "('BTC', 'buy',  101.0, 20.0, '2026-03-31T02:30:00.000000Z')," +
-                    "('BTC', 'sell', 102.0, 15.0, '2026-03-31T03:15:00.000000Z')," +
-                    "('BTC', 'buy',  103.0, 25.0, '2026-03-31T05:45:00.000000Z')");
-
-            String query = "SELECT timestamp," +
-                    "  sum(price * amount) / sum(amount) AS value," +
-                    "  sum(amount) AS count," +
-                    "  first(price)," +
-                    "  first(amount)" +
-                    " FROM trades" +
-                    " WHERE timestamp >= '2026-03-30T02:44:07.792000+01:00'" +
-                    "   AND timestamp <= '2026-03-31T09:27:07.030999+01:00'" +
-                    " SAMPLE BY 1h" +
-                    " FROM '2026-03-31T00:00:00+01:00' TO '2026-03-31T23:59:59+01:00'" +
-                    " FILL(0, 0, 0, 0)";
-
-            // getCursor() called multiple times on the same factory must
-            // return consistent results (tests cached plan reuse).
-            RecordCursorFactory factory = select(query);
-            try {
-                String firstResult = null;
-                for (int i = 0; i < 5; i++) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        StringSink s = new StringSink();
-                        CursorPrinter.println(factory.getMetadata(), s);
-                        CursorPrinter.println(cursor, factory.getMetadata(), s);
-                        if (firstResult == null) {
-                            firstResult = s.toString();
-                        } else {
-                            TestUtils.assertEquals("execution #" + (i + 1) + " differs from #1", firstResult, s.toString());
-                        }
-                    }
-                }
-            } finally {
-                Misc.free(factory);
-            }
+            execute("CREATE TABLE t_sb_l256 (k LONG256, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t_sb_l256 VALUES ('0x01'::LONG256, 0), ('0x02'::LONG256, 60_000_000), ('0x01'::LONG256, 900_000_000)");
+            assertQuery("SELECT k, count() AS cnt, ts FROM t_sb_l256 SAMPLE BY 1m FILL(NULL) ORDER BY k, ts")
+                    .noLeakCheck()
+                    .returns("""
+                            k\tcnt\tts
+                            0x01\t1\t1970-01-01T00:00:00.000000Z
+                            0x01\tnull\t1970-01-01T00:01:00.000000Z
+                            0x01\tnull\t1970-01-01T00:02:00.000000Z
+                            0x01\tnull\t1970-01-01T00:03:00.000000Z
+                            0x01\tnull\t1970-01-01T00:04:00.000000Z
+                            0x01\tnull\t1970-01-01T00:05:00.000000Z
+                            0x01\tnull\t1970-01-01T00:06:00.000000Z
+                            0x01\tnull\t1970-01-01T00:07:00.000000Z
+                            0x01\tnull\t1970-01-01T00:08:00.000000Z
+                            0x01\tnull\t1970-01-01T00:09:00.000000Z
+                            0x01\tnull\t1970-01-01T00:10:00.000000Z
+                            0x01\tnull\t1970-01-01T00:11:00.000000Z
+                            0x01\tnull\t1970-01-01T00:12:00.000000Z
+                            0x01\tnull\t1970-01-01T00:13:00.000000Z
+                            0x01\tnull\t1970-01-01T00:14:00.000000Z
+                            0x01\t1\t1970-01-01T00:15:00.000000Z
+                            0x02\tnull\t1970-01-01T00:00:00.000000Z
+                            0x02\t1\t1970-01-01T00:01:00.000000Z
+                            0x02\tnull\t1970-01-01T00:02:00.000000Z
+                            0x02\tnull\t1970-01-01T00:03:00.000000Z
+                            0x02\tnull\t1970-01-01T00:04:00.000000Z
+                            0x02\tnull\t1970-01-01T00:05:00.000000Z
+                            0x02\tnull\t1970-01-01T00:06:00.000000Z
+                            0x02\tnull\t1970-01-01T00:07:00.000000Z
+                            0x02\tnull\t1970-01-01T00:08:00.000000Z
+                            0x02\tnull\t1970-01-01T00:09:00.000000Z
+                            0x02\tnull\t1970-01-01T00:10:00.000000Z
+                            0x02\tnull\t1970-01-01T00:11:00.000000Z
+                            0x02\tnull\t1970-01-01T00:12:00.000000Z
+                            0x02\tnull\t1970-01-01T00:13:00.000000Z
+                            0x02\tnull\t1970-01-01T00:14:00.000000Z
+                            0x02\tnull\t1970-01-01T00:15:00.000000Z
+                            """);
         });
     }
 
@@ -446,7 +406,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table telem (created timestamp NOT NULL, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
+            execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 
             execute("insert into telem " +
                     "select" +
@@ -683,7 +643,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testFillValueException() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table telem (created timestamp NOT NULL, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
+            execute("create table telem (created timestamp, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 
             execute(
                     "insert into telem " +
@@ -1402,7 +1362,7 @@ public class SampleByTest extends AbstractCairoTest {
                               symbol SYMBOL capacity 256 CACHE,
                               price DOUBLE,
                               amount DOUBLE,
-                              timestamp TIMESTAMP NOT NULL
+                              timestamp TIMESTAMP
                             ) timestamp (timestamp) PARTITION BY DAY;
                             """
             );
@@ -1517,18 +1477,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertQuery("select k, s, first(lat) lat, last(lon) lon " +
                 "from xx " +
@@ -1544,18 +1502,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -1607,18 +1563,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -1672,18 +1626,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -1759,18 +1711,15 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to calendar",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                true,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to calendar")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -1850,18 +1799,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, first(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertQuery("select k, s, first(lat) lat, first(lon) lon " +
                 "from xx " +
@@ -1877,18 +1824,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, first(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -1920,18 +1865,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, first(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -1965,18 +1908,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, first(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -2025,18 +1966,15 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to calendar",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                true,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, first(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to calendar")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -2782,18 +2720,16 @@ public class SampleByTest extends AbstractCairoTest {
     public void testIndexSampleByBufferExceeded() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_SAMPLEBY_PAGE_SIZE, 16);
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where s in ('a')" +
-                        "sample by 60s align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 4096) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where s in ('a')" +
+                "sample by 60s align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 4096) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -2880,18 +2816,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-02' and s in ('b')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-02' and s in ('b')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -2946,18 +2880,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 256) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, first(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 256) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -3007,7 +2939,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
+            execute("create table xx (lat double, lon double, s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
             assertQuery("select s, first(lat) lat, first(lon) lon " +
@@ -3059,7 +2991,7 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertMemoryLeak(() -> execute("create table xx (s symbol, k timestamp NOT NULL)" +
+        assertMemoryLeak(() -> execute("create table xx (s symbol, k timestamp)" +
                 ", index(s capacity 256) timestamp(k) partition by DAY"));
 
         assertSampleByIndexQuery(
@@ -3106,18 +3038,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-01-01T00:00:00.000000Z;30m;5h;10' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -3164,18 +3094,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-02' and s in ('b')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, first(lon) lon " +
+                "from xx " +
+                "where k in '1970-02' and s in ('b')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -3341,20 +3269,18 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, last(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where s = 'b' " +
-                        "  and k >= cast(1388534400 * 1000000L as timestamp) " +
-                        "  and k <= cast(1655742718 * 1000000L as timestamp)" +
-                        "sample by 1M align to first observation ",
-                "create table xx (k timestamp NOT NULL, s symbol, lat double, lon double)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, last(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where s = 'b' " +
+                "  and k >= cast(1388534400 * 1000000L as timestamp) " +
+                "  and k <= cast(1655742718 * 1000000L as timestamp)" +
+                "sample by 1M align to first observation ")
+                .ddl("create table xx (k timestamp, s symbol, lat double, lon double)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -3412,18 +3338,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, last(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-02' and s in ('a')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat long, lon long, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, last(lon) lon " +
+                "from xx " +
+                "where k in '1970-02' and s in ('a')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat long, lon long, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -3491,18 +3415,16 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "k\ts\tlat\tlon\n",
-                "select k, s, first(lat) lat, first(lon) lon " +
-                        "from xx " +
-                        "where k in '1970-02' and s in ('b')" +
-                        "sample by 2h align to first observation",
-                "create table xx (lat double, lon double, s symbol, k timestamp NOT NULL)" +
-                        ", index(s capacity 10) timestamp(k) partition by DAY",
-                "k",
-                false,
-                true
-        );
+        assertQuery("select k, s, first(lat) lat, first(lon) lon " +
+                "from xx " +
+                "where k in '1970-02' and s in ('b')" +
+                "sample by 2h align to first observation")
+                .ddl("create table xx (lat double, lon double, s symbol, k timestamp)" +
+                        ", index(s capacity 10) timestamp(k) partition by DAY")
+                .timestamp("k")
+                .noRandomAccess()
+                .expectSize()
+                .returns("k\ts\tlat\tlon\n");
 
         assertSampleByIndexQuery(
                 """
@@ -3589,7 +3511,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table xx (k timestamp NOT NULL)\n" +
+            execute("create table xx (k timestamp)\n" +
                     " timestamp(k) partition by DAY");
             execute(
                     """
@@ -3636,7 +3558,7 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertMemoryLeak(() -> execute("create table xx (s symbol, k timestamp NOT NULL)" +
+        assertMemoryLeak(() -> execute("create table xx (s symbol, k timestamp)" +
                 ", index(s capacity 256) timestamp(k) partition by DAY"));
 
         assertSampleByIndexQuery(
@@ -3665,7 +3587,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table xx (k timestamp NOT NULL)\n" +
+            execute("create table xx (k timestamp)\n" +
                     " timestamp(k) partition by DAY");
             execute(
                     """
@@ -3719,7 +3641,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table xx (s symbol, k timestamp NOT NULL)" +
+            execute("create table xx (s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
             execute(
@@ -3805,7 +3727,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table xx (s symbol, k timestamp NOT NULL)" +
+            execute("create table xx (s symbol, k timestamp)" +
                     ", index(s capacity 256) timestamp(k) partition by DAY");
 
             execute(
@@ -4042,7 +3964,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table xx (k timestamp NOT NULL, d DOUBLE, s SYMBOL)" +
+            execute("create table xx (k timestamp, d DOUBLE, s SYMBOL)" +
                     ", index(s capacity 345) timestamp(k) partition by DAY \n");
 
             execute("""
@@ -4379,7 +4301,7 @@ public class SampleByTest extends AbstractCairoTest {
     @Test
     public void testSampleBy27mFromWithOffset() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
                             "SELECT x::INT, timestamp_sequence('2021-03-01T00:00:00.000000Z', 600_000_000) " +
@@ -4422,7 +4344,7 @@ public class SampleByTest extends AbstractCairoTest {
         //
         // With OFFSET '-00:20', bucket boundaries shift by -20 minutes.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
                             "SELECT x::INT, timestamp_sequence('2021-03-14T09:00:00.000000Z', 600_000_000) " +
@@ -4464,7 +4386,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table x (i int, ts timestamp NOT NULL) timestamp(ts) PARTITION by day;");
+            execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
             execute(
                     "insert into x " +
                             "select x, timestamp_sequence('2021-03-26', 60 * 1000000) " +
@@ -4868,7 +4790,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table x (i int, ts timestamp NOT NULL) timestamp(ts) PARTITION by day;");
+            execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
             execute(
                     "insert into x " +
                             "select x, timestamp_sequence('2021-03-26', 60 * 1000000) " +
@@ -4920,7 +4842,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table x (i int, ts timestamp NOT NULL) timestamp(ts) PARTITION by day;");
+            execute("create table x (i int, ts timestamp) timestamp(ts) PARTITION by day;");
             execute(
                     "insert into x " +
                             "select x, timestamp_sequence('2021-03-26', 60 * 1000000) " +
@@ -5342,14 +5264,14 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select * from (" +
-                            "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar ) " +
-                            "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0",
-                    """
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select * from (" +
+                    "select ts2 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar ) " +
+                    "where tstmp >= '2022-12-01T00:00:00.000000Z' and  sym = 'B' and length(sym)*tstmp::long > 0")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Encode sort light
                                   keys: [ts1]
@@ -5377,7 +5299,7 @@ public class SampleByTest extends AbstractCairoTest {
                             "  side SYMBOL, " +
                             "  price DOUBLE, " +
                             "  amount DOUBLE, " +
-                            "  timestamp TIMESTAMP NOT NULL " +
+                            "  timestamp TIMESTAMP " +
                             ") timestamp(timestamp) PARTITION BY DAY;"
             );
 
@@ -5430,7 +5352,7 @@ public class SampleByTest extends AbstractCairoTest {
         //
         // The WHERE filter must use to_utc to include data from Oct 29 22:00 UTC.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
                             "SELECT x::INT, timestamp_sequence('2021-10-29T22:00:00.000000Z', 3_600_000_000L) " +
@@ -5466,7 +5388,7 @@ public class SampleByTest extends AbstractCairoTest {
         //
         // The WHERE filter must use to_utc to include data from Mar 26 23:00 UTC.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
                             "SELECT x::INT, timestamp_sequence('2021-03-26T23:00:00.000000Z', 3_600_000_000L) " +
@@ -5778,273 +5700,6 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSampleByDayFromAlignToCalendarDSTChathamFallBack() throws Exception {
-        // Pacific/Chatham: UTC+12:45 (CHAST) / UTC+13:45 (CHADT)
-        // Fall back: Apr 4, 2021 at 3:45am CHADT -> 2:45am CHAST (= Apr 3 14:00 UTC)
-        //
-        // Day boundaries (midnight local -> UTC):
-        //   Apr 3 00:00 CHADT = Apr 2 10:15 UTC
-        //   Apr 4 00:00 CHADT = Apr 3 10:15 UTC
-        //   Apr 5 00:00 CHAST = Apr 4 11:15 UTC  (back to standard time, 25h day)
-        //   Apr 6 00:00 CHAST = Apr 5 11:15 UTC
-        //
-        // The fall-back day (Apr 4) is 25 hours long.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute(
-                    "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-04-02T10:15:00.000000Z', 3_600_000_000L) " +
-                            "FROM long_sequence(120);"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
-                            min\tmax\tts
-                            1\t24\t2021-04-02T10:15:00.000000Z
-                            25\t49\t2021-04-03T10:15:00.000000Z
-                            50\t73\t2021-04-04T11:15:00.000000Z
-                            74\t97\t2021-04-05T11:15:00.000000Z
-                            98\t120\t2021-04-06T11:15:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-04-03' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';",
-                    "ts",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByDayFromAlignToCalendarDSTChathamSpringForward() throws Exception {
-        // Pacific/Chatham: UTC+12:45 (CHAST) / UTC+13:45 (CHADT)
-        // Spring forward: Sep 26, 2021 at 2:45am CHAST -> 3:45am CHADT (= Sep 25 14:00 UTC)
-        // 45-minute offset + DST makes this a demanding timezone test.
-        //
-        // Day boundaries (midnight local -> UTC):
-        //   Sep 24 00:00 CHAST = Sep 23 11:15 UTC
-        //   Sep 25 00:00 CHAST = Sep 24 11:15 UTC
-        //   Sep 26 00:00 CHAST = Sep 25 11:15 UTC  (spring forward at 2:45am during this day)
-        //   Sep 27 00:00 CHADT = Sep 26 10:15 UTC  (now in daylight time)
-        //   Sep 28 00:00 CHADT = Sep 27 10:15 UTC
-        //
-        // The spring-forward day (Sep 26) is only 23 hours long.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute(
-                    "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-09-23T11:15:00.000000Z', 3_600_000_000L) " +
-                            "FROM long_sequence(120);"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
-                            min\tmax\tts
-                            1\t24\t2021-09-23T11:15:00.000000Z
-                            25\t48\t2021-09-24T11:15:00.000000Z
-                            49\t71\t2021-09-25T11:15:00.000000Z
-                            72\t95\t2021-09-26T10:15:00.000000Z
-                            96\t119\t2021-09-27T10:15:00.000000Z
-                            120\t120\t2021-09-28T10:15:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-09-24' ALIGN TO CALENDAR TIME ZONE 'Pacific/Chatham';",
-                    "ts",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByDayFromWithOffset() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute(
-                    "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-03-01T00:00:00.000000Z', 3_600_000_000) " +
-                            "FROM long_sequence(120);"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
-                            min\tmax\tcount\tts
-                            1\t25\t25\t2021-03-01T00:15:00.000000Z
-                            26\t49\t24\t2021-03-02T00:15:00.000000Z
-                            50\t73\t24\t2021-03-03T00:15:00.000000Z
-                            74\t97\t24\t2021-03-04T00:15:00.000000Z
-                            98\t120\t23\t2021-03-05T00:15:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR WITH OFFSET '+00:15';",
-                    "ts",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByDayFromWithOffsetTimezoneDst() throws Exception {
-        // America/Anchorage: AKST (UTC-9) -> AKDT (UTC-8)
-        // Spring forward: March 14, 2021 at 2:00 AM AKST = 11:00 UTC
-        // Clocks jump from 2:00 AM to 3:00 AM local.
-        //
-        // 1d stride with OFFSET '-00:20' shifts day boundaries by -20 minutes.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
-            execute(
-                    "INSERT INTO x " +
-                            "SELECT x::INT, timestamp_sequence('2021-03-12T09:00:00.000000Z', 3_600_000_000) " +
-                            "FROM long_sequence(120);"
-            );
-
-            assertQueryNoLeakCheck(
-                    """
-                            min\tmax\tcount\tts
-                            1\t24\t24\t2021-03-12T08:40:00.000000Z
-                            25\t48\t24\t2021-03-13T08:40:00.000000Z
-                            49\t71\t23\t2021-03-14T08:40:00.000000Z
-                            72\t95\t24\t2021-03-15T07:40:00.000000Z
-                            96\t119\t24\t2021-03-16T07:40:00.000000Z
-                            120\t120\t1\t2021-03-17T07:40:00.000000Z
-                            """,
-                    "SELECT min(i), max(i), count(), ts FROM x " +
-                            "SAMPLE BY 1d FROM '2021-03-01' ALIGN TO CALENDAR TIME ZONE 'America/Anchorage' WITH OFFSET '-00:20';",
-                    "ts",
-                    true,
-                    true
-            );
-        });
-    }
-
-    @Test
-    public void testSampleByDayNoFillAlignToCalendarWithTimezoneLondon() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
-
-        assertQuery(
-                """
-                        to_timezone\ts\tlat\tlon
-                        2021-03-26T00:00:00.000000Z\ta\t142.30215575416736\t2021-03-26T22:50:00.000000Z
-                        2021-03-27T00:00:00.000000Z\ta\tnull\t2021-03-27T23:00:00.000000Z
-                        2021-03-28T00:00:00.000000Z\ta\t33.45558404694713\t2021-03-28T20:40:00.000000Z
-                        2021-03-29T00:00:00.000000Z\ta\t70.00560222114518\t2021-03-29T16:40:00.000000Z
-                        2021-03-30T00:00:00.000000Z\ta\t13.290235514836048\t2021-03-30T02:40:00.000000Z
-                        """,
-                "select to_timezone(k, 'Europe/London'), s, lat, lon from (select k, s, first(lat) lat, last(k) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1d align to calendar time zone 'Europe/London')",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   rnd_double(1)*180 lat," +
-                        "   rnd_double(1)*180 lon," +
-                        "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
-                        "   from" +
-                        "   long_sequence(120)" +
-                        ") timestamp(k)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezone() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
-
-        assertQuery(
-                """
-                        k\tc\ta\tlk
-                        2021-03-27T00:00:00.000000Z\t218\t78.61254708288084\t2021-03-27T21:57:00.000000Z
-                        2021-03-28T00:00:00.000000Z\t230\t16.41641076342043\t2021-03-28T20:57:00.000000Z
-                        2021-03-29T00:00:00.000000Z\t240\t10.130283315402789\t2021-03-29T20:57:00.000000Z
-                        2021-03-30T00:00:00.000000Z\t240\t22.52165473191222\t2021-03-30T20:57:00.000000Z
-                        2021-03-31T00:00:00.000000Z\t72\t45.38592869415369\t2021-03-31T04:09:00.000000Z
-                        """,
-                "select to_timezone(k, 'Europe/Riga') k, c, a, lk from (select k, count() c, last(a) a, last(k) lk from x sample by 1d align to calendar time zone 'Europe/Riga')",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-03-27T00:15:00.000000Z' as timestamp), 6*60000000) k" +
-                        " from" +
-                        " long_sequence(1000)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testSampleByDayNoFillNotKeyedAlignToCalendarTimezoneOct() throws Exception {
-        // We are going over spring time change. Because time is "expanding" we don't have
-        // to do anything special. Our UTC timestamps will show "gap" and data doesn't
-        // have to change
-        assertQuery(
-                """
-                        k\tc
-                        2021-10-30T00:00:00.000000Z\t218
-                        2021-10-31T00:00:00.000000Z\t250
-                        2021-11-01T00:00:00.000000Z\t132
-                        """,
-                "select to_timezone(k, 'Europe/Berlin') k, c from (select k, count() c from x sample by 1d align to calendar time zone 'Europe/Berlin')",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        " rnd_double(0)*100 a," +
-                        " rnd_symbol(5,4,4,1) b," +
-                        " timestamp_sequence(cast('2021-10-30T00:15:00.000000Z' as timestamp), 6*60000000) k" +
-                        " from" +
-                        " long_sequence(600)" +
-                        ") timestamp(k) partition by NONE",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
-    public void testSampleByDayNoFillNotKeyedAlignToCalendarWithTimezoneLondon() throws Exception {
-        Rnd rnd = TestUtils.generateRandom(LOG);
-        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
-
-        assertQuery(
-                """
-                        to_timezone\tlat\tlon
-                        2021-03-26T00:00:00.000000Z\t142.30215575416736\t2021-03-26T22:50:00.000000Z
-                        2021-03-27T00:00:00.000000Z\tnull\t2021-03-27T23:00:00.000000Z
-                        2021-03-28T00:00:00.000000Z\t33.45558404694713\t2021-03-28T20:40:00.000000Z
-                        2021-03-29T00:00:00.000000Z\t70.00560222114518\t2021-03-29T16:40:00.000000Z
-                        2021-03-30T00:00:00.000000Z\t13.290235514836048\t2021-03-30T02:40:00.000000Z
-                        """,
-                "select to_timezone(k, 'Europe/London'), lat, lon from (select k, first(lat) lat, last(k) lon " +
-                        "from x " +
-                        "where s in ('a') " +
-                        "sample by 1d align to calendar time zone 'Europe/London')",
-                "create table x as " +
-                        "(" +
-                        "select" +
-                        "   rnd_double(1)*180 lat," +
-                        "   rnd_double(1)*180 lon," +
-                        "   rnd_symbol('a','b',null) s," +
-                        "   timestamp_sequence('2021-03-25T23:30:00.00000Z', 50 * 60 * 1000000L) k" +
-                        "   from" +
-                        "   long_sequence(120)" +
-                        ") timestamp(k)",
-                null,
-                true,
-                true
-        );
-    }
-
-    @Test
     public void testSampleByDisallowsPredicatePushdown() throws Exception {
         String align = "";
 
@@ -6320,7 +5975,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE candles_market_spot_4_1m (" +
-                    "   candle_start_time TIMESTAMP NOT NULL," +
+                    "   candle_start_time TIMESTAMP," +
                     "   candle_open_price DOUBLE," +
                     "   candle_close_price DOUBLE," +
                     "   candle_low_price DOUBLE," +
@@ -6330,7 +5985,7 @@ public class SampleByTest extends AbstractCairoTest {
                     "   candle_trades_count INT," +
                     "   candle_usd_volume DOUBLE," +
                     "   computed_by VARCHAR," +
-                    "   created_at TIMESTAMP NOT NULL," +
+                    "   created_at TIMESTAMP," +
                     "   candle_symbol SYMBOL CAPACITY 256 CACHE INDEX CAPACITY 256" +
                     ") timestamp(candle_start_time) PARTITION BY WEEK WAL " +
                     "DEDUP UPSERT KEYS(candle_start_time,candle_symbol);");
@@ -6584,8 +6239,8 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pos (" +
-                    "  time TIMESTAMP NOT NULL," +
-                    "  ts TIMESTAMP NOT NULL," +
+                    "  time TIMESTAMP," +
+                    "  ts TIMESTAMP," +
                     "  id SYMBOL INDEX," +
                     "  lat DOUBLE," +
                     "  lon DOUBLE," +
@@ -6617,8 +6272,8 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pos (" +
-                    "  time TIMESTAMP NOT NULL," +
-                    "  ts TIMESTAMP NOT NULL," +
+                    "  time TIMESTAMP," +
+                    "  ts TIMESTAMP," +
                     "  id SYMBOL INDEX," +
                     "  lat DOUBLE," +
                     "  lon DOUBLE," +
@@ -6650,7 +6305,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pos (" +
-                    "  time TIMESTAMP NOT NULL," +
+                    "  time TIMESTAMP," +
                     "  id SYMBOL INDEX," +
                     "  lat DOUBLE," +
                     "  lon DOUBLE," +
@@ -6699,7 +6354,7 @@ public class SampleByTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pos (" +
-                    "  time TIMESTAMP NOT NULL," +
+                    "  time TIMESTAMP," +
                     "  id SYMBOL INDEX," +
                     "  lat DOUBLE," +
                     "  lon DOUBLE," +
@@ -6900,14 +6555,12 @@ public class SampleByTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
-        assertQuery(
-                "id\ttime\tgeo6\tlat\tlon\n",
-                "select   id, time, geo6, last(lat) lat, last(lon) lon " +
-                        "from pos " +
-                        "where id = 'A' sample by 15m ALIGN to CALENDAR " +
-                        "order by time, id",
-                "CREATE TABLE pos (" +
-                        "  time TIMESTAMP NOT NULL," +
+        assertQuery("select   id, time, geo6, last(lat) lat, last(lon) lon " +
+                "from pos " +
+                "where id = 'A' sample by 15m ALIGN to CALENDAR " +
+                "order by time, id")
+                .ddl("CREATE TABLE pos (" +
+                        "  time TIMESTAMP," +
                         "  id SYMBOL INDEX," +
                         "  lat DOUBLE," +
                         "  lon DOUBLE," +
@@ -6967,7 +6620,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE ignition (
-                      value_time TIMESTAMP NOT NULL,
+                      value_time TIMESTAMP,
                       double_value DOUBLE
                     ) timestamp(value_time)
                     """);
@@ -7068,7 +6721,7 @@ public class SampleByTest extends AbstractCairoTest {
             // Create a table with gaps so LINEAR interpolation is actually exercised
             execute("""
                     CREATE TABLE gaps (
-                      ts TIMESTAMP NOT NULL,
+                      ts TIMESTAMP,
                       val DOUBLE
                     ) timestamp(ts)
                     """);
@@ -7124,7 +6777,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE gaps (
-                      ts TIMESTAMP NOT NULL,
+                      ts TIMESTAMP,
                       val DOUBLE
                     ) timestamp(ts)
                     """);
@@ -7182,7 +6835,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE gaps (
-                      ts TIMESTAMP NOT NULL,
+                      ts TIMESTAMP,
                       val DOUBLE
                     ) timestamp(ts)
                     """);
@@ -7243,7 +6896,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE dst_data (
-                      ts TIMESTAMP NOT NULL,
+                      ts TIMESTAMP,
                       val DOUBLE
                     ) timestamp(ts)
                     """);
@@ -7341,7 +6994,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE ignition (
-                      value_time TIMESTAMP NOT NULL,
+                      value_time TIMESTAMP,
                       double_value DOUBLE
                     ) timestamp(value_time)
                     """);
@@ -7468,7 +7121,7 @@ public class SampleByTest extends AbstractCairoTest {
             execute(
                     """
                             create table tbl (
-                              ts timestamp NOT NULL,
+                              ts timestamp,
                               price double
                             ) timestamp(ts) partition by day wal;"""
             );
@@ -7600,7 +7253,7 @@ public class SampleByTest extends AbstractCairoTest {
         // Fall back: Oct 31, 2021 at 3:00 CEST -> 2:00 CET (= Oct 31 01:00 UTC)
         // The local hour 02:00-03:00 occurs twice.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
                             "SELECT x::INT, timestamp_sequence('2021-10-30T21:00:00.000000Z', 600_000_000L) " +
@@ -7640,7 +7293,7 @@ public class SampleByTest extends AbstractCairoTest {
         // Spring forward: Mar 28, 2021 at 2:00 CET -> 3:00 CEST (= Mar 28 01:00 UTC)
         // The local hour 02:00-03:00 doesn't exist.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x " +
                             "SELECT x::INT, timestamp_sequence('2021-03-27T21:00:00.000000Z', 600_000_000L) " +
@@ -7738,7 +7391,7 @@ public class SampleByTest extends AbstractCairoTest {
                 "(" +
                 " a double," +
                 " b symbol," +
-                " k timestamp NOT NULL" +
+                " k timestamp" +
                 ") timestamp(k) partition by NONE";
         String ddl2 = "insert into x select * from (" +
                 "select" +
@@ -7927,7 +7580,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNegativeTimestamp() throws Exception {
-        execute("create table test ( ts TIMESTAMP NOT NULL, value float );");
+        execute("create table test ( ts TIMESTAMP, value float );");
         execute("""
                 insert into test VALUES
                     ('1968-10-01T01:00:00.0Z', 5),
@@ -7961,7 +7614,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     @Test
     public void testSampleByNegativeTimestampEdgeCase() throws Exception {
-        execute("create table test ( ts TIMESTAMP NOT NULL, value float );");
+        execute("create table test ( ts TIMESTAMP, value float );");
         execute("""
                 insert into test VALUES
                     ('1969-12-31T23:00:00.0Z', 5),
@@ -8344,7 +7997,7 @@ public class SampleByTest extends AbstractCairoTest {
     public void testSampleByOrderBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE eq_equities_market_data (" +
-                    "timestamp TIMESTAMP NOT NULL, " +
+                    "timestamp TIMESTAMP, " +
                     "symbol SYMBOL, " +
                     "venue SYMBOL, " +
                     "asks DOUBLE[][], bids DOUBLE[][]" +
@@ -8409,17 +8062,17 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "(select sym, first(val), avg(val), last(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar) a " +
-                            " left join " +
-                            "(select sym, first(val), avg(val), last(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar) b on(sym) ",
-                    """
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select * from " +
+                    "(select sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar) a " +
+                    " left join " +
+                    "(select sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar) b on(sym) ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 Hash Left Outer Join Light
                                   condition: b.sym=a.sym
@@ -8457,17 +8110,17 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select * from " +
-                            "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar) a " +
-                            " asof join " +
-                            "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar) b ",
-                    """
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select * from " +
+                    "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar) a " +
+                    " asof join " +
+                    "(select ts1, sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar) b ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             SelectedRecord
                                 AsOf Join
                                     Encode sort light
@@ -8541,12 +8194,12 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar ",
-                    """
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select ts1 a, ts1 b, sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [b]
                                 SelectedRecord
@@ -8568,12 +8221,12 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar ",
-                    """
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select ts1 a, ts1 b, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [b]
                                 SelectedRecord
@@ -8595,12 +8248,12 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
-                            "from x " +
-                            "sample by 1m align to calendar ",
-                    """
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
+                    "from x " +
+                    "sample by 1m align to calendar ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [d]
                                 SelectedRecord
@@ -8622,7 +8275,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (ts1 timestamp NOT NULL, ts2 timestamp) timestamp(ts1) partition by DAY");
+            execute("create table if not exists x (ts1 timestamp, ts2 timestamp) timestamp(ts1) partition by DAY");
             execute(
                     "insert into x values ('2020-01-01T00:00:00', '2020-01-01T00:00:01'), " +
                             "('2020-01-01T00:00:00', '2020-01-01T00:00:01'), " +
@@ -8698,7 +8351,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (i INT, ts TIMESTAMP NOT NULL, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
+            execute("CREATE TABLE x (i INT, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;");
             execute(
                     "INSERT INTO x VALUES (1, '2010-01-01T01', '2010-01-01T01')," +
                             "(2, '2020-01-01T01', '2020-01-01T02')," +
@@ -8939,12 +8592,12 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "select ts1, sym, min(val), avg(val), max(val) " +
-                            "from x " +
-                            "sample by 1m align to calendar time zone 'UTC'",
-                    """
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select ts1, sym, min(val), avg(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar time zone 'UTC'")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [ts1]
                                 Async Group By workers: 1
@@ -8965,8 +8618,11 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar " +
+                    " union all " +
                     "select sym, first(val), avg(val), last(val), max(val) " +
                     "from x " +
                     "sample by 1m align to calendar ")
@@ -9007,8 +8663,11 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
+            execute("create table if not exists x (  ts1 timestamp, ts2 timestamp, sym symbol, val long ) timestamp(ts1) partition by DAY");
+            assertQuery("select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
+                    "from x " +
+                    "sample by 1m align to calendar " +
+                    " union all " +
                     "select ts1 as tstmp, sym, first(val), avg(val), last(val), max(val) " +
                     "from x " +
                     "sample by 1m align to calendar ")
@@ -9047,12 +8706,12 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (ts1 timestamp NOT NULL, ts2 timestamp, sym symbol, val long) timestamp(ts1) partition by DAY");
-            assertPlanNoLeakCheck(
-                    "with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
-                            "from x " +
-                            "sample by 1m align to calendar) select * from y ",
-                    """
+            execute("create table if not exists x (ts1 timestamp, ts2 timestamp, sym symbol, val long) timestamp(ts1) partition by DAY");
+            assertQuery("with y as (select ts1 a, ts1 b, sym, first(val), avg(val), ts1 e, last(val), max(val), ts1 c, ts1 d " +
+                    "from x " +
+                    "sample by 1m align to calendar) select * from y ")
+                    .noLeakCheck()
+                    .assertsPlan("""
                             Encode sort light
                               keys: [d]
                                 SelectedRecord
@@ -9080,7 +8739,7 @@ public class SampleByTest extends AbstractCairoTest {
                       side SYMBOL capacity 256 CACHE,
                       price DOUBLE,
                       amount DOUBLE,
-                      timestamp TIMESTAMP NOT NULL
+                      timestamp TIMESTAMP
                     ) timestamp (timestamp) PARTITION BY DAY WAL;""");
             drainWalQueue();
 
@@ -9118,7 +8777,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE points ( \s
-                      timestamp TIMESTAMP NOT NULL, \s
+                      timestamp TIMESTAMP, \s
                       value DOUBLE,
                       name SYMBOL
                     )  TIMESTAMP(timestamp)
@@ -9166,14 +8825,14 @@ public class SampleByTest extends AbstractCairoTest {
                       symbol SYMBOL capacity 256 CACHE,
                       price DOUBLE,
                       amount DOUBLE,
-                      timestamp TIMESTAMP NOT NULL
+                      timestamp TIMESTAMP
                     ) timestamp (timestamp) PARTITION BY DAY;""");
             execute("""
                     CREATE TABLE 'trades2' (
                       symbol SYMBOL capacity 256 CACHE,
                       price DOUBLE,
                       amount DOUBLE,
-                      timestamp TIMESTAMP NOT NULL
+                      timestamp TIMESTAMP
                     ) timestamp (timestamp) PARTITION BY DAY;""");
 
             execute("""
@@ -9430,7 +9089,7 @@ public class SampleByTest extends AbstractCairoTest {
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
 
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE weather ( ts TIMESTAMP NOT NULL, temperature DOUBLE, humidity INTEGER ) TIMESTAMP(ts);");
+            execute("CREATE TABLE weather ( ts TIMESTAMP, temperature DOUBLE, humidity INTEGER ) TIMESTAMP(ts);");
             execute("""
                     INSERT INTO weather (ts, temperature, humidity) VALUES
                         ('2024-01-01T00:00:00Z', 10.0, 10),
@@ -9591,7 +9250,7 @@ public class SampleByTest extends AbstractCairoTest {
                               symbol SYMBOL capacity 256 CACHE,
                               price DOUBLE,
                               amount DOUBLE,
-                              timestamp TIMESTAMP NOT NULL
+                              timestamp TIMESTAMP
                             ) timestamp (timestamp) PARTITION BY DAY;"""
             );
             execute(
@@ -9712,7 +9371,7 @@ public class SampleByTest extends AbstractCairoTest {
                               symbol SYMBOL capacity 256 CACHE,
                               price DOUBLE,
                               amount DOUBLE,
-                              timestamp TIMESTAMP NOT NULL
+                              timestamp TIMESTAMP
                             ) timestamp (timestamp) PARTITION BY DAY;
                             """
             );
@@ -11043,7 +10702,7 @@ public class SampleByTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     create table x (
-                      ts timestamp NOT NULL
+                      ts timestamp
                     ) timestamp(ts) partition by day wal;""");
 
             execute("""
@@ -16176,10 +15835,11 @@ public class SampleByTest extends AbstractCairoTest {
                         " j long," +
                         " l byte," +
                         " p timestamp," +
-                        " k timestamp NOT NULL" +
-                        ") timestamp(k) partition by NONE",
-                "k",
-                "insert into x select" +
+                        " k timestamp" +
+                        ") timestamp(k) partition by NONE")
+                .timestamp("k")
+                .noRandomAccess()
+                .mutateWith("insert into x select" +
                         " rnd_int() a," +
                         " rnd_char() c," +
                         " rnd_double(2) d," +
@@ -18183,7 +17843,7 @@ public class SampleByTest extends AbstractCairoTest {
                     pool,
                     (engine, _, sqlExecutionContext) -> {
                         engine.execute(
-                                "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp NOT NULL) timestamp(k) partition by day;",
+                                "create table x (d1 double, d2 double, s symbol index, kms long, k timestamp) timestamp(k) partition by day;",
                                 sqlExecutionContext
                         );
 
@@ -18284,7 +17944,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void testSampleByPushdownWithDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table if not exists x (  ts timestamp NOT NULL, sym symbol, val long ) timestamp(ts) partition by DAY");
+            execute("create table if not exists x (  ts timestamp, sym symbol, val long ) timestamp(ts) partition by DAY");
             String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +
@@ -18300,7 +17960,7 @@ public class SampleByTest extends AbstractCairoTest {
 
     private void testSampleByPushdownWithoutDesignatedTs(String fill, String alignTo, String plan) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table if not exists y (  ts timestamp NOT NULL, sym symbol, val long ) ");
+            execute("create table if not exists y (  ts timestamp, sym symbol, val long ) ");
             String fillOpt = fill.isEmpty() ? "" : "fill(" + fill + ")";
             String query = "select * from (" +
                     "select ts as tstmp, sym, first(val), avg(val), last(val), max(val) " +

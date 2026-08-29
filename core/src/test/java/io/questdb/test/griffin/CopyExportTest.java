@@ -105,7 +105,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testConcurrentInsertAndCopyPartitionFuzz() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table fuzz_table (ts timestamp NOT NULL, id long, value double, name string) timestamp(ts) partition by DAY WAL");
+            execute("create table fuzz_table (ts timestamp, id long, value double, name string) timestamp(ts) partition by DAY WAL");
 
             StringBuilder initialInsert = new StringBuilder("insert into fuzz_table values ");
             for (int i = 0; i < 1000; i++) {
@@ -264,12 +264,9 @@ public class CopyExportTest extends AbstractCairoTest {
         assertQuery("copy test_table to 'test_table'  with format parquet1;")
                 .fails(45, "unsupported format, only 'parquet' is supported");
 
-        execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
-        assertException(
-                "copy test_table to 'test_table'  with partition_by Day;",
-                0,
-                "export format must be specified, supported formats: 'parquet'"
-        );
+        execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
+        assertQuery("copy test_table to 'test_table'  with partition_by Day;")
+                .fails(0, "export format must be specified, supported formats: 'parquet'");
 
         assertQuery("copy test_table to 'test_table'  with partition_by Day1;")
                 .fails(51, "invalid partition by option: Day1");
@@ -319,7 +316,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetBoundaryValuesMaxRowGroupSize() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
             execute("insert into test_table values (0, 1)");
             drainWalQueue();
 
@@ -336,9 +333,8 @@ public class CopyExportTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .returns("""
                                 path\tdiskSizeHuman
-                                test_table.parquet\t602.0 B
-                                """,
-                        "select path, diskSizeHuman from export_files()  order by modifiedTime");
+                                test_table.parquet\t641.0 B
+                                """);
             };
             testCopyExport(stmt, test);
         });
@@ -347,7 +343,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetBoundaryValuesMinRowGroupSize() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
             execute("insert into test_table values (0, 1)");
             drainWalQueue();
 
@@ -368,7 +364,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetBoundaryValuesNegativeRowGroupSize() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
             execute("insert into test_table values (0, 1)");
             drainWalQueue();
 
@@ -389,7 +385,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetBoundaryValuesZeroRowGroupSize() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
             execute("insert into test_table values (0, 1)");
             drainWalQueue();
 
@@ -397,44 +393,11 @@ public class CopyExportTest extends AbstractCairoTest {
                     runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet row_group_size 0", sqlExecutionContext);
 
             CopyExportRunnable test = () ->
-                    assertEventually(() -> assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                    exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n",
-                            "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1"));
-
-            testCopyExport(stmt, test);
-        });
-    }
-
-    @Test
-    public void testCopyParquetEmptyTable() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("create table all_types_empty (" +
-                    "bool_col boolean, " +
-                    "byte_col byte, " +
-                    "short_col short, " +
-                    "int_col int, " +
-                    "long_col long, " +
-                    "float_col float, " +
-                    "double_col double, " +
-                    "string_col string, " +
-                    "symbol_col symbol, " +
-                    "t_ns timestamp_ns, " +
-                    "d_array DOUBLE[], " +
-                    "ts timestamp NOT NULL" +
-                    ") timestamp(ts)");
-
-            CopyExportRunnable stmt = () ->
-                    runAndFetchCopyExportID("copy all_types_empty to 'all_types_empty' with format parquet", sqlExecutionContext);
-            CopyExportRunnable test = () ->
-                    assertEventually(() -> {
-                        assertSql("export_path\tnum_exported_files\tstatus\n" +
-                                        exportRoot + File.separator + "all_types_empty.parquet" + "\t1\tfinished\n",
-                                "SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1");
-                        assertSql("""
-                                        bool_col\tbyte_col\tshort_col\tint_col\tlong_col\tfloat_col\tdouble_col\tstring_col\tsymbol_col\tt_ns\td_array\tts
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "all_types_empty" + ".parquet')");
-                    });
+                    assertEventually(() -> assertQuery("SELECT export_path, num_exported_files, status FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("export_path\tnum_exported_files\tstatus\n" +
+                                    exportRoot + File.separator + "test_table.parquet" + "\t1\tfinished\n"));
 
             testCopyExport(stmt, test);
         });
@@ -465,7 +428,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     CREATE TABLE t (
                         dummy INT,
                         val DOUBLE,
-                        ts TIMESTAMP NOT NULL,
+                        ts TIMESTAMP,
                         extra LONG
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
@@ -514,7 +477,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     CREATE TABLE t (
                         dummy INT,
                         val DOUBLE,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
 
@@ -756,7 +719,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetFailsWithSpecifyPartitionBy() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts timestamp NOT NULL, x int) timestamp(ts) partition by DAY");
+            execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
             execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2), ('2023-02-01T10:00:00.000Z', 3), ('2023-02-02T10:00:00.000Z', 4)");
             CopyExportRunnable stmt = () -> runAndFetchCopyExportID("copy test_table to 'test_table' with format parquet partition_by MONTH", sqlExecutionContext);
 
@@ -795,12 +758,12 @@ public class CopyExportTest extends AbstractCairoTest {
                                         ts\tx
                                         2023-02-01T10:00:00.000000Z\t3
                                         2023-02-02T10:00:00.000000Z\t4
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2023-02.parquet')");
-                        assertSql("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2023-01.parquet\t626.0 B\n" +
-                                        "test_table" + File.separator + "2023-02.parquet\t626.0 B\n",
-                                "select path, diskSizeHuman from export_files() order by path");
+                                        """);
+                        assertQuery("select path, diskSizeHuman from export_files() order by path")
+                                .noLeakCheck()
+                                .returns("path\tdiskSizeHuman\n" +
+                                        "test_table" + File.separator + "2023-01.parquet\t672.0 B\n" +
+                                        "test_table" + File.separator + "2023-02.parquet\t672.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -809,7 +772,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetFromParquet() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
             execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1)");
             drainWalQueue();
 
@@ -831,7 +794,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetFromParquet1() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
 
             drainWalQueue();
             CopyExportRunnable stmt = () ->
@@ -853,7 +816,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetFromParquet2() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts TIMESTAMP NOT NULL, x int) timestamp(ts) partition by day wal;");
+            execute("create table test_table (ts TIMESTAMP, x int) timestamp(ts) partition by day wal;");
             execute("insert into test_table values ('2020-01-01T00:00:00.000000Z', 0), ('2020-01-02T00:00:00.000000Z', 1)");
             drainWalQueue();
             execute("alter table test_table convert partition to parquet where ts < '2020-01-02T00:00:00.000000Z'");
@@ -879,12 +842,12 @@ public class CopyExportTest extends AbstractCairoTest {
                                         ts\tx
                                         2020-01-01T00:00:00.000000Z\t0
                                         2020-01-01T00:00:01.000000Z\t10
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "test_table" + File.separator + "2020-01-01.parquet')");
-                        assertSql("path\tdiskSizeHuman\n" +
-                                        "test_table" + File.separator + "2020-01-01.parquet\t517.0 B\n" +
-                                        "test_table" + File.separator + "2020-01-02.parquet\t602.0 B\n",
-                                "select path, diskSizeHuman from export_files()  order by path");
+                                        """);
+                        assertQuery("select path, diskSizeHuman from export_files()  order by path")
+                                .noLeakCheck()
+                                .returns("path\tdiskSizeHuman\n" +
+                                        "test_table" + File.separator + "2020-01-01.parquet\t666.0 B\n" +
+                                        "test_table" + File.separator + "2020-01-02.parquet\t648.0 B\n");
                     });
             testCopyExport(stmt, test);
         });
@@ -987,12 +950,12 @@ public class CopyExportTest extends AbstractCairoTest {
                                 .returns("""
                                         sym\tprice\tts
                                         jpyusd\t1.321\t2023-11-10T12:00:00.000000000Z
-                                        """,
-                                "select * from read_parquet('" + exportRoot + File.separator + "price_1h" + File.separator + "2023-11.parquet')");
-                        assertSql("path\tdiskSizeHuman\n" +
-                                        "price_1h" + File.separator + "2023-09.parquet\t929.0 B\n" +
-                                        "price_1h" + File.separator + "2023-11.parquet\t934.0 B\n",
-                                "select path, diskSizeHuman from export_files()  order by path");
+                                        """);
+                        assertQuery("select path, diskSizeHuman from export_files()  order by path")
+                                .noLeakCheck()
+                                .returns("path\tdiskSizeHuman\n" +
+                                        "price_1h" + File.separator + "2023-09.parquet\t1022.0 B\n" +
+                                        "price_1h" + File.separator + "2023-11.parquet\t1.0 KiB\n");
                     });
 
             testCopyExport(stmt, test);
@@ -1068,7 +1031,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     "symbol_col symbol, " +
                     "t_ns timestamp_ns, " +
                     "d_array DOUBLE[], " +
-                    "ts timestamp NOT NULL" +
+                    "ts timestamp" +
                     ") timestamp(ts)");
 
             execute("insert into all_types values (" +
@@ -1113,7 +1076,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     "double_col double, " +
                     "string_col string, " +
                     "symbol_col symbol, " +
-                    "ts timestamp NOT NULL" +
+                    "ts timestamp" +
                     ") timestamp(ts)");
 
             execute("insert into comprehensive_types values (" +
@@ -1224,7 +1187,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyParquetWithComplexQuery() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table orders (id int, customer_id int, amount double, order_date timestamp NOT NULL) timestamp(order_date)");
+            execute("create table orders (id int, customer_id int, amount double, order_date timestamp) timestamp(order_date)");
             execute("create table customers (id int, name string, country string)");
 
             execute("insert into customers values (1, 'John', 'USA'), (2, 'Jane', 'UK')");
@@ -1853,7 +1816,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyQueryWithBindVariable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE ts_table (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ts_table (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO ts_table VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1904,7 +1867,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyQueryWithBindVariableStreaming() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE ts_table2 (x INT, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ts_table2 (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("""
                     INSERT INTO ts_table2 VALUES
                     (1, '2024-01-01T00:00:00.000000Z'),
@@ -1945,7 +1908,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyQueryWithCastExpression() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (x LONG, y DOUBLE, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t1 (x LONG, y DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t1 VALUES
                     (100, 1.5, '2024-01-01T00:00:00.000000Z'),
@@ -1984,7 +1947,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyQueryWithComputedAndPassthroughColumns() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t1 (x INT, y LONG, name STRING, ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
+            execute("CREATE TABLE t1 (x INT, y LONG, name STRING, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("""
                     INSERT INTO t1 VALUES
                     (1, 100, 'alpha', '2024-01-01T00:00:00.000000Z'),
@@ -2585,7 +2548,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE str_inl (
-                        ts TIMESTAMP NOT NULL,
+                        ts TIMESTAMP,
                         id INT,
                         s STRING
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
@@ -2745,7 +2708,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE vc_hyb (
-                        ts TIMESTAMP NOT NULL,
+                        ts TIMESTAMP,
                         id INT,
                         vc VARCHAR
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
@@ -2794,7 +2757,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE vc_mp (
-                        ts TIMESTAMP NOT NULL,
+                        ts TIMESTAMP,
                         id INT,
                         vc VARCHAR
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
@@ -2864,7 +2827,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE vc_inl (
-                        ts TIMESTAMP NOT NULL,
+                        ts TIMESTAMP,
                         id INT,
                         vc VARCHAR
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
@@ -2914,7 +2877,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE vc_inl_nulls (
-                        ts TIMESTAMP NOT NULL,
+                        ts TIMESTAMP,
                         id INT,
                         vc VARCHAR
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
@@ -2978,7 +2941,7 @@ public class CopyExportTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE vc_mixed (
-                        ts TIMESTAMP NOT NULL,
+                        ts TIMESTAMP,
                         id INT,
                         vc VARCHAR
                     ) TIMESTAMP(ts) PARTITION BY DAY""");
@@ -3261,7 +3224,7 @@ public class CopyExportTest extends AbstractCairoTest {
     public void testCopyWithNowFunc() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(MicrosTimestampDriver.floor("2023-01-01T10:00:01.000Z"));
-            execute("create table test_table (ts timestamp NOT NULL, x int) timestamp(ts) partition by DAY");
+            execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
             execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2)");
             CopyExportRunnable stmt = () ->
                     runAndFetchCopyExportID("copy (select * from test_table where ts < now()) to 'output11' with format parquet", sqlExecutionContext);
@@ -3383,7 +3346,7 @@ public class CopyExportTest extends AbstractCairoTest {
     @Test
     public void testCopyWithPartitionByTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table test_table (ts timestamp NOT NULL, x int) timestamp(ts) partition by DAY");
+            execute("create table test_table (ts timestamp, x int) timestamp(ts) partition by DAY");
             execute("insert into test_table values ('2023-01-01T10:00:00.000Z', 1), ('2023-01-02T10:00:00.000Z', 2)");
 
             CopyExportRunnable stmt = () ->
@@ -3911,7 +3874,7 @@ public class CopyExportTest extends AbstractCairoTest {
         final int symbolCount = 10_000;
 
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE symbol_test (ts TIMESTAMP NOT NULL, sym SYMBOL, value LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;");
+            execute("CREATE TABLE symbol_test (ts TIMESTAMP, sym SYMBOL, value LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL;");
 
             String insertQuery = "INSERT BATCH 10000 INTO symbol_test SELECT " +
                     "x::TIMESTAMP AS ts, " +

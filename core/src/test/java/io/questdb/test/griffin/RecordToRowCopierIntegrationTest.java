@@ -86,7 +86,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testAllNumericTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table src (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "b byte, " +
                     "s short, " +
                     "i int, " +
@@ -96,7 +96,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by year");
 
             execute("create table dst (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "b byte, " +
                     "s short, " +
                     "i int, " +
@@ -133,7 +133,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Build source table with all types repeated
             sink.clear();
-            sink.put("create table src (ts timestamp NOT NULL");
+            sink.put("create table src (ts timestamp");
             for (int i = 0; i < columnMultiplier; i++) {
                 sink.put(", b").put(i).put(" byte");
                 sink.put(", s").put(i).put(" short");
@@ -228,8 +228,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testBinaryType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, b binary) timestamp(ts) partition by year");
-            execute("create table dst (ts timestamp NOT NULL, b binary) timestamp(ts) partition by year");
+            execute("create table src (ts timestamp, b binary) timestamp(ts) partition by year");
+            execute("create table dst (ts timestamp, b binary) timestamp(ts) partition by year");
 
             // Insert some binary data using functions
             execute("insert into src select cast(x * 1000000 as timestamp) as ts, " +
@@ -254,8 +254,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testCharConversions() throws Exception {
         assertMemoryLeak(() -> {
             // Char -> String
-            execute("create table src1 (ts timestamp NOT NULL, c char) timestamp(ts) partition by year");
-            execute("create table dst1 (ts timestamp NOT NULL, c string) timestamp(ts) partition by year");
+            execute("create table src1 (ts timestamp, c char) timestamp(ts) partition by year");
+            execute("create table dst1 (ts timestamp, c string) timestamp(ts) partition by year");
             execute("insert into src1 values (0, 'A'), (1000000, 'Z')");
             execute("insert into dst1 select * from src1");
             assertQuery("select c from dst1 order by ts")
@@ -264,8 +264,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("c\nA\nZ\n");
 
             // Char -> Varchar
-            execute("create table src2 (ts timestamp NOT NULL, c char) timestamp(ts) partition by year");
-            execute("create table dst2 (ts timestamp NOT NULL, c varchar) timestamp(ts) partition by year");
+            execute("create table src2 (ts timestamp, c char) timestamp(ts) partition by year");
+            execute("create table dst2 (ts timestamp, c varchar) timestamp(ts) partition by year");
             execute("insert into src2 values (0, 'X'), (1000000, 'Y')");
             execute("insert into dst2 select * from src2");
             assertQuery("select c from dst2 order by ts")
@@ -274,8 +274,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("c\nX\nY\n");
 
             // Char -> Symbol (without nulls since char null handling may differ)
-            execute("create table src3 (ts timestamp NOT NULL, c char) timestamp(ts) partition by year");
-            execute("create table dst3 (ts timestamp NOT NULL, c symbol) timestamp(ts) partition by year");
+            execute("create table src3 (ts timestamp, c char) timestamp(ts) partition by year");
+            execute("create table dst3 (ts timestamp, c symbol) timestamp(ts) partition by year");
             execute("insert into src3 values (0, 'M'), (1000000, 'N')");
             execute("insert into dst3 select * from src3");
             assertQuery("select c from dst3 order by ts")
@@ -291,8 +291,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testCharType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, c char) timestamp(ts) partition by year");
-            execute("create table dst (ts timestamp NOT NULL, c char) timestamp(ts) partition by year");
+            execute("create table src (ts timestamp, c char) timestamp(ts) partition by year");
+            execute("create table dst (ts timestamp, c char) timestamp(ts) partition by year");
 
             execute("insert into src values " +
                     "(0, 'A'), " +
@@ -408,7 +408,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Create source table with many columns of various types
             sink.clear();
-            sink.put("create table src (ts timestamp NOT NULL");
+            sink.put("create table src (ts timestamp");
             for (int i = 0; i < typeCount; i++) {
                 sink.put(", int_col").put(i).put(" int");
                 sink.put(", long_col").put(i).put(" long");
@@ -540,7 +540,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Create source table with narrower types
             sink.clear();
-            sink.put("create table src (ts timestamp NOT NULL");
+            sink.put("create table src (ts timestamp");
             for (int i = 0; i < columnCount; i++) {
                 sink.put(", byte_col").put(i).put(" byte");
                 sink.put(", short_col").put(i).put(" short");
@@ -594,13 +594,13 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Use DECIMAL32 and DECIMAL64 which are more commonly used
             execute("create table src (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "d9_4 decimal(9,4), " +    // DECIMAL32
                     "d18_6 decimal(18,6)" +     // DECIMAL64
                     ") timestamp(ts) partition by year");
 
             execute("create table dst (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "d9_4 decimal(9,4), " +
                     "d18_6 decimal(18,6)" +
                     ") timestamp(ts) partition by year");
@@ -667,8 +667,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testGeoHashNarrowing() throws Exception {
         assertMemoryLeak(() -> {
             // GEOLONG to GEOINT
-            execute("create table src1 (ts timestamp NOT NULL, g geohash(12c)) timestamp(ts) partition by year");
-            execute("create table dst1 (ts timestamp NOT NULL, g geohash(6c)) timestamp(ts) partition by year");
+            execute("create table src1 (ts timestamp, g geohash(12c)) timestamp(ts) partition by year");
+            execute("create table dst1 (ts timestamp, g geohash(6c)) timestamp(ts) partition by year");
             execute("insert into src1 values (0, 'u33d8b121234'), (1000000, 'sp052w92p1p8')");
             execute("insert into dst1 select * from src1");
             assertQuery("select g from dst1 order by ts")
@@ -677,8 +677,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("g\nu33d8b\nsp052w\n");
 
             // GEOINT to GEOSHORT
-            execute("create table src2 (ts timestamp NOT NULL, g geohash(6c)) timestamp(ts) partition by year");
-            execute("create table dst2 (ts timestamp NOT NULL, g geohash(3c)) timestamp(ts) partition by year");
+            execute("create table src2 (ts timestamp, g geohash(6c)) timestamp(ts) partition by year");
+            execute("create table dst2 (ts timestamp, g geohash(3c)) timestamp(ts) partition by year");
             execute("insert into src2 values (0, 'u33d8b'), (1000000, 'sp052w')");
             execute("insert into dst2 select * from src2");
             assertQuery("select g from dst2 order by ts")
@@ -687,8 +687,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("g\nu33\nsp0\n");
 
             // GEOSHORT to GEOBYTE
-            execute("create table src3 (ts timestamp NOT NULL, g geohash(3c)) timestamp(ts) partition by year");
-            execute("create table dst3 (ts timestamp NOT NULL, g geohash(1c)) timestamp(ts) partition by year");
+            execute("create table src3 (ts timestamp, g geohash(3c)) timestamp(ts) partition by year");
+            execute("create table dst3 (ts timestamp, g geohash(1c)) timestamp(ts) partition by year");
             execute("insert into src3 values (0, 'u33'), (1000000, 'sp0')");
             execute("insert into dst3 select * from src3");
             assertQuery("select g from dst3 order by ts")
@@ -705,7 +705,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testGeoHashTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table src (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "g1 geohash(1c), " +   // GEOBYTE (5 bits = 1 char)
                     "g2 geohash(3c), " +   // GEOSHORT (15 bits = 3 chars)
                     "g4 geohash(6c), " +   // GEOINT (30 bits = 6 chars)
@@ -713,7 +713,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by year");
 
             execute("create table dst (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "g1 geohash(1c), " +
                     "g2 geohash(3c), " +
                     "g4 geohash(6c), " +
@@ -744,8 +744,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testIPv4Type() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, ip ipv4) timestamp(ts) partition by year");
-            execute("create table dst (ts timestamp NOT NULL, ip ipv4) timestamp(ts) partition by year");
+            execute("create table src (ts timestamp, ip ipv4) timestamp(ts) partition by year");
+            execute("create table dst (ts timestamp, ip ipv4) timestamp(ts) partition by year");
 
             execute("insert into src values " +
                     "(0, '192.168.1.1'), " +
@@ -769,7 +769,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testInsertAsSelectWithComplexTypes() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table src (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "i int, " +
                     "l long, " +
                     "d double, " +
@@ -780,7 +780,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by year");
 
             execute("create table dst (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "i int, " +
                     "l long, " +
                     "d double, " +
@@ -836,8 +836,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectWithPartitionedTables() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, val int) timestamp(ts) partition by MONTH");
-            execute("create table dst (ts timestamp NOT NULL, val int) timestamp(ts) partition by MONTH");
+            execute("create table src (ts timestamp, val int) timestamp(ts) partition by MONTH");
+            execute("create table dst (ts timestamp, val int) timestamp(ts) partition by MONTH");
 
             // Insert data across multiple months
             execute("insert into src values " +
@@ -860,8 +860,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectWithStringSymbolConversions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src_str (ts timestamp NOT NULL, val string) timestamp(ts) partition by year");
-            execute("create table dst_sym (ts timestamp NOT NULL, val symbol) timestamp(ts) partition by year");
+            execute("create table src_str (ts timestamp, val string) timestamp(ts) partition by year");
+            execute("create table dst_sym (ts timestamp, val symbol) timestamp(ts) partition by year");
 
             execute("insert into src_str values (0, 'apple'), (1000000, 'banana'), (2000000, 'cherry')");
             execute("insert into dst_sym select * from src_str");
@@ -872,8 +872,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("val\napple\nbanana\ncherry\n");
 
             // Test reverse direction
-            execute("create table src_sym (ts timestamp NOT NULL, val symbol) timestamp(ts) partition by year");
-            execute("create table dst_str (ts timestamp NOT NULL, val string) timestamp(ts) partition by year");
+            execute("create table src_sym (ts timestamp, val symbol) timestamp(ts) partition by year");
+            execute("create table dst_str (ts timestamp, val string) timestamp(ts) partition by year");
 
             execute("insert into src_sym values (0, 'red'), (1000000, 'green'), (2000000, 'blue')");
             execute("insert into dst_str select * from src_sym");
@@ -888,8 +888,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testInsertAsSelectWithTypeConversions() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, b byte, s short, i int) timestamp(ts) partition by year");
-            execute("create table dst (ts timestamp NOT NULL, b long, s long, i long) timestamp(ts) partition by year");
+            execute("create table src (ts timestamp, b byte, s short, i int) timestamp(ts) partition by year");
+            execute("create table dst (ts timestamp, b long, s long, i long) timestamp(ts) partition by year");
 
             execute("insert into src values (0, 1, 2, 3), (1000000, 10, 20, 30), (2000000, 100, 200, 300)");
             execute("insert into dst select * from src");
@@ -950,7 +950,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             execute(sink);
 
             sink.clear();
-            sink.put("create table dst (ts timestamp NOT NULL, id int");
+            sink.put("create table dst (ts timestamp, id int");
             for (int i = 0; i < columnCount; i++) {
                 sink.put(", col").put(i).put(" int");
             }
@@ -979,7 +979,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testIntegerToDecimalConversions() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table src (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "b byte, " +
                     "s short, " +
                     "i int, " +
@@ -987,7 +987,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     ") timestamp(ts) partition by year");
 
             execute("create table dst (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "b decimal(10,2), " +
                     "s decimal(10,2), " +
                     "i decimal(15,2), " +
@@ -1026,8 +1026,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testLong256Type() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, l long256) timestamp(ts) partition by year");
-            execute("create table dst (ts timestamp NOT NULL, l long256) timestamp(ts) partition by year");
+            execute("create table src (ts timestamp, l long256) timestamp(ts) partition by year");
+            execute("create table dst (ts timestamp, l long256) timestamp(ts) partition by year");
 
             execute("insert into src values " +
                     "(0, '0x01'), " +
@@ -1088,14 +1088,14 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testNumericWidening() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table src (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "b byte, " +
                     "s short, " +
                     "i int" +
                     ") timestamp(ts) partition by year");
 
             execute("create table dst (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "b long, " +      // byte -> long
                     "s long, " +      // short -> long
                     "i long" +        // int -> long
@@ -1134,8 +1134,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testStringParsingConversions() throws Exception {
         assertMemoryLeak(() -> {
             // String -> numeric types
-            execute("create table src1 (ts timestamp NOT NULL, v string) timestamp(ts) partition by year");
-            execute("create table dst1 (ts timestamp NOT NULL, v int) timestamp(ts) partition by year");
+            execute("create table src1 (ts timestamp, v string) timestamp(ts) partition by year");
+            execute("create table dst1 (ts timestamp, v int) timestamp(ts) partition by year");
             execute("insert into src1 values (0, '123'), (1000000, '-456'), (2000000, null)");
             execute("insert into dst1 select * from src1");
             assertQuery("select v from dst1 order by ts")
@@ -1144,8 +1144,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("v\n123\n-456\nnull\n");
 
             // String -> timestamp
-            execute("create table src2 (ts timestamp NOT NULL, v string) timestamp(ts) partition by year");
-            execute("create table dst2 (ts timestamp NOT NULL, v timestamp) timestamp(ts) partition by year");
+            execute("create table src2 (ts timestamp, v string) timestamp(ts) partition by year");
+            execute("create table dst2 (ts timestamp, v timestamp) timestamp(ts) partition by year");
             execute("insert into src2 values (0, '2024-01-15T10:30:45.123456'), (1000000, '2024-06-20T23:59:59.999999')");
             execute("insert into dst2 select * from src2");
             assertQuery("select count(*) from dst2")
@@ -1155,8 +1155,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("count\n2\n");
 
             // String -> UUID
-            execute("create table src3 (ts timestamp NOT NULL, v string) timestamp(ts) partition by year");
-            execute("create table dst3 (ts timestamp NOT NULL, v uuid) timestamp(ts) partition by year");
+            execute("create table src3 (ts timestamp, v string) timestamp(ts) partition by year");
+            execute("create table dst3 (ts timestamp, v uuid) timestamp(ts) partition by year");
             execute("insert into src3 values (0, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'), (1000000, null)");
             execute("insert into dst3 select * from src3");
             assertQuery("select v from dst3 order by ts")
@@ -1173,8 +1173,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testStringTypeConversions() throws Exception {
         assertMemoryLeak(() -> {
             // String -> Symbol
-            execute("create table src1 (ts timestamp NOT NULL, v string) timestamp(ts) partition by year");
-            execute("create table dst1 (ts timestamp NOT NULL, v symbol) timestamp(ts) partition by year");
+            execute("create table src1 (ts timestamp, v string) timestamp(ts) partition by year");
+            execute("create table dst1 (ts timestamp, v symbol) timestamp(ts) partition by year");
             execute("insert into src1 values (0, 'apple'), (1000000, 'banana'), (2000000, null)");
             execute("insert into dst1 select * from src1");
             assertQuery("select v from dst1 order by ts")
@@ -1183,8 +1183,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("v\napple\nbanana\n\n");
 
             // Symbol -> String
-            execute("create table src2 (ts timestamp NOT NULL, v symbol) timestamp(ts) partition by year");
-            execute("create table dst2 (ts timestamp NOT NULL, v string) timestamp(ts) partition by year");
+            execute("create table src2 (ts timestamp, v symbol) timestamp(ts) partition by year");
+            execute("create table dst2 (ts timestamp, v string) timestamp(ts) partition by year");
             execute("insert into src2 values (0, 'red'), (1000000, 'green'), (2000000, null)");
             execute("insert into dst2 select * from src2");
             assertQuery("select v from dst2 order by ts")
@@ -1193,8 +1193,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("v\nred\ngreen\n\n");
 
             // String -> Varchar
-            execute("create table src3 (ts timestamp NOT NULL, v string) timestamp(ts) partition by year");
-            execute("create table dst3 (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by year");
+            execute("create table src3 (ts timestamp, v string) timestamp(ts) partition by year");
+            execute("create table dst3 (ts timestamp, v varchar) timestamp(ts) partition by year");
             execute("insert into src3 values (0, 'hello'), (1000000, 'world'), (2000000, null)");
             execute("insert into dst3 select * from src3");
             assertQuery("select v from dst3 order by ts")
@@ -1203,8 +1203,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("v\nhello\nworld\n\n");
 
             // Varchar -> String
-            execute("create table src4 (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by year");
-            execute("create table dst4 (ts timestamp NOT NULL, v string) timestamp(ts) partition by year");
+            execute("create table src4 (ts timestamp, v varchar) timestamp(ts) partition by year");
+            execute("create table dst4 (ts timestamp, v string) timestamp(ts) partition by year");
             execute("insert into src4 values (0, 'foo'), (1000000, 'bar'), (2000000, null)");
             execute("insert into dst4 select * from src4");
             assertQuery("select v from dst4 order by ts")
@@ -1221,8 +1221,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testTemporalConversions() throws Exception {
         assertMemoryLeak(() -> {
             // DATE -> TIMESTAMP
-            execute("create table src1 (ts timestamp NOT NULL, d date) timestamp(ts) partition by year");
-            execute("create table dst1 (ts timestamp NOT NULL, d timestamp) timestamp(ts) partition by year");
+            execute("create table src1 (ts timestamp, d date) timestamp(ts) partition by year");
+            execute("create table dst1 (ts timestamp, d timestamp) timestamp(ts) partition by year");
             execute("insert into src1 values (0, '2024-01-15'), (1000000, '2024-06-20')");
             execute("insert into dst1 select * from src1");
             assertQuery("select count(*) from dst1")
@@ -1232,8 +1232,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("count\n2\n");
 
             // TIMESTAMP -> DATE
-            execute("create table src2 (ts timestamp NOT NULL, t timestamp) timestamp(ts) partition by year");
-            execute("create table dst2 (ts timestamp NOT NULL, t date) timestamp(ts) partition by year");
+            execute("create table src2 (ts timestamp, t timestamp) timestamp(ts) partition by year");
+            execute("create table dst2 (ts timestamp, t date) timestamp(ts) partition by year");
             execute("insert into src2 values (0, '2024-01-15T10:30:45.123456'), (1000000, '2024-06-20T23:59:59.999999')");
             execute("insert into dst2 select * from src2");
             assertQuery("select count(*) from dst2")
@@ -1243,8 +1243,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("count\n2\n");
 
             // TIMESTAMP -> LONG
-            execute("create table src3 (ts timestamp NOT NULL, t timestamp) timestamp(ts) partition by year");
-            execute("create table dst3 (ts timestamp NOT NULL, t long) timestamp(ts) partition by year");
+            execute("create table src3 (ts timestamp, t timestamp) timestamp(ts) partition by year");
+            execute("create table dst3 (ts timestamp, t long) timestamp(ts) partition by year");
             execute("insert into src3 values (0, '2024-01-15T00:00:00.000000'), (1000000, '2024-01-15T00:00:01.000000')");
             execute("insert into dst3 select * from src3");
             assertQuery("select t from dst3 order by ts")
@@ -1261,13 +1261,13 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testTimestampPrecisions() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table src (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "ts_micro timestamp, " +
                     "ts_nano timestamp_ns" +
                     ") timestamp(ts) partition by year");
 
             execute("create table dst (" +
-                    "ts timestamp NOT NULL, " +
+                    "ts timestamp, " +
                     "ts_micro timestamp, " +
                     "ts_nano timestamp_ns" +
                     ") timestamp(ts) partition by year");
@@ -1294,8 +1294,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testUuidToStringConversion() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, u uuid) timestamp(ts) partition by year");
-            execute("create table dst (ts timestamp NOT NULL, u string) timestamp(ts) partition by year");
+            execute("create table src (ts timestamp, u uuid) timestamp(ts) partition by year");
+            execute("create table dst (ts timestamp, u string) timestamp(ts) partition by year");
 
             execute("insert into src values " +
                     "(0, 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'), " +
@@ -1317,8 +1317,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testUuidType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, u uuid) timestamp(ts) partition by year");
-            execute("create table dst (ts timestamp NOT NULL, u uuid) timestamp(ts) partition by year");
+            execute("create table src (ts timestamp, u uuid) timestamp(ts) partition by year");
+            execute("create table dst (ts timestamp, u uuid) timestamp(ts) partition by year");
 
             execute("insert into src values " +
                     "(0, '11111111-1111-1111-1111-111111111111'), " +
@@ -1345,8 +1345,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     public void testVarcharParsingConversions() throws Exception {
         assertMemoryLeak(() -> {
             // Varchar -> numeric types
-            execute("create table src1 (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by year");
-            execute("create table dst1 (ts timestamp NOT NULL, v long) timestamp(ts) partition by year");
+            execute("create table src1 (ts timestamp, v varchar) timestamp(ts) partition by year");
+            execute("create table dst1 (ts timestamp, v long) timestamp(ts) partition by year");
             execute("insert into src1 values (0, '9876543210'), (1000000, '-9876543210'), (2000000, null)");
             execute("insert into dst1 select * from src1");
             assertQuery("select v from dst1 order by ts")
@@ -1355,8 +1355,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("v\n9876543210\n-9876543210\nnull\n");
 
             // Varchar -> double
-            execute("create table src2 (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by year");
-            execute("create table dst2 (ts timestamp NOT NULL, v double) timestamp(ts) partition by year");
+            execute("create table src2 (ts timestamp, v varchar) timestamp(ts) partition by year");
+            execute("create table dst2 (ts timestamp, v double) timestamp(ts) partition by year");
             execute("insert into src2 values (0, '3.14159'), (1000000, '-2.71828'), (2000000, null)");
             execute("insert into dst2 select * from src2");
             assertQuery("select v from dst2 order by ts")
@@ -1365,8 +1365,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
                     .returns("v\n3.14159\n-2.71828\nnull\n");
 
             // Varchar -> IPv4
-            execute("create table src3 (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by year");
-            execute("create table dst3 (ts timestamp NOT NULL, v ipv4) timestamp(ts) partition by year");
+            execute("create table src3 (ts timestamp, v varchar) timestamp(ts) partition by year");
+            execute("create table dst3 (ts timestamp, v ipv4) timestamp(ts) partition by year");
             execute("insert into src3 values (0, '192.168.1.1'), (1000000, '10.0.0.1'), (2000000, null)");
             execute("insert into dst3 select * from src3");
             assertQuery("select v from dst3 order by ts")
@@ -1382,8 +1382,8 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
     @Test
     public void testVarcharType() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table src (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by year");
-            execute("create table dst (ts timestamp NOT NULL, v varchar) timestamp(ts) partition by year");
+            execute("create table src (ts timestamp, v varchar) timestamp(ts) partition by year");
+            execute("create table dst (ts timestamp, v varchar) timestamp(ts) partition by year");
 
             execute("insert into src values " +
                     "(0, 'hello'), " +
@@ -1428,7 +1428,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
      */
     private static void buildCreateTableSql(String tableName, int columnCount) {
         AbstractCairoTest.sink.clear();
-        AbstractCairoTest.sink.put("create table ").put(tableName).put(" (ts timestamp NOT NULL");
+        AbstractCairoTest.sink.put("create table ").put(tableName).put(" (ts timestamp");
         for (int i = 0; i < columnCount; i++) {
             AbstractCairoTest.sink.put(", col").put(i).put(" int");
         }
@@ -1444,7 +1444,7 @@ public class RecordToRowCopierIntegrationTest extends AbstractCairoTest {
             ColumnTypeProvider typeProvider
     ) {
         AbstractCairoTest.sink.clear();
-        AbstractCairoTest.sink.put("create table ").put(tableName).put(" (ts timestamp NOT NULL");
+        AbstractCairoTest.sink.put("create table ").put(tableName).put(" (ts timestamp");
         for (int i = 0; i < columnCount; i++) {
             AbstractCairoTest.sink.put(", ").put("c").put(i).put(" ").put(typeProvider.getType(i));
         }

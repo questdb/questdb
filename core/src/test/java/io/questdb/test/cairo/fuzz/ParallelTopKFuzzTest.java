@@ -554,7 +554,7 @@ public class ParallelTopKFuzzTest extends AbstractCairoTest {
 
                         engine.execute(
                                 "CREATE TABLE tab (" +
-                                        "  ts TIMESTAMP NOT NULL," +
+                                        "  ts TIMESTAMP," +
                                         "  key SYMBOL," +
                                         "  price DOUBLE," +
                                         "  quantity LONG) timestamp (ts) PARTITION BY DAY",

@@ -167,7 +167,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
         assertExecRequest(
                 httpClient,
                 "create table if not exists " + tableName +
-                        " (ts timestamp NOT NULL, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                        " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
                         " timestamp(ts) partition by day wal",
                 "{\"ddl\":\"OK\"}"
         );
@@ -316,7 +316,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     public void testHttpOverIlpCannotIngestIntoView() throws Exception {
         runSqlViaPG(
                 "create table prices (" +
-                        "sym varchar, price double, ts timestamp NOT NULL" +
+                        "sym varchar, price double, ts timestamp" +
                         ") timestamp(ts) partition by day wal"
         );
         runSqlViaPG(
@@ -346,10 +346,10 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     public void testPGWire() throws SQLException {
         runSqlViaPG(
                 "create table if not exists " + TABLE1 +
-                        " (ts timestamp NOT NULL, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                        " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
                         " timestamp(ts) partition by day wal",
                 "create table if not exists " + TABLE2 +
-                        " (ts timestamp NOT NULL, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                        " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
                         " timestamp(ts) partition by day wal"
         );
         for (int i = 0; i < 9; i++) {
@@ -415,7 +415,7 @@ public class ViewBootstrapTest extends AbstractBootstrapTest {
     public void testTcpOverIlpCannotIngestIntoView() throws Exception {
         runSqlViaPG(
                 "create table prices (" +
-                        "sym varchar, price double, ts timestamp NOT NULL" +
+                        "sym varchar, price double, ts timestamp" +
                         ") timestamp(ts) partition by day wal"
         );
         runSqlViaPG(

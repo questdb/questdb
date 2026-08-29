@@ -169,13 +169,10 @@ public class CountDistinctUuidGroupByFunctionFactoryTest extends AbstractCairoTe
     public void testMappingZeroToNulls() throws Exception {
         assertMemoryLeak(() -> {
             // this is to ensure that uuids wth nulls and zeros don't map to the same values
-            assertQuery(
-                    "a\ts\tts\n",
-                    "select * from x",
-                    "create table x ( a SYMBOL, s UUID, ts TIMESTAMP NOT NULL ) timestamp(ts)",
-                    "ts",
-                    true
-            );
+            assertQuery("select * from x")
+                    .ddl("create table x ( a SYMBOL, s UUID, ts TIMESTAMP ) timestamp(ts)")
+                    .timestamp("ts")
+                    .returns("a\ts\tts\n");
 
             execute("insert into x values ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, 0), '2021-05-21'), ('a', to_uuid(5, null), '2021-05-21'), ('a', to_uuid(10, 0), '2021-05-21'), ('a', to_uuid(10, null), '2021-05-21')" +
                     ", ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(0, 5), '2021-05-21'), ('a', to_uuid(null, 5), '2021-05-21'), ('a', to_uuid(0, 10), '2021-05-21'), ('a', to_uuid(null, 10), '2021-05-21'), ('a', to_uuid(0, 0), '2021-05-21'), ('a', to_uuid(null, null), '2021-05-21')");

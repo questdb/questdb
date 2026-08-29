@@ -106,7 +106,7 @@ public class FuzzChangeSymbolCapacityOperation implements FuzzTransactionOperati
         // for both index families.
         int indexValueBlockCapacity = Math.max(2, Math.abs(tempRnd.nextInt()));
         builder.addColumnToList(columName, 0, ColumnType.SYMBOL, symbolCapacity, tempRnd.nextBoolean(),
-                tempRnd.nextBoolean(), tempRnd.nextInt(), false, false);
+                indexType, indexValueBlockCapacity, false);
         AlterOperation alterOp = builder.build();
         try (SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE)) {
             alterOp.withSqlStatement(

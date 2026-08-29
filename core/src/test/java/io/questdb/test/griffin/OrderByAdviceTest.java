@@ -115,26 +115,21 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 DXR\t1275864035
                 """;
 
-        assertQuery(
-                "sym\tspread\n",
-                "select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true,
-                false,
-                false
-        );
+        assertQuery("select sym, ask-bid spread from x where ts IN '1970-01-03' order by spread")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
+                .returns("sym\tspread\n", expected);
     }
 
     @Test
@@ -146,24 +141,20 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.9940353811420282
                 """;
 
-        assertQuery(
-                "sym\tmaxp\n",
-                "select sym , max(price) maxp from x where ts IN '1970-01-04' order by maxp",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true,
-                true,
-                false
-        );
+        assertQuery("select sym , max(price) maxp from x where ts IN '1970-01-04' order by maxp")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .expectSize()
+                .returns("sym\tmaxp\n", expected);
     }
 
     @Test
@@ -175,47 +166,42 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 ABB\t0.008444033230580739
                 """;
 
-        assertQuery(
-                "sym\tmaxp\n",
-                "select sym, min(price) maxp from x where ts in '1970-01-04' order by maxp",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true,
-                true,
-                false
-        );
+        assertQuery("select sym, min(price) maxp from x where ts in '1970-01-04' order by maxp")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .expectSize()
+                .returns("sym\tmaxp\n", expected);
     }
 
     @Test
     public void testNoKeyGroupBy() throws Exception {
-        assertQuery(
-                "column\nnull\n",
-                "select sum(price) / count() from x where price > 0",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                "column\n" +
-                        "0.48510032025339733\n",
-                false,
-                true,
-                false
-        );
+        assertQuery("select sum(price) / count() from x where price > 0")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .noRandomAccess()
+                .expectSize()
+                .returns("column\nnull\n", """
+                        column
+                        0.48510032025339733
+                        """);
     }
 
     @Test
@@ -234,24 +220,20 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.6508594025855301\t1970-01-03T00:18:00.000000Z
                 """;
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x order by k, ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true,
-                true,
-                false
-        );
+        assertQuery("select sym k, price, ts from x order by k, ts desc")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
+                .expectSize()
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -260,7 +242,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 create table trades (
                     sym symbol,
                     price double,
-                    ts timestamp NOT NULL
+                    ts timestamp
                 ) timestamp(ts) partition by DAY
                 """);
         execute("""
@@ -281,7 +263,7 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 create table prices (
                     sym symbol,
                     price double,
-                    ts timestamp NOT NULL
+                    ts timestamp
                 ) timestamp(ts) partition by DAY
                 """);
         execute("""
@@ -425,22 +407,19 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 BB\t1545253512\t1970-01-03T00:42:00.000000Z
                 """;
 
-        assertQuery(
-                "sym\tprice\tts\n",
-                "select * from tab where sym in ('AA', 'BB') order by sym, price",
-                "create table tab (\n" +
-                        "    sym symbol index,\n" +
-                        "    price int,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+        assertQuery("select * from tab where sym in ('AA', 'BB') order by sym, price")
+                .ddl("""
+                        create table tab (
+                            sym symbol index,
+                            price int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into tab select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
+                .returns("sym\tprice\tts\n", expected);
     }
 
     @Test
@@ -620,24 +599,22 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z
                 """;
 
-        assertQuery(
-                "sym\tbid\task\tts\n",
-                "select * from x where sym in ('AA', 'BB' ) order by ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts###DESC",
-                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+        assertQuery("select * from x where sym in ('AA', 'BB' ) order by ts desc")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
+                .timestampDesc("ts")
+                .returns("sym\tbid\task\tts\n", expected);
     }
 
     @Test
@@ -656,26 +633,23 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 AA\t315515118\t1548800833\t1970-01-03T00:00:00.000000Z
                 """;
 
-        assertQuery(
-                "sym\tbid\task\tts\n",
-                "select * from x order by ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts###desc",
-                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true,
-                true,
-                false
-        );
+        assertQuery("select * from x order by ts desc")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
+                .timestampDesc("ts")
+                .expectSize()
+                .returns("sym\tbid\task\tts\n", expected);
     }
 
     @Test
@@ -713,23 +687,19 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
                 """;
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true
-
-        );
+        assertQuery("select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -767,42 +737,35 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
                 """;
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' and 2 > 1 order by k, ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true
-
-        );
+        assertQuery("select sym k, price, ts from x where sym = 'HBC' and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' and 2 > 1 order by k, ts desc")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
     public void testSingleSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "k\tprice\tts\n",
-                    "select sym k, price, ts from x where 1 = 2 and sym = 'HBC' and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
-                    "create table x (\n" +
-                            "    sym symbol index,\n" +
-                            "    price double,\n" +
-                            "    ts timestamp NOT NULL\n" +
-                            ") timestamp(ts) partition by DAY",
-                    null,
-                    true,
-                    true
-
-            );
+            assertQuery("select sym k, price, ts from x where 1 = 2 and sym = 'HBC' and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc")
+                    .noLeakCheck()
+                    .ddl("""
+                            create table x (
+                                sym symbol index,
+                                price double,
+                                ts timestamp
+                            ) timestamp(ts) partition by DAY""")
+                    .expectSize()
+                    .returns("k\tprice\tts\n");
             Assert.assertTrue(TestMatchFunctionFactory.isClosed());
         });
     }
@@ -903,23 +866,19 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
                 """;
 
-        assertQuery(
-                "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by sym",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true
-
-        );
+        assertQuery("x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by sym")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .returns("sym\tprice\tts\n", expected);
     }
 
     @Test
@@ -994,23 +953,19 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
                 """;
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true
-
-        );
+        assertQuery("select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -1085,23 +1040,19 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
                 """;
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true
-
-        );
+        assertQuery("select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -1176,41 +1127,35 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.1350821238488883\t1970-01-04T00:18:00.000000Z
                 """;
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true
-        );
+        assertQuery("select sym k, price, ts from x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
     public void testSymbolSearchOrderByAliasAndTimestampDescEmpty() throws Exception {
         TestMatchFunctionFactory.clear();
         assertMemoryLeak(() -> {
-            assertQueryNoLeakCheck(
-                    "k\tprice\tts\n",
-                    "select sym k, price, ts from x where sym in ('HBC', 'ABB') and 1 = 3 and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc",
-                    "create table x (\n" +
-                            "    sym symbol index,\n" +
-                            "    price double,\n" +
-                            "    ts timestamp NOT NULL\n" +
-                            ") timestamp(ts) partition by DAY",
-                    null,
-                    true,
-                    true
-
-            );
+            assertQuery("select sym k, price, ts from x where sym in ('HBC', 'ABB') and 1 = 3 and test_match() and ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by k, ts desc")
+                    .noLeakCheck()
+                    .ddl("""
+                            create table x (
+                                sym symbol index,
+                                price double,
+                                ts timestamp
+                            ) timestamp(ts) partition by DAY""")
+                    .expectSize()
+                    .returns("k\tprice\tts\n");
             Assert.assertTrue(TestMatchFunctionFactory.isClosed());
         });
     }
@@ -1287,23 +1232,19 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 HBC\t0.6504194217741501\t1970-01-04T10:06:00.000000Z
                 """;
 
-        assertQuery(
-                "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true
-
-        );
+        assertQuery("x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .returns("sym\tprice\tts\n", expected);
     }
 
     @Test
@@ -1378,22 +1319,19 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 ABB\t0.858967821197869\t1970-01-04T10:24:00.000000Z
                 """;
 
-        assertQuery(
-                "sym\tprice\tts\n",
-                "x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1 desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(1000)) timestamp (ts)",
-                expected,
-                true
-        );
+        assertQuery("x where sym in ('HBC', 'ABB') and  ts>='1970-01-04T00:00:00.000Z' and ts< '1970-01-04T10:30:00.000Z' order by 1 desc")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(1000)) timestamp (ts)""")
+                .returns("sym\tprice\tts\n", expected);
     }
 
     @Test
@@ -1502,23 +1440,20 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 DXR\t0.05094182589333662\t1970-01-03T09:54:00.000000Z
                 """;
 
-        assertQuery(
-                "k\tprice\tts\n",
-                "select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'", "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    price double,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                "ts",
-                "insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym, \n" +
-                        "        rnd_double() price, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(100)) timestamp (ts)",
-                expected,
-                true,
-                false,
-                false
-        );
+        assertQuery("select sym k, price, ts from x where ts<'1970-01-04T10:30:00.000Z'")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            price double,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('ABB', 'HBC', 'DXR') sym,\s
+                                rnd_double() price,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(100)) timestamp (ts)""")
+                .timestamp("ts")
+                .returns("k\tprice\tts\n", expected);
     }
 
     @Test
@@ -1535,24 +1470,21 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 BB\t-850582456
                 """;
 
-        assertQuery(
-                "sym\tspread\n",
-                "select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+        assertQuery("select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
+                .returns("sym\tspread\n", expected);
     }
 
     @Test
@@ -1569,23 +1501,20 @@ public class OrderByAdviceTest extends AbstractCairoTest {
                 BB\t-1912873112
                 """;
 
-        assertQuery(
-                "sym\tspread\n",
-                "select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread desc",
-                "create table x (\n" +
-                        "    sym symbol index,\n" +
-                        "    bid int,\n" +
-                        "    ask int,\n" +
-                        "    ts timestamp NOT NULL\n" +
-                        ") timestamp(ts) partition by DAY",
-                null,
-                "insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym, \n" +
-                        "        rnd_int() bid, \n" +
-                        "        rnd_int() ask, \n" +
-                        "        timestamp_sequence(172800000000, 360000000) ts \n" +
-                        "    from long_sequence(10)) timestamp (ts)",
-                expected,
-                true
-        );
+        assertQuery("select sym, ask-bid spread from x where sym in ('AA', 'BB' ) order by sym, spread desc")
+                .ddl("""
+                        create table x (
+                            sym symbol index,
+                            bid int,
+                            ask int,
+                            ts timestamp
+                        ) timestamp(ts) partition by DAY""")
+                .mutateWith("""
+                        insert into x select * from (select rnd_symbol('AA', 'BB', 'CC') sym,\s
+                                rnd_int() bid,\s
+                                rnd_int() ask,\s
+                                timestamp_sequence(172800000000, 360000000) ts\s
+                            from long_sequence(10)) timestamp (ts)""")
+                .returns("sym\tspread\n", expected);
     }
 }

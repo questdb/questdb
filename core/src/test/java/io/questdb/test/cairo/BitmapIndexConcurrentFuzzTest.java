@@ -71,7 +71,7 @@ public class BitmapIndexConcurrentFuzzTest extends AbstractCairoTest {
                     "CREATE TABLE trades (" +
                             "  id INT," +
                             "  symbol SYMBOL INDEX," +
-                            "  ts TIMESTAMP NOT NULL" +
+                            "  ts TIMESTAMP" +
                             ") TIMESTAMP(ts) PARTITION BY HOUR WAL"
             );
 

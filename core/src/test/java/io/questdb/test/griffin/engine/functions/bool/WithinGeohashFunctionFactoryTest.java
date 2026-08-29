@@ -31,10 +31,12 @@ import org.junit.Test;
 
 public class WithinGeohashFunctionFactoryTest extends AbstractCairoTest {
 
-    public static String ddlTrips = "CREATE TABLE trips (\n" +
-            "pickup_datetime TIMESTAMP NOT NULL,\n" +
-            "pickup_geohash GEOHASH(12c)\n" +
-            ") timestamp(pickup_datetime)\n";
+    public static String ddlTrips = """
+            CREATE TABLE trips (
+            pickup_datetime TIMESTAMP,
+            pickup_geohash GEOHASH(12c)
+            ) timestamp(pickup_datetime)
+            """;
 
     public static String dmlTrips = """
             INSERT INTO trips (pickup_datetime, pickup_geohash) VALUES\s

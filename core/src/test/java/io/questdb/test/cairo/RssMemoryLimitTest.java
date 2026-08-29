@@ -87,7 +87,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             int batchCount = Os.isLinux() ? 10 : 4;
             int batchSize = 500_000;
 
-            execute("create table x (ts timestamp NOT NULL, i int, l long, d double, vch varchar) timestamp(ts) partition by day wal;");
+            execute("create table x (ts timestamp, i int, l long, d double, vch varchar) timestamp(ts) partition by day wal;");
 
             for (int i = 0; i < batchCount; i++) {
                 execute("insert into x select" +
@@ -149,7 +149,7 @@ public class RssMemoryLimitTest extends AbstractCairoTest {
             int batchCount = 100;
             int batchSize = 50_000;
 
-            execute("create table x (ts timestamp NOT NULL) timestamp(ts) partition by day wal;");
+            execute("create table x (ts timestamp) timestamp(ts) partition by day wal;");
 
             for (int i = 0; i < batchCount; i++) {
                 execute("insert into x select" +

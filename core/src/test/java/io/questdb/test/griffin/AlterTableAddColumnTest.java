@@ -90,23 +90,23 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     final String originalColumns = """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\tfalse
-                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse
-                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\tfalse
-                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t
+                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\t\t
+                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """;
 
                     assertQuery("show columns from x")
@@ -115,12 +115,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             .returns(isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\ttrue\tfalse\n" +
-                                    "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n",
-                            "show columns from x",
-                            null,
-                            false
-                    );
+                                      "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                      "mycol2\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n");
                 }
         );
     }
@@ -270,19 +266,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("""
                                     c\tmycol
-                                    XYZ\t-2147483648
-                                    ABC\t-2147483648
-                                    ABC\t-2147483648
-                                    XYZ\t-2147483648
-                                    \t-2147483648
-                                    CDE\t-2147483648
-                                    CDE\t-2147483648
-                                    ABC\t-2147483648
-                                    \t-2147483648
-                                    XYZ\t-2147483648
-                                    """,
-                            "select c, mycol from x"
-                    );
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """);
                 }
         );
     }
@@ -301,19 +295,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("""
                                     c\tmycol
-                                    XYZ\t-2147483648
-                                    ABC\t-2147483648
-                                    ABC\t-2147483648
-                                    XYZ\t-2147483648
-                                    \t-2147483648
-                                    CDE\t-2147483648
-                                    CDE\t-2147483648
-                                    ABC\t-2147483648
-                                    \t-2147483648
-                                    XYZ\t-2147483648
-                                    """,
-                            "select c, mycol from x"
-                    );
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """);
                 }
         );
     }
@@ -390,19 +382,17 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             .expectSize()
                             .returns("""
                                     c\tmycol
-                                    XYZ\t-2147483648
-                                    ABC\t-2147483648
-                                    ABC\t-2147483648
-                                    XYZ\t-2147483648
-                                    \t-2147483648
-                                    CDE\t-2147483648
-                                    CDE\t-2147483648
-                                    ABC\t-2147483648
-                                    \t-2147483648
-                                    XYZ\t-2147483648
-                                    """,
-                            "select c, mycol from x"
-                    );
+                                    XYZ\tnull
+                                    ABC\tnull
+                                    ABC\tnull
+                                    XYZ\tnull
+                                    \tnull
+                                    CDE\tnull
+                                    CDE\tnull
+                                    ABC\tnull
+                                    \tnull
+                                    XYZ\tnull
+                                    """);
                 }
         );
     }
@@ -440,7 +430,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAddDecimalsColumnsWithColTopsSelect() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
-                    "create table x (ts timestamp NOT NULL) timestamp (ts)" +
+                    "create table x (ts timestamp) timestamp (ts)" +
                             " partition by day" +
                             (isWal ? " wal" : "") +
                             ";"
@@ -491,7 +481,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
     public void testAddDefaultDecimalColumn() throws Exception {
         assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
             execute(
-                    "create table x (ts timestamp NOT NULL) timestamp (ts)" +
+                    "create table x (ts timestamp) timestamp (ts)" +
                             " partition by day" +
                             (isWal ? " wal" : "") +
                             ";"
@@ -597,13 +587,13 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
             // 'a_col' already exists — should be skipped; 'b_col' should be added
             execute("alter table x add column if not exists a_col int, b_col long");
             drainWalQueue();
-            assertSql(
-                    """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            b_col\tLONG\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            """,
-                    "table_columns('x') where column = 'b_col'"
-            );
+            assertQuery("table_columns('x') where column = 'b_col'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            b_col\tLONG\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t
+                            """);
         });
     }
 
@@ -932,7 +922,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                                     "\ti INT,\n" +
                                     "\tsym SYMBOL,\n" +
                                     "\tamt DOUBLE,\n" +
-                                    "\ttimestamp TIMESTAMP NOT NULL,\n" +
+                                    "\ttimestamp TIMESTAMP,\n" +
                                     "\tb BOOLEAN,\n" +
                                     "\tc STRING,\n" +
                                     "\td DOUBLE,\n" +
@@ -991,23 +981,23 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                     drainWalQueue();
 
                     final String originalColumns = """
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tnotNull\tupsertKey
-                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\tfalse
-                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\tfalse
-                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\tfalse
-                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
-                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\tfalse
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
+                            i\tINT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            sym\tSYMBOL\tfalse\t0\ttrue\t128\t3\tfalse\tfalse\t\t
+                            amt\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            timestamp\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
+                            b\tBOOLEAN\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            c\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            d\tDOUBLE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            e\tFLOAT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            f\tSHORT\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            g\tDATE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            ik\tSYMBOL\tfalse\t0\ttrue\t128\t4\tfalse\tfalse\t\t
+                            j\tLONG\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            k\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            l\tBYTE\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            m\tBINARY\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                            n\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
                             """;
 
                     assertQuery("show columns from x")
@@ -1016,12 +1006,8 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             .returns(isWal
                                     ? originalColumns
                                     : originalColumns +
-                                    "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\tfalse\n" +
-                                    "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\tfalse\n",
-                            "show columns from x",
-                            null,
-                            false
-                    );
+                                      "mycol\tINT\tfalse\t256\tfalse\t0\t0\tfalse\tfalse\t\t\n" +
+                                      "second\tSYMBOL\tfalse\t256\ttrue\t128\t1\tfalse\tfalse\t\t\n");
                 }
         );
     }
@@ -1078,7 +1064,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
                             "\ti INT,\n" +
                             "\tsym SYMBOL,\n" +
                             "\tamt DOUBLE,\n" +
-                            "\ttimestamp TIMESTAMP NOT NULL,\n" +
+                            "\ttimestamp TIMESTAMP,\n" +
                             "\tb BOOLEAN,\n" +
                             "\tc STRING,\n" +
                             "\td DOUBLE,\n" +
@@ -1145,7 +1131,7 @@ public class AlterTableAddColumnTest extends AbstractCairoTest {
         assertMemoryLeak(
                 () -> {
                     execute(
-                            "create table x (ts timestamp NOT NULL) timestamp (ts)" +
+                            "create table x (ts timestamp) timestamp (ts)" +
                                     " partition by month" +
                                     (isWal ? " wal" : "") +
                                     ";"

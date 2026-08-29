@@ -81,7 +81,7 @@ public class UnequalWorkerPoolTest extends AbstractBootstrapTest {
 
                 serverMain.getEngine().execute(
                         "CREATE TABLE metrics (" +
-                                "ts TIMESTAMP NOT NULL, " +
+                                "ts TIMESTAMP, " +
                                 "sensor_id SYMBOL, " +
                                 "region SYMBOL, " +
                                 "value DOUBLE, " +

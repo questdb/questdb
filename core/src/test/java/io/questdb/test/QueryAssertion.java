@@ -274,6 +274,12 @@ public class QueryAssertion {
         return this;
     }
 
+    /** Compatibility overload for the legacy query assertion failure form. */
+    public void ddl(CharSequence ddl, int errorPos, CharSequence message) throws Exception {
+        this.ddl(ddl);
+        fails(errorPos, message);
+    }
+
     /**
      * Multi-statement variant of {@link #ddl(CharSequence)}. The statements run in order, each as a
      * separate {@code engine.execute()} call, before the query is compiled. Use when setup needs more

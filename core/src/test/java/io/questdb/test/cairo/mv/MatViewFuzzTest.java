@@ -337,7 +337,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
             execute(
                     "create table base_price (" +
-                            "  sym varchar, price long, ts timestamp NOT NULL" +
+                            "  sym varchar, price long, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             final String viewQuery = "select sym, sum(price) as sum_price, ts from base_price sample by 1m";
@@ -467,7 +467,7 @@ public class MatViewFuzzTest extends AbstractFuzzTest {
 
             execute(
                     "create table base_price (" +
-                            "  sym varchar, price long, ts timestamp NOT NULL" +
+                            "  sym varchar, price long, ts timestamp" +
                             ") timestamp(ts) partition by DAY WAL"
             );
             final String viewQuery = "select sym, sum(price) as sum_price, ts from base_price sample by 1m";

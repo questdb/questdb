@@ -138,15 +138,15 @@ public class CountTest extends AbstractCairoTest {
     public void testCountOverCursorThrows() throws Exception {
         assertMemoryLeak(() -> {
             try {
-                assertQueryNoLeakCheck(
-                        "cnt_1\tcnt_42\n" +
-                                "20\t20\n",
-                        "count(select distinct s from x where right(s, 1)='/')",
-                        "create table x (s string, ts timestamp NOT NULL) timestamp(ts) partition by day",
-                        null,
-                        false,
-                        true
-                );
+                assertQuery("count(select distinct s from x where right(s, 1)='/')")
+                        .noLeakCheck()
+                        .ddl("create table x (s string, ts timestamp) timestamp(ts) partition by day")
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                cnt_1\tcnt_42
+                                20\t20
+                                """);
                 Assert.fail();
             } catch (SqlException ignore) {
             }
@@ -283,7 +283,7 @@ public class CountTest extends AbstractCairoTest {
 
     @Test
     public void testInterpolation() throws Exception {
-        execute("create table x (ts timestamp NOT NULL, d double, f float, ip ipv4, i int, l256 long256, l long, s string, sym symbol, vch varchar) timestamp(ts);");
+        execute("create table x (ts timestamp, d double, f float, ip ipv4, i int, l256 long256, l long, s string, sym symbol, vch varchar) timestamp(ts);");
         execute("insert into x values " +
                 "('2000-01-01T00:00', 1, 1, '192.168.1.1', 1, '0x42', 1, 'foo', 'foo', 'foo'), " +
                 "('2000-01-01T04:30', 2, 2, '192.168.1.2', 2, '0x43', 2, 'bar', 'bar', 'bar'), " +

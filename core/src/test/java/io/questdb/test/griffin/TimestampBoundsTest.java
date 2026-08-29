@@ -61,18 +61,22 @@ public class TimestampBoundsTest extends AbstractCairoTest {
     public void testDesignatedTimestampBoundsNonPartitioned() throws Exception {
         Assume.assumeFalse(walEnabled);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts)");
-            assertException("INSERT INTO tango VALUES (NULL)", 26, "designated timestamp column cannot be NULL");
-            assertException("INSERT INTO tango VALUES (" + -1L + ")", 26, "designated timestamp before 1970-01-01 is not allowed");
-            assertException("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')", 26, "designated timestamp before 1970-01-01 is not allowed");
-            assertException("INSERT INTO tango VALUES (" + Micros.YEAR_10000 + ")", 26, "designated timestamp beyond 9999-12-31 is not allowed");
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts)");
+            assertQuery("INSERT INTO tango VALUES (NULL)")
+                    .fails(26, "designated timestamp column cannot be NULL");
+            assertQuery("INSERT INTO tango VALUES (" + -1L + ")")
+                    .fails(26, "designated timestamp before 1970-01-01 is not allowed");
+            assertQuery("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')")
+                    .fails(26, "designated timestamp before 1970-01-01 is not allowed");
+            assertQuery("INSERT INTO tango VALUES (" + Micros.YEAR_10000 + ")")
+                    .fails(26, "designated timestamp beyond 9999-12-31 is not allowed");
         });
     }
 
     @Test
     public void testDesignatedTimestampBoundsPartitioned() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR "
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR "
                     + (walEnabled ? "" : "BYPASS ") + "WAL");
             assertQuery("INSERT INTO tango VALUES (NULL)")
                     .fails(26, "designated timestamp column cannot be NULL");
@@ -88,7 +92,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
     @Test
     public void testDesignatedTimestampBoundsWithSwitchPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY HOUR "
+            execute("CREATE TABLE tango (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR "
                     + (walEnabled ? "" : "BYPASS ") + "WAL");
             execute("INSERT INTO tango VALUES (" + 1L + ")");
             assertQuery("INSERT INTO tango VALUES (NULL)")
@@ -106,7 +110,7 @@ public class TimestampBoundsTest extends AbstractCairoTest {
     public void testTimestampBoundsNotDesignated() throws Exception {
         Assume.assumeFalse(walEnabled);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tango (ts TIMESTAMP NOT NULL)");
+            execute("CREATE TABLE tango (ts TIMESTAMP)");
             execute("INSERT INTO tango VALUES (" + Micros.YEAR_10000 + ")");
             execute("INSERT INTO tango VALUES (" + -1L + ")");
             execute("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')");

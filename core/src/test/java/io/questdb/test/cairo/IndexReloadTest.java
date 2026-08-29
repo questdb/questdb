@@ -34,7 +34,7 @@ public class IndexReloadTest extends AbstractCairoTest {
         // we need to find a good way to deal with this without having to remap the index
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (" +
-                    "ts TIMESTAMP NOT NULL, " +
+                    "ts TIMESTAMP, " +
                     "code SYMBOL capacity 128, " +
                     "col1 DOUBLE, " +
                     "col2 DOUBLE, " +
@@ -179,7 +179,7 @@ public class IndexReloadTest extends AbstractCairoTest {
         // we need to find a good way to deal with this without having to remap the index
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test_table (" +
-                    "ts TIMESTAMP NOT NULL, " +
+                    "ts TIMESTAMP, " +
                     "code SYMBOL capacity 128, " +
                     "col1 DOUBLE, " +
                     "col2 DOUBLE, " +

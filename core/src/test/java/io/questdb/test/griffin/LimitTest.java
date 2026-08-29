@@ -409,7 +409,7 @@ public class LimitTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     "create table if not exists table1" +
-                            " (ts timestamp NOT NULL, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
+                            " (ts timestamp, k symbol capacity 2048, k2 symbol capacity 512, v long)" +
                             " timestamp(ts) partition by day wal"
             );
             for (int i = 0; i < 9; i++) {
@@ -446,7 +446,7 @@ public class LimitTest extends AbstractCairoTest {
     public void testLimitForSubQueryWithFilterAndLimit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE eq_equities_market_data (" +
-                    "timestamp TIMESTAMP NOT NULL, " +
+                    "timestamp TIMESTAMP, " +
                     "symbol SYMBOL, " +
                     "venue SYMBOL, " +
                     "asks DOUBLE[][], bids DOUBLE[][]" +
@@ -485,7 +485,7 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testLimitMinusOneAndPredicateAndColumnAlias() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (ts timestamp NOT NULL, id symbol)");
+            execute("create table t1 (ts timestamp, id symbol)");
             execute("insert into t1 values (0, 'abc'), (2, 'a1'), (3, 'abc'), (4, 'abc'), (5, 'a2')");
             assertQuery("select ts, id as id from t1 where id = 'abc' limit -1")
                     .noLeakCheck()
@@ -771,7 +771,7 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testNegativeLimitEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table y (sym symbol, ts timestamp NOT NULL) timestamp(ts) partition by day");
+            execute("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");
 
             assertQuery("y where sym = 'googl' limit -3")
                     .noLeakCheck()
@@ -1108,7 +1108,7 @@ public class LimitTest extends AbstractCairoTest {
     @Test
     public void testOrderByTimestampDescWithWhereAndLimit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (id LONG, price DOUBLE, timestamp TIMESTAMP NOT NULL) timestamp(timestamp);");
+            execute("CREATE TABLE trades (id LONG, price DOUBLE, timestamp TIMESTAMP) timestamp(timestamp);");
             execute("INSERT INTO trades " +
                     "SELECT x, x * 1.5, " +
                     "  timestamp_sequence(to_timestamp('2024-01-01T00:00:00', 'yyyy-MM-ddTHH:mm:ss'), 3600000000) " +
@@ -1275,7 +1275,7 @@ public class LimitTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE intervaltest (
                       id long,
-                      ts TIMESTAMP NOT NULL
+                      ts TIMESTAMP
                     ) timestamp (ts) PARTITION BY DAY""");
 
             execute("""
@@ -2024,7 +2024,7 @@ public class LimitTest extends AbstractCairoTest {
 
     private void testLimitMinusOne() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t1 (ts timestamp NOT NULL, id symbol)");
+            execute("create table t1 (ts timestamp, id symbol)");
 
             String inserts = """
                     insert into t1 values (0L, 'abc')

@@ -73,7 +73,7 @@ public class LevelTwoPriceFunctionFactoryTest extends AbstractFunctionFactoryTes
                     "  side SYMBOL capacity 256 CACHE,\n" +
                     "  price DOUBLE,\n" +
                     "  amount DOUBLE,\n" +
-                    "  timestamp TIMESTAMP NOT NULL\n" +
+                    "  timestamp TIMESTAMP\n" +
                     ") timestamp (timestamp) PARTITION BY DAY WAL DEDUP UPSERT KEYS(symbol, timestamp);");
 
             execute("INSERT INTO btc_trades (symbol, side, price, amount, timestamp) VALUES\n" +

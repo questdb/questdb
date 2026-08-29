@@ -2315,7 +2315,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY HOUR WAL
                             """
             );
@@ -2530,7 +2530,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY HOUR WAL
                             """
             );
@@ -2601,7 +2601,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY HOUR WAL
                             """
             );
@@ -2734,7 +2734,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3111,7 +3111,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3254,7 +3254,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3334,7 +3334,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3412,7 +3412,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3548,7 +3548,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3625,7 +3625,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3698,7 +3698,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, s SYMBOL, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, s SYMBOL, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3765,7 +3765,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, s SYMBOL, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, s SYMBOL, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3826,7 +3826,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3868,7 +3868,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -3943,7 +3943,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4020,7 +4020,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4092,7 +4092,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4259,7 +4259,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4420,7 +4420,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4511,7 +4511,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, b DOUBLE, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (a INT, b DOUBLE, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4573,7 +4573,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (a INT, x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (a INT, x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4681,7 +4681,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4757,7 +4757,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4847,7 +4847,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, x INT)
+                            CREATE TABLE x (ts TIMESTAMP, x INT)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -4944,7 +4944,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (ts TIMESTAMP NOT NULL, v VARCHAR, s SYMBOL)
+                            CREATE TABLE x (ts TIMESTAMP, v VARCHAR, s SYMBOL)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5026,7 +5026,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Create table with several column types including VARCHAR
             execute(
                     """
-                            CREATE TABLE x (x INT, v VARCHAR, s SYMBOL, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, v VARCHAR, s SYMBOL, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5128,7 +5128,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5183,7 +5183,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5293,7 +5293,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(dodgyFacade, () -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5395,7 +5395,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(dodgyFacade, () -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5474,7 +5474,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5577,7 +5577,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5645,7 +5645,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, s SYMBOL, v VARCHAR, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );
@@ -5736,7 +5736,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute(
                     """
-                            CREATE TABLE x (x INT, ts TIMESTAMP NOT NULL)
+                            CREATE TABLE x (x INT, ts TIMESTAMP)
                             TIMESTAMP(ts) PARTITION BY DAY WAL
                             """
             );

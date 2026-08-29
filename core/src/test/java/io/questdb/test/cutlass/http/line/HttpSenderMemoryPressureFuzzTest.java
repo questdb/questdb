@@ -74,7 +74,7 @@ public class HttpSenderMemoryPressureFuzzTest extends AbstractBootstrapTest {
         ) {
             serverMain.start();
             serverMain.execute("create table " + tn +
-                    "(b byte, s short, i int, l long, f float, d double, v varchar, sym symbol, tss timestamp, ts timestamp NOT NULL" +
+                    "(b byte, s short, i int, l long, f float, d double, v varchar, sym symbol, tss timestamp, ts timestamp" +
                     ") timestamp(ts) partition by HOUR WAL");
 
             // Warm up server apply jobs to allocate necessary resources

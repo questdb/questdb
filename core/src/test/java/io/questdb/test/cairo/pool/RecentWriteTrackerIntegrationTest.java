@@ -183,7 +183,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     @Test
     public void testDropTableRemovesFromTracker() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE drop_test (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE drop_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -218,7 +218,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     @Test
     public void testGetWriteStats() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE stats_test (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE stats_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -252,7 +252,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     @Test
     public void testGetWriteTimestampForTable() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE metrics (ts TIMESTAMP NOT NULL, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE metrics (ts TIMESTAMP, value DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -287,7 +287,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             // Create many tables
             for (int i = 0; i < 20; i++) {
-                execute("CREATE TABLE limit_test_" + i + " (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE TABLE limit_test_" + i + " (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
             }
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
@@ -317,9 +317,9 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     @Test
     public void testMostRecentTableFirst() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE first_table (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE second_table (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE third_table (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE first_table (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE second_table (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE third_table (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -353,7 +353,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     @Test
     public void testRemoveTableFromTracking() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE to_be_dropped (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE to_be_dropped (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -384,7 +384,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     @Test
     public void testRepeatedWritesUpdateTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE events (ts TIMESTAMP NOT NULL, data STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE events (ts TIMESTAMP, data STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -424,7 +424,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     @Test
     public void testTrackRowCount() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE row_count_test (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE row_count_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -464,9 +464,9 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testTrackWritesToWalTables() throws Exception {
         assertMemoryLeak(() -> {
             // Create WAL tables
-            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, price DOUBLE, qty INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE orders (ts TIMESTAMP NOT NULL, side SYMBOL, amount DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE users (ts TIMESTAMP NOT NULL, name STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE, qty INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE orders (ts TIMESTAMP, side SYMBOL, amount DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE users (ts TIMESTAMP, name STRING) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             // Get the tracker from engine
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
@@ -518,7 +518,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testUniqueRowsNotCountedAsDedup() throws Exception {
         assertMemoryLeak(() -> {
             // Create a WAL table with dedup enabled
-            execute("CREATE TABLE unique_test (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("CREATE TABLE unique_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
 
             RecentWriteTracker tracker = engine.getRecentWriteTracker();
             tracker.clear();
@@ -576,8 +576,8 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testHydrateFromExistingTables() throws Exception {
         assertMemoryLeak(() -> {
             // Create tables and write data
-            execute("CREATE TABLE hydrate_test1 (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE TABLE hydrate_test2 (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE hydrate_test1 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE hydrate_test2 (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
             execute("INSERT INTO hydrate_test1 VALUES (now(), 1)");
             execute("INSERT INTO hydrate_test1 VALUES (now(), 2)");
@@ -622,7 +622,7 @@ public class RecentWriteTrackerIntegrationTest extends AbstractCairoTest {
     public void testWalPendingAndDedupTracking() throws Exception {
         assertMemoryLeak(() -> {
             // Create a WAL table with dedup enabled on timestamp
-            execute("CREATE TABLE dedup_test (ts TIMESTAMP NOT NULL, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("CREATE TABLE dedup_test (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
 
             engine.getRecentWriteTracker().clear();
 

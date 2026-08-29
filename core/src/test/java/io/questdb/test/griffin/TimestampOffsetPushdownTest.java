@@ -208,7 +208,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testDayOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             // Row 1: timestamp 2022-01-01 12:00 -> ts (after -1d) = 2021-12-31 12:00 (NOT in 2022)
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
             // Row 2: timestamp 2022-01-02 12:00 -> ts (after -1d) = 2022-01-01 12:00 (in 2022)
@@ -477,7 +477,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testHourOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             // Row 1: timestamp 2022-01-01 00:30:00 -> ts (after -1h) = 2021-12-31 23:30:00 (NOT in 2022)
             execute("INSERT INTO trades VALUES (100, '2022-01-01T00:30:00.000000Z');");
             // Row 2: timestamp 2022-01-01 01:30:00 -> ts (after -1h) = 2022-01-01 00:30:00 (in 2022)
@@ -604,7 +604,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Test for int overflow when negating the stride value.
         // The optimizer stores the INVERSE of the stride for pushdown.
         // If stride = Integer.MIN_VALUE (-2147483648), then inverse = 2147483648 which overflows int.
-        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;"));
+        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
 
         // Use Integer.MIN_VALUE as stride - negating it causes overflow
         // -(-2147483648) = 2147483648 which exceeds Integer.MAX_VALUE
@@ -623,7 +623,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // and the optimizer intrinsically understands this function for predicate pushdown.
         //
         // 3,000,000,000 seconds = ~95 years, which exceeds int range.
-        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;"));
+        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
 
         // Use an offset of 3 billion seconds (exceeds Integer.MAX_VALUE of 2,147,483,647)
         // Error position 35 is at the stride argument "3000000000"
@@ -678,7 +678,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testMinuteOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T00:15:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T00:45:00.000000Z');");
 
@@ -713,7 +713,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testMixedPredicatesPushdown() throws Exception {
         // Test that non-timestamp predicates don't interfere with pushdown
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, '2022-01-01T03:30:00.000000Z');");
@@ -766,7 +766,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testMonthOffsetPushdown() throws Exception {
         // Month offset IS pushed down with calendar-aware handling
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY MONTH;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY MONTH;");
             // Row 1: timestamp 2022-02-15 -> ts (after -1M) = 2022-01-15 (NOT in Feb 2022)
             execute("INSERT INTO trades VALUES (100, '2022-02-15T12:00:00.000000Z');");
             // Row 2: timestamp 2022-03-15 -> ts (after -1M) = 2022-02-15 (in Feb 2022)
@@ -1067,7 +1067,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Verify that negative integer offsets (using unary minus) are correctly handled
         // This is a regression test for isConstantIntegerExpression handling of unary minus
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T02:00:00.000000Z');");
 
             // Use explicit negative value with unary minus
@@ -1181,7 +1181,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testNestedOffsetsPushdown() throws Exception {
         // Test that nested dateadd offsets both get applied
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             // With -1h then -1d offset, total is -25h
             // Row at 2022-01-02 02:00 -> after -1h = 2022-01-02 01:00 -> after -1d = 2022-01-01 01:00
             execute("INSERT INTO trades VALUES (100, '2022-01-02T02:00:00.000000Z');");
@@ -1220,7 +1220,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testNestedOffsetsYearPushdown() throws Exception {
         // Test nested offsets with year-based dateadd
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
 
             String query = """
                     SELECT * FROM (
@@ -1252,7 +1252,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testNoOffsetNoPushdownMetadata() throws Exception {
         // When there's no dateadd, no ts_offset should appear and literal timestamp wins
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
 
             String query = """
                     SELECT price, timestamp FROM trades
@@ -1273,7 +1273,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testNonConstantOffsetNoPushdown() throws Exception {
         // Non-constant offset should not be pushed down
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, offset_val INT, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, offset_val INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, 1, '2022-01-01T01:00:00.000000Z');");
 
             String query = """
@@ -1302,7 +1302,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // the non-literal part should NOT be pushed down to the nested model.
         // With AND, the predicates can be split so the timestamp part is pushed down.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, quantity INT, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, quantity INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, 10, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, 20, '2022-01-01T02:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, 5, '2022-01-01T03:30:00.000000Z');");
@@ -1345,7 +1345,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // This is a regression test for the case where isTimestampPredicate returns true
         // but the predicate also references other non-literal aliases that can't be resolved.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, quantity INT, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, quantity INT, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, 10, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, 20, '2022-01-01T02:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, 5, '2022-01-02T03:30:00.000000Z');");
@@ -1471,7 +1471,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testNullOffsetThrowsError() throws Exception {
         // Ensure a NULL stride is rejected
-        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;"));
+        assertMemoryLeak(() -> execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;"));
         assertQuery("SELECT * FROM (SELECT dateadd('h', NULL, timestamp) as ts, price FROM trades) WHERE ts IN '2022'")
                 .fails(35, "`null` is not a valid stride");
     }
@@ -1846,7 +1846,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // When both original timestamp AND dateadd are in projection, filtering on the
         // dateadd column should NOT use and_offset pushdown (original timestamp is designated)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T00:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, '2022-01-01T02:30:00.000000Z');");
@@ -1886,7 +1886,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Test that when BOTH the original timestamp AND a dateadd column are in the projection,
         // the original timestamp takes precedence as the designated timestamp.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:00:00.000000Z');");
 
@@ -1924,7 +1924,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // This is a regression test for the case where Chars.equalsIgnoreCase fails to match
         // qualified column names like "t.timestamp" against "timestamp".
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:00:00.000000Z');");
 
@@ -1963,7 +1963,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testPositiveOffsetPushdown() throws Exception {
         // Test positive offset (dateadd adds time, so pushdown subtracts)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             // Row 1: timestamp 2021-12-31 22:00 -> ts (after +2h) = 2022-01-01 00:00 (in 2022)
             execute("INSERT INTO trades VALUES (100, '2021-12-31T22:00:00.000000Z');");
             // Row 2: timestamp 2021-12-31 21:00 -> ts (after +2h) = 2021-12-31 23:00 (NOT in 2022)
@@ -2005,7 +2005,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Test that qualified column names like "trades.timestamp" in the dateadd expression
         // are correctly recognized as referencing the designated timestamp
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
 
@@ -2041,7 +2041,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Test that qualified column names like "v.ts" in WHERE clause are correctly matched
         // and rewritten for timestamp predicate pushdown
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
 
@@ -2078,7 +2078,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // we don't produce a double-qualified result like "v.t.timestamp".
         // This is a regression test for rewriteColumnToken incorrectly preserving prefix.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
 
@@ -2115,7 +2115,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testQuotedColumnNamePushdown() throws Exception {
         // Test that quoted column names like "ts" are correctly matched for pushdown
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:30:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:30:00.000000Z');");
 
@@ -2151,7 +2151,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Predicate ts > '2022-01-01' AND ts < now()
         // The constant part can be pushed down, but the now() part stays as filter
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
 
             String query = """
@@ -2179,7 +2179,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testRejectPredicateBetweenWithNow() throws Exception {
         // Predicate ts BETWEEN ... AND now() should NOT be pushed down
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
 
             String query = """
@@ -2206,7 +2206,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testRejectPredicateOrWithNow() throws Exception {
         // Predicate ts > '2025-01-01' OR ts < now() should NOT be pushed down
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
 
             String query = """
@@ -2234,7 +2234,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Predicate ts > dateadd('d', -7, now()) should NOT be pushed down
         // because dateadd uses now() instead of timestamp
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
 
             String query = """
@@ -2261,7 +2261,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testRejectPredicateWithDateaddSysdate() throws Exception {
         // Predicate ts > dateadd('h', -1, sysdate()) should NOT be pushed down
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
 
             String query = """
@@ -2288,7 +2288,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testRejectPredicateWithNow() throws Exception {
         // Predicate ts > now() should NOT be pushed down
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
 
             String query = """
@@ -2315,7 +2315,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testRejectPredicateWithSysdate() throws Exception {
         // Predicate ts > sysdate() should NOT be pushed down
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
 
             String query = """
@@ -2342,7 +2342,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testRejectPredicateWithSystimestamp() throws Exception {
         // Predicate ts > systimestamp() should NOT be pushed down
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
 
             String query = """
@@ -2423,7 +2423,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testSecondOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T00:00:30.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T00:01:00.000000Z');");
 
@@ -2676,7 +2676,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testViewPushdown() throws Exception {
         // Test that predicates are pushed down through views with dateadd offset
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T12:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-02T12:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, '2022-01-03T12:00:00.000000Z');");
@@ -2711,7 +2711,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     @Test
     public void testWeekOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY MONTH;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY MONTH;");
             execute("INSERT INTO trades VALUES (100, '2022-01-08T12:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-15T12:00:00.000000Z');");
 
@@ -2747,7 +2747,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Window function should preserve the designated timestamp from the nested model
         // Row ordering is maintained because window functions process rows in order
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T00:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T01:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, '2022-01-01T02:00:00.000000Z');");
@@ -2776,7 +2776,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Verify that shifted and non-shifted timestamps produce consistent results
         // The window function should see the same row ordering in both cases
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T00:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T01:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, '2022-01-01T02:00:00.000000Z');");
@@ -2826,7 +2826,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Window function with dateadd on timestamp - should still work correctly
         // The dateadd-transformed column should be usable as timestamp
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, '2022-01-01T03:00:00.000000Z');");
@@ -2858,7 +2858,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
         // Window function with dateadd timestamp and WHERE clause
         // Predicate should NOT be pushed through window function (window needs all rows first)
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY DAY;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
             execute("INSERT INTO trades VALUES (100, '2022-01-01T01:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (150, '2022-01-01T02:00:00.000000Z');");
             execute("INSERT INTO trades VALUES (200, '2022-01-01T03:00:00.000000Z');");
@@ -2896,7 +2896,7 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     public void testYearOffsetPushdown() throws Exception {
         // Year offset IS pushed down with calendar-aware handling
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP NOT NULL) TIMESTAMP(timestamp) PARTITION BY YEAR;");
+            execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY YEAR;");
             // Row 1: timestamp 2023-06-15 -> ts (after -1y) = 2022-06-15 (in 2022)
             execute("INSERT INTO trades VALUES (100, '2023-06-15T12:00:00.000000Z');");
             // Row 2: timestamp 2024-06-15 -> ts (after -1y) = 2023-06-15 (NOT in 2022)

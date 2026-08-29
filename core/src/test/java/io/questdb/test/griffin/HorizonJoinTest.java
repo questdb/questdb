@@ -1219,7 +1219,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades_nots (ts TIMESTAMP NOT NULL, sym SYMBOL, qty DOUBLE)");
+            execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
             executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
 
             assertQuery("SELECT avg(p.price) " +
@@ -1971,7 +1971,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE prices (
-                                            price_ts TIMESTAMP NOT NULL,
+                                            price_ts TIMESTAMP,
                                             sym SYMBOL,
                                             price DOUBLE)
                                         TIMESTAMP(price_ts) PARTITION BY HOUR
@@ -1997,7 +1997,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         engine.execute(
                                 """
                                         CREATE TABLE orders (
-                                            order_ts TIMESTAMP NOT NULL,
+                                            order_ts TIMESTAMP,
                                             sym SYMBOL,
                                             amount LONG
                                         ) TIMESTAMP(order_ts);
@@ -2232,7 +2232,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testHorizonJoinSlaveNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
-            execute("CREATE TABLE prices_nots (ts TIMESTAMP NOT NULL, sym SYMBOL, price DOUBLE)");
+            execute("CREATE TABLE prices_nots (ts TIMESTAMP, sym SYMBOL, price DOUBLE)");
 
             assertQuery("SELECT avg(p.price) " +
                     "FROM trades AS t " +
@@ -2400,8 +2400,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testHorizonJoinTimestampOverflow() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE prices (ts TIMESTAMP NOT NULL, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
 
             // Year 9999 timestamp ≈ 253_402_300_799_999_999 micros
             execute("INSERT INTO trades VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 100)");
@@ -4969,7 +4969,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // This exercises per-slave timestamp scaling where each slave has a different scale factor.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP_NS, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE bids (ts TIMESTAMP NOT NULL, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE bids (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE asks (ts TIMESTAMP_NS, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)");
 
             execute(
@@ -5019,8 +5019,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testMultiHorizonJoinDifferentTimestampTypes() throws Exception {
         // Slaves with different timestamp types exercise per-slave timestamp scaling
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE bids (ts TIMESTAMP NOT NULL, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE bids (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)");
             execute("CREATE TABLE asks (ts TIMESTAMP_NS, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)");
 
             execute(
@@ -5741,7 +5741,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     @Test
     public void testMultiHorizonJoinMasterNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades_nots (ts TIMESTAMP NOT NULL, sym SYMBOL, qty DOUBLE)");
+            execute("CREATE TABLE trades_nots (ts TIMESTAMP, sym SYMBOL, qty DOUBLE)");
             executeWithRewriteTimestamp(
                     "CREATE TABLE bids (ts #TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)",
                     rightTableTimestampType.getTypeName()
@@ -6645,9 +6645,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
     public void testMultiHorizonJoinTimestampOverflow() throws Exception {
         // Multi-slave counterpart of testHorizonJoinTimestampOverflow.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (ts TIMESTAMP NOT NULL, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE bids (ts TIMESTAMP NOT NULL, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)");
-            execute("CREATE TABLE asks (ts TIMESTAMP NOT NULL, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE bids (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE asks (ts TIMESTAMP, sym SYMBOL, ask DOUBLE) TIMESTAMP(ts)");
 
             execute("INSERT INTO trades VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 100)");
             execute("INSERT INTO bids VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 10)");

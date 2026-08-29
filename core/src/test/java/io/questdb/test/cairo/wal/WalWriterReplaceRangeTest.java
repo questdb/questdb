@@ -67,7 +67,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(CAIRO_WAL_MAX_LAG_SIZE, 1);
 
-            execute("create table stress (id long, ts timestamp NOT NULL, value long) timestamp(ts) partition by DAY WAL");
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("stress");
 
             long lastMinuteStart = MicrosTimestampDriver.floor("2022-02-24T23:59");
@@ -272,7 +272,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     public void testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother2(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T21:31', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -373,7 +373,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testReplaceRangeCommitDataRangeCommitErrors() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
@@ -977,7 +977,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testReplaceRangeNotSupportedParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
                     "rnd_varchar(), rnd_symbol(null, 'a', 'b', 'c') from long_sequence(400)");
@@ -995,7 +995,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     @Test
     public void testReplaceRangeSingleCommitMiddleMerge() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -1064,7 +1064,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     public void testReplaceRangeSingleCommitPrefixMerge() throws Exception {
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -1132,7 +1132,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     public void testReplaceRangeSingleCommitSuffixMerge() throws Exception {
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -1439,7 +1439,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final int partitionRowCount = 500;
 
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             // Insert 1000 rows to fill one partition
@@ -1814,7 +1814,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
 
-            execute("create table stress (id long, ts timestamp NOT NULL, value long) timestamp(ts) partition by DAY WAL");
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("stress");
 
             // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
@@ -1878,7 +1878,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
 
-            execute("create table stress (id long, ts timestamp NOT NULL, value long) timestamp(ts) partition by DAY WAL");
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("stress");
 
             // Insert 100k rows spanning 1 day, so that partition is reasonably big to rewrite
@@ -1948,7 +1948,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
 
-            execute("create table stress (id long, ts timestamp NOT NULL, value long) timestamp(ts) partition by DAY WAL");
+            execute("create table stress (id long, ts timestamp, value long) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("stress");
 
             // Insert 100k rows spanning 1 day
@@ -2219,7 +2219,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
     }
 
     private void runReplaceCase(String tsStr, String rangeStartStr, String rangeEndStr, boolean compareTxns, boolean compareTruncateVersion, String tableName, String expectedTableName, boolean compareTxnDetails, boolean generateNoRowsCommit) throws SqlException, NumericException {
-        execute("create table " + tableName + " (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+        execute("create table " + tableName + " (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
         TableToken tableToken = engine.verifyTableName(tableName);
 
         execute("insert into " + tableName + " select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2230,7 +2230,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testRemovesFirstPartitionNoRowsAdded(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2243,7 +2243,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testRemovesLastPartitionNoRowsAdded(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2256,7 +2256,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testReplaceCommitAdds2PartitionsBeforeExisting(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2269,7 +2269,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testReplaceCommitNotOrdered(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2282,7 +2282,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testReplaceCommitRemoves2PartitionsAndAdds1(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2295,7 +2295,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testReplaceDeletesAppendsNothingToLastAndPartitionAndInsertsIntoAnother(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T00:31', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2308,7 +2308,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testReplaceRangeBeforeFirstPartitionAndData(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2336,7 +2336,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testReplaceRangeLastPartition(boolean compareTruncateVersion, boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T00:31', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2349,7 +2349,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testReplaceTruncatesAllData(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +
@@ -2362,7 +2362,7 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
 
     private void testReplaceTruncatesAllDataAndAddsNewBeforeExisting(boolean generateNoRowsCommit) throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table rg (id int, ts timestamp NOT NULL, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
+            execute("create table rg (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("rg");
 
             execute("insert into rg select x, timestamp_sequence('2022-02-24T12:30', 15 * 60 * 1000 * 1000), x/2, cast(x as string), " +

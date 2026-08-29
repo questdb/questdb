@@ -296,7 +296,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val INT PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -332,7 +332,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     CREATE TABLE x (
                         a INT PARQUET(BLOOM_FILTER),
                         b INT,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -361,7 +361,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val INT,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -388,7 +388,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val INT PARQUET(DELTA_BINARY_PACKED, ZSTD(3), BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -418,7 +418,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     CREATE TABLE x (
                         a INT PARQUET(BLOOM_FILTER),
                         b INT,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -448,7 +448,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val INT,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -478,7 +478,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val INT PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -508,7 +508,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
                     CREATE TABLE x (
                         a INT PARQUET(BLOOM_FILTER),
                         b INT PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -538,7 +538,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         a INT,
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -578,7 +578,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         s SYMBOL PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -610,7 +610,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val INT PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -642,7 +642,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val INT PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -676,7 +676,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val VARCHAR PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -710,7 +710,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val INT PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -748,7 +748,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val LONG PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -780,7 +780,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE x (
                         val VARCHAR PARQUET(BLOOM_FILTER),
-                        ts TIMESTAMP NOT NULL
+                        ts TIMESTAMP
                     ) TIMESTAMP(ts) PARTITION BY DAY
                     """);
             execute("""
@@ -907,7 +907,7 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             execute(
                     "create table x (" +
                             " an_array double[]," +
-                            " a_ts timestamp NOT NULL" +
+                            " a_ts timestamp" +
                             ") timestamp(a_ts) partition by month;"
             );
 

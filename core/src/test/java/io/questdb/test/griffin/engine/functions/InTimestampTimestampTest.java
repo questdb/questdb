@@ -36,19 +36,9 @@ import org.junit.Test;
 public class InTimestampTimestampTest extends AbstractCairoTest {
 
     @Test
-    public void testBindVarRuntimeConstantsWithConstant() throws SqlException {
-        execute("""
-                create table MovementLog(
-                ts timestamp NOT NULL,
-                initParticipantId long,
-                initParticipantIdType symbol,
-                movementBusinessDate date,
-                slotId timestamp
-                ) timestamp(ts) partition by day wal
-                """);
-
-        final ObjList<BindVariableTestTuple> tuples = new ObjList<>();
-        tuples.add(new BindVariableTestTuple(
+    public void testBindVarRuntimeConstantsWithConstant() throws Exception {
+        final ObjList<BindVarTuple> cases = new ObjList<>();
+        cases.add(BindVarTuple.ok(
                 "runtime constants",
                 "participantId\tparticipantIdType\n",
                 bindVariableService -> {
