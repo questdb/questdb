@@ -409,6 +409,48 @@ public class PostingIndexBenchmarkSuite {
         }
     }
 
+    /**
+     * {@link #indexRangeRead} with the reader opened ONCE rather than per op.
+     * <p>
+     * Diagnostic, not a headline number. Both read benchmarks open a reader
+     * inside the measured op, so each op pays a fixed construction cost --
+     * mapping the artifacts and parsing the footer -- amortised over only 500
+     * keys. Solving the two benchmarks for their fixed and per-key terms put
+     * arm B's per-key cost at parity with the native chain (47ns against 54ns)
+     * and its fixed cost at four times native's, which says the whole of the
+     * range-read gap is construction. This measures the per-key term directly
+     * rather than inferring it, and is also what a query actually does: open a
+     * reader per partition, then look up many keys.
+     */
+    /**
+     * Reader CONSTRUCTION alone: open the artifacts, then free them.
+     * <p>
+     * Diagnostic. Both read benchmarks open a reader inside the measured op,
+     * and hoisting that open turned arm B's 1,000,000-key range read from 3.9x
+     * SLOWER than the native chain into 1.41x faster -- so construction is the
+     * whole of that gap. Inferring its cost by subtracting warm from cold
+     * conflates it with whatever else differs; this measures it on its own.
+     */
+    @Benchmark
+    public void indexReaderOpen(IndexState s) {
+        try (Path path = new Path().of(s.dir)) {
+            Misc.free(openReader(s, path));
+        }
+    }
+
+    @Benchmark
+    public void indexRangeReadWarm(IndexState s) {
+        if (s.warmReader == null) {
+            s.warmPath = new Path().of(s.dir);
+            s.warmReader = openReader(s, s.warmPath);
+        }
+        for (int key : s.rangeKeys) {
+            try (RowCursor c = s.warmReader.getCursor(key, s.maxRow / 4, s.maxRow * 3 / 4)) {
+                while (c.hasNext()) c.next();
+            }
+        }
+    }
+
     @Benchmark
     public void indexScanRead(IndexState s) {
         try (Path path = new Path().of(s.dir)) {
@@ -2071,8 +2113,18 @@ public class PostingIndexBenchmarkSuite {
             verifyArmPostingCount(this, totalRows);
         }
 
+        /**
+         * A reader held open across ops, for the WARM benchmarks below.
+         * Opened lazily on the benchmark thread because a reader binds
+         * mappings the op then reads.
+         */
+        IndexReader warmReader;
+        Path warmPath;
+
         @TearDown(Level.Trial)
         public void tearDown() {
+            warmReader = Misc.free(warmReader);
+            warmPath = Misc.free(warmPath);
             parquetCvr = Misc.free(parquetCvr);
             deleteDir(dir);
         }
