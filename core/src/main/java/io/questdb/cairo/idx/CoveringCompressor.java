@@ -991,6 +991,64 @@ public class CoveringCompressor {
      * Compute the maximum compressed size for a stride of values.
      * Used to pre-allocate the output buffer.
      */
+    /**
+     * Compresses one block of a covered column, dispatching on its type: ALP for
+     * DOUBLE and FLOAT, linear-prediction FoR for the designated timestamp,
+     * frame-of-reference for the integer widths, raw for the rest. Falls back to
+     * a RAW_BLOCK_FLAG block whenever the codec would not be smaller.
+     * <p>
+     * Shared by the native chain and the parquet form. They must agree byte for
+     * byte, because the same {@code readXxxAt} decoders serve both, and a
+     * covering index that encoded differently per form would be two formats
+     * wearing one name.
+     */
+    public static int compressCoveredBlock(long rawBuf, int valueCount, int shift, int colType,
+                                            boolean isDesignatedTs,
+                                            long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
+        if (isDesignatedTs) {
+            // Designated timestamp: non-null, monotonically increasing per key.
+            // Linear-prediction FoR gives O(1) random access with same compression as delta.
+            return compressLongsLinearPred(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+        }
+        return switch (ColumnType.tagOf(colType)) {
+            case ColumnType.DOUBLE -> {
+                int alpSize = compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                int rawSize = 4 + valueCount * Double.BYTES;
+                if (alpSize <= rawSize) {
+                    yield alpSize;
+                }
+                Unsafe.putInt(destBuf, valueCount | RAW_BLOCK_FLAG);
+                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount * Double.BYTES);
+                yield rawSize;
+            }
+            case ColumnType.FLOAT -> {
+                int alpSize = compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                int rawSize = 4 + valueCount * Float.BYTES;
+                if (alpSize <= rawSize) {
+                    yield alpSize;
+                }
+                Unsafe.putInt(destBuf, valueCount | RAW_BLOCK_FLAG);
+                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount * Float.BYTES);
+                yield rawSize;
+            }
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
+                    compressLongs(rawBuf, valueCount, destBuf);
+            case ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,
+                 ColumnType.DECIMAL32 ->
+                    compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                    compressShorts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                    compressBytes(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            default -> {
+                // Raw copy for remaining fixed-width types: LONG128, UUID, LONG256, DECIMAL128/256
+                Unsafe.putInt(destBuf, valueCount);
+                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
+                yield 4 + (valueCount << shift);
+            }
+        };
+    }
+
     public static int maxCompressedSize(int count, int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DOUBLE ->

@@ -3175,6 +3175,167 @@ public class ParquetIndexSealTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Storage of a covering index, both forms, at a known posting count.
+     * <p>
+     * Asserts the property the parquet form has to meet to be worth shipping:
+     * it must not cost more to store than the native chain. Both now encode
+     * covered values with the same codec -- ALP for the DOUBLE, linear
+     * prediction for the timestamp, frame-of-reference for the LONG -- so what
+     * is left to differ is the postings, where the packed payload is denser.
+     * <p>
+     * Sizes are printed as well as asserted, because the ratio is the number
+     * anyone reading this actually wants.
+     */
+    @Test
+    public void testCoveringIndexStorageBeatsTheNativeChain() throws Exception {
+        assertMemoryLeak(() -> {
+            inputRoot = root;
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, false);
+            createPackedKeyTable();
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+            final long nativeAll;
+            final long nativeLive;
+            try (Path path = new Path()) {
+                final String dir = partitionPath(path, PACKED_TABLE_NAME).toString();
+                nativeAll = sumNativeIndexFiles(dir);
+                // The chain keeps a pre-seal generation alongside the sealed one
+                // -- sym.pc0.0.0 is 8 bytes a posting, sym.pc0.0.1 is the ALP
+                // block -- and counting both would credit the native chain with
+                // bytes no query reads. Which generation is live is PROVEN here
+                // rather than assumed: delete the lower one and require the
+                // index to still answer correctly.
+                engine.releaseInactive();
+                final java.io.File[] stale = new java.io.File(dir).listFiles(
+                        (_, n) -> isNativeIndexFile(n) && (n.endsWith(".pv.0") || n.contains(".0.0")));
+                Assert.assertNotNull(stale);
+                long freed = 0;
+                for (java.io.File f : stale) {
+                    freed += f.length();
+                    Assert.assertTrue("could not remove " + f.getName(), f.delete());
+                }
+                Assert.assertTrue("no superseded generation found to test", freed > 0);
+                nativeLive = nativeAll - freed;
+            }
+            // If the deleted generation had been live this would fail or answer
+            // wrongly, which is what makes nativeLive the honest denominator.
+            assertQuery("select count() from " + PACKED_TABLE_NAME + " where sym = 'q0'")
+                    .noRandomAccess()
+                    .expectSize()
+                    // 501: the fixture adds one more q0 row in a LATER partition,
+                    // so the indexed partition's 500 plus that one.
+                    .returns("count\n501\n");
+
+            execute("DROP TABLE " + PACKED_TABLE_NAME);
+            drainWalQueue();
+
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
+            createPackedKeyTable();
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+            drainWalQueue();
+            execute("ALTER TABLE " + PACKED_TABLE_NAME + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+            drainWalQueue();
+            engine.releaseInactive();
+            final long packedBytes;
+            try (Path path = new Path()) {
+                packedBytes = sumIndexFiles(partitionPath(path, PACKED_TABLE_NAME).toString(), "sym.pidx.");
+            }
+
+            try (Path path = new Path()) {
+                final String dir = partitionPath(path, PACKED_TABLE_NAME).toString();
+                final java.io.File[] pidx = new java.io.File(dir).listFiles(
+                        (_, n) -> n.startsWith("sym.pidx.") && n.endsWith(".parquet"));
+                final java.io.File[] ims = new java.io.File(dir).listFiles(
+                        (_, n) -> n.startsWith("sym.pidx.") && n.endsWith("._im"));
+                Assert.assertNotNull(pidx);
+                Assert.assertNotNull(ims);
+                final IndexMetaFileReader r = new IndexMetaFileReader();
+                IndexMetaFileReader.openAndMapRO(configuration.getFilesFacade(),
+                        path.of(ims[0].getAbsolutePath()).$(), r);
+                try {
+                    final int groups = r.getIndexRowGroupCount();
+                    final int cols = r.getColumnCount();
+                    long chunkTotal = 0;
+                    final long[] perCol = new long[cols];
+                    for (int g = 0; g < groups; g++) {
+                        for (int c = 0; c < cols; c++) {
+                            final long b = r.getChunkTotalCompressed(g, c);
+                            perCol[c] += b;
+                            chunkTotal += b;
+                        }
+                    }
+                    System.out.println("PIDXBRK rowGroups=" + groups + " columns=" + cols
+                            + " parquetFile=" + (pidx[0].length() / 1024) + "K"
+                            + " _im=" + (ims[0].length() / 1024) + "K");
+                    for (int c = 0; c < cols; c++) {
+                        System.out.printf("PIDXBRK   %-14s %7dK  (%.2f B/posting)%n",
+                                r.getColumnName(c), perCol[c] / 1024,
+                                perCol[c] / (double) PACKED_ROW_COUNT);
+                    }
+                    System.out.printf("PIDXBRK   %-14s %7dK%n", "chunks total", chunkTotal / 1024);
+                    System.out.printf("PIDXBRK   %-14s %7dK  <- footer + per-chunk thrift%n",
+                            "container", (pidx[0].length() - chunkTotal) / 1024);
+                } finally {
+                    r.close();
+                }
+            }
+
+            System.out.printf(
+                    "PIDXSIZE postings=%d  nativeAll=%dK  nativeLive=%dK (%.2f B/posting)"
+                            + "  packed=%dK (%.2f B/posting)  ratio=%.2fx%n",
+                    PACKED_ROW_COUNT,
+                    nativeAll / 1024,
+                    nativeLive / 1024, nativeLive / (double) PACKED_ROW_COUNT,
+                    packedBytes / 1024, packedBytes / (double) PACKED_ROW_COUNT,
+                    packedBytes / (double) nativeLive);
+
+            Assert.assertTrue(
+                    "the parquet covering index must not cost more to store than the native chain's"
+                            + " LIVE generation [nativeLive=" + nativeLive + ", packed=" + packedBytes + ']',
+                    packedBytes <= nativeLive
+            );
+        });
+    }
+
+    /**
+     * The native chain's own files, and ONLY those. {@code sym.d} is the symbol
+     * column's data and exists whether or not the column is indexed, so counting
+     * it would credit the parquet form with 1,368 KB it never had to store --
+     * the parquet side is summed over {@code sym.pidx.*}, which is index only.
+     */
+    private static boolean isNativeIndexFile(String name) {
+        return name.startsWith("sym.")
+                && (name.startsWith("sym.pk") || name.startsWith("sym.pci")
+                || name.startsWith("sym.pv.") || name.startsWith("sym.pc"));
+    }
+
+    private static long sumNativeIndexFiles(String partitionDir) {
+        final java.io.File[] files = new java.io.File(partitionDir).listFiles((_, n) -> isNativeIndexFile(n));
+        Assert.assertNotNull("no partition directory at " + partitionDir, files);
+        Assert.assertTrue("no native index files", files.length > 0);
+        long total = 0;
+        for (java.io.File f : files) {
+            total += f.length();
+        }
+        return total;
+    }
+
+    /** Total bytes of every index file for {@code prefix} in the partition. */
+    private static long sumIndexFiles(String partitionDir, String prefix) {
+        final java.io.File[] files = new java.io.File(partitionDir).listFiles((_, n) -> n.startsWith(prefix));
+        Assert.assertNotNull("no partition directory at " + partitionDir, files);
+        Assert.assertTrue("no index files matching " + prefix, files.length > 0);
+        long total = 0;
+        for (java.io.File f : files) {
+            total += f.length();
+        }
+        return total;
+    }
+
     @Test
     public void testSealPacksManySmallKeysIntoSharedRowGroups() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");

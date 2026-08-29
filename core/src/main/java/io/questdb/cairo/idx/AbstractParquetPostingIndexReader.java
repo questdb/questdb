@@ -398,7 +398,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                 // One row per group, so the group's blob is the only value in
                 // the page: a PLAIN BYTE_ARRAY value is a 4-byte little-endian
                 // length then the bytes.
-                addr = pidxAddr + pageOffset + Integer.BYTES + PostingIndexUtils.COVER_BLOB_HEADER_SIZE;
+                // The blob IS the compressed block; CoveringCompressor's
+                // readXxxAt decoders address a value by index inside it.
+                addr = pidxAddr + pageOffset + Integer.BYTES;
             }
             coverBlobAddrs[at] = addr;
         }
@@ -1109,26 +1111,41 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
 
         @Override
         public byte getCoveredByte(int includeIdx) {
+            if (packedPayload) {
+                return CoveringCompressor.readByteAt(coveredBlock(includeIdx), (int) emittedRow);
+            }
             return Unsafe.getUnsafe().getByte(coveredAddress(includeIdx, 1));
         }
 
         @Override
         public double getCoveredDouble(int includeIdx) {
+            if (packedPayload) {
+                return CoveringCompressor.readDoubleAt(coveredBlock(includeIdx), (int) emittedRow);
+            }
             return Unsafe.getUnsafe().getDouble(coveredAddress(includeIdx, 8));
         }
 
         @Override
         public float getCoveredFloat(int includeIdx) {
+            if (packedPayload) {
+                return CoveringCompressor.readFloatAt(coveredBlock(includeIdx), (int) emittedRow);
+            }
             return Unsafe.getUnsafe().getFloat(coveredAddress(includeIdx, 4));
         }
 
         @Override
         public int getCoveredInt(int includeIdx) {
+            if (packedPayload) {
+                return CoveringCompressor.readIntAt(coveredBlock(includeIdx), (int) emittedRow);
+            }
             return Unsafe.getUnsafe().getInt(coveredAddress(includeIdx, 4));
         }
 
         @Override
         public long getCoveredLong(int includeIdx) {
+            if (packedPayload) {
+                return CoveringCompressor.readLongAt(coveredBlock(includeIdx), (int) emittedRow);
+            }
             return Unsafe.getUnsafe().getLong(coveredAddress(includeIdx, 8));
         }
 
@@ -1164,6 +1181,9 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
 
         @Override
         public short getCoveredShort(int includeIdx) {
+            if (packedPayload) {
+                return CoveringCompressor.readShortAt(coveredBlock(includeIdx), (int) emittedRow);
+            }
             return Unsafe.getUnsafe().getShort(coveredAddress(includeIdx, 2));
         }
 
@@ -1239,6 +1259,26 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         public long seekToLast() {
             throw new UnsupportedOperationException(
                     "seekToLast: use a backward index reader; forward iteration is O(n)");
+        }
+
+        /**
+         * The compressed covered block holding {@code includeIdx}'s values for
+         * the row last emitted, under the packed arm.
+         */
+        protected long coveredBlock(int includeIdx) {
+            if (!isCoveredAvailable(includeIdx)) {
+                throw CairoException.critical(0)
+                        .put("covered slot was not projected [slot=").put(includeIdx)
+                        .put(", column=").put(columnName).put(']');
+            }
+            final long blob = coverBlobDataAddr(packedRowGroup, includeIdx);
+            if (blob == 0) {
+                throw CairoException.critical(0)
+                        .put("covering index packed cover blob is not addressable [slot=").put(includeIdx)
+                        .put(", rowGroup=").put(packedRowGroup)
+                        .put(", column=").put(columnName).put(']');
+            }
+            return blob;
         }
 
         /**

@@ -39,6 +39,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -149,6 +150,8 @@ public final class ParquetIndexSeal {
         private long[] coverAuxSizes;
         private long[] coverDataAddrs;
         private long[] coverDataSizes;
+        /** Allocation size, which exceeds coverDataSizes once the codec beats its bound. */
+        private long[] coverDataBounds;
 
         private void free() {
             freeIfSet(dataAddr, dataSize);
@@ -159,7 +162,7 @@ public final class ParquetIndexSeal {
             keyIdAddr = 0;
             if (coverDataAddrs != null) {
                 for (int i = 0; i < coverDataAddrs.length; i++) {
-                    freeIfSet(coverDataAddrs[i], coverDataSizes[i]);
+                    freeIfSet(coverDataAddrs[i], coverDataBounds[i]);
                     coverDataAddrs[i] = 0;
                     freeIfSet(coverAuxAddrs[i], coverAuxSizes[i]);
                     coverAuxAddrs[i] = 0;
@@ -711,6 +714,23 @@ public final class ParquetIndexSeal {
      * copy, and the blobs together hold exactly what the per-posting arm would
      * have written as a column.
      */
+    /**
+     * Builds one BINARY column per cover slot: each row group's slice of that
+     * covered column, COMPRESSED with the same codec the native chain uses --
+     * ALP for DOUBLE and FLOAT, linear-prediction for the designated timestamp,
+     * frame-of-reference for the integer widths.
+     * <p>
+     * The blob IS the compressed block, with no wrapper: the block is
+     * self-describing and {@link CoveringCompressor}'s {@code readXxxAt}
+     * decoders address a value by index inside it, so a covered read stays O(1)
+     * and never decodes the group. That is what makes this affordable -- a
+     * parquet page codec would have compressed too, but only by making every
+     * covered read decompress the page it lands in.
+     * <p>
+     * Storing them raw, as this did first, was 8 bytes a posting against the
+     * native chain's 1.98 for the same DOUBLE column, and that gap was the whole
+     * reason the parquet form was larger than native overall.
+     */
     private static void buildCoverBlobs(
             PackedPayload payload,
             LongList groupRowCounts,
@@ -722,39 +742,76 @@ public final class ParquetIndexSeal {
         payload.coverAuxSizes = new long[coverCount];
         payload.coverDataAddrs = new long[coverCount];
         payload.coverDataSizes = new long[coverCount];
+        payload.coverDataBounds = new long[coverCount];
         if (coverCount == 0) {
             return;
         }
         final int groupCount = groupRowCounts.size();
-        for (int slot = 0; slot < coverCount; slot++) {
-            final int width = ColumnType.sizeOf(coveredTypes.getQuick(slot));
-            long dataSize = 0;
-            for (int g = 0; g < groupCount; g++) {
-                dataSize += BINARY_HEADER_SIZE
-                        + PostingIndexUtils.coverBlobSize((int) groupRowCounts.getQuick(g), width);
-            }
-            payload.coverAuxSizes[slot] = (long) groupCount * Long.BYTES;
-            payload.coverDataSizes[slot] = dataSize;
-            payload.coverAuxAddrs[slot] = Unsafe.malloc(payload.coverAuxSizes[slot], MemoryTag.NATIVE_TABLE_WRITER);
-            payload.coverDataAddrs[slot] = Unsafe.malloc(dataSize, MemoryTag.NATIVE_TABLE_WRITER);
 
-            final long src = sortedCoverAddrs.getQuick(slot);
-            long dataOffset = 0;
-            long postingLo = 0;
-            for (int g = 0; g < groupCount; g++) {
-                final int rows = (int) groupRowCounts.getQuick(g);
-                final int blobSize = PostingIndexUtils.coverBlobSize(rows, width);
-                Unsafe.getUnsafe().putLong(payload.coverAuxAddrs[slot] + (long) g * Long.BYTES, dataOffset);
-                Unsafe.getUnsafe().putLong(payload.coverDataAddrs[slot] + dataOffset, blobSize);
-                PostingIndexUtils.encodeCoverBlob(
-                        payload.coverDataAddrs[slot] + dataOffset + BINARY_HEADER_SIZE,
-                        src + postingLo * width,
-                        rows,
-                        width
-                );
-                dataOffset += BINARY_HEADER_SIZE + blobSize;
-                postingLo += rows;
+        int maxRows = 0;
+        for (int g = 0; g < groupCount; g++) {
+            maxRows = Math.max(maxRows, (int) groupRowCounts.getQuick(g));
+        }
+        // The ALP paths need a long workspace per value and a byte per value for
+        // the exception map; both are sized by the widest group.
+        final long longWorkspaceSize = (long) maxRows * Long.BYTES;
+        long longWorkspace = 0;
+        long exceptionWorkspace = 0;
+        try {
+            longWorkspace = Unsafe.malloc(longWorkspaceSize, MemoryTag.NATIVE_TABLE_WRITER);
+            exceptionWorkspace = Unsafe.malloc(maxRows, MemoryTag.NATIVE_TABLE_WRITER);
+
+            for (int slot = 0; slot < coverCount; slot++) {
+                final int type = coveredTypes.getQuick(slot);
+                final int width = ColumnType.sizeOf(type);
+                final int shift = Numbers.msb(width);
+                // Keyed on the TYPE, matching CoveringCompressor.maxCompressedSize,
+                // which also treats TIMESTAMP apart from LONG. A covered
+                // TIMESTAMP that is not the designated one still encodes
+                // losslessly this way -- linear prediction just compresses it
+                // less well -- so the choice cannot produce a wrong value.
+                final boolean isTs = ColumnType.tagOf(type) == ColumnType.TIMESTAMP;
+
+                // Upper bound: the codec never exceeds it, and the blobs are
+                // written contiguously from the front, so the tail is simply
+                // unused and the chunk is handed the ACTUAL length.
+                long bound = 0;
+                for (int g = 0; g < groupCount; g++) {
+                    bound += BINARY_HEADER_SIZE
+                            + CoveringCompressor.maxCompressedSize((int) groupRowCounts.getQuick(g), type);
+                }
+                payload.coverAuxSizes[slot] = (long) groupCount * Long.BYTES;
+                payload.coverAuxAddrs[slot] = Unsafe.malloc(payload.coverAuxSizes[slot], MemoryTag.NATIVE_TABLE_WRITER);
+                payload.coverDataAddrs[slot] = Unsafe.malloc(bound, MemoryTag.NATIVE_TABLE_WRITER);
+                payload.coverDataSizes[slot] = bound;
+
+                final long src = sortedCoverAddrs.getQuick(slot);
+                long dataOffset = 0;
+                long postingLo = 0;
+                for (int g = 0; g < groupCount; g++) {
+                    final int rows = (int) groupRowCounts.getQuick(g);
+                    Unsafe.getUnsafe().putLong(payload.coverAuxAddrs[slot] + (long) g * Long.BYTES, dataOffset);
+                    final int size = CoveringCompressor.compressCoveredBlock(
+                            src + postingLo * width,
+                            rows,
+                            shift,
+                            type,
+                            isTs,
+                            payload.coverDataAddrs[slot] + dataOffset + BINARY_HEADER_SIZE,
+                            longWorkspace,
+                            exceptionWorkspace
+                    );
+                    Unsafe.getUnsafe().putLong(payload.coverDataAddrs[slot] + dataOffset, size);
+                    dataOffset += BINARY_HEADER_SIZE + size;
+                    postingLo += rows;
+                }
+                // What the chunk actually holds, not what was reserved.
+                payload.coverDataSizes[slot] = dataOffset;
+                payload.coverDataBounds[slot] = bound;
             }
+        } finally {
+            freeIfSet(exceptionWorkspace, maxRows);
+            freeIfSet(longWorkspace, longWorkspaceSize);
         }
     }
 
