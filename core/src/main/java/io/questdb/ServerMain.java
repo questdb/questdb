@@ -238,6 +238,9 @@ public class ServerMain implements Closeable {
      * the live object graph so a later call can retry safely.
      */
     public boolean closeBy(long deadlineNanos) {
+        // Signal cancellation before taking the lock: start() boots under closeLock, so a
+        // blocked start must observe the stop request and unwind before the lock frees.
+        requestClose();
         boolean isInterrupted = false;
         boolean isLocked = closeLock.tryLock();
         while (!isLocked) {
