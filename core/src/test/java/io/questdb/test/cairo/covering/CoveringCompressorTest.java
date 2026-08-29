@@ -1164,4 +1164,57 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     private interface BlockTest {
         void run(long blockAddr, int storedLength, long outAddr, long workspaceAddr);
     }
+
+    /**
+     * {@link CoveringCompressor#arithmeticStart} and
+     * {@link CoveringCompressor#arithmeticStride} read the block header at fixed
+     * offsets, so they are pinned against the decoder that owns the layout: if
+     * the header ever gains a field, this fails rather than silently returning
+     * the wrong sequence.
+     * <p>
+     * The closed form matters because a cursor uses it to generate row ids
+     * WITHOUT decoding -- a wrong start or stride would produce plausible row
+     * ids that are simply not the ones stored.
+     */
+    @Test
+    public void testArithmeticAccessorsAgreeWithTheDecoder() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 257;
+            for (long stride : new long[]{1, 7, 2000, 1L << 20}) {
+                final long first = 12_345L;
+                final long srcSize = (long) count * Long.BYTES;
+                final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+                final int bound = CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP);
+                final long block = Unsafe.calloc(bound, MemoryTag.NATIVE_DEFAULT);
+                final long ws = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+                final long out = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.getUnsafe().putLong(src + ((long) i << 3), first + i * stride);
+                    }
+                    CoveringCompressor.compressLongsLinearPred(src, count, block, ws);
+
+                    Assert.assertTrue("an exact progression must encode with zero residuals [stride=" + stride + ']',
+                            CoveringCompressor.isArithmeticBlock(block));
+                    Assert.assertEquals("stride", stride, CoveringCompressor.arithmeticStride(block));
+
+                    // The decoder is the authority: the accessors must reproduce
+                    // exactly what it produces, value for value.
+                    CoveringCompressor.readLongsInto(block, 0, count, out);
+                    final long start = CoveringCompressor.arithmeticStart(block);
+                    for (int i = 0; i < count; i++) {
+                        final long decoded = Unsafe.getUnsafe().getLong(out + ((long) i << 3));
+                        Assert.assertEquals("value " + i + " [stride=" + stride + ']',
+                                decoded, start + (long) i * stride);
+                        Assert.assertEquals("round trip " + i, first + i * stride, decoded);
+                    }
+                } finally {
+                    Unsafe.free(out, srcSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(ws, srcSize, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(block, bound, MemoryTag.NATIVE_DEFAULT);
+                    Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
 }

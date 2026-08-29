@@ -191,6 +191,15 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         private int packedBatch = PACKED_WIDEN_BATCH_MIN;
         /** Group ordinal the current widened batch starts at; 0 off the packed arm. */
         private long coverOrdinalBase;
+        /**
+         * Set when the key's block is an exact arithmetic progression, so its
+         * row ids are computed rather than read. No buffer, no decode, no memory
+         * touched per row -- the same trick the native chain's constant-delta
+         * path uses, which is why it reads zero bytes a row.
+         */
+        private boolean seqMode;
+        private long seqStart;
+        private long seqStride;
         private long rowLo;
         private boolean detached;
         private boolean pooled;
@@ -257,7 +266,9 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             // repeats per row is most of what a scan costs.
             if (decodedGroup && nullPos >= nullCount && rowInGroup < groupRows) {
                 final long i = rowInGroup++;
-                final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                final long rowId = seqMode
+                        ? seqStart + (coverOrdinalBase + i - packedKeyStart) * seqStride
+                        : Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
                 if (windowNarrowed || (rowId >= minValue && rowId <= maxValue)) {
                     setEmittedRow(coverOrdinalBase + i);
                     next = rowId;
@@ -291,7 +302,9 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 }
                 while (rowInGroup < groupRows) {
                     final long i = rowInGroup++;
-                    final long rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                    final long rowId = seqMode
+                        ? seqStart + (coverOrdinalBase + i - packedKeyStart) * seqStride
+                        : Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
                     // seekFirstAtLeast/seekFirstAbove cut the range to exactly
                     // the rows inside the window, so when they ran every row
                     // left is emitted and the bounds test below is a tautology.
@@ -329,12 +342,19 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          * {@link PostingIndexUtils#PACKED_BATCH_SIZE} values at a time, so the
          * widen and the walk fuse into one pass over data that stays in cache.
          */
+        /** Ceiling division for positive divisors, used by the closed-form seek. */
+        private static long ceilDiv(long a, long b) {
+            return -Math.floorDiv(-a, b);
+        }
+
         private boolean refillPackedBatch() {
             if (packedNext >= packedEnd) {
                 return false;
             }
             final int batch = (int) Math.min(packedEnd - packedNext, packedBatch);
-            rowIdPtr = unpackRowIds(rg, key, (int) packedNext, batch);
+            if (!seqMode) {
+                rowIdPtr = unpackRowIds(rg, key, (int) packedNext, batch);
+            }
             // The widened batch has its own indices; covered values are addressed
             // by the GROUP ordinal, so record where this batch starts.
             // packedNext is KEY-RELATIVE; emittedRow must stay a GROUP ordinal
@@ -458,6 +478,15 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                                 .put(", column=").put(columnName).put(']');
                     }
                     final long runLen = rowHi - rowLo;
+                    // A stride of zero would mean repeated row ids, which a key
+                    // never has, so the closed form is only taken when it is
+                    // genuinely a progression.
+                    seqMode = CoveringCompressor.isArithmeticBlock(block)
+                            && CoveringCompressor.arithmeticStride(block) > 0;
+                    if (seqMode) {
+                        seqStart = CoveringCompressor.arithmeticStart(block);
+                        seqStride = CoveringCompressor.arithmeticStride(block);
+                    }
                     // A window that already contains the whole group needs no
                     // search: every row of the key's run is inside it. The seeks
                     // are two binary searches per key, and an unbounded scan --
@@ -468,6 +497,13 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     if (isWholeGroupInRange(rg, minValue, maxValue)) {
                         from = 0;
                         to = runLen;
+                    } else if (seqMode) {
+                        // Solved rather than searched: the first index at or
+                        // above minValue is ceil((minValue - start) / stride).
+                        from = Math.max(0, Math.min(runLen,
+                                ceilDiv(minValue - seqStart, seqStride)));
+                        to = Math.max(from, Math.min(runLen,
+                                Math.floorDiv(maxValue - seqStart, seqStride) + 1));
                     } else {
                         from = packedSeekFirstAtLeast(block, 0, runLen, minValue);
                         to = packedSeekFirstAbove(block, from, runLen, maxValue);

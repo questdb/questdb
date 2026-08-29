@@ -773,6 +773,36 @@ public class CoveringCompressor {
      * Reads in place: no workspace, because the residuals are widened straight
      * into the destination and the linear-prediction term is added over it.
      */
+    /**
+     * True when {@code srcAddr}'s block encodes an exact arithmetic progression:
+     * linear prediction with every residual zero.
+     * <p>
+     * Such a block needs no decoding at all -- value {@code i} is
+     * {@link #arithmeticStart} + {@code i} * {@link #arithmeticStride} -- so a
+     * cursor can generate its values with a multiply-add and touch no memory.
+     * That is what the native chain's constant-delta path does, and why it reads
+     * ZERO bytes per row on evenly spaced postings.
+     * <p>
+     * It is the common case for row ids: residuals are zero whenever a key's
+     * postings are evenly spaced, which is what per-key linear prediction was
+     * chosen to exploit.
+     */
+    public static boolean isArithmeticBlock(long srcAddr) {
+        final int rawBw = Unsafe.getByte(srcAddr + 4) & 0xFF;
+        return (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG && (rawBw & BW_MASK_6BIT) == 0;
+    }
+
+    /** First value of an {@link #isArithmeticBlock} block. */
+    public static long arithmeticStart(long srcAddr) {
+        // forBase at +5, firstValue at +13 -- the residual every value carries.
+        return Unsafe.getLong(srcAddr + 13) + Unsafe.getLong(srcAddr + 5);
+    }
+
+    /** Common difference of an {@link #isArithmeticBlock} block. */
+    public static long arithmeticStride(long srcAddr) {
+        return Unsafe.getLong(srcAddr + 21);
+    }
+
     public static void readLongsInto(long srcAddr, int from, int count, long destAddr) {
         long pos = srcAddr;
         final int total = Unsafe.getInt(pos);
@@ -794,13 +824,28 @@ public class CoveringCompressor {
             stride = Unsafe.getLong(pos);
             pos += 8;
         }
-        if (bw > 0) {
-            BitpackUtils.unpackValuesFrom(pos, from, count, bw, forBase, destAddr);
-        } else {
-            for (int i = 0; i < count; i++) {
-                Unsafe.putLong(destAddr + (long) i * Long.BYTES, forBase);
+        if (bw == 0) {
+            // Every residual is the same, so the values are an arithmetic
+            // progression and one pass computes them outright. Filling with
+            // forBase and then re-reading each element to add the prediction is
+            // two passes over the buffer for a sequence that needs none -- and
+            // this is the COMMON case for row ids, whose residuals are zero
+            // whenever a key's postings are evenly spaced. A forked profile,
+            // scoped to the measurement iterations, put that second pass at 28%
+            // of a packed scan.
+            final long start = firstValue + forBase;
+            if (isLinearPred) {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.putLong(destAddr + (long) i * Long.BYTES, start + (long) (from + i) * stride);
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.putLong(destAddr + (long) i * Long.BYTES, forBase);
+                }
             }
+            return;
         }
+        BitpackUtils.unpackValuesFrom(pos, from, count, bw, forBase, destAddr);
         if (isLinearPred) {
             for (int i = 0; i < count; i++) {
                 final long at = destAddr + (long) i * Long.BYTES;

@@ -185,6 +185,30 @@ public class PostingIndexBenchmarkSuite {
                     builder.param(param, values.split(","));
                 }
             }
+            // -Dquestdb.suite.bench.prof=jfr attaches a JMH PROFILER, which is
+            // not the same thing as profiling the launcher.
+            //
+            // JMH injects the profiler into the FORKED JVM and scopes its
+            // recording to the measurement iterations, so the samples are the
+            // benchmark and nothing else. Profiling via forks=0 and an
+            // -XX:StartFlightRecording on the launcher instead records the whole
+            // process -- including fixture setup, which builds and seals a
+            // multi-million-posting index and drains cursors to verify it. Two
+            // changes on this branch were made off profiles polluted that way:
+            // one put realloc at 21% of a scan when fixing it moved a single
+            // cell, and one attributed 10% to a window seek that measured flat
+            // when removed.
+            //
+            // Options pass through after a colon, e.g. prof=jfr:dir=/tmp/jfr
+            final String prof = System.getProperty("questdb.suite.bench.prof");
+            if (prof != null) {
+                final int colon = prof.indexOf(':');
+                if (colon < 0) {
+                    builder.addProfiler(prof);
+                } else {
+                    builder.addProfiler(prof.substring(0, colon), prof.substring(colon + 1));
+                }
+            }
             if ("wal_o3".equals(filter) || "wal_o3_append".equals(filter) || "wal_o3_spill".equals(filter)) {
                 // Same exports as the branch below. This branch forked already,
                 // so it needed them just as much; the two only differ in
