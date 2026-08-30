@@ -138,11 +138,11 @@ public class FirstNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunctio
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcVal = srcValue.getDouble(valueIndex + 1);
-        if (!Numbers.isNull(srcVal)) {
+        if (isArgNotNull || !Numbers.isNull(srcVal)) {
             long srcRowId = srcValue.getLong(valueIndex);
             long destRowId = destValue.getLong(valueIndex);
             // srcRowId is non-null at this point since we know that the value is non-null
-            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || Numbers.isNull(destValue.getDouble(valueIndex + 1))) {
+            if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || (!isArgNotNull && Numbers.isNull(destValue.getDouble(valueIndex + 1)))) {
                 destValue.putLong(valueIndex, srcRowId);
                 destValue.putDouble(valueIndex + 1, srcVal);
             }

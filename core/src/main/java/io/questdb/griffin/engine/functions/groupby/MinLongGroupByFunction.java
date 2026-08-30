@@ -92,7 +92,9 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
                 if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.LONG_NULL)) {
+                        Unsafe.putLong(addr, value);
+                    }
                 }
             }
         } else {
@@ -103,7 +105,9 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
                 if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.LONG_NULL)) {
+                        Unsafe.putLong(addr, value);
+                    }
                 }
             }
         }
@@ -111,7 +115,11 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        mapValue.minLong(valueIndex, arg.getLong(record));
+        final long current = mapValue.getLong(valueIndex);
+        final long value = arg.getLong(record);
+        if (value < current || (!isArgNotNull && current == Numbers.LONG_NULL)) {
+            mapValue.putLong(valueIndex, value);
+        }
     }
 
     @Override
@@ -164,7 +172,8 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMin = srcValue.getLong(valueIndex);
         long destMin = destValue.getLong(valueIndex);
-        if (srcMin != Numbers.LONG_NULL && (srcMin < destMin || destMin == Numbers.LONG_NULL)) {
+        if ((isArgNotNull || srcMin != Numbers.LONG_NULL)
+                && (srcMin < destMin || (!isArgNotNull && destMin == Numbers.LONG_NULL))) {
             destValue.putLong(valueIndex, srcMin);
         }
     }

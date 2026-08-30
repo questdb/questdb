@@ -135,13 +135,13 @@ public class FirstNotNullLongGroupByFunction extends FirstLongGroupByFunction {
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcVal = srcValue.getLong(valueIndex + 1);
-        if (srcVal == Numbers.LONG_NULL) {
+        if (!isArgNotNull && srcVal == Numbers.LONG_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getLong(valueIndex + 1) == Numbers.LONG_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || (!isArgNotNull && destValue.getLong(valueIndex + 1) == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcVal);
         }

@@ -137,13 +137,13 @@ public class FirstNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcVal = srcValue.getInt(valueIndex + 1);
-        if (srcVal == Numbers.INT_NULL) {
+        if (!isArgNotNull && srcVal == Numbers.INT_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
         // srcRowId is non-null at this point since we know that the value is non-null
-        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || destValue.getInt(valueIndex + 1) == Numbers.INT_NULL) {
+        if (srcRowId < destRowId || destRowId == Numbers.LONG_NULL || (!isArgNotNull && destValue.getInt(valueIndex + 1) == Numbers.INT_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putInt(valueIndex + 1, srcVal);
         }

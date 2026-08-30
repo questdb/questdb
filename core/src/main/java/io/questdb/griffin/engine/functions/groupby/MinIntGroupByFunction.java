@@ -92,7 +92,9 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.INT_NULL)) {
+                        Unsafe.putInt(addr, value);
+                    }
                 }
             }
         } else {
@@ -103,7 +105,9 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
                 if (isArgNotNull || value != Numbers.INT_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final int current = Unsafe.getInt(addr);
-                    Unsafe.putInt(addr, current != Numbers.INT_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.INT_NULL)) {
+                        Unsafe.putInt(addr, value);
+                    }
                 }
             }
         }
@@ -111,7 +115,11 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        mapValue.minInt(valueIndex, arg.getInt(record));
+        final int current = mapValue.getInt(valueIndex);
+        final int value = arg.getInt(record);
+        if (value < current || (!isArgNotNull && current == Numbers.INT_NULL)) {
+            mapValue.putInt(valueIndex, value);
+        }
     }
 
     @Override
@@ -164,7 +172,8 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcMin = srcValue.getInt(valueIndex);
         int destMin = destValue.getInt(valueIndex);
-        if (srcMin != Numbers.INT_NULL && (srcMin < destMin || destMin == Numbers.INT_NULL)) {
+        if ((isArgNotNull || srcMin != Numbers.INT_NULL)
+                && (srcMin < destMin || (!isArgNotNull && destMin == Numbers.INT_NULL))) {
             destValue.putInt(valueIndex, srcMin);
         }
     }

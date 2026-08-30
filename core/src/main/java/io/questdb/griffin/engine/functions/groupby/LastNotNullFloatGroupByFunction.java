@@ -50,7 +50,7 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
                 if (isArgNotNull || !Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getFloat(valueIndex + 1))) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && Numbers.isNull(mapValue.getFloat(valueIndex + 1)))) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putFloat(valueIndex + 1, value);
                     }
@@ -141,7 +141,7 @@ public class LastNotNullFloatGroupByFunction extends FirstFloatGroupByFunction {
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId || Numbers.isNull(destValue.getFloat(valueIndex + 1))) {
+        if (srcRowId > destRowId || (!isArgNotNull && Numbers.isNull(destValue.getFloat(valueIndex + 1)))) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putFloat(valueIndex + 1, srcVal);
         }

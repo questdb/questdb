@@ -49,7 +49,7 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
                 if (isArgNotNull || value != Numbers.INT_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && mapValue.getInt(valueIndex + 1) == Numbers.INT_NULL)) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putInt(valueIndex + 1, value);
                     }
@@ -135,12 +135,12 @@ public class LastNotNullIntGroupByFunction extends FirstIntGroupByFunction {
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         int srcVal = srcValue.getInt(valueIndex + 1);
-        if (srcVal == Numbers.INT_NULL) {
+        if (!isArgNotNull && srcVal == Numbers.INT_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId || destValue.getInt(valueIndex + 1) == Numbers.INT_NULL) {
+        if (srcRowId > destRowId || (!isArgNotNull && destValue.getInt(valueIndex + 1) == Numbers.INT_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putInt(valueIndex + 1, srcVal);
         }

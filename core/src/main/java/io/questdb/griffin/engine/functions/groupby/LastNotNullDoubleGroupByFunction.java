@@ -50,7 +50,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
                 if (isArgNotNull || !Numbers.isNull(value)) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || Numbers.isNull(mapValue.getDouble(valueIndex + 1))) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && Numbers.isNull(mapValue.getDouble(valueIndex + 1)))) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putDouble(valueIndex + 1, value);
                     }
@@ -141,7 +141,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId || Numbers.isNull(destValue.getDouble(valueIndex + 1))) {
+        if (srcRowId > destRowId || (!isArgNotNull && Numbers.isNull(destValue.getDouble(valueIndex + 1)))) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putDouble(valueIndex + 1, srcVal);
         }

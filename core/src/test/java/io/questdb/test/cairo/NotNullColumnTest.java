@@ -1583,6 +1583,67 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelAggregatesKeepNotNullSentinels() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 2);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (i INT NOT NULL, l LONG NOT NULL, f FLOAT NOT NULL, d DOUBLE NOT NULL, k SYMBOL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        (NULL, NULL, NULL, NULL, 'a', '2024-01-01'),
+                        (2, 2, 2, 2, 'a', '2024-01-02'),
+                        (3, 3, 3, 3, 'a', '2024-01-03'),
+                        (4, 4, 4, 4, 'b', '2024-01-04'),
+                        (5, 5, 5, 5, 'b', '2024-01-05'),
+                        (NULL, NULL, NULL, NULL, 'b', '2024-01-06')
+                    """);
+
+            assertSql(
+                    """
+                            k	count_distinct	sum	avg	min	max
+                            a	3	-2147483643	-7.15827881E8	-2147483648	3
+                            b	3	-2147483639	-7.158278796666666E8	-2147483648	5
+                            """,
+                    "SELECT k, count_distinct(i), sum(i), avg(i), min(i), max(i) FROM t GROUP BY k ORDER BY k"
+            );
+            assertSql(
+                    """
+                            k	count_distinct	sum	min	max
+                            a	3	-9223372036854775803	-9223372036854775808	3
+                            b	3	-9223372036854775799	-9223372036854775808	5
+                            """,
+                    "SELECT k, count_distinct(l), sum(l), min(l), max(l) FROM t GROUP BY k ORDER BY k"
+            );
+            assertSql(
+                    """
+                            k	avg_includes_sentinel
+                            a	true
+                            b	true
+                            """,
+                    "SELECT k, avg(l) < -3.0E18 avg_includes_sentinel FROM t GROUP BY k ORDER BY k"
+            );
+            assertSql(
+                    """
+                            a_first_i	a_first_l	a_first_f	a_first_d	b_last_i	b_last_l	b_last_f	b_last_d
+                            true	true	true	true	true	true	true	true
+                            """,
+                    """
+                            SELECT
+                                first_not_null(i) != 2 a_first_i,
+                                first_not_null(l) != 2 a_first_l,
+                                first_not_null(f) != 2 a_first_f,
+                                first_not_null(d) != 2 a_first_d,
+                                last_not_null(i) != 5 b_last_i,
+                                last_not_null(l) != 5 b_last_l,
+                                last_not_null(f) != 5 b_last_f,
+                                last_not_null(d) != 5 b_last_d
+                            FROM t
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testFirstLastNotNullOnNotNullColumnReturnsSentinel() throws Exception {
         assertMemoryLeak(() -> {
             // first_not_null / last_not_null on a NOT NULL column must return
