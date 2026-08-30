@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http;
 
 import io.questdb.FactoryProvider;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.network.IODispatcherConfiguration;
 import io.questdb.std.ObjHashSet;
@@ -54,6 +55,16 @@ public interface HttpServerConfiguration extends IODispatcherConfiguration, Work
     HttpContextConfiguration getHttpContextConfiguration();
 
     byte getRequiredAuthType();
+
+    /**
+     * Identifies which listener a security context is being created for, so that the ACL can
+     * apply the right endpoint permission. The min HTTP server overrides this: it serves only
+     * the metrics and health-check endpoints, which carry their own permissions, and must not
+     * imply {@code HTTP} — that would also grant the REST API and Web Console on the main port.
+     */
+    default byte getSecurityContextInterfaceId() {
+        return SecurityContextFactory.HTTP;
+    }
 
     WaitProcessorConfiguration getWaitProcessorConfiguration();
 

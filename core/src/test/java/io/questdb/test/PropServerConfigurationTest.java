@@ -36,6 +36,7 @@ import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SampleBySortStrategy;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -109,6 +110,21 @@ public class PropServerConfigurationTest {
         File root = new File(temp.getRoot(), "root");
         TestUtils.copyMimeTypes(root.getAbsolutePath());
         PropServerConfigurationTest.root = root.getAbsolutePath();
+    }
+
+    @Test
+    public void testSecurityContextInterfaceIdDiffersBetweenMainAndMinServers() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertEquals(
+                SecurityContextFactory.HTTP,
+                configuration.getHttpServerConfiguration().getSecurityContextInterfaceId()
+        );
+        // the min server must not imply Permission.HTTP: its endpoints carry their own permissions
+        Assert.assertEquals(
+                SecurityContextFactory.HTTP_MIN,
+                configuration.getHttpMinServerConfiguration().getSecurityContextInterfaceId()
+        );
     }
 
     @Test

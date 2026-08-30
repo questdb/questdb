@@ -606,7 +606,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             // auth successful, create security context from auth info
             final SecurityContextFactory scf = configuration.getFactoryProvider().getSecurityContextFactory();
-            securityContext = scf.getInstance(principalContext, SecurityContextFactory.HTTP);
+            securityContext = scf.getInstance(principalContext, configuration.getSecurityContextInterfaceId());
 
             if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
                 // the client can request a session by sending 'session=true',
