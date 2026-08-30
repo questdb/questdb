@@ -69,100 +69,102 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
     private static final long CACHE_NOT_PRESENT = -1L;
 
     @Test
-    public void testRankedEfClippedOrdinalsAndLegacyCompatibility() {
-        final int count = 4_096;
-        final long srcSize = (long) count * Long.BYTES;
-        final long maxEncodedSize = PostingIndexUtils.computeMaxEncodedSize(count);
-        final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-        final long encoded = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
-        final long legacy = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
-        try (PostingIndexUtils.EncodeContext context = new PostingIndexUtils.EncodeContext()) {
-            long value = 0;
-            for (int i = 0; i < count; i++) {
-                value += 17 + (i & 31);
-                Unsafe.putLong(src + (long) i * Long.BYTES, value);
-            }
-            context.ensureCapacity(count);
-            final int encodedSize = PostingIndexUtils.encodeKeyNative(
-                    src,
-                    count,
-                    encoded,
-                    context,
-                    PostingIndexUtils.ENCODING_EF
-            );
-            final int legacySize = PostingIndexUtils.efPrefixSize(encoded);
-            assertTrue("ranked EF must append metadata after the legacy prefix", encodedSize > legacySize);
-            assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
-
-            // An old decoder stops at the self-sized EF prefix and ignores the trailer.
-            final long[] decoded = new long[count];
-            PostingIndexUtils.decodeKeyEF(encoded, decoded);
-            for (int i = 0; i < count; i++) {
-                assertEquals(Unsafe.getLong(src + (long) i * Long.BYTES), decoded[i]);
-            }
-
-            assertEquals(0, PostingIndexUtils.efLowerBound(encoded, encodedSize, 0));
-            for (int targetIndex = 0; targetIndex < count; targetIndex++) {
-                final long target = Unsafe.getLong(src + (long) targetIndex * Long.BYTES);
-                assertEquals(targetIndex, PostingIndexUtils.efLowerBound(encoded, encodedSize, target));
-                assertEquals(target, PostingIndexUtils.efSelectRanked(encoded, encodedSize, targetIndex));
-                if (target < Long.MAX_VALUE) {
-                    assertEquals(targetIndex + 1, PostingIndexUtils.efLowerBound(encoded, encodedSize, target + 1));
+    public void testRankedEfClippedOrdinalsAndLegacyCompatibility() throws Exception {
+        assertMemoryLeak(() -> {
+            final int count = 4_096;
+            final long srcSize = (long) count * Long.BYTES;
+            final long maxEncodedSize = PostingIndexUtils.computeMaxEncodedSize(count);
+            final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+            final long encoded = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+            final long legacy = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext context = new PostingIndexUtils.EncodeContext()) {
+                long value = 0;
+                for (int i = 0; i < count; i++) {
+                    value += 17 + (i & 31);
+                    Unsafe.putLong(src + (long) i * Long.BYTES, value);
                 }
+                context.ensureCapacity(count);
+                final int encodedSize = PostingIndexUtils.encodeKeyNative(
+                        src,
+                        count,
+                        encoded,
+                        context,
+                        PostingIndexUtils.ENCODING_EF
+                );
+                final int legacySize = PostingIndexUtils.efPrefixSize(encoded);
+                assertTrue("ranked EF must append metadata after the legacy prefix", encodedSize > legacySize);
+                assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
+
+                // An old decoder stops at the self-sized EF prefix and ignores the trailer.
+                final long[] decoded = new long[count];
+                PostingIndexUtils.decodeKeyEF(encoded, decoded);
+                for (int i = 0; i < count; i++) {
+                    assertEquals(Unsafe.getLong(src + (long) i * Long.BYTES), decoded[i]);
+                }
+
+                assertEquals(0, PostingIndexUtils.efLowerBound(encoded, encodedSize, 0));
+                for (int targetIndex = 0; targetIndex < count; targetIndex++) {
+                    final long target = Unsafe.getLong(src + (long) targetIndex * Long.BYTES);
+                    assertEquals(targetIndex, PostingIndexUtils.efLowerBound(encoded, encodedSize, target));
+                    assertEquals(target, PostingIndexUtils.efSelectRanked(encoded, encodedSize, targetIndex));
+                    if (target < Long.MAX_VALUE) {
+                        assertEquals(targetIndex + 1, PostingIndexUtils.efLowerBound(encoded, encodedSize, target + 1));
+                    }
+                }
+                assertEquals(count, PostingIndexUtils.efLowerBound(encoded, encodedSize, Long.MAX_VALUE));
+
+                // New code keeps old unranked EF readable, but declines bounded rank/select.
+                Unsafe.copyMemory(encoded, legacy, legacySize);
+                assertFalse(PostingIndexUtils.hasEfRankTrailer(legacy, legacySize));
+                assertEquals(-1, PostingIndexUtils.efLowerBound(legacy, legacySize, decoded[count / 2]));
+                assertEquals(Numbers.LONG_NULL, PostingIndexUtils.efSelectRanked(legacy, legacySize, count / 2));
+                final long[] legacyDecoded = new long[count];
+                PostingIndexUtils.decodeKeyEF(legacy, legacyDecoded);
+                assertArrayEquals(decoded, legacyDecoded);
+
+                // A clipped/truncated or malformed trailer never becomes partially trusted.
+                assertFalse(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize - 1));
+                assertEquals(-1, PostingIndexUtils.efLowerBound(encoded, encodedSize - 1, decoded[count / 2]));
+                final int trailerMagic = Unsafe.getInt(encoded + legacySize);
+                Unsafe.putInt(encoded + legacySize, trailerMagic ^ 1);
+                assertFalse(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
+                assertEquals(Numbers.LONG_NULL,
+                        PostingIndexUtils.efSelectRanked(encoded, encodedSize, count / 2));
+                Unsafe.putInt(encoded + legacySize, trailerMagic);
+                assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
+
+                // Header, extent, endpoint ranks, and the local difference between the final two
+                // interior checkpoints all survive this paired mutation. Every ranked consumer must
+                // still reject the later checkpoint
+                // independently before using its corrupt absolute ordinal for high/low-bit addressing.
+                final long trailer = encoded + legacySize;
+                final long checkpoints = trailer + 16;
+                final int checkpointCount = Unsafe.getInt(trailer + 12);
+                final int laterCheckpoint = checkpointCount - 2;
+                final int firstCheckpoint = laterCheckpoint - 1;
+                final int checkpointEntrySize = 2 * Integer.BYTES;
+                final long firstCheckpointAddress = checkpoints + (long) firstCheckpoint * checkpointEntrySize;
+                final long laterCheckpointAddress = checkpoints + (long) laterCheckpoint * checkpointEntrySize;
+                final int firstCheckpointRank = Unsafe.getInt(firstCheckpointAddress);
+                final int laterCheckpointRank = Unsafe.getInt(laterCheckpointAddress);
+                assertTrue("fixture must have adjacent interior checkpoints",
+                        firstCheckpointRank > 0 && laterCheckpointRank > firstCheckpointRank && laterCheckpointRank < count);
+                Unsafe.putInt(firstCheckpointAddress, firstCheckpointRank + 1);
+                Unsafe.putInt(laterCheckpointAddress, laterCheckpointRank + 1);
+                assertEquals(-1, PostingIndexUtils.efRankBeforeHighWord(encoded, encodedSize, laterCheckpoint * 8));
+                assertEquals(Numbers.LONG_NULL,
+                        PostingIndexUtils.efSelectRanked(encoded, encodedSize, laterCheckpointRank));
+                assertEquals(-1,
+                        PostingIndexUtils.efLowerBound(encoded, encodedSize, Unsafe.getLong(src + (long) laterCheckpointRank * Long.BYTES)));
+                Unsafe.putInt(firstCheckpointAddress, firstCheckpointRank);
+                Unsafe.putInt(laterCheckpointAddress, laterCheckpointRank);
+                assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
+            } finally {
+                Unsafe.free(legacy, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(encoded, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
             }
-            assertEquals(count, PostingIndexUtils.efLowerBound(encoded, encodedSize, Long.MAX_VALUE));
-
-            // New code keeps old unranked EF readable, but declines bounded rank/select.
-            Unsafe.copyMemory(encoded, legacy, legacySize);
-            assertFalse(PostingIndexUtils.hasEfRankTrailer(legacy, legacySize));
-            assertEquals(-1, PostingIndexUtils.efLowerBound(legacy, legacySize, decoded[count / 2]));
-            assertEquals(Numbers.LONG_NULL, PostingIndexUtils.efSelectRanked(legacy, legacySize, count / 2));
-            final long[] legacyDecoded = new long[count];
-            PostingIndexUtils.decodeKeyEF(legacy, legacyDecoded);
-            assertArrayEquals(decoded, legacyDecoded);
-
-            // A clipped/truncated or malformed trailer never becomes partially trusted.
-            assertFalse(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize - 1));
-            assertEquals(-1, PostingIndexUtils.efLowerBound(encoded, encodedSize - 1, decoded[count / 2]));
-            final int trailerMagic = Unsafe.getInt(encoded + legacySize);
-            Unsafe.putInt(encoded + legacySize, trailerMagic ^ 1);
-            assertFalse(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
-            assertEquals(Numbers.LONG_NULL,
-                    PostingIndexUtils.efSelectRanked(encoded, encodedSize, count / 2));
-            Unsafe.putInt(encoded + legacySize, trailerMagic);
-            assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
-
-            // Header, extent, endpoint ranks, and the local difference between the final two
-            // interior checkpoints all survive this paired mutation. Every ranked consumer must
-            // still reject the later checkpoint
-            // independently before using its corrupt absolute ordinal for high/low-bit addressing.
-            final long trailer = encoded + legacySize;
-            final long checkpoints = trailer + 16;
-            final int checkpointCount = Unsafe.getInt(trailer + 12);
-            final int laterCheckpoint = checkpointCount - 2;
-            final int firstCheckpoint = laterCheckpoint - 1;
-            final int checkpointEntrySize = 2 * Integer.BYTES;
-            final long firstCheckpointAddress = checkpoints + (long) firstCheckpoint * checkpointEntrySize;
-            final long laterCheckpointAddress = checkpoints + (long) laterCheckpoint * checkpointEntrySize;
-            final int firstCheckpointRank = Unsafe.getInt(firstCheckpointAddress);
-            final int laterCheckpointRank = Unsafe.getInt(laterCheckpointAddress);
-            assertTrue("fixture must have adjacent interior checkpoints",
-                    firstCheckpointRank > 0 && laterCheckpointRank > firstCheckpointRank && laterCheckpointRank < count);
-            Unsafe.putInt(firstCheckpointAddress, firstCheckpointRank + 1);
-            Unsafe.putInt(laterCheckpointAddress, laterCheckpointRank + 1);
-            assertEquals(-1, PostingIndexUtils.efRankBeforeHighWord(encoded, encodedSize, laterCheckpoint * 8));
-            assertEquals(Numbers.LONG_NULL,
-                    PostingIndexUtils.efSelectRanked(encoded, encodedSize, laterCheckpointRank));
-            assertEquals(-1,
-                    PostingIndexUtils.efLowerBound(encoded, encodedSize, Unsafe.getLong(src + (long) laterCheckpointRank * Long.BYTES)));
-            Unsafe.putInt(firstCheckpointAddress, firstCheckpointRank);
-            Unsafe.putInt(laterCheckpointAddress, laterCheckpointRank);
-            assertTrue(PostingIndexUtils.hasEfRankTrailer(encoded, encodedSize));
-        } finally {
-            Unsafe.free(legacy, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(encoded, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
-        }
+        });
     }
 
     @Test
@@ -580,48 +582,85 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
      */
     @Test
     public void testDeltaTailSelectDoesNotReadPrecedingBlockCounts() throws Exception {
-        final int count = 4_096;
-        final long srcSize = (long) count * Long.BYTES;
-        final long maxEncodedSize = PostingIndexUtils.computeMaxEncodedSize(count);
-        final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
-        final long encoded = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
-        try (PostingIndexUtils.EncodeContext context = new PostingIndexUtils.EncodeContext()) {
-            long value = 0;
-            for (int i = 0; i < count; i++) {
-                value += 3 + (i & 7);
-                Unsafe.putLong(src + (long) i * Long.BYTES, value);
+        assertMemoryLeak(() -> {
+            final int count = 4_096;
+            final long srcSize = (long) count * Long.BYTES;
+            final long maxEncodedSize = PostingIndexUtils.computeMaxEncodedSize(count);
+            final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+            final long encoded = Unsafe.malloc(maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+            try (PostingIndexUtils.EncodeContext context = new PostingIndexUtils.EncodeContext()) {
+                long value = 0;
+                for (int i = 0; i < count; i++) {
+                    value += 3 + (i & 7);
+                    Unsafe.putLong(src + (long) i * Long.BYTES, value);
+                }
+                context.ensureCapacity(count);
+                PostingIndexUtils.encodeKeyNative(
+                        src,
+                        count,
+                        encoded,
+                        context,
+                        PostingIndexUtils.ENCODING_DELTA
+                );
+                final int blockCount = Unsafe.getInt(encoded);
+                assertTrue(blockCount > 2);
+
+                final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) Unsafe.getUnsafe()
+                        .allocateInstance(PostingIndexFwdReader.class);
+                final Method select = AbstractPostingIndexReader.class.getDeclaredMethod(
+                        "selectFromDeltaBlob", long.class, long.class, int.class, int.class);
+                select.setAccessible(true);
+                final long expected = Unsafe.getLong(src + (long) (count - 1) * Long.BYTES);
+                assertEquals(expected, ((Number) select.invoke(reader, 0L, encoded, blockCount, count - 1)).longValue());
+
+                // Every non-final block has fixed capacity. Poisoning an early count byte exposes an
+                // ordinal selector that linearly accumulates preceding counts; a bounded selector derives
+                // the tail block directly and therefore never consumes this byte.
+                final long firstBlockCountAddress = encoded + Integer.BYTES;
+                final byte firstBlockCount = Unsafe.getByte(firstBlockCountAddress);
+                Unsafe.putByte(firstBlockCountAddress, (byte) (PostingIndexUtils.BLOCK_CAPACITY - 1));
+                assertEquals(expected, ((Number) select.invoke(reader, 0L, encoded, blockCount, count - 1)).longValue());
+                Unsafe.putByte(firstBlockCountAddress, firstBlockCount);
+            } finally {
+                Unsafe.free(encoded, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
             }
-            context.ensureCapacity(count);
-            PostingIndexUtils.encodeKeyNative(
-                    src,
-                    count,
-                    encoded,
-                    context,
-                    PostingIndexUtils.ENCODING_DELTA
-            );
-            final int blockCount = Unsafe.getInt(encoded);
-            assertTrue(blockCount > 2);
+        });
+    }
 
-            final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) Unsafe.getUnsafe()
-                    .allocateInstance(PostingIndexFwdReader.class);
-            final Method select = AbstractPostingIndexReader.class.getDeclaredMethod(
-                    "selectFromDeltaBlob", long.class, long.class, int.class, int.class);
-            select.setAccessible(true);
-            final long expected = Unsafe.getLong(src + (long) (count - 1) * Long.BYTES);
-            assertEquals(expected, ((Number) select.invoke(reader, 0L, encoded, blockCount, count - 1)).longValue());
+    @Test
+    public void testDeltaLowerBoundWithVariableDeltas() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "delta_lower_bound";
+                final int pathLen = path.size();
+                final int count = 2 * PostingIndexUtils.BLOCK_CAPACITY;
+                final long[] values = new long[count];
+                long value = 0;
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, PostingIndexUtils.ENCODING_DELTA)) {
+                    writer.of(path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, true);
+                    for (int i = 0; i < count; i++) {
+                        value += 3 + (i & 7);
+                        values[i] = value;
+                        writer.add(0, value);
+                    }
+                    writer.setMaxValue(value);
+                    writer.commit();
+                }
 
-            // Every non-final block has fixed capacity. Poisoning an early count byte exposes an
-            // ordinal selector that linearly accumulates preceding counts; a bounded selector derives
-            // the tail block directly and therefore never consumes this byte.
-            final long firstBlockCountAddress = encoded + Integer.BYTES;
-            final byte firstBlockCount = Unsafe.getByte(firstBlockCountAddress);
-            Unsafe.putByte(firstBlockCountAddress, (byte) (PostingIndexUtils.BLOCK_CAPACITY - 1));
-            assertEquals(expected, ((Number) select.invoke(reader, 0L, encoded, blockCount, count - 1)).longValue());
-            Unsafe.putByte(firstBlockCountAddress, firstBlockCount);
-        } finally {
-            Unsafe.free(encoded, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);
-            Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
-        }
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
+                    reader.reloadConditionally();
+                    for (int i = 0; i < count; i++) {
+                        assertEquals(count - i,
+                                reader.countMatchesClamped(0, values[i], values[count - 1], values[count - 1]));
+                        assertEquals(count - i - 1,
+                                reader.countMatchesClamped(0, values[i] + 1, values[count - 1], values[count - 1]));
+                    }
+                }
+            }
+        });
     }
 
     @Test

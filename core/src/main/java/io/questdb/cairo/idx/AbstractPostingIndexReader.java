@@ -1771,10 +1771,32 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         final int block = lo;
         final int blockStart = block * PostingIndexUtils.BLOCK_CAPACITY;
         final int blockValueCount = Unsafe.getByte(baseAddr + valueCountsOffset + block) & 0xFF;
+        final long minDeltasOffset = firstValuesOffset + (long) blockCount * Long.BYTES;
+        final long bitWidthsOffset = minDeltasOffset + (long) blockCount * Long.BYTES;
+        final long packedOffsetsOffset = bitWidthsOffset + blockCount;
+        final long packedDataStartOffset = blockCount > 1
+                ? packedOffsetsOffset + (long) blockCount * Long.BYTES
+                : bitWidthsOffset + blockCount;
+        final long minDelta = Unsafe.getLong(baseAddr + minDeltasOffset + (long) block * Long.BYTES);
+        final int bitWidth = Unsafe.getByte(baseAddr + bitWidthsOffset + block) & 0xFF;
+        final long packedDataAddr;
+        if (bitWidth > 0) {
+            final long packedOffset = block > 0
+                    ? Unsafe.getLong(baseAddr + packedOffsetsOffset + (long) block * Long.BYTES)
+                    : 0;
+            packedDataAddr = baseAddr + packedDataStartOffset + packedOffset;
+        } else {
+            packedDataAddr = 0;
+        }
+        long value = Unsafe.getLong(baseAddr + firstValuesOffset + (long) block * Long.BYTES);
         int within = 0;
-        while (within < blockValueCount
-                && selectFromDeltaBlock(encodedOffset, baseAddr, blockCount, block, within) < target) {
+        while (within < blockValueCount && value < target) {
             within++;
+            if (within < blockValueCount) {
+                value += bitWidth == 0
+                        ? minDelta
+                        : BitpackUtils.unpackValue(packedDataAddr, within - 1, bitWidth, minDelta);
+            }
         }
         return Math.min(count, blockStart + within);
     }
@@ -1870,41 +1892,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
         long encodedOffset = strideFileOffset + PostingIndexUtils.strideDeltaHeaderSize(ks) + dataOffset;
         return selectFromKeyBlob(encodedOffset, j);
-    }
-
-    private long selectFromDeltaBlock(
-            long encodedOffset,
-            long baseAddr,
-            int blockCount,
-            int block,
-            int indexInBlock
-    ) {
-        final long valueCountsOffset = encodedOffset + Integer.BYTES;
-        final long firstValuesOffset = valueCountsOffset + blockCount;
-        final long minDeltasOffset = firstValuesOffset + (long) blockCount * Long.BYTES;
-        final long bitWidthsOffset = minDeltasOffset + (long) blockCount * Long.BYTES;
-        final long packedOffsetsOffset = bitWidthsOffset + blockCount;
-        final long packedDataStartOffset = blockCount > 1
-                ? packedOffsetsOffset + (long) blockCount * Long.BYTES
-                : bitWidthsOffset + blockCount;
-        final long firstValue = Unsafe.getLong(baseAddr + firstValuesOffset + (long) block * Long.BYTES);
-        if (indexInBlock == 0) {
-            return firstValue;
-        }
-        final long minDelta = Unsafe.getLong(baseAddr + minDeltasOffset + (long) block * Long.BYTES);
-        final int bitWidth = Unsafe.getByte(baseAddr + bitWidthsOffset + block) & 0xFF;
-        if (bitWidth == 0) {
-            return firstValue + (long) indexInBlock * minDelta;
-        }
-        final long packedOffset = block > 0
-                ? Unsafe.getLong(baseAddr + packedOffsetsOffset + (long) block * Long.BYTES)
-                : 0;
-        final long packedDataAddr = baseAddr + packedDataStartOffset + packedOffset;
-        long value = firstValue;
-        for (int i = 0; i < indexInBlock; i++) {
-            value += BitpackUtils.unpackValue(packedDataAddr, i, bitWidth, minDelta);
-        }
-        return value;
     }
 
     /**

@@ -132,13 +132,16 @@ public class IntLongSortedListTest {
         // The heap now contains: {35, 30, 20, 50, 40}
         // Drain via pollValue — must be non-decreasing
         long prev = Long.MIN_VALUE;
+        int count = 0;
         while (heap.hasNext()) {
             long v = heap.pollValue();
             Assert.assertTrue("poll not ascending: prev=" + prev + " v=" + v, v >= prev);
             prev = v;
+            count++;
         }
 
-        // Verify we got all 4 remaining entries (20, 30, 35, 40, 50)
+        // Verify we got all 5 remaining entries (20, 30, 35, 40, 50)
+        Assert.assertEquals(5, count);
         Assert.assertEquals(0, heap.size());
     }
 

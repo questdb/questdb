@@ -225,12 +225,19 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
                 String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
+                    // Keep the escaped spelling for allocation-free exact hits, but invalidate only
+                    // when the normalized matcher source changes.
+                    lastPattern = p;
                     if (caseInsensitive) {
                         flags |= Pattern.CASE_INSENSITIVE;
                         p = p.toLowerCase();
+                        if (matcher != null && p.equals(matcher.pattern().pattern())) {
+                            p = null;
+                        }
                     }
-                    matcher = Pattern.compile(p, flags).matcher("");
-                    lastPattern = p;
+                    if (p != null) {
+                        matcher = Pattern.compile(p, flags).matcher("");
+                    }
                 }
 
                 final StaticSymbolTable symbolTable = value.getStaticSymbolTable();

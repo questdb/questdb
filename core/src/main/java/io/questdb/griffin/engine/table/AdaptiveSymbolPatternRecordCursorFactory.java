@@ -402,10 +402,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
      * <p>
      * Ownership of {@code dfcFactory} moves to {@link #sharedFrameFactory}, which the surviving base
      * still holds and still closes. The base keeps opening through that wrapper, so it keeps calling
-     * back into {@link #prepareKeysFor}: that is what rebuilds the stolen filter's matched-key set
+     * back into {@link #prepareKeysFor}: that method rebuilds the stolen filter's matched-key set
      * against the executing reader, since {@code PreparedSymbolPatternFilter.init()} deliberately
-     * leaves the provider alone. The half-closed factory therefore stays reachable as the wrapper's
-     * owner; only its delegates are gone.
+     * leaves the provider alone, but skips the effective-key list whose only consumers halfClose()
+     * frees. The half-closed factory therefore stays reachable as the wrapper's owner; only its
+     * delegates are gone.
      */
     @Override
     public void halfClose() {
@@ -546,8 +547,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         final PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, order);
         final boolean isSelective;
         try {
-            prepareKeysFor(frameCursor, executionContext);
-            isSelective = estimate(frameCursor);
+            isSelective = prepareKeysFor(frameCursor, executionContext, true) && estimate(frameCursor);
         } catch (Throwable th) {
             Misc.free(frameCursor);
             throw th;
@@ -557,16 +557,27 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     /**
-     * Rebuilds the prepared filter's matched-key set and {@code effectiveKeys} from the symbol
-     * dictionary of {@code frameCursor}'s reader. Both key lists are only valid against the
-     * transaction they were read from: symbol keys are append-only, so a list built on an older
-     * transaction cannot point at the wrong symbol, but it has no key at all for a symbol a later
-     * commit introduced, and every row carrying that symbol would then be dropped.
+     * Rebuilds the prepared filter's matched-key set and, while an index consumer remains,
+     * {@code effectiveKeys} from the symbol dictionary of {@code frameCursor}'s reader. Both key
+     * lists are only valid against the transaction they were read from: symbol keys are append-only,
+     * so a list built on an older transaction cannot point at the wrong symbol, but it has no key at
+     * all for a symbol a later commit introduced, and every row carrying that symbol would then be
+     * dropped.
+     *
+     * @return false when an estimate can reject a negated complement from its cardinality without
+     * materializing it
      */
-    private void prepareKeysFor(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) throws SqlException {
+    private boolean prepareKeysFor(
+            PartitionFrameCursor frameCursor,
+            SqlExecutionContext executionContext,
+            boolean isProbeCapApplied
+    ) throws SqlException {
         symbolTableSourceMapper.of(frameCursor);
         patternFilter.prepare(symbolTableSourceMapper, executionContext);
-        buildEffectiveKeys(symbolTableSourceMapper);
+        if (isFilterStolen) {
+            return false;
+        }
+        return buildEffectiveKeys(symbolTableSourceMapper, isProbeCapApplied);
     }
 
     private boolean estimate(PartitionFrameCursor frameCursor) {
@@ -707,19 +718,25 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         return true;
     }
 
-    private void buildEffectiveKeys(SymbolTableSource symbolTableSource) {
+    private boolean buildEffectiveKeys(SymbolTableSource symbolTableSource, boolean isProbeCapApplied) {
         final IntList matched = patternFilter.getMatchedSymbolKeys();
         effectiveKeys.clear();
         if (!isNegated) {
             effectiveKeys.addAll(matched);
-            return;
+            return true;
         }
 
         final StaticSymbolTable symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(
                 patternFilter.getSymbolColumnIndex()
         );
-        int matchedIndex = 0;
+        final boolean hasNull = symbolTable.containsNullValue();
         final int matchedSize = matched.size();
+        final long effectiveKeyCount = (long) symbolTable.getSymbolCount() - matchedSize + (hasNull ? 1 : 0);
+        if (isProbeCapApplied && effectiveKeyCount > maxEstimateProbes) {
+            return false;
+        }
+
+        int matchedIndex = 0;
         for (int key = 0, symbolCount = symbolTable.getSymbolCount(); key < symbolCount; key++) {
             if (matchedIndex < matchedSize && matched.getQuick(matchedIndex) == key) {
                 matchedIndex++;
@@ -727,9 +744,10 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 effectiveKeys.add(key);
             }
         }
-        if (symbolTable.containsNullValue()) {
+        if (hasNull) {
             effectiveKeys.add(SymbolTable.VALUE_IS_NULL);
         }
+        return true;
     }
 
     /**
@@ -797,7 +815,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 // A fresh reader may already carry a newer transaction than the estimate costed, so the
                 // key lists have to be rebuilt from THIS reader's symbol dictionary before the delegate
                 // binds them.
-                owner.prepareKeysFor(cursor, executionContext);
+                owner.prepareKeysFor(cursor, executionContext, false);
             } catch (Throwable th) {
                 Misc.free(cursor);
                 throw th;

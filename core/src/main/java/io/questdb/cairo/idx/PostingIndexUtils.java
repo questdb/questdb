@@ -330,8 +330,19 @@ public final class PostingIndexUtils {
     // loud "Unsupported Posting index version" on the older build. Once raised it
     // never goes back down for that file, because a superseded format-1 entry
     // stays reachable through the head prev pointer. Non-covering files stay at
-    // V2_FORMAT_VERSION, where both layouts are byte-identical and downgrading
-    // remains safe.
+    // V2_FORMAT_VERSION because their format-0 and format-1 .pk chain entries
+    // are byte-identical.
+    //
+    // That byte identity applies only to the .pk chain layout. Ranked EF writers
+    // append an EFR2 trailer to each selected .pv key blob: a 16-byte header plus
+    // one 8-byte rank-and-integrity checkpoint for each of
+    // ceil(highWordCount / 8) + 1 positions. Pre-EFR2 readers derive the EF
+    // prefix extent from its 17-byte header and ignore the trailer; current
+    // readers still decode old unranked EF blobs and use ranked metadata only
+    // after validating the trailer shape, exact blob extent, and checkpoint
+    // integrity. This establishes old/new reader read compatibility, but .pv
+    // blobs are not byte-identical and this does not provide a general downgrade
+    // guarantee.
     public static final int V3_FORMAT_VERSION = 3;
     // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B.
     // Ranked writers append a trailer after the legacy-decodable prefix. Older readers derive

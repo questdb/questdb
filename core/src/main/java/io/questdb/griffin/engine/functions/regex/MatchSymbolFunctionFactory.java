@@ -108,6 +108,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
+        private boolean stateInherited;
 
         public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher) {
             this.symbolFun = symbolFun;
@@ -144,7 +145,11 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            if (stateInherited) {
+                stateInherited = false;
+            } else {
+                extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            }
             // Eager: retires getBool()'s lazy-init branch on the query thread before any worker can
             // reach it. See the comment there.
             initialized = true;
@@ -161,6 +166,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 target.symbolKeys.clear();
                 target.symbolKeys.addAll(symbolKeys);
                 target.initialized = initialized;
+                target.stateInherited = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
@@ -178,6 +184,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
         private Matcher matcher;
+        private boolean stateInherited;
 
         public MatchStaticSymbolTableRuntimeConstPatternFunction(SymbolFunction symbolFun, Function pattern, int patternPosition) {
             this.symbolFun = symbolFun;
@@ -214,7 +221,11 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
             matcher = RegexUtils.createMatcher(pattern, patternPosition);
-            extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            if (stateInherited) {
+                stateInherited = false;
+            } else {
+                extractSymbolKeys(symbolFun, symbolKeys, matcher);
+            }
             // Eager: retires getBool()'s lazy-init branch on the query thread before any worker can
             // reach it. See the comment there.
             initialized = true;
@@ -241,6 +252,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 target.symbolKeys.clear();
                 target.symbolKeys.addAll(symbolKeys);
                 target.initialized = initialized;
+                target.stateInherited = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
