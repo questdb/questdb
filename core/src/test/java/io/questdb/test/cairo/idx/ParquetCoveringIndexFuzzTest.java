@@ -97,6 +97,17 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                 // riding on the per-posting arm's.
                 fuzzOneFixture(rnd, rnd.nextInt(40_000) + 20_000, SYM_CARDINALITY, "narrow_packed", true);
                 fuzzOneFixture(rnd, WIDE_RUN_ROWS, WIDE_RUN_CARDINALITY, "wide_packed", true);
+                // Neither regime above reaches the FLAT row-id layout: both
+                // give a key thousands of postings, and the seal only lays a
+                // group out flat when its keys are narrower than a per-key
+                // block header. This one gives a key two.
+                final long flatRows = rnd.nextInt(40_000) + 20_000;
+                fuzzOneFixture(rnd, flatRows, (int) (flatRows / 2), "flat_packed", true, false, true, false);
+                // And none of them reaches the widen: x % cardinality makes
+                // every run an arithmetic progression, which is emitted in
+                // closed form without reading a row id at all.
+                fuzzOneFixture(
+                        rnd, rnd.nextInt(40_000) + 20_000, SYM_CARDINALITY, "scattered_packed", true, true, false, true);
                 // Proof, not assumption, that the wide fixture crosses a group
                 // boundary. An earlier version compared _im SIZES, which does
                 // not establish this: the _im grows with the DATA row group
@@ -122,13 +133,42 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
      *               below ask for no covered value.
      */
     private int fuzzOneFixture(Rnd rnd, long rowCount, int cardinality, String label, boolean packed) throws Exception {
+        return fuzzOneFixture(rnd, rowCount, cardinality, label, packed, false);
+    }
+
+    /**
+     * @param scattered lay a key's rows out so they are NOT an arithmetic
+     *                  progression. {@code x % cardinality} makes every key's
+     *                  run a progression, which the cursors emit in closed form
+     *                  without widening anything -- so a fuzz built only from
+     *                  it never exercises the widen or the binary-search seek.
+     */
+    private int fuzzOneFixture(
+            Rnd rnd, long rowCount, int cardinality, String label, boolean packed, boolean scattered
+    ) throws Exception {
+        return fuzzOneFixture(rnd, rowCount, cardinality, label, packed, scattered, false, false);
+    }
+
+    /**
+     * @param requireFlat  the fixture must lay at least one row group out flat.
+     *                     A regime added to reach a code path is worth nothing
+     *                     if the seal quietly declines to produce it, and the
+     *                     shape that triggers it is a cost comparison, not a
+     *                     cardinality the caller can be sure of.
+     * @param requireWiden the draws must actually widen a row id rather than
+     *                     emit every one of them in closed form.
+     */
+    private int fuzzOneFixture(
+            Rnd rnd, long rowCount, int cardinality, String label, boolean packed, boolean scattered,
+            boolean requireFlat, boolean requireWiden
+    ) throws Exception {
         final String nativeArm = "native_arm_" + label;
         final String parquetArm = "parquet_arm_" + label;
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, packed);
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "native");
-        createArm(nativeArm, rowCount, cardinality, !packed);
+        createArm(nativeArm, rowCount, cardinality, !packed, scattered);
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
-        createArm(parquetArm, rowCount, cardinality, !packed);
+        createArm(parquetArm, rowCount, cardinality, !packed, scattered);
 
         assertArmsAreSealedDifferently(nativeArm, parquetArm);
 
@@ -163,6 +203,13 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
 
                     final int keyCount = nativeFwd.getKeyCount();
                     Assert.assertTrue("the fixture must have keys", keyCount > 1);
+                    if (requireFlat) {
+                        Assert.assertTrue(
+                                "this fixture exists to reach the FLAT row-id layout and did not"
+                                        + " [label=" + label + ", cardinality=" + cardinality + ']',
+                                ((AbstractParquetPostingIndexReader) parquetFwd).flatRowIdGroupCount() > 0
+                        );
+                    }
 
                     for (int draw = 0; draw < DRAWS; draw++) {
                         final int key = rnd.nextInt(keyCount);
@@ -184,11 +231,18 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
                 assertSameSequence(nativeReader, parquetReader, nativeCol, parquetCol,
                         key, lo, hi, covers, direction);
             }
+            if (requireWiden) {
+                Assert.assertTrue(
+                        "this fixture exists to reach the WIDEN path and every row id was"
+                                + " emitted in closed form instead [label=" + label + ']',
+                        ((AbstractParquetPostingIndexReader) parquetFwd).getWidenedRowIdCount() > 0
+                );
+            }
             return ((AbstractParquetPostingIndexReader) parquetFwd).getIndexRowGroupCount();
         }
     }
 
-    private void createArm(String table, long rowCount, int cardinality, boolean covered) throws Exception {
+    private void createArm(String table, long rowCount, int cardinality, boolean covered, boolean scattered) throws Exception {
         execute("CREATE TABLE " + table + " (" +
                 "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
                 ") TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -197,7 +251,7 @@ public class ParquetCoveringIndexFuzzTest extends AbstractCairoTest {
         // every row rather than coincidentally matching.
         execute("INSERT INTO " + table + " SELECT" +
                 " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
-                " 's' || (x % " + cardinality + ")," +
+                " " + (scattered ? "'s' || ((x * x) % " + cardinality + ")" : "'s' || (x % " + cardinality + ")") + "," +
                 " x::DOUBLE," +
                 " x * 3" +
                 " FROM long_sequence(" + rowCount + ")");
