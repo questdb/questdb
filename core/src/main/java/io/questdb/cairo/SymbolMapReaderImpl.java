@@ -265,8 +265,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             assert charSize > 0 || symbolCount == 0;
             charMem.extend(charSize);
         } else if (symbolCount < this.symbolCount) {
-            cache.remove(symbolCount + 1, this.symbolCount);
+            cache.remove(symbolCount, this.symbolCount - 1);
             this.symbolCount = symbolCount;
+            this.maxOffset = SymbolMapWriter.keyToOffset(symbolCount);
         }
         // Refresh contains null flag.
         this.nullValue = offsetMem.getBool(SymbolMapWriter.HEADER_NULL_FLAG);
