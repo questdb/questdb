@@ -283,12 +283,16 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         final boolean isSelective = prepareAndEstimate(executionContext, order);
         try {
             if (isSelective && coveringDelegate != null) {
-                testCoveringInvocations.incrementAndGet();
+                if (SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled) {
+                    testCoveringInvocations.incrementAndGet();
+                }
                 return coveringDelegate.getPageFrameCursor(executionContext, order);
             }
-            testScanInvocations.incrementAndGet();
-            if (!isSelective) {
-                SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
+            if (SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled) {
+                testScanInvocations.incrementAndGet();
+                if (!isSelective) {
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
+                }
             }
             return scanDelegate.getPageFrameCursor(executionContext, order);
         } finally {
@@ -307,7 +311,9 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         try {
             if (isSelective) {
                 if (coveringDelegate != null) {
-                    testCoveringInvocations.incrementAndGet();
+                    if (SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled) {
+                        testCoveringInvocations.incrementAndGet();
+                    }
                     return coveringDelegate.getCursor(executionContext);
                 }
                 final RecordCursor indexCursor = indexDelegate.getCursor(executionContext);
@@ -324,8 +330,10 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                     throw th;
                 }
             }
-            testScanInvocations.incrementAndGet();
-            SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
+            if (SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled) {
+                testScanInvocations.incrementAndGet();
+                SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
+            }
             return scanDelegate.getCursor(executionContext);
         } finally {
             // See getPageFrameCursor().

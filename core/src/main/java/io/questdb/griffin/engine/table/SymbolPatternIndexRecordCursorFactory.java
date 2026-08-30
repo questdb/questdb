@@ -50,6 +50,13 @@ import java.util.concurrent.atomic.AtomicLong;
  * the key list or enumerate the symbol dictionary.
  */
 public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameRecordCursorFactory {
+    // Guards the four route counters: the two below plus the covering/scan pair in
+    // AdaptiveSymbolPatternRecordCursorFactory, which already increments testFallbackInvocations
+    // across the class boundary. Same pattern as that factory's isEstimatorCounterEnabled: a plain
+    // static boolean the JIT folds away in production, flipped only by tests and benchmark probes
+    // that drive their queries on the calling thread.
+    @TestOnly
+    public static boolean isRouteCounterEnabled = false;
     @TestOnly
     public static final AtomicLong testFallbackInvocations = new AtomicLong();
     @TestOnly
@@ -172,7 +179,9 @@ public class SymbolPatternIndexRecordCursorFactory extends AbstractPageFrameReco
         }
         cursorFactoriesIdx[0] = n;
         indexCursor.of(pageFrameCursor, executionContext);
-        testIndexInvocations.incrementAndGet();
+        if (isRouteCounterEnabled) {
+            testIndexInvocations.incrementAndGet();
+        }
         return indexCursor;
     }
 }

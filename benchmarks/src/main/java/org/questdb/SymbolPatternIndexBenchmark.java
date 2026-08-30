@@ -144,7 +144,14 @@ public class SymbolPatternIndexBenchmark {
         // budget and row-selectivity check: bitmap index, covering index, or scan fallback.
         private String probePath() throws SqlException {
             SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-            drain(fastFactory);
+            // Route counters are guarded off in production; enable them for the probe drain only, so
+            // the measured drain loops keep the JIT-folded production branch.
+            SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = true;
+            try {
+                drain(fastFactory);
+            } finally {
+                SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = false;
+            }
             if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0) return "index";
             if (SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0) return "fallback";
             return (scenario.equals("pos_covering") || scenario.equals("covering_broad")) ? "covering" : "scan";
@@ -333,7 +340,13 @@ public class SymbolPatternIndexBenchmark {
                 final String scen = SCENARIOS.getQuick(i);
                 try (RecordCursorFactory factory = compiler.compile(scenarioFastSql(scen), sharedCtx).getRecordCursorFactory()) {
                     SymbolPatternIndexRecordCursorFactory.resetTestCounters();
-                    drain(factory);
+                    // Same guard discipline as probePath(): counters on for the probe drain only.
+                    SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = true;
+                    try {
+                        drain(factory);
+                    } finally {
+                        SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = false;
+                    }
                     String label;
                     if (SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0) {
                         label = "index";

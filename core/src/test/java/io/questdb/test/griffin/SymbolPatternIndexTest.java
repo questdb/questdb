@@ -71,6 +71,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.sql.async.SlotGatedWorkStealingStrategy;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -89,7 +90,18 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
     public void setUp() {
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 2);
         factoryProvider = SlotGatedWorkStealingStrategy.newFactoryProvider();
+        // Route counters are guarded off in production; nearly every test here asserts them, so the
+        // class enables the guard once instead of 100+ per-test try/finally blocks.
+        // testRouteCountersStayIdleAtProductionDefaults pins the production default locally.
+        SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = true;
         super.setUp();
+    }
+
+    @Override
+    @After
+    public void tearDown() throws Exception {
+        SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = false;
+        super.tearDown();
     }
 
     /**
@@ -229,6 +241,47 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             );
             Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get());
             Assert.assertTrue(AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get() > 0);
+        });
+    }
+
+    /**
+     * Route counters are test-only observability and must not mutate on production cursor opens.
+     * Every counter flag stays at its production default here, so opening cursors through both
+     * factories - covering route, fallback scan route, and bitmap index route - must leave all four
+     * route counters untouched. The plan assertions pin that the queries really route through the
+     * factories under test; without them the zero checks below would hold vacuously.
+     */
+    @Test
+    public void testRouteCountersStayIdleAtProductionDefaults() throws Exception {
+        assertMemoryLeak(() -> {
+            // Covering and fallback scan routes, through AdaptiveSymbolPatternRecordCursorFactory.
+            execute("CREATE TABLE tcov (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tcov VALUES ('AA', 1.0, 0), ('AB', 2.0, 1)");
+            execute("INSERT INTO tcov SELECT 'BA', x::DOUBLE, timestamp_sequence(2, 1) FROM long_sequence(1_000)");
+            // Bitmap index route, through SymbolPatternIndexRecordCursorFactory.
+            execute("CREATE TABLE tidx (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tidx SELECT 'A', x, timestamp_sequence(0, 1) FROM long_sequence(5)");
+            execute("INSERT INTO tidx SELECT 'B', x, timestamp_sequence(5, 1) FROM long_sequence(95)");
+
+            assertQuery("SELECT sum(price) FROM tcov WHERE sym LIKE 'A%'").noLeakCheck().assertsPlanContaining("CoveringIndex");
+            assertQuery("SELECT sym, v FROM tidx WHERE sym LIKE 'A%'").noLeakCheck().assertsPlanContaining("SymbolPatternIndex");
+
+            // setUp() enables the guard for the rest of the class; this test pins the production
+            // default (false) to prove an unflagged open leaves the counters alone.
+            SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = false;
+            try {
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                select("SELECT sum(price) FROM tcov WHERE sym LIKE 'A%'");        // covering route
+                select("SELECT sum(price) FROM tcov WHERE sym LIKE 'B%'");        // fallback scan route
+                select("SELECT sym, v FROM tidx WHERE sym LIKE 'A%' ORDER BY v"); // bitmap index route
+                Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get());
+                Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get());
+                Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+                Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
+            } finally {
+                SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled = true;
+            }
         });
     }
 
@@ -452,6 +505,142 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             );
             Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
             Assert.assertTrue(SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0);
+        });
+    }
+
+    /**
+     * Regression guard for adaptive symbol-pattern routing over a table that mixes a
+     * converted-Parquet partition with a native one. ALTER TABLE ... CONVERT PARTITION TO
+     * PARQUET rebuilds the bitmap sidecars into the parquet partition dir
+     * ({@code TableWriter.convertPartitionNativeToParquet} calls
+     * {@code copyOrRebuildColumnIndexes} before committing), and the adaptive owner's estimate
+     * probes {@code TableReader.getIndexReader} per partition frame with no parquet carve-out,
+     * so both the positive and the negated (complement, NULL-inclusive) patterns must keep
+     * taking the bitmap index route AND keep returning the scan+filter ground truth.
+     * <p>
+     * Non-vacuity: the parquet leg cannot silently stay native (the table_partitions()
+     * assertion pins isParquet per partition), the route cannot silently flip (a flip trips
+     * the exact counter asserts: the taken route must be 1, the other 0), and a wrong result
+     * on either partition format trips the literal row expectations - each leg's expected rows
+     * carry v values from BOTH the parquet day (9001-9003) and the native day (9004-9006).
+     */
+    @Test
+    public void testBitmapRoutesServeConvertedParquetAndNativePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Day 1 (1970-01-01, converted below): 2000 dominant 'AA' rows keep both patterns
+            // far under the 5% index-route admission share; the sparse matches carry marker v
+            // values so a row dropped from the parquet leg is visible in the literal expectation.
+            execute("INSERT INTO t SELECT 'AA', x, timestamp_sequence(0, 1_000) FROM long_sequence(2_000)");
+            execute("INSERT INTO t VALUES ('BA', 9_001, 3_000_000_000), ('BB', 9_002, 3_000_001_000), (NULL, 9_003, 3_000_002_000)");
+            // Day 2 (1970-01-02) stays native: the active partition of a non-WAL table cannot convert.
+            execute("INSERT INTO t SELECT 'AA', 2_000 + x, timestamp_sequence(86_400_000_000, 1_000) FROM long_sequence(2_000)");
+            execute("INSERT INTO t VALUES ('BA', 9_004, 90_000_000_000), ('BB', 9_005, 90_000_001_000), (NULL, 9_006, 90_000_002_000)");
+
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            // The parquet leg must not be silently native: a non-WAL convert skips the active
+            // partition without failing, so pin the format of both partitions.
+            assertQuery("SELECT name, isParquet FROM table_partitions('t')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            name\tisParquet
+                            1970-01-01\ttrue
+                            1970-01-02\tfalse
+                            """);
+
+            // Positive pattern: one serial cursor open, so the index route counts exactly once.
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            final String positive = select("SELECT sym, v FROM t WHERE sym LIKE 'B%' ORDER BY v");
+            TestUtils.assertEquals("""
+                    sym\tv
+                    BA\t9001
+                    BB\t9002
+                    BA\t9004
+                    BB\t9005
+                    """, positive);
+            Assert.assertEquals(
+                    "the positive pattern must take the bitmap index route over the mixed table",
+                    1, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE 'B%' ORDER BY v"),
+                    positive
+            );
+
+            // Negated pattern: the complement key set is {BA, BB, NULL}, so the NULL-symbol rows
+            // (9003, 9006) must come back from the parquet and the native partition alike.
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            final String negated = select("SELECT sym, v FROM t WHERE sym NOT LIKE 'A%' ORDER BY v");
+            TestUtils.assertEquals("""
+                    sym\tv
+                    BA\t9001
+                    BB\t9002
+                    \t9003
+                    BA\t9004
+                    BB\t9005
+                    \t9006
+                    """, negated);
+            Assert.assertEquals(
+                    "the negated pattern must take the bitmap index route over the mixed table",
+                    1, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+            );
+            Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym NOT LIKE 'A%' ORDER BY v"),
+                    negated
+            );
+        });
+    }
+
+    /**
+     * Covering-route companion of {@link #testBitmapRoutesServeConvertedParquetAndNativePartitions}:
+     * a POSTING INCLUDE index converted to parquet keeps its covering sidecars (the convert path
+     * links them across, see {@code CoveringIndexParquetNativeRoundTripTest}), so a covered
+     * aggregation over the mixed table must still open the covering delegate and aggregate rows
+     * from both partition formats.
+     * <p>
+     * Non-vacuity: isParquet is pinned per partition; the parquet day contributes 30.0 of the
+     * expected 100.0 sum, so dropping that leg fails the literal expectation; and a route flip
+     * trips the covering/scan counter pair.
+     */
+    @Test
+    public void testCoveringRouteServesConvertedParquetAndNativePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tc (sym SYMBOL INDEX TYPE POSTING INCLUDE (price), price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Day 1 (converted): matched share 4/4004 sits far under the 2% covering admission share.
+            execute("INSERT INTO tc SELECT 'AA', 1.0, timestamp_sequence(0, 1_000) FROM long_sequence(2_000)");
+            execute("INSERT INTO tc VALUES ('BA', 10.0, 3_000_000_000), ('BB', 20.0, 3_000_001_000)");
+            // Day 2 stays native.
+            execute("INSERT INTO tc SELECT 'AA', 1.0, timestamp_sequence(86_400_000_000, 1_000) FROM long_sequence(2_000)");
+            execute("INSERT INTO tc VALUES ('BA', 30.0, 90_000_000_000), ('BB', 40.0, 90_000_001_000)");
+
+            execute("ALTER TABLE tc CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            assertQuery("SELECT name, isParquet FROM table_partitions('tc')")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            name\tisParquet
+                            1970-01-01\ttrue
+                            1970-01-02\tfalse
+                            """);
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            final String covered = select("SELECT sum(price) FROM tc WHERE sym LIKE 'B%'");
+            // 10 + 20 from the parquet day, 30 + 40 from the native day.
+            TestUtils.assertEquals("sum\n100.0\n", covered);
+            Assert.assertTrue(
+                    "the covered pattern must take the covering route over the mixed table",
+                    AdaptiveSymbolPatternRecordCursorFactory.testCoveringInvocations.get() > 0
+            );
+            Assert.assertEquals(0, AdaptiveSymbolPatternRecordCursorFactory.testScanInvocations.get());
+            TestUtils.assertEquals(
+                    select("SELECT /*+ no_symbol_pattern_index(tc) no_covering(tc) */ sum(price) FROM tc WHERE sym LIKE 'B%'"),
+                    covered
+            );
         });
     }
 
