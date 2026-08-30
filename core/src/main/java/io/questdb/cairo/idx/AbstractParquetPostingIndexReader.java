@@ -167,6 +167,16 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * assertions read, so a lost update makes a pruning test pass by losing the
      * evidence rather than by pruning.
      */
+    /**
+     * Row ids WIDENED out of a packed blob since this reader was bound.
+     * <p>
+     * The packed arm decodes no parquet row group, so
+     * {@link #decodedRowCount} cannot see its work. This is the analogous
+     * metric, and the question it answers is whether a cursor re-widens what it
+     * has already emitted: compared against the rows a scan actually produces,
+     * a ratio above one is wasted work per fetch.
+     */
+    protected final AtomicLong widenedRowIdCount = new AtomicLong();
     protected final AtomicLong decodedRowCount = new AtomicLong();
     protected final AtomicLong decodedRowGroupCount = new AtomicLong();
     protected long indexTxn = -1;
@@ -225,6 +235,11 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      */
     public long getDecodedRowCount() {
         return decodedRowCount.get();
+    }
+
+    /** @see #widenedRowIdCount */
+    public long getWidenedRowIdCount() {
+        return widenedRowIdCount.get();
     }
 
     /**
@@ -1125,6 +1140,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
          * cursor was already holding.
          */
         protected long unpackFlatRowIds(int rowGroup, long startOrdinal, int count) {
+            widenedRowIdCount.addAndGet(count);
             ensureUnpackCapacity(count);
             BitpackUtils.unpackValuesFrom(
                     packedDataAddrs[rowGroup],
@@ -1156,6 +1172,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                         .put("covering index packed payload is not addressable [rowGroup=").put(rowGroup)
                         .put(", column=").put(columnName).put(']');
             }
+            widenedRowIdCount.addAndGet(count);
             ensureUnpackCapacity(count);
             // Batched: one header parse for the whole run, then an AVX2 widen
             // over the residuals. Per-value readLongAt re-parses the block
@@ -1780,6 +1797,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         this.indexTxn = indexTxn;
         this.decodedRowGroupCount.set(0);
         this.decodedRowCount.set(0);
+        this.widenedRowIdCount.set(0);
         this.imFileSize = imFileSize;
         final int plen = path.size();
         try {

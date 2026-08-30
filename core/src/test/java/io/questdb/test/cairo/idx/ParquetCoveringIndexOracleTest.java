@@ -1066,6 +1066,92 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Whether a full scan re-widens or re-decodes what it has already emitted.
+     * <p>
+     * The question a bulk cursor would answer is "does each step redo work",
+     * and it is worth measuring before designing one: if a fetch re-widened a
+     * chunk, the fix is batching, and if it does not, the per-row cost is the
+     * cursor PROTOCOL and batching buys nothing.
+     * <p>
+     * Reported per emitted row. One means every row id is produced exactly
+     * once; above one is waste.
+     */
+    @Test
+    public void testAScanProducesEachRowIdExactlyOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
+
+            final StringBuilder report = new StringBuilder(
+                    "\n  shape             emitted   widened   decoded   widened/row%n".replace("%n", "\n"));
+            // Wide keys take the per-key block path, narrow keys the flat one,
+            // and they widen through different code. The third shape is the one
+            // that matters most: x % keys makes every key's rows an arithmetic
+            // progression, which the closed form emits without touching memory,
+            // so measuring only those two would report zero work for a reason
+            // that has nothing to do with batching. x*x % keys is not linear in
+            // x, so those runs are not progressions and MUST be widened.
+            for (int shape = 0; shape < 3; shape++) {
+                final int keys = shape == 1 ? ROW_COUNT / 2 : 16;
+                final String expr = shape == 2
+                        ? "'s' || ((x * x) % " + keys + ")"
+                        : "'s' || (x % " + keys + ")";
+                final String label = shape == 2 ? keys + " keys, scattered" : keys + " keys";
+                final String name = "scanwork_" + shape;
+                execute("CREATE TABLE " + name + " (" +
+                        "ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG" +
+                        ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + name + " SELECT" +
+                        " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP)," +
+                        " " + expr + "," +
+                        " x::DOUBLE," +
+                        " x * 3" +
+                        " FROM long_sequence(" + ROW_COUNT + ")");
+                drainWalQueue();
+                execute("ALTER TABLE " + name + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+                drainWalQueue();
+                execute("ALTER TABLE " + name + " ALTER COLUMN sym ADD INDEX TYPE POSTING");
+                drainWalQueue();
+                engine.releaseInactive();
+
+                try (TableReader r = engine.getReader(engine.verifyTableName(name))) {
+                    final int col = r.getMetadata().getColumnIndex("sym");
+                    final AbstractParquetPostingIndexReader idx =
+                            (AbstractParquetPostingIndexReader) r.getIndexReader(0, col, IndexReader.DIR_FORWARD);
+                    Assert.assertTrue(idx.isPackedPayload());
+                    final int keyCount = idx.getKeyCount();
+                    long emitted = 0;
+                    for (int k = 0; k < keyCount; k++) {
+                        try (RowCursor c = idx.getCursor(k, 0, Long.MAX_VALUE)) {
+                            while (c.hasNext()) {
+                                c.next();
+                                emitted++;
+                            }
+                        }
+                    }
+                    final long widened = idx.getWidenedRowIdCount();
+                    report.append(String.format(
+                            "  %-16s %8d  %8d  %8d   %.3f%n",
+                            label, emitted, widened, idx.getDecodedRowCount(),
+                            widened / (double) emitted));
+                    Assert.assertEquals("the scan must produce every row", ROW_COUNT, emitted);
+                    // The batching already sizes each widen to what the cursor
+                    // then drains, so nothing is produced twice. If this ever
+                    // exceeds one, a fetch is redoing work and BATCHING is the
+                    // fix; while it holds, the per-row cost is the protocol.
+                    Assert.assertTrue(
+                            "a scan widened more row ids than it emitted [emitted=" + emitted
+                                    + ", widened=" + widened + ']',
+                            widened <= emitted);
+                }
+                execute("DROP TABLE " + name);
+                drainWalQueue();
+            }
+            System.out.println(report);
+        });
+    }
+
     private void drain(
             IndexReader reader, int key, long min, long max, int[] covers,
             LongList rowIds, LongList coveredValues
