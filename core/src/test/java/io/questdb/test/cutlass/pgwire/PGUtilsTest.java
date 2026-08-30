@@ -110,15 +110,16 @@ public class PGUtilsTest extends AbstractCairoTest {
     public void testDecimalNotNullSentinelBinSize() throws Exception {
         assertMemoryLeak(() -> {
             final int[] precisions = {2, 4, 9, 18, 38, Decimals.MAX_PRECISION};
-            final int[] scales = {0, 0, 0, 2, 2, 2};
             final int[] storageBits = {8, 16, 32, 64, 128, 256};
             try (ScratchSink sink = new ScratchSink()) {
                 for (int i = 0; i < precisions.length; i++) {
-                    final int columnType = ColumnType.getDecimalType(precisions[i], scales[i]);
                     final BigInteger magnitude = BigInteger.ONE.shiftLeft(storageBits[i] - 1);
-                    final int expected = expectedBinSize(magnitude, scales[i]);
-                    Assert.assertEquals(expected, PGUtils.decimalSentinelBinSize(columnType));
-                    Assert.assertEquals(expected, sink.encodeNotNullSentinel(columnType));
+                    for (int scale = 0; scale <= precisions[i]; scale++) {
+                        final int columnType = ColumnType.getDecimalType(precisions[i], scale);
+                        final int expected = expectedBinSize(magnitude, scale);
+                        Assert.assertEquals(expected, PGUtils.decimalSentinelBinSize(columnType));
+                        Assert.assertEquals(expected, sink.encodeNotNullSentinel(columnType));
+                    }
                 }
             }
         });
