@@ -43,6 +43,7 @@ import io.questdb.mp.Job;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.Job.WorkerContext;
 import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
@@ -50,6 +51,10 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.Closeable;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -66,10 +71,50 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
-    public void testBoundedHaltProceedsWhenWorkerWedged() {
-        // A worker stuck in a never-returning job would make an unbounded halt() block forever.
-        // The bounded halt(timeoutNanos) must instead wait up to the budget, log, and return.
+    public void testBoundedHaltApiCompatibility() throws Throwable {
+        final MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        final MethodHandle managerHalt = lookup.findVirtual(
+                WorkerPoolManager.class,
+                "halt",
+                MethodType.methodType(void.class, long.class)
+        );
+        final MethodHandle poolHaltBy = lookup.findVirtual(
+                WorkerPool.class,
+                "haltBy",
+                MethodType.methodType(boolean.class, long.class)
+        );
+
+        final AtomicBoolean poolResourceClosed = new AtomicBoolean();
+        final WorkerPool pool = new WorkerPool(() -> 0);
+        pool.freeOnExit(closeFlagJob(poolResourceClosed));
+        try {
+            Assert.assertTrue((boolean) poolHaltBy.invokeExact(
+                    pool,
+                    System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            ));
+        } finally {
+            pool.halt();
+        }
+        Assert.assertTrue(poolResourceClosed.get());
+
+        final AtomicBoolean managerResourceClosed = new AtomicBoolean();
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(0);
+        workerPoolManager.getSharedPoolNetwork().freeOnExit(closeFlagJob(managerResourceClosed));
+        try {
+            managerHalt.invokeExact(
+                    workerPoolManager,
+                    System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            );
+        } finally {
+            workerPoolManager.halt();
+        }
+        Assert.assertTrue(managerResourceClosed.get());
+    }
+
+    @Test
+    public void testBoundedHaltRetainsResourcesWhenWorkerWedged() {
         final AtomicBoolean release = new AtomicBoolean(false);
+        final AtomicBoolean resourceClosed = new AtomicBoolean(false);
         final SOCountDownLatch jobEntered = new SOCountDownLatch(1);
         final WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
             @Override
@@ -88,13 +133,20 @@ public class WorkerPoolManagerTest {
                 return true;
             }
         });
-        pool.assign(workerContext -> {
-            jobEntered.countDown();
-            // Spin until released so the worker never reaches halted.countDown() within the bound.
-            while (!release.get()) {
-                Os.pause();
+        pool.assign(new Job() {
+            @Override
+            public void closeInstance() {
+                resourceClosed.set(true);
             }
-            return false;
+
+            @Override
+            public boolean run(WorkerContext workerContext) {
+                jobEntered.countDown();
+                while (!release.get()) {
+                    Os.pause();
+                }
+                return false;
+            }
         });
         try {
             pool.start(null);
@@ -102,11 +154,9 @@ public class WorkerPoolManagerTest {
 
             final long budgetNanos = TimeUnit.MILLISECONDS.toNanos(200L);
             final long start = System.nanoTime();
-            pool.halt(budgetNanos);
+            Assert.assertFalse(pool.haltBy(start + budgetNanos));
             final long elapsed = System.nanoTime() - start;
 
-            // halt() returned despite the wedged worker (log-and-proceed), and did so close to the
-            // budget rather than blocking forever. Allow generous slack for CI scheduling jitter.
             Assert.assertTrue(
                     "bounded halt returned too fast, budget not honoured [elapsedMs=" + (elapsed / 1_000_000) + "]",
                     elapsed >= budgetNanos - TimeUnit.MILLISECONDS.toNanos(50L)
@@ -115,10 +165,12 @@ public class WorkerPoolManagerTest {
                     "bounded halt did not respect its timeout [elapsedMs=" + (elapsed / 1_000_000) + "]",
                     elapsed < TimeUnit.SECONDS.toNanos(10L)
             );
+            Assert.assertFalse(resourceClosed.get());
         } finally {
-            // Let the wedged worker exit its job so the daemon thread can stop spinning.
             release.set(true);
+            Assert.assertTrue(pool.haltBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
         }
+        Assert.assertTrue(resourceClosed.get());
     }
 
     @Test
@@ -310,6 +362,11 @@ public class WorkerPoolManagerTest {
             }
 
             @Override
+            public WorkerPoolConfiguration getLiveViewRefreshPoolConfiguration() {
+                return null;
+            }
+
+            @Override
             public WorkerPoolConfiguration getMatViewRefreshPoolConfiguration() {
                 return null;
             }
@@ -381,6 +438,10 @@ public class WorkerPoolManagerTest {
         return createWorkerPoolManager(workerCount, null);
     }
 
+    private static Job closeFlagJob(AtomicBoolean closed) {
+        return new CloseFlagJob(closed);
+    }
+
     private static Job fastCountDownJob(SOCountDownLatch endLatch) {
         return workerContext -> {
             endLatch.countDown();
@@ -434,5 +495,23 @@ public class WorkerPoolManagerTest {
                 return true;
             }
         };
+    }
+
+    private static final class CloseFlagJob implements Job, Closeable {
+        private final AtomicBoolean closed;
+
+        private CloseFlagJob(AtomicBoolean closed) {
+            this.closed = closed;
+        }
+
+        @Override
+        public void close() {
+            closed.set(true);
+        }
+
+        @Override
+        public boolean run(WorkerContext workerContext) {
+            return false;
+        }
     }
 }

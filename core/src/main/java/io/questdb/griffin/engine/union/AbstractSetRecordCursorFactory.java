@@ -43,6 +43,10 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
     private ObjList<Function> castFunctionsA;
     private ObjList<Function> castFunctionsB;
 
+    protected AbstractSetRecordCursorFactory(RecordMetadata metadata) {
+        super(metadata);
+    }
+
     public AbstractSetRecordCursorFactory(
             RecordMetadata metadata,
             RecordCursorFactory factoryA,
@@ -50,11 +54,30 @@ abstract class AbstractSetRecordCursorFactory extends AbstractRecordCursorFactor
             ObjList<Function> castFunctionsA,
             ObjList<Function> castFunctionsB
     ) {
-        super(metadata);
+        this(metadata);
         this.factoryA = factoryA;
         this.factoryB = factoryB;
         this.castFunctionsB = castFunctionsB;
         this.castFunctionsA = castFunctionsA;
+    }
+
+    // A set operation is stable iff both inputs are; cast functions are type adapters over
+    // child columns and introduce no value sources of their own.
+    @Override
+    public boolean isNonDeterministic() {
+        return factoryA.isNonDeterministic() || factoryB.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return factoryA.isStableWithinExecution() && factoryB.isStableWithinExecution();
+    }
+
+    // A set operation reads externally if either input does. getBaseFactory() cannot express this
+    // because it returns a single child, so the two-child propagation is explicit here.
+    @Override
+    public boolean usesExternalDataSource() {
+        return factoryA.usesExternalDataSource() || factoryB.usesExternalDataSource();
     }
 
     @Override

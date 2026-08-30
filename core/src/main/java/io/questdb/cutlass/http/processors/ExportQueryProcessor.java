@@ -357,9 +357,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private static void putDecimal128StringValue(HttpChunkedResponse response, Decimal128 decimal128, int type) {
-        if (decimal128.isNull()) {
-            response.putAscii("null");
-        } else {
+        if (!decimal128.isNull()) {
             response.putAscii('\"');
             Decimals.appendNonNull(decimal128, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
             response.putAscii('\"');
@@ -367,17 +365,13 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private static void putDecimal16StringValue(HttpChunkedResponse response, short value, int type) {
-        if (value == Decimals.DECIMAL16_NULL) {
-            response.putAscii("null");
-        } else {
+        if (value != Decimals.DECIMAL16_NULL) {
             putDecimalLongStringValue(response, value, type);
         }
     }
 
     private static void putDecimal256StringValue(HttpChunkedResponse response, Decimal256 decimal256, int type) {
-        if (decimal256.isNull()) {
-            response.putAscii("null");
-        } else {
+        if (!decimal256.isNull()) {
             response.putAscii('\"');
             Decimals.appendNonNull(decimal256, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
             response.putAscii('\"');
@@ -385,32 +379,26 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
     }
 
     private static void putDecimal32StringValue(HttpChunkedResponse response, int value, int type) {
-        if (value == Decimals.DECIMAL32_NULL) {
-            response.putAscii("null");
-        } else {
+        if (value != Decimals.DECIMAL32_NULL) {
             putDecimalLongStringValue(response, value, type);
         }
     }
 
     private static void putDecimal64StringValue(HttpChunkedResponse response, long value, int type) {
-        if (value == Decimals.DECIMAL64_NULL) {
-            response.putAscii("null");
-        } else {
+        if (value != Decimals.DECIMAL64_NULL) {
             putDecimalLongStringValue(response, value, type);
         }
     }
 
     private static void putDecimal8StringValue(HttpChunkedResponse response, byte value, int type) {
-        if (value == Decimals.DECIMAL8_NULL) {
-            response.putAscii("null");
-        } else {
+        if (value != Decimals.DECIMAL8_NULL) {
             putDecimalLongStringValue(response, value, type);
         }
     }
 
     private static void putDecimalLongStringValue(HttpChunkedResponse response, long value, int type) {
         response.putAscii('\"');
-        Decimals.append(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        Decimals.appendNonNull(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('\"');
     }
 
@@ -709,6 +697,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         state.getExportModel().getBloomFilterFpp(),
                         sqlExecutionContext.getBindVariableService()
                 );
+                state.task.setMemoryTracker(sqlExecutionContext.getMemoryTracker());
                 exporter.of(state.task);
                 exporter.setExportMode(exportMode);
                 switch (exportMode) {

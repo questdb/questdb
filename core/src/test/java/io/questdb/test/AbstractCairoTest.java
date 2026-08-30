@@ -156,6 +156,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static long spinLockTimeout = DEFAULT_SPIN_LOCK_TIMEOUT;
     protected static SqlExecutionContext sqlExecutionContext;
     static boolean[] FACTORY_TAGS = new boolean[MemoryTag.SIZE];
+    private static int classJitMode;
     private static long fdReuseCount;
     private static long memoryUsage = -1;
     private static long mmapReuseCount;
@@ -387,6 +388,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         node1.initGriffin(circuitBreaker);
         bindVariableService = node1.getBindVariableService();
         sqlExecutionContext = node1.getSqlExecutionContext();
+        // The context constructor reads the JIT mode off the configuration, and this is the only
+        // moment it reads the mode a @BeforeClass set: Cairo#tearDown() clears the overrides after
+        // every test method, and CairoTestConfiguration resolves them live, so from the second
+        // method onward the configuration reports the built-in default instead. setUp() hands the
+        // context back this value rather than re-reading the configuration.
+        classJitMode = sqlExecutionContext.getJitMode();
         ((MicrosTimestampDriver) MicrosTimestampDriver.INSTANCE).setTicker(testMicrosClock);
         ((NanosTimestampDriver) NanosTimestampDriver.INSTANCE).setTicker(testNanoClock);
         ColumnType.makeUtf8DefaultString();
@@ -437,6 +444,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
         memoryUsage = -1;
         forEachNode(QuestDBTestNode::setUpGriffin);
         sqlExecutionContext.reset();
+        // The execution context outlives a test method, and setJitMode() is not part of
+        // reset(). A test that switches the mode and then fails leaves it switched for every
+        // test that runs after it, which surfaces as "JIT was not enabled" on an unrelated
+        // test and hides the failure that actually caused it. Restore the mode captured in
+        // setUpStatic(), not configuration.getSqlJitMode() - see the note there.
+        sqlExecutionContext.setJitMode(classJitMode);
         sqlExecutionContext.setParallelFilterEnabled(configuration.isSqlParallelFilterEnabled());
         sqlExecutionContext.setParallelGroupByEnabled(configuration.isSqlParallelGroupByEnabled());
         sqlExecutionContext.setParallelTopKEnabled(configuration.isSqlParallelTopKEnabled());
@@ -448,6 +461,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         ParanoiaState.FD_PARANOIA_MODE = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
         engine.getMetrics().clear();
         engine.getMatViewStateStore().clear();
+        engine.getLiveViewStateStore().clear();
     }
 
     public void tearDown(boolean removeDir) {
@@ -505,8 +519,6 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 rowCount = txReader.getTransientRowCount();
             }
 
-            long parquetSize = txReader.getPartitionParquetFileSize(i);
-
             if (i > 0) {
                 sink.put(",");
             }
@@ -519,7 +531,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
             }
 
             if (txReader.isPartitionParquet(i)) {
-                sink.put(", parquetSize: ").put(parquetSize);
+                sink.put(", parquetSize: ").put(txReader.getPartitionParquetFileSize(i));
             }
             if (txReader.isPartitionReadOnly(i)) {
                 sink.put(", readOnly=true");
@@ -1000,6 +1012,22 @@ public abstract class AbstractCairoTest extends AbstractTest {
             for (int i = 0; i < ticks; i++) {
                 walApplyJob.run();
             }
+        }
+    }
+
+    /**
+     * Reports whether the WAL-level symbol dictionary of {@code columnName} still sits in
+     * {@code walName}'s directory. Every already-written segment of that WAL resolves its clean
+     * symbol band through {@code <wal>/<column>.o} and its siblings, so this is the artifact a
+     * symbol capacity rebuild or a DROP COLUMN strands. Unlike the {@code assert*Existence}
+     * helpers this returns the answer rather than asserting it, because callers both search for
+     * the WAL that holds the dictionary and assert its disappearance.
+     */
+    protected static boolean walSymbolOffsetFileExists(@NotNull TableToken tableToken, String walName, String columnName) {
+        try (Path path = new Path()) {
+            path.of(engine.getConfiguration().getDbRoot()).concat(tableToken.getDirName()).concat(walName);
+            TableUtils.offsetFileName(path, columnName, TableUtils.COLUMN_NAME_TXN_NONE);
+            return engine.getConfiguration().getFilesFacade().exists(path.$());
         }
     }
 

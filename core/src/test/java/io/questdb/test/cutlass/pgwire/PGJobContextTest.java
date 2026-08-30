@@ -103,6 +103,7 @@ import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Time;
@@ -8158,6 +8159,41 @@ nodejs code:
     }
 
     @Test
+    public void testOverflowingConstantIntProjectionKeepsInt4Descriptor() throws Exception {
+        // INT arithmetic wraps modulo 2^32, so 1_000_000 * 1_000_000 stays an INT and pgwire
+        // describes the column as int4 carrying the wrapped value. IntWidthWrapTest pins the
+        // server-side column type; this pins the wire hop, so a driver keeps mapping the column
+        // to Integer instead of silently switching the Java type when the OID derivation moves.
+        // The third column is the control: widening one operand still yields an int8 descriptor,
+        // so a regression that describes everything as int4 reddens here too.
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            sink.clear();
+            try (
+                    PreparedStatement ps = connection.prepareStatement("""
+                            SELECT 1_000_000 * 1_000_000 AS wrapped,
+                                   2_147_483_647 + 1 AS wrapped_to_null,
+                                   1_000_000L * 1_000_000 AS widened""");
+                    ResultSet rs = ps.executeQuery()
+            ) {
+                // the descriptor OIDs the server sent, as the driver names them
+                final ResultSetMetaData metaData = rs.getMetaData();
+                assertEquals("int4", metaData.getColumnTypeName(1));
+                assertEquals("int4", metaData.getColumnTypeName(2));
+                assertEquals("int8", metaData.getColumnTypeName(3));
+
+                assertResultSet(
+                        """
+                                wrapped[INTEGER],wrapped_to_null[INTEGER],widened[BIGINT]
+                                -727379968,null,1000000000000
+                                """,
+                        sink,
+                        rs
+                );
+            }
+        });
+    }
+
+    @Test
     public void testPHPSelectHex() throws Exception {
         //         PHP client script to reproduce
         //        $dbName = 'qdb';
@@ -11007,7 +11043,7 @@ create table tab as (
                                 Assert.fail("exception expected");
                             }
                         } catch (SQLException e) {
-                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1063]");
+                            TestUtils.assertContains(e.getMessage(), "not enough space in send buffer [sendBufferSize=512, requiredSize=1070]");
                         }
                     }
                 },

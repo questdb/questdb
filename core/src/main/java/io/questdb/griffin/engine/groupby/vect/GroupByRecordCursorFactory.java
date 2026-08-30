@@ -197,7 +197,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.frameMemoryPools = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 // Single sequential scan; no LRU caching needed across frames.
-                frameMemoryPools.add(new PageFrameMemoryPool(0L));
+                frameMemoryPools.add(new PageFrameMemoryPool(configuration, 0L));
             }
         } catch (Throwable th) {
             close();
@@ -208,6 +208,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    // Vector aggregates are column-bound builtins (sum/min/max/avg/count/...) with no argument
+    // expressions, hence deterministic by construction; stability is the base's.
+    @Override
+    public boolean isNonDeterministic() {
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return base.isStableWithinExecution();
     }
 
     @Override
@@ -602,7 +614,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         while (true) {
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
                                 if (workStealingStrategy.shouldSteal(mergedCount)) {
                                     VectorAggregateEntry.aggregateUnsafe(

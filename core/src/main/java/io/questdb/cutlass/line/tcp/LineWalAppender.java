@@ -91,6 +91,11 @@ public class LineWalAppender implements QuietCloseable {
                 if (retryCount == maxMetadataChangeRetries) {
                     throw CairoException.nonCritical().put("metadata changed too many times during WAL append");
                 }
+            } catch (CairoException e) {
+                if (e.isMalformedUtf8()) {
+                    throw LineProtocolException.malformedUtf8(tud.getTableNameUtf16(), e.getFlyweightMessage());
+                }
+                throw e;
             }
         }
     }
@@ -158,9 +163,10 @@ public class LineWalAppender implements QuietCloseable {
                             try {
                                 int newColumnType = ld.getColumnType(ld.getColNameUtf8(), ent);
                                 if (newColumnType == ColumnType.DECIMAL) {
+                                    // the surrogate DECIMAL carries no precision or scale, so it cannot back a column
                                     throw CairoException.nonCritical()
                                             .put("decimal columns cannot be created automatically [table=")
-                                            .put(writer.getTableToken())
+                                            .put(tud.getTableNameUtf16())
                                             .put(", columnName=")
                                             .put(columnNameUtf16)
                                             .put(']');
@@ -532,6 +538,9 @@ public class LineWalAppender implements QuietCloseable {
                         }
                         break;
                     case LineTcpParser.ENTITY_TYPE_DECIMAL:
+                        if (!ColumnType.isDecimalType(ColumnType.tagOf(colType))) {
+                            throw castError(tud.getTableNameUtf16(), "DECIMAL", colType, ent.getName());
+                        }
                         Decimal256 decimal = ent.getDecimalValue();
                         if (decimal.isNull()) {
                             DecimalUtil.storeNull(r, columnIndex, colType);
@@ -566,6 +575,13 @@ public class LineWalAppender implements QuietCloseable {
             LOG.error().$("could not write line protocol measurement [tableName=").$(tud.getTableNameUtf16()).$(", message=").$safe(th.getFlyweightMessage()).$(", trace: ").$((Throwable) th).I$();
             if (r != null) {
                 r.cancel();
+            }
+            if (th.isMalformedUtf8()) {
+                // Bad input, not a broken writer. As a bare CairoException this hits the
+                // scheduler's catch-all, which drops the writer -- one bad byte would churn the
+                // writer per line. LineProtocolException skips the line instead, as castError()
+                // already does. Other CairoExceptions still propagate, so real faults surface.
+                throw LineProtocolException.malformedUtf8(tud.getTableNameUtf16(), th.getFlyweightMessage());
             }
             throw th;
         } catch (Throwable th) {

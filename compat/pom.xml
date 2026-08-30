@@ -27,7 +27,7 @@
 
     <groupId>io.questdb</groupId>
     <artifactId>compat</artifactId>
-    <version>9.4.4-SNAPSHOT</version>
+    <version>10.0.2-SNAPSHOT</version>
 
     <name>Compatibility tests for QuestDB</name>
 
@@ -137,7 +137,7 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>2.17</version>
                     <configuration>
-                        <argLine>--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED</argLine>
+                        <argLine>--enable-native-access=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED</argLine>
                         <includes>
                             <include>${test.include}</include>
                         </includes>

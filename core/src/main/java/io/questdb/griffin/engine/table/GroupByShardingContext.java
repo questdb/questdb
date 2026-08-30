@@ -395,7 +395,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                 while (true) {
                     long cursor = pubSeq.next();
                     if (cursor < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                        circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
                         if (strategy.shouldSteal(mergedCount)) {
                             mergeShard(-1, shardIndex);

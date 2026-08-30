@@ -43,6 +43,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
@@ -58,6 +59,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -70,7 +72,7 @@ import java.io.Closeable;
  * 3. Per-worker ASOF join maps for symbol -> rowId mappings (when keyed join)
  * 4. Filter resources (compiled and Java filters)
  */
-public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeable, Reopenable, Plannable {
+public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     protected final long bwdScanAbsoluteThreshold;
     protected final long bwdScanMinGap;
     protected final long bwdScanSwitchFactor;
@@ -454,6 +456,12 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
         return ownerGroupByFunctions;
     }
 
+    @Override
+    @TestOnly
+    public PerWorkerLocks getPerWorkerLocks() {
+        return perWorkerLocks;
+    }
+
     public RecordSink getSlaveAsOfJoinMapSink(int slotId) {
         if (slotId == -1) {
             return ownerSlaveAsOfJoinMapSink;
@@ -475,8 +483,27 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
         memoryTracker = executionContext.getMemoryTracker();
         filterCtx.initFilters(symbolTableSource, executionContext);
-        // Note: group by functions are initialized in initTimeFrameCursors() where we have
+        // Note: group by functions are initialized in initOwnerGroupByFunctions() where we have
         // access to both master and slave symbol table sources
+    }
+
+    /**
+     * Binds the owner group-by functions to the join symbol table source, which the caller must
+     * have bound to the master and slave sources first. The cursor calls this at getCursor() time,
+     * so that a parent projection or sort over a SYMBOL aggregate can resolve the output column's
+     * static symbol table before the slave time-frame cache is built on the first read; otherwise
+     * SymbolColumn.init trips its static-symbol-table assert, or the sort NPEs on a null table.
+     * <p>
+     * This is the only place the owner functions are bound. initTimeFrameCursors() must not repeat
+     * it: init() is stateful for a cursor comparison in an aggregate argument, which would execute
+     * its scalar sub-query a second time per cursor. Re-binding to the slave time-frame source
+     * would buy nothing either, since that source resolves symbol tables through the very
+     * page-frame cursor bound here.
+     */
+    public void initOwnerGroupByFunctions(SqlExecutionContext executionContext) throws SqlException {
+        for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
+            ownerGroupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
+        }
     }
 
     /**
@@ -503,11 +530,11 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, Closeabl
             perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
         }
 
-        // Initialize group by functions with combined symbol table source
+        // Rebind the combined symbol table source for the per-worker clones below. The owner
+        // group-by functions are already bound, by initOwnerGroupByFunctions() at getCursor()
+        // time, and must not be re-initialized here - init() is stateful for a cursor comparison.
+        // The operands are the ones the cursor bound, so the owner's source is unchanged.
         horizonJoinSymbolTableSource.of(masterSymbolTableSource, slavePageFrameCursor);
-        for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
-            ownerGroupByFunctions.getQuick(i).init(horizonJoinSymbolTableSource, executionContext);
-        }
         if (perWorkerGroupByFunctions != null) {
             final boolean current = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);

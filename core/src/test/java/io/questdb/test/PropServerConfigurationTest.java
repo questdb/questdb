@@ -215,7 +215,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(Long.MAX_VALUE, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getMaxQueryResponseRowLimit());
         Assert.assertTrue(configuration.getCairoConfiguration().getCircuitBreakerConfiguration().isEnabled());
         Assert.assertEquals(2_000_000, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-        Assert.assertEquals(64, configuration.getCairoConfiguration().getCircuitBreakerConfiguration().getBufferSize());
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
@@ -364,7 +363,6 @@ public class PropServerConfigurationTest {
         Assert.assertSame(NetworkFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getNetworkFacade());
         Assert.assertSame(EpollFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getEpollFacade());
         Assert.assertSame(SelectFacadeImpl.INSTANCE, configuration.getHttpServerConfiguration().getSelectFacade());
-        Assert.assertEquals(64, configuration.getHttpServerConfiguration().getTestConnectionBufferSize());
         Assert.assertTrue(FilesFacadeImpl.class.isAssignableFrom(configuration.getCairoConfiguration().getFilesFacade().getClass()));
         Assert.assertSame(MillisecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMillisecondClock());
         Assert.assertSame(MicrosecondClockImpl.INSTANCE, configuration.getCairoConfiguration().getMicrosecondClock());
@@ -400,7 +398,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(5000, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
         Assert.assertEquals(256, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
-        Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(8, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
         Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_NANOS, configuration.getLineTcpReceiverConfiguration().getTimestampUnit());
         Assert.assertEquals(131072, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
@@ -467,7 +464,6 @@ public class PropServerConfigurationTest {
         // PG wire
         Assert.assertEquals(64, configuration.getPGWireConfiguration().getLimit());
         Assert.assertEquals(500, configuration.getPGWireConfiguration().getAcceptLoopTimeout());
-        Assert.assertEquals(64, configuration.getPGWireConfiguration().getTestConnectionBufferSize());
         Assert.assertEquals(2, configuration.getPGWireConfiguration().getBinParamCountCapacity());
         Assert.assertTrue(configuration.getPGWireConfiguration().isSelectCacheEnabled());
         Assert.assertEquals(32, configuration.getPGWireConfiguration().getConcurrentCacheConfiguration().getBlocks());
@@ -930,6 +926,132 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testLiveViewDefaults() throws Exception {
+        // Pin every live-view default through the real parser. Tests that set these keys
+        // on a test configuration object never exercise PropServerConfiguration, so an
+        // ignored key or a getter wired to the wrong field would go unnoticed there.
+        CairoConfiguration cairo = newPropServerConfiguration(new Properties()).getCairoConfiguration();
+
+        Assert.assertEquals(5 * Micros.MINUTE_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
+        Assert.assertEquals(1_000_000L, cairo.getLiveViewCheckpointRows());
+        Assert.assertTrue(cairo.isLiveViewEnabled());
+        Assert.assertEquals(5, cairo.getLiveViewFlushRetryMax());
+        Assert.assertEquals(60 * Micros.SECOND_MICROS, cairo.getLiveViewFlushRetryMaxDurationMicros());
+        Assert.assertEquals(16L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
+        Assert.assertEquals(64L * 1024, cairo.getLiveViewInMemoryBufferInitialBytes());
+        Assert.assertEquals(60 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(100_000, cairo.getLiveViewPartitionCompactThreshold());
+        Assert.assertEquals(0L, cairo.getLiveViewRefreshMemoryLimitBytes());
+        Assert.assertEquals(64, cairo.getLiveViewRefreshTurnMaxCommits());
+        Assert.assertEquals(50_000L, cairo.getLiveViewRefreshTurnMaxDurationMicros());
+    }
+
+    @Test
+    public void testLiveViewEnvOverrides() throws Exception {
+        // The environment must win over server.conf on the live-view keys, and the
+        // duration/size units must convert on the env path too.
+        final Properties properties = new Properties();
+        final Map<String, String> env = new HashMap<>();
+
+        properties.setProperty("cairo.live.view.checkpoint.rows", "250000");
+        env.put("QDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS", "777000");
+
+        properties.setProperty("cairo.live.view.enabled", "true");
+        env.put("QDB_CAIRO_LIVE_VIEW_ENABLED", "false");
+
+        properties.setProperty("cairo.live.view.in.memory.max", "45m");
+        env.put("QDB_CAIRO_LIVE_VIEW_IN_MEMORY_MAX", "90m");
+
+        properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "32M");
+        env.put("QDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES", "64M");
+
+        CairoConfiguration cairo = newPropServerConfiguration(root, properties, env, new BuildInformationHolder())
+                .getCairoConfiguration();
+
+        Assert.assertEquals(777_000L, cairo.getLiveViewCheckpointRows());
+        Assert.assertFalse(cairo.isLiveViewEnabled());
+        Assert.assertEquals(90 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(64L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
+    }
+
+    @Test
+    public void testLiveViewInMemoryBufferGrowthBytesAcceptsZero() throws Exception {
+        // Zero (and negative) growth budget is a supported "compact on every publish" sentinel
+        // (LiveViewRefreshJob.isCompactionWorthwhile treats growthBudget <= 0 that way), so it must
+        // parse cleanly rather than being rejected. Locks the contract so the initial-bytes minimum
+        // is never mistakenly extended to the growth budget.
+        final Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "0");
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+        Assert.assertEquals(0, cairo.getLiveViewInMemoryBufferGrowthBytes());
+    }
+
+    @Test
+    public void testLiveViewInMemoryBufferInitialBytesRejectsNonPositive() throws Exception {
+        // A zero or negative in-memory buffer initial size reaches MemoryCARWImpl.setPageSize as
+        // Numbers.msb(ceilPow2(size)) -- a negative shift -- corrupting the first refresh instead of
+        // failing the server start. Reject it at config parse time with a message naming the key.
+        for (String value : new String[]{"0", "-1"}) {
+            final Properties properties = new Properties();
+            properties.setProperty("cairo.live.view.in.memory.buffer.initial.bytes", value);
+            try {
+                newPropServerConfiguration(properties);
+                Assert.fail("expected rejection for initial.bytes=" + value);
+            } catch (ServerConfigurationException e) {
+                TestUtils.assertContains(e.getMessage(), "cairo.live.view.in.memory.buffer.initial.bytes");
+            }
+        }
+    }
+
+    @Test
+    public void testLiveViewMalformedDurationRejected() throws Exception {
+        // A duration key that cannot be parsed must fail the server start with a message
+        // naming the offending key, not fall back to the default.
+        final Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.refresh.turn.max.duration.micros", "not-a-duration");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.live.view.refresh.turn.max.duration.micros");
+        }
+    }
+
+    @Test
+    public void testLiveViewNonDefaults() throws Exception {
+        // Every live-view key gets a value that differs from its default AND from every
+        // other key's parsed value, so a key that is ignored, misspelled or swapped with
+        // its neighbour cannot satisfy these assertions. The duration and size keys carry
+        // unit suffixes, exercising the getMicros()/getLongSize() conversions.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.live.view.checkpoint.max.duration.micros", "90s");
+        properties.setProperty("cairo.live.view.checkpoint.rows", "640000");
+        properties.setProperty("cairo.live.view.enabled", "false");
+        properties.setProperty("cairo.live.view.flush.retry.max", "9");
+        properties.setProperty("cairo.live.view.flush.retry.max.duration.micros", "2m");
+        properties.setProperty("cairo.live.view.in.memory.buffer.growth.bytes", "32M");
+        properties.setProperty("cairo.live.view.in.memory.buffer.initial.bytes", "128k");
+        properties.setProperty("cairo.live.view.in.memory.max", "45m");
+        properties.setProperty("cairo.live.view.partition.compact.threshold", "333000");
+        properties.setProperty("cairo.live.view.refresh.turn.max.commits", "128");
+        properties.setProperty("cairo.live.view.refresh.turn.max.duration.micros", "250ms");
+
+        CairoConfiguration cairo = newPropServerConfiguration(properties).getCairoConfiguration();
+
+        Assert.assertEquals(90 * Micros.SECOND_MICROS, cairo.getLiveViewCheckpointMaxDurationMicros());
+        Assert.assertEquals(640_000L, cairo.getLiveViewCheckpointRows());
+        Assert.assertFalse(cairo.isLiveViewEnabled());
+        Assert.assertEquals(9, cairo.getLiveViewFlushRetryMax());
+        Assert.assertEquals(2 * Micros.MINUTE_MICROS, cairo.getLiveViewFlushRetryMaxDurationMicros());
+        Assert.assertEquals(32L * 1024 * 1024, cairo.getLiveViewInMemoryBufferGrowthBytes());
+        Assert.assertEquals(128L * 1024, cairo.getLiveViewInMemoryBufferInitialBytes());
+        Assert.assertEquals(45 * Micros.MINUTE_MICROS, cairo.getLiveViewInMemoryMaxMicros());
+        Assert.assertEquals(333_000, cairo.getLiveViewPartitionCompactThreshold());
+        Assert.assertEquals(128, cairo.getLiveViewRefreshTurnMaxCommits());
+        Assert.assertEquals(250_000L, cairo.getLiveViewRefreshTurnMaxDurationMicros());
+    }
+
+    @Test
     public void testMaxBytesBelowPageSizeAccepted() throws Exception {
         // The implementation floors each operator's effective cap at one *.page.size, so a
         // *.max.bytes below the page size is silently raised at runtime. The config layer
@@ -954,12 +1076,37 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testPageSizeAboveCompressedOffsetCeilingRejected() throws Exception {
+        // These three heaps are addressed by 32-bit compressed offsets, and the initial page is
+        // allocated before any growth guard runs, so a page above the encoding ceiling truncates the
+        // offset of everything in its top region. The key heap and the map heap scale offsets by 8
+        // and cap at (2^32 - 2) * 8; the value chain scales by 4 and caps at half that. Only these
+        // three read their page size with getLongSize() - every other page size here goes through
+        // getIntSize() and so cannot reach 2GB, let alone either ceiling.
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "34359738360");
+        assertPageSizeRejected("cairo.sql.sort.key.page.size", "34359738360");
+        assertPageSizeRejected("cairo.sql.sort.light.value.page.size", "17179869180");
+
+        // The two ceilings differ, so a page between them is legal for the 8-byte-scaled heaps and
+        // not for the value chain. Without that split one bound would silently cover both.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.small.map.page.size", "34359738352");
+        properties.setProperty("cairo.sql.sort.key.page.size", "34359738352");
+        properties.setProperty("cairo.sql.sort.light.value.page.size", "17179869176");
+        newPropServerConfiguration(properties); // exactly at each ceiling must build
+        assertPageSizeRejected("cairo.sql.sort.light.value.page.size", "34359738352");
+    }
+
+    @Test
     public void testPageSizeAtMinimumAccepted() throws Exception {
         // Exactly at each minimum must build (off-by-one guard). window.rowid (>=12, ceilPow2 -> 16)
         // and window.tree (>=24, ceilPow2 -> 32) are rounded up by the config's ceilPow2.
         Properties properties = new Properties();
         properties.setProperty("cairo.sql.sort.key.page.size", "64");
         properties.setProperty("cairo.sql.sort.light.value.page.size", "12");
+        properties.setProperty("cairo.sql.hash.join.light.value.page.size", "12");
+        properties.setProperty("cairo.sql.small.map.page.size", "4");
+        properties.setProperty("cairo.sql.join.metadata.page.size", "4");
         properties.setProperty("cairo.sql.window.store.page.size", "64");
         properties.setProperty("cairo.sql.window.rowid.page.size", "16");
         properties.setProperty("cairo.sql.window.tree.page.size", "32");
@@ -984,6 +1131,21 @@ public class PropServerConfigurationTest {
         assertPageSizeRejected("cairo.sql.window.rowid.page.size", "8");
         assertPageSizeRejected("cairo.sql.window.store.page.size", "0");
         assertPageSizeRejected("cairo.sql.window.store.page.size", "32");
+        assertPageSizeRejected("cairo.sql.hash.join.light.value.page.size", "0");
+        assertPageSizeRejected("cairo.sql.hash.join.light.value.page.size", "8");
+        // small.map sizes OrderedMap's heap. The floor is only the map's structural bound, which
+        // asserts heapSize > 3; anything above it that a query cannot fit is rejected per query by
+        // the map's own check, which names the property. Values between the two - 24 bytes against a
+        // LONG key plus a LONG value, say - run their queries, so the floor must not reject them:
+        // OrderedMapTest.testHeapSizeBetweenStructuralMinimumAndEntrySize pins the accepted side.
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "0");
+        assertPageSizeRejected("cairo.sql.small.map.page.size", "3");
+        // join.metadata sizes the other configured OrderedMap - two STRING keys and one INT value.
+        // Below four bytes the map's own assertion fired while SQL compilation built join metadata,
+        // so a configuration mistake surfaced as an AssertionError out of the compiler with nothing
+        // naming the property. It takes small.map's floor for the same reason small.map has one.
+        assertPageSizeRejected("cairo.sql.join.metadata.page.size", "0");
+        assertPageSizeRejected("cairo.sql.join.metadata.page.size", "3");
     }
 
     @Test
@@ -2005,7 +2167,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(90002, configuration.getHttpMinServerConfiguration().getNapThreshold());
             Assert.assertEquals(100002, configuration.getHttpMinServerConfiguration().getSleepThreshold());
             Assert.assertEquals(1002, configuration.getHttpMinServerConfiguration().getSleepTimeout());
-            Assert.assertEquals(16, configuration.getHttpMinServerConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(4, configuration.getHttpMinServerConfiguration().getWorkerCount());
             Assert.assertEquals(750, configuration.getHttpMinServerConfiguration().getAcceptLoopTimeout());
 
@@ -2029,7 +2190,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(4194304, configuration.getHttpServerConfiguration().getNetSendBufferSize());
             Assert.assertEquals(8192, configuration.getHttpServerConfiguration().getRecvBufferSize());
             Assert.assertEquals(8388608, configuration.getHttpServerConfiguration().getNetRecvBufferSize());
-            Assert.assertEquals(16, configuration.getHttpServerConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(168101918, configuration.getHttpServerConfiguration().getBindIPv4Address());
             Assert.assertEquals(9900, configuration.getHttpServerConfiguration().getBindPort());
             Assert.assertEquals(2_000, configuration.getHttpServerConfiguration().getJsonQueryProcessorConfiguration().getConnectionCheckFrequency());
@@ -2061,7 +2221,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1_002, configuration.getLineTcpReceiverConfiguration().getQueueTimeout());
             Assert.assertEquals(64, configuration.getLineTcpReceiverConfiguration().getInterestQueueCapacity());
             Assert.assertEquals(11, configuration.getLineTcpReceiverConfiguration().getListenBacklog());
-            Assert.assertEquals(16, configuration.getLineTcpReceiverConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(32, configuration.getLineTcpReceiverConfiguration().getConnectionPoolInitialCapacity());
             Assert.assertEquals(CommonUtils.TIMESTAMP_UNIT_MICROS, configuration.getLineTcpReceiverConfiguration().getTimestampUnit());
             Assert.assertEquals(2049, configuration.getLineTcpReceiverConfiguration().getRecvBufferSize());
@@ -2120,7 +2279,6 @@ public class PropServerConfigurationTest {
             Assert.assertTrue(configuration.getPGWireConfiguration().isReadOnlyUserEnabled());
             Assert.assertEquals("my_quest_ro", configuration.getPGWireConfiguration().getReadOnlyPassword());
             Assert.assertEquals("my_user", configuration.getPGWireConfiguration().getReadOnlyUsername());
-            Assert.assertEquals(16, configuration.getPGWireConfiguration().getTestConnectionBufferSize());
             Assert.assertEquals(new DefaultPGConfiguration().getServerVersion(), configuration.getPGWireConfiguration().getServerVersion());
             Assert.assertEquals(10, configuration.getPGWireConfiguration().getNamedStatementLimit());
             Assert.assertEquals(250, configuration.getPGWireConfiguration().getAcceptLoopTimeout());
@@ -2204,7 +2362,6 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(33554432, configuration.getHttpMinServerConfiguration().getNetSendBufferSize());
             Assert.assertEquals(16384, configuration.getHttpMinServerConfiguration().getRecvBufferSize());
             Assert.assertEquals(16777216, configuration.getHttpMinServerConfiguration().getNetRecvBufferSize());
-            Assert.assertEquals(64, configuration.getHttpMinServerConfiguration().getTestConnectionBufferSize());
             Assert.assertTrue(configuration.getHttpMinServerConfiguration().getHint());
 
             // ILP/TCP
@@ -2608,7 +2765,6 @@ public class PropServerConfigurationTest {
 
         Assert.assertFalse(configuration.getCircuitBreakerConfiguration().isEnabled());
         Assert.assertEquals(500, configuration.getCircuitBreakerConfiguration().getCircuitBreakerThrottle());
-        Assert.assertEquals(16, configuration.getCircuitBreakerConfiguration().getBufferSize());
 
         Assert.assertEquals(32, configuration.getTextConfiguration().getDateAdapterPoolCapacity());
         Assert.assertEquals(65536, configuration.getTextConfiguration().getJsonCacheLimit());

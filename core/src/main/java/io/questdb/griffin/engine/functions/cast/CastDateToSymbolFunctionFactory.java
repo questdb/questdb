@@ -127,7 +127,7 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
             sink.clear();
             sink.put(value);
             final String str = Chars.toString(sink);
-            symbols.add(Chars.toString(sink));
+            symbols.add(str);
             return str;
         }
 
@@ -157,12 +157,15 @@ public class CastDateToSymbolFunctionFactory implements FunctionFactory {
 
         @Override
         public @Nullable SymbolTable newSymbolTable() {
-            Func copy = new Func(arg);
-            copy.symbolTableShortcut.putAll(this.symbolTableShortcut);
-            copy.symbols.clear();
-            copy.symbols.addAll(this.symbols);
-            copy.next = this.next;
-            return copy;
+            return new CastToSymbolTable(symbols);
+        }
+
+        @Override
+        public boolean supportsKeyValueAccess() {
+            // getInt() mints a key with one probe on the decoded scalar, never by hashing the row's
+            // text, and valueOf() resolves it by indexing symbols. A key consumer such as QWP egress
+            // should therefore encode each distinct value once instead of re-encoding it per row.
+            return true;
         }
 
         @Override

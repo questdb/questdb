@@ -24,8 +24,8 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
-import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.columns.IPv4Column;
 import io.questdb.griffin.engine.functions.groupby.CountIPv4GroupByFunction;
@@ -37,27 +37,19 @@ import io.questdb.griffin.engine.functions.groupby.MaxIPv4GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.MinIPv4GroupByFunction;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.std.IntList;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
-import io.questdb.std.Unsafe;
-import org.junit.After;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class IPv4GroupByFunctionBatchTest {
-    private static final int COLUMN_INDEX = 654;
-    private long lastAllocated;
-    private long lastSize;
-
-    @After
-    public void tearDown() {
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-            lastAllocated = 0;
-            lastSize = 0;
+public class IPv4GroupByFunctionBatchTest extends AbstractGroupByFunctionBatchTest {
+    // Stands in for a row whose IPv4 column is NULL, as a column-top row reads.
+    private static final Record NULL_IPv4_RECORD = new Record() {
+        @Override
+        public int getIPv4(int col) {
+            return Numbers.IPv4_NULL;
         }
-    }
+    };
 
     @Test
     public void testCountIPv4Batch() {
@@ -218,6 +210,43 @@ public class IPv4GroupByFunctionBatchTest {
     }
 
     @Test
+    public void testLastNotNullIPv4BatchKeepsHigherRowIdNonNull() {
+        GroupByFunction function = newLastNotNullIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            function.setNull(value);
+
+            // A stored non-null must survive a batch that arrives at a lower rowId. See the class javadoc.
+            long ptr = allocateInts(ipv4("9.9.9.9"));
+            function.computeBatch(value, ptr, 1, 100);
+            Assert.assertEquals(ipv4("9.9.9.9"), function.getIPv4(value));
+
+            ptr = allocateInts(ipv4("10.0.0.7"));
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(ipv4("9.9.9.9"), function.getIPv4(value));
+        }
+    }
+
+    @Test
+    public void testLastNotNullIPv4BatchReplacesStoredNull() {
+        GroupByFunction function = newLastNotNullIPv4Function(IPv4Column.newInstance(COLUMN_INDEX));
+        try (SimpleMapValue value = prepare(function)) {
+            // A frame with column tops or type casts falls back to the row-by-row path, whose
+            // computeFirst writes through unconditionally - NULL value included - leaving the
+            // accumulator holding a real rowId next to a NULL value. Frames reach a worker out of
+            // order, so a later frame can carry a non-null at a LOWER rowId, and computeBatch must
+            // still take it: a stored NULL is not a value to keep. computeNext already does this.
+            function.computeFirst(value, NULL_IPv4_RECORD, 100);
+            Assert.assertEquals(Numbers.IPv4_NULL, function.getIPv4(value));
+
+            long ptr = allocateInts(ipv4("10.0.0.7"));
+            function.computeBatch(value, ptr, 1, 10);
+
+            Assert.assertEquals(ipv4("10.0.0.7"), function.getIPv4(value));
+        }
+    }
+
+    @Test
     public void testMaxIPv4Batch() {
         MaxIPv4GroupByFunction function = new MaxIPv4GroupByFunction(IPv4Column.newInstance(COLUMN_INDEX));
         try (SimpleMapValue value = prepare(function)) {
@@ -287,23 +316,6 @@ public class IPv4GroupByFunctionBatchTest {
         }
     }
 
-    private long allocateInts(int... values) {
-        if (values.length == 0) {
-            return 0;
-        }
-        if (lastAllocated != 0) {
-            Unsafe.free(lastAllocated, lastSize, MemoryTag.NATIVE_DEFAULT);
-        }
-        lastSize = (long) values.length * Integer.BYTES;
-        lastAllocated = Unsafe.malloc(lastSize, MemoryTag.NATIVE_DEFAULT);
-        long addr = lastAllocated;
-        for (int value : values) {
-            Unsafe.putInt(addr, value);
-            addr += Integer.BYTES;
-        }
-        return lastAllocated;
-    }
-
     private int ipv4(String value) {
         return Numbers.parseIPv4Quiet(value);
     }
@@ -338,14 +350,5 @@ public class IPv4GroupByFunctionBatchTest {
         IntList argPositions = new IntList();
         argPositions.add(0);
         return (GroupByFunction) new LastNotNullIPv4GroupByFunctionFactory().newInstance(0, args, argPositions, null, null);
-    }
-
-    private SimpleMapValue prepare(GroupByFunction function) {
-        var columnTypes = new ArrayColumnTypes();
-        function.initValueTypes(columnTypes);
-        SimpleMapValue value = new SimpleMapValue(columnTypes.getColumnCount());
-        function.initValueIndex(0);
-        function.setEmpty(value);
-        return value;
     }
 }
