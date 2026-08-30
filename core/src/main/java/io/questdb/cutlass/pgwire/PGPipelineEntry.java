@@ -1556,6 +1556,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private short getPgResultSetColumnFormatCode(int columnIndex, int columnType) {
+        //Simple query protocol forces all columns (including binary) to text format (0)
+        if (stateDesc == SYNC_DESC_ROW_DESCRIPTION) {
+            return 0;
+        }
+        
         // binary is always sent as binary (e.g.) we never Base64 encode that
         if (columnType != ColumnType.BINARY) {
             return (msgBindSelectFormatCodeCount > 1 ? msgBindSelectFormatCodes.get(columnIndex) : msgBindSelectFormatCodes.get(0)) ? (short) 1 : 0;
