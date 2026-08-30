@@ -106,6 +106,11 @@ public interface SecurityContext extends Mutable {
     /**
      * Authorizes the health-check endpoint served by the min HTTP server. Enforced only when that
      * listener requires authentication; with authentication off there is no principal to check.
+     * <p>
+     * Note that the min server has a single auth toggle, {@code http.health.check.authentication.required},
+     * shared by the health-check and metrics endpoints. Turning it off to allow anonymous liveness
+     * probes therefore also stops {@link #authorizeMetrics()} being enforced. Anonymous
+     * {@code /status} combined with an authorized {@code /metrics} is not expressible today.
      */
     void authorizeHealthCheck();
 
@@ -128,6 +133,8 @@ public interface SecurityContext extends Mutable {
     /**
      * Authorizes the Prometheus metrics endpoint served by the min HTTP server. Enforced only when
      * that listener requires authentication; with authentication off there is no principal to check.
+     * See {@link #authorizeHealthCheck()} for the consequence of sharing one auth toggle across both
+     * min-server endpoints.
      */
     void authorizeMetrics();
 
