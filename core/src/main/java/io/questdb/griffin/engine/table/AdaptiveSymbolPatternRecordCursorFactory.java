@@ -572,8 +572,8 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
      * all for a symbol a later commit introduced, and every row carrying that symbol would then be
      * dropped.
      *
-     * @return false when an estimate can reject a negated complement from its cardinality without
-     * materializing it
+     * @return false when an estimate can reject a positive match set or negated complement from its
+     * cardinality without materializing it
      */
     private boolean prepareKeysFor(
             PartitionFrameCursor frameCursor,
@@ -730,6 +730,9 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         final IntList matched = patternFilter.getMatchedSymbolKeys();
         effectiveKeys.clear();
         if (!isNegated) {
+            if (isProbeCapApplied && matched.size() > maxEstimateProbes) {
+                return false;
+            }
             effectiveKeys.addAll(matched);
             return true;
         }

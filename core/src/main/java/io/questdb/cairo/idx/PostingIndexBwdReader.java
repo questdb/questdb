@@ -239,6 +239,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long efHighOffset;
         private int efHighWordIdx;
         private int efL;
+        private int efRankBeforeHighWord;
+        private int efRankedCheckpoint;
         private boolean isEFRanked;
         private long efLowMask;
         private long efLowOffset;
@@ -450,6 +452,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.isEFMode = false;
             this.isEFRanked = false;
             this.efHighWordIdx = -1;
+            this.efRankBeforeHighWord = 0;
+            this.efRankedCheckpoint = -1;
             this.isFlatMode = false;
             this.flatRemaining = 0;
             this.bufferRangeChecked = false;
@@ -517,19 +521,36 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long baseAddr = valueMem.addressOf(0);
             while (efHighWordIdx >= 0) {
                 long word = Unsafe.getLong(baseAddr + efHighOffset + (long) efHighWordIdx * 8);
+                final int rankBefore;
+                if (isEFRanked) {
+                    final int checkpoint = efHighWordIdx >>> PostingIndexUtils.EF_RANK_CHECKPOINT_SHIFT;
+                    if (checkpoint != efRankedCheckpoint) {
+                        efRankBeforeHighWord = PostingIndexUtils.efRankBeforeHighWord(
+                                baseAddr + efBlobOffset,
+                                efBlobSize,
+                                efHighWordIdx
+                        );
+                        if (efRankBeforeHighWord < 0) {
+                            throw CairoException.critical(0).put("corrupt ranked EF trailer");
+                        }
+                        efRankedCheckpoint = checkpoint;
+                    } else {
+                        efRankBeforeHighWord -= Long.bitCount(word);
+                        if (efRankBeforeHighWord < 0) {
+                            throw CairoException.critical(0).put("corrupt ranked EF trailer");
+                        }
+                    }
+                    rankBefore = efRankBeforeHighWord;
+                } else {
+                    if (word == 0) {
+                        efHighWordIdx--;
+                        continue;
+                    }
+                    rankBefore = Unsafe.getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
+                }
                 if (word == 0) {
                     efHighWordIdx--;
                     continue;
-                }
-                int rankBefore = isEFRanked
-                        ? PostingIndexUtils.efRankBeforeHighWord(
-                        baseAddr + efBlobOffset,
-                        efBlobSize,
-                        efHighWordIdx
-                )
-                        : Unsafe.getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
-                if (rankBefore < 0) {
-                    throw CairoException.critical(0).put("corrupt ranked EF trailer");
                 }
                 int bufIdx = 0;
                 long w = word;
@@ -916,6 +937,8 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
                 efBlobOffset = encodedOffset;
                 efBlobSize = encodedSize;
+                efRankBeforeHighWord = 0;
+                efRankedCheckpoint = -1;
                 isEFRanked = PostingIndexUtils.hasEfRankTrailer(baseAddr + encodedOffset, encodedSize);
                 if (!isEFRanked) {
                     // Legacy EF has no persisted rank metadata. Preserve compatibility with the

@@ -244,13 +244,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Route counters are test-only observability and must not mutate on production cursor opens.
-     * Every counter flag stays at its production default here, so opening cursors through both
-     * factories - covering route, fallback scan route, and bitmap index route - must leave all four
-     * route counters untouched. The plan assertions pin that the queries really route through the
-     * factories under test; without them the zero checks below would hold vacuously.
-     */
+    // Plan assertions ensure that zero route counters do not pass vacuously.
     @Test
     public void testRouteCountersStayIdleAtProductionDefaults() throws Exception {
         assertMemoryLeak(() -> {
@@ -285,12 +279,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The covering route reads the projection out of the posting index, keyed by the very same
-     * refreshed key list, so a commit landing between the estimate and the covering delegate's own
-     * reader acquisition drops every row under the newly introduced key while still emitting the new
-     * rows of an already-known key.
-     */
+    // A commit between estimation and delegate acquisition must not mix table snapshots.
     @Test
     public void testCommitAtEstimateReaderReturnKeepsCoveringRouteCoherent() throws Exception {
         assertMemoryLeak(() -> {
@@ -314,13 +303,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Same window as {@link #testCommitAtEstimateReaderReturnKeepsIndexRouteCoherent()}, but for the
-     * broad pattern that the estimate rejects. The fallback scan re-reads the table under its own
-     * reader while the prepared pattern filter still carries the key set the estimate extracted from
-     * the previous snapshot's symbol dictionary, so a symbol the same commit introduced is filtered
-     * out even though the scan can see its rows.
-     */
+    // The fallback filter and scan must use one symbol-table snapshot across a concurrent commit.
     @Test
     public void testCommitAtEstimateReaderReturnKeepsFallbackScanCoherent() throws Exception {
         assertMemoryLeak(() -> {
@@ -345,12 +328,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The adaptive factory releases the partition-frame cursor its selectivity estimate opened before
-     * the selected delegate acquires one of its own. A commit landing in that window must not be able
-     * to produce a result that belongs to neither snapshot: the query either runs wholly before the
-     * commit or wholly after it.
-     */
+    // A commit between estimation and delegate acquisition must not mix table snapshots.
     @Test
     public void testCommitAtEstimateReaderReturnKeepsIndexRouteCoherent() throws Exception {
         assertMemoryLeak(() -> {
@@ -374,21 +352,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Execution-mode sweep for single-reader cursor opens. The adaptive shapes reach the
-     * estimate-to-delegate hand-off through different partition-frame factories or key-list builds;
-     * the descending shape bypasses that route. Each must open exactly one table reader per cursor open:
-     * <ul>
-     *   <li>a WAL table, whose reader the apply job advances independently of the query;</li>
-     *   <li>an interval-filtered query, which uses {@code IntervalPartitionFrameCursorFactory} and is
-     *       the {@code size() == -1} shape the estimate special-cases;</li>
-     *   <li>a negated pattern, whose {@code buildEffectiveKeys()} enumerates the whole symbol
-     *       dictionary and therefore has the widest exposure to a dictionary that grew;</li>
-     *   <li>an unlimited descending designated-timestamp query, which bypasses the adaptive route
-     *       because its index delegates cannot stream backward, and opens one reader for the ordinary
-     *       backward scan.</li>
-     * </ul>
-     */
+    // Every mode must hand the estimate cursor to the delegate and open one reader per cursor.
     @Test
     public void testEstimateHandsItsCursorToTheDelegateAcrossExecutionModes() throws Exception {
         assertMemoryLeak(() -> {
@@ -425,11 +389,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The ordinary backward scan used for an unlimited descending designated-timestamp pattern query
-     * opens one reader. A commit triggered when that reader returns must therefore land wholly after
-     * the drained result rather than split one query across two table transactions.
-     */
+    // The commit callback must run after the descending scan drains its single reader.
     @Test
     public void testCommitAtReaderReturnKeepsDescendingScanCoherent() throws Exception {
         assertMemoryLeak(() -> {
@@ -508,22 +468,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Regression guard for adaptive symbol-pattern routing over a table that mixes a
-     * converted-Parquet partition with a native one. ALTER TABLE ... CONVERT PARTITION TO
-     * PARQUET rebuilds the bitmap sidecars into the parquet partition dir
-     * ({@code TableWriter.convertPartitionNativeToParquet} calls
-     * {@code copyOrRebuildColumnIndexes} before committing), and the adaptive owner's estimate
-     * probes {@code TableReader.getIndexReader} per partition frame with no parquet carve-out,
-     * so both the positive and the negated (complement, NULL-inclusive) patterns must keep
-     * taking the bitmap index route AND keep returning the scan+filter ground truth.
-     * <p>
-     * Non-vacuity: the parquet leg cannot silently stay native (the table_partitions()
-     * assertion pins isParquet per partition), the route cannot silently flip (a flip trips
-     * the exact counter asserts: the taken route must be 1, the other 0), and a wrong result
-     * on either partition format trips the literal row expectations - each leg's expected rows
-     * carry v values from BOTH the parquet day (9001-9003) and the native day (9004-9006).
-     */
     @Test
     public void testBitmapRoutesServeConvertedParquetAndNativePartitions() throws Exception {
         assertMemoryLeak(() -> {
@@ -595,17 +539,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Covering-route companion of {@link #testBitmapRoutesServeConvertedParquetAndNativePartitions}:
-     * a POSTING INCLUDE index converted to parquet keeps its covering sidecars (the convert path
-     * links them across, see {@code CoveringIndexParquetNativeRoundTripTest}), so a covered
-     * aggregation over the mixed table must still open the covering delegate and aggregate rows
-     * from both partition formats.
-     * <p>
-     * Non-vacuity: isParquet is pinned per partition; the parquet day contributes 30.0 of the
-     * expected 100.0 sum, so dropping that leg fails the literal expectation; and a route flip
-     * trips the covering/scan counter pair.
-     */
     @Test
     public void testCoveringRouteServesConvertedParquetAndNativePartitions() throws Exception {
         assertMemoryLeak(() -> {
@@ -644,15 +577,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * M2-a. The probe budget bounds PLANNING work, and it has to bound the two dimensions it spends
-     * that work on -- partition frames and matched dictionary keys -- independently. Multiplying them
-     * into one counter makes a table's partition count alone exhaust the budget: at the default
-     * threshold of 100, a 40-partition table with four matched keys hits 160 probes and the estimate
-     * rejects the route at frame 26, no matter how selective the pattern is. Measured on a 20M-row,
-     * 50-partition table, that flip costs 40x (0.51 ms on the index route against 20.2 ms on the
-     * parallel scan) the moment a LIKE matches a third symbol.
-     */
     @Test
     public void testManyPartitionsWithSeveralMatchedKeysUsesIndexRoute() throws Exception {
         assertMemoryLeak(() -> {
@@ -677,13 +601,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * M2-b. A timestamp predicate builds an {@code AbstractIntervalPartitionFrameCursor}, whose
-     * {@code size()} answers -1 rather than counting rows it has not walked yet. Reading that -1 as
-     * "unknown row count, reject" put every time-filtered query -- the archetypal time-series query,
-     * and the one whose row set is already narrowed to where an index route wins -- on the fallback
-     * scan permanently. The estimate now counts the selected rows off the frames it walks anyway.
-     */
+    // Interval frame cursors report size() == -1, so estimation must count their frames.
     @Test
     public void testTimestampFilteredQueryUsesIndexRoute() throws Exception {
         assertMemoryLeak(() -> {
@@ -731,20 +649,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Pins both probe caps and pins that they stay independent. With the budget at 4:
-     * three frames and four keys is admitted (the old cumulative counter multiplied them to 12 and
-     * rejected); five keys in three frames is rejected by the key cap; one key over ten frames is
-     * rejected by the frame cap. The frame cap is the guard that keeps the index route out of the
-     * partition counts where it loses to the parallel scan, so a change that drops it fails here.
-     * <p>
-     * The frame cap has two implementations and this pins both. A full cursor is rejected in O(1)
-     * off the reader's partition count; an interval cursor cannot be, because it answers
-     * {@code size()} with -1 and its frames are only the partitions IN RANGE. The interval leg is
-     * therefore the only test in this class that reaches the in-loop {@code frames} counter, and it
-     * asserts the exact frame count so that the frame cap, not the row-share test, is provably what
-     * rejected the route.
-     */
+    // Full cursors enforce the frame cap eagerly; interval cursors enforce it while iterating.
     @Test
     public void testFrameAndKeyProbeCapsApplyIndependently() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "4");
@@ -806,13 +711,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The frame cap has an O(1) form for cursors that walk whole partitions: their frame count is
-     * bounded by the reader's partition count, so a table past the cap can be rejected before the
-     * first {@code next()}. Route counters cannot see the difference -- both forms pick the fallback
-     * scan -- so this counts the frames the estimator pulled. Measured, the walk it skips costs about
-     * 0.02 ms per frame, so roughly 2 ms per open at the default cap.
-     */
     @Test
     public void testManyPartitionScanRejectsWithoutWalkingFrames() throws Exception {
         assertMemoryLeak(() -> {
@@ -849,13 +747,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The O(1) rejection above must NOT extend to interval cursors. Their frames are the partitions
-     * IN RANGE, which the table's total partition count does not bound usefully: a narrow filter on a
-     * long-lived table walks a handful of frames and is precisely where the index route wins --
-     * measured 0.81 ms against the parallel scan's 2.71 ms on a 100-partition, 20M-row table with a
-     * 30-day filter. Rejecting it off the total partition count would be cheap and wrong.
-     */
+    // Interval cursors must apply the frame cap to in-range partitions, not the whole table.
     @Test
     public void testNarrowIntervalOnManyPartitionTableUsesIndexRoute() throws Exception {
         assertMemoryLeak(() -> {
@@ -974,20 +866,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Re-binding the pattern on a factory whose filter a parallel aggregate has STOLEN must re-prepare
-     * the matched-key set. That set has exactly one writer on this path: the shared partition-frame
-     * wrapper calls back into {@code prepareKeysFor()} on every cursor open, because
-     * {@code PreparedSymbolPatternFilter.init()} deliberately leaves the provider alone and
-     * {@code halfClose()} has already dismantled the adaptive factory that would otherwise rebuild it.
-     * Preparing once per compiled factory instead of once per open would make the second execution
-     * evaluate the PREVIOUS pattern's keys and return wrong rows with no error, which is why this
-     * asserts against the {@code no_symbol_pattern_index} oracle on every re-bind rather than trusting
-     * the assert in {@code getBool()} - that one only fires when the callback disappears entirely.
-     * <p>
-     * The plan assertion is load-bearing too: a factory that stopped stealing would satisfy the row
-     * assertions for the wrong reason.
-     */
+    // A stolen filter relies on the frame wrapper to rebuild keys on every cursor open.
     @Test
     public void testBindVariableKeysRefreshOnStolenFilterCursorReuse() throws Exception {
         assertMemoryLeak(() -> {
@@ -1028,18 +907,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The heap row cursor must open one row cursor per LIVE symbol key, not one per per-key factory
-     * ever allocated. {@link SymbolPatternIndexRecordCursorFactory} grows its per-key factory list
-     * monotonically and re-arms only the first {@code cursorFactoriesIdx[0]} entries, so re-running a
-     * prepared statement with a narrower pattern leaves factories behind that still carry a symbol key
-     * from the previous execution. Their rows never reach the result set -- the heap seeds itself only
-     * up to the live count -- so the waste shows up solely as extra index seeks, one per stale key per
-     * page frame, which is why this test counts cursor opens instead of asserting rows.
-     * <p>
-     * The reused factory is compared against a freshly compiled one running the identical query, so the
-     * assertion does not depend on how many page frames the table happens to have.
-     */
+    // Prepared factories retain old per-key factories, but the heap must open only live keys.
     @Test
     public void testHeapRowCursorOpensOneCursorPerLiveKey() throws Exception {
         assertMemoryLeak(() -> {
@@ -1588,17 +1456,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The per-open selectivity estimate must cost O(1) metadata reads per key and partition, never a
-     * walk of the index. Row counts cannot tell the two apart -- both produce the same answer -- so
-     * this counts the index entries the estimator itself consumed. On the default BITMAP symbol index
-     * the estimate resolves from the key entry's stored value count plus the two block seeks the
-     * cursor would do anyway, so the count must be exactly zero.
-     * <p>
-     * The pattern deliberately matches half the table: that is the shape where the estimate has to
-     * reject the index route, and where a walk is most expensive, since it runs to the whole
-     * {@code maxIndexRows} budget before the rejection and does so before the caller sees a row.
-     */
     @Test
     public void testEstimatorReadsNoBitmapIndexEntries() throws Exception {
         assertMemoryLeak(() -> {
@@ -1639,19 +1496,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The admission probe must cost the SELECTED RANGE, not the posting list the matched key holds in
-     * the partition. {@link BitmapIndexFwdReader#countMatchesInRange} reaches a range in the middle of
-     * a chain by hopping forward from the first value block and backward from the last one, so an
-     * unbounded pair of seeks inspects nearly every block a hot key owns before the estimate can even
-     * reject the route. Nothing one level up notices: the seeks read no index entry and pull no extra
-     * frame, so both of those counters stay at zero while the probe walks the whole chain.
-     * <p>
-     * Two tables of identical shape and different length pin it. The interval sits in the middle of
-     * each and selects the same five rows, so the hop count must not grow with the posting list, and
-     * it must stay inside the configured probe budget. A WAL table of the long shape repeats the
-     * measurement, because the apply job builds that index through a different writer path.
-     */
+    // Probe work must scale with the selected range, not the key's complete posting list.
     @Test
     public void testEstimatorBoundsBitmapBlockHops() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "16");
@@ -1737,15 +1582,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Execution-mode coverage for the estimate. {@code matchedRows} accumulates across every frame
-     * the cursor yields, so a per-partition count that was not partition-local, or that leaked one
-     * partition's postings into another's frame, would mis-add here and pick the wrong route. The
-     * non-partitioned table pins the single-frame shape, and the interval-restricted shape pins the
-     * unknown-size case: an interval frame cursor reports {@code size() == -1}, so the estimate takes
-     * its denominator from the frames it walks anyway rather than rejecting the route outright, and
-     * it must reach that denominator without walking a single index entry.
-     */
     @Test
     public void testEstimatorAcrossPartitionsAndIntervalFrames() throws Exception {
         assertMemoryLeak(() -> {
@@ -1816,13 +1652,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The admitted share of matched rows must sit below the measured crossover with the parallel
-     * scan, not above it. Benchmarks on a 2M-row table put that crossover at 8-10% of rows for a
-     * bare filter: at 4% the index route is still ~1.8x faster, at 10% it is ~1.3x slower. The
-     * estimator admits up to {@code totalRows / 20}, so a pattern matching 1% of rows takes the
-     * index and one matching 10% must not.
-     */
     @Test
     public void testEstimatorRejectsSharesAboveMeasuredCrossover() throws Exception {
         assertMemoryLeak(() -> {
@@ -1856,19 +1685,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The covering route and the index route do not share an admission threshold, and must not: the
-     * covering route reads a narrow projection out of the posting index but produces its page frames on
-     * the opening thread, so only the filter above it scales with the shared query workers while the
-     * fallback scan scales end to end. Benchmarks on a 2M-row table put the covering route's crossover
-     * with that scan at ~4% of rows on 4 workers and ~2.5-3% on 8, against 8-10% for the index route,
-     * so one constant sized for the index route admits the covering route across a band where it is
-     * measurably slower -- 1.25x at 5% and 1.90x at 8% on 4 workers, 2.0x at 5% on 8.
-     * <p>
-     * This pins the split rather than either number: 2% of a covered table takes the covering route,
-     * 4% falls back to the scan, and the very same 4% on a bitmap index still takes the index route.
-     * Collapsing the two constants back into one would fail the second or the third assertion.
-     */
+    // Covering and bitmap routes intentionally use different selectivity thresholds.
     @Test
     public void testCoveringRouteAdmitsSmallerShareThanIndexRoute() throws Exception {
         assertMemoryLeak(() -> {
@@ -1995,10 +1812,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * End-to-end row parity: the index fast path (unhinted) must return exactly the same rows as the
-     * scan+filter path forced by the opt-out hint. The hint is the ground truth; the two must agree.
-     */
     @Test
     public void testStartsWithMatchesScanFilter_indexPath() throws Exception {
         assertMemoryLeak(() -> {
@@ -2011,11 +1824,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Proves recognition fired: the unhinted plan routes through the SymbolPatternIndex fast path, while
-     * the hinted (opt-out) plan does not. This is the meaningful RED-&gt;GREEN signal for the codegen branch,
-     * because the row-parity test alone passes even when both queries scan+filter.
-     */
     @Test
     public void testPlanUsesSymbolPatternIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -2026,10 +1834,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Residual conjunct ({@code AND v > 1000}) must be applied on the index rows: index-path result must
-     * equal the scan+filter (hinted) ground truth.
-     */
     @Test
     public void testResidualFilterMatchesScanFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2042,9 +1846,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Regex ({@code ~}) and ILIKE variants must also route through the index and match ground truth.
-     */
     @Test
     public void testRegexAndIlikeMatchScanFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2215,10 +2016,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Descending designated-timestamp order bypasses the pattern index when there is no LIMIT; the
-     * resulting backward scan must equal the explicitly hinted scan+filter ground truth.
-     */
     @Test
     public void testDescOrderMatchesScanFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -2230,11 +2027,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP2: negation ({@code NOT LIKE}) IS now lifted to the index fast path via a complement scan, and the
-     * result must still equal the scan+filter ground truth (same rows, including NULL-symbol rows). The
-     * opt-out hint still forces the scan+filter path.
-     */
     @Test
     public void testNegationLiftedToIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -2248,18 +2040,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * {@code no_index(t)} is the documented escape hatch that forces a full scan, and every other index
-     * route in SqlCodeGenerator consults it (the LATEST BY index route, the sorted-symbol-index route,
-     * the FilterOnValues route, and -- via {@link io.questdb.griffin.SqlHints#hasNoCoveringHint} ORing in
-     * {@code no_index} -- the covering route). The symbol-pattern route must honour it too, otherwise
-     * {@code no_index} leaves the pattern route as the ONLY surviving index path, which is the opposite
-     * of what the hint promises.
-     * <p>
-     * Asserts on the {@code AdaptiveSymbolPattern} plan node, not on {@code SymbolPatternIndex}:
-     * {@code AdaptiveSymbolPatternRecordCursorFactory.toPlan()} prints all three delegates
-     * unconditionally, so only the adaptive node itself proves the route was constructed.
-     */
+    // Adaptive plans print every delegate, so only the AdaptiveSymbolPattern node proves routing.
     @Test
     public void testNoIndexHintDisablesSymbolPatternRoute() throws Exception {
         assertMemoryLeak(() -> {
@@ -2306,12 +2087,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * {@code no_index(t)} must also suppress the pattern route when the posting index makes the
-     * projection fully covered -- that shape reaches the covering delegate, which
-     * {@link io.questdb.griffin.SqlHints#hasNoCoveringHint} already suppresses, so without the fix
-     * {@code no_index} would leave the adaptive owner holding only its bitmap and scan delegates.
-     */
     @Test
     public void testNoIndexHintDisablesSymbolPatternRouteOnCoveredProjection() throws Exception {
         assertMemoryLeak(() -> {
@@ -2329,11 +2104,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP2 end-to-end row parity for the NEGATED complement fast path: {@code NOT LIKE 'A%'} via the index
-     * (unhinted) must return byte-identical rows to the scan+filter ground truth (hinted), including the
-     * NULL-symbol rows that {@code NOT LIKE} includes.
-     */
     @Test
     public void testNotLikeMatchesScanFilter_indexPath() throws Exception {
         assertMemoryLeak(() -> {
@@ -2346,11 +2116,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP2 recognition proof for negation: the unhinted {@code NOT LIKE} plan routes through the
-     * SymbolPatternIndex complement fast path, while the hinted (opt-out) plan does not. This is the
-     * meaningful RED-&gt;GREEN signal for the negated codegen branch.
-     */
     @Test
     public void testNotLikePlanUsesSymbolPatternIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -2361,12 +2126,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP2 Case B: the binary {@code !~} operator (which parses as a single binary node, not {@code not(~)})
-     * must also be lifted to the complement fast path via a synthesized positive {@code ~} provider node.
-     * Asserts both recognition (plan routes through / opts out of SymbolPatternIndex) and row parity —
-     * including NULL-symbol rows — against the scan+filter ground truth.
-     */
+    // The !~ operator has a binary AST shape distinct from NOT applied to regex.
     @Test
     public void testNotRegexMatchesScanFilter_indexPath() throws Exception {
         assertMemoryLeak(() -> {
@@ -2479,17 +2239,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The cheaper SequentialRowCursorFactory ("Cursor-order scan") drains one symbol key at a time, so
-     * its rows are not in designated-timestamp order. Like FilterOnValuesRecordCursorFactory, the index
-     * route may pick it only when the model declares its row order invariant: an outer ORDER BY that
-     * re-sorts anyway, or an aggregation that ignores row order.
-     * <p>
-     * The aggregation leg runs with parallel GROUP BY off on purpose. A parallel-eligible aggregate
-     * steals the pattern filter and aggregates over the scan delegate's page frames, so the index route
-     * - and with it the cursor-order scan this test is about - is unreachable under one. See
-     * {@link #testSelectivePatternUnderParallelAggregateForgoesIndexRoute}.
-     */
+    // Disable parallel GROUP BY so filter stealing cannot bypass the sequential index cursor.
     @Test
     public void testOrderInvariantModelUsesSequentialScan() throws Exception {
         assertMemoryLeak(() -> {
@@ -2512,12 +2262,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A query with no ORDER BY still promises rows in designated-timestamp order, so the index route
-     * must merge its per-key cursors ("Table-order scan"). The fixture assigns symbol key 0 to the row
-     * with the LATER timestamp, so a key-at-a-time drain would emit 'aa' before 'ab' -- the LIMIT case
-     * would then return the wrong rows outright, not merely a different order.
-     */
+    // Without ORDER BY, the cursor must still preserve designated-timestamp order.
     @Test
     public void testUnorderedScanStaysTimestampOrdered() throws Exception {
         assertMemoryLeak(() -> {
@@ -2536,15 +2281,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The reproducer filed against this PR: {@code WHERE sym LIKE ... LIMIT N} must return the same rows
-     * as the same statement without the index route. The two matched keys interleave in time, so a
-     * key-at-a-time drain would take all four 'a12' rows instead of the first four rows in
-     * designated-timestamp order -- a different ROW SET, not merely a different order, and the web
-     * console appends LIMIT to every query. Pinned against two independent ground truths: the
-     * no_symbol_pattern_index scan+filter oracle, and the equivalent IN list, whose established index
-     * route this one is required to match.
-     */
+    // Per-key draining changes the LIMIT row set, not merely its order.
     @Test
     public void testPatternLimitWithoutOrderByReturnsScanFilterRows() throws Exception {
         assertMemoryLeak(() -> {
@@ -2610,12 +2347,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         execute("INSERT INTO t SELECT 'bb', x, timestamp_sequence('2024-01-01T02:00:00.000000Z', 1_000_000) FROM long_sequence(1_000)");
     }
 
-    /**
-     * For all orderings (none, ASC ts, DESC ts) the fast-path must return exactly the same rows as the
-     * hinted scan+filter ground truth. Hint goes right after SELECT (a WHERE-clause hint is a silent no-op).
-     * For the unordered case ("") both queries are given a stable tiebreaker sort so that the comparison
-     * is deterministic regardless of cursor-order differences between the index and full-scan paths.
-     */
     @Test
     public void testOrderByTimestampParity() throws Exception {
         assertMemoryLeak(() -> {
@@ -2637,15 +2368,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * When matched-key count exceeds the default threshold (100), the factory must fall back to a
-     * full scan+filter cursor. We trigger this by inserting 150 distinct symbols that all match the
-     * pattern {@code 'A%'}, giving 150 matched keys &gt; 100. The fallback counter must increment and
-     * the index counter must stay at zero; rows must match the hinted scan+filter ground truth.
-     * <p>
-     * The table ALSO holds non-matching B-keys so the ground-truth comparison is not vacuous: a
-     * fallback that dropped the pattern predicate (and returned the whole table) would fail here.
-     */
+    // Non-matching keys ensure fallback still applies the pattern predicate.
     @Test
     public void testHighSelectivityFallsBackToScan() throws Exception {
         assertMemoryLeak(() -> {
@@ -2675,11 +2398,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * When matched-key count is at or below the default threshold (100), the factory must use the
-     * index-merge path. With only 3 matching symbol keys (AA, AB, AC out of AA/AB/BA/BB/AC), the
-     * index counter must increment and the fallback counter must stay at zero.
-     */
     @Test
     public void testLowSelectivityUsesIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -2704,12 +2422,59 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP2 negated adaptive threshold: the fast-vs-fallback decision is measured on the COMPLEMENT (included)
-     * size, not the matched size. With 150 distinct {@code B}-prefixed symbols and pattern {@code NOT LIKE 'A%'},
-     * the positive pattern matches 0 keys but the complement is 150 &gt; 100, so the factory must fall back to
-     * scan+filter (fallback counter increments, index counter stays zero) while still matching ground truth.
-     */
+    @Test
+    public void testPositiveOverProbeCapDoesNotRetainEffectiveKeys() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "16");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // A1..A16 sit exactly on the probe cap. aZ adds the seventeenth non-NULL key, while the
+            // final NULL row pins positive-pattern NULL semantics without changing either key count.
+            execute("""
+                    INSERT INTO t SELECT
+                      CASE WHEN x <= 16 THEN 'A' || x WHEN x < 1_000 THEN 'aZ' ELSE NULL END,
+                      x,
+                      timestamp_sequence(0, 1_000)
+                    FROM long_sequence(1_000)""");
+
+            bindVariableService.setStr("pattern", "A%");
+            final String query = "SELECT sym, v FROM t WHERE sym LIKE :pattern ORDER BY v";
+            final String oracle = "SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE sym LIKE :pattern ORDER BY v";
+            try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                final IntList effectiveKeys = getAdaptiveEffectiveKeys(factory);
+                final int initialCapacity = effectiveKeys.capacity();
+
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                Assert.assertEquals("a set exactly at the cap must remain available to the index delegate", 16, effectiveKeys.size());
+                Assert.assertEquals(initialCapacity, effectiveKeys.capacity());
+                Assert.assertTrue("the equal-cap set must use the index route",
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0);
+                Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get());
+
+                bindVariableService.setStr("pattern", "%");
+                for (int open = 0; open < 2; open++) {
+                    SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                    TestUtils.assertEquals(select(oracle), printFactory(factory));
+                    Assert.assertEquals("an over-cap positive set must not be copied on open " + open,
+                            0, effectiveKeys.size());
+                    Assert.assertEquals("an over-cap positive set must not grow retained capacity on open " + open,
+                            initialCapacity, effectiveKeys.capacity());
+                    Assert.assertTrue("the over-cap set must use the scan route",
+                            SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0);
+                    Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
+                }
+
+                bindVariableService.setStr("pattern", null);
+                TestUtils.assertEquals(select(oracle), printFactory(factory));
+                Assert.assertEquals("a NULL pattern must leave no effective keys", 0, effectiveKeys.size());
+                Assert.assertEquals(initialCapacity, effectiveKeys.capacity());
+            }
+
+            assertOverProbeCapDoesNotRetainEffectiveKeys("sym ILIKE 'a%'");
+            assertOverProbeCapDoesNotRetainEffectiveKeys("sym ~ '^[Aa]'");
+        });
+    }
+
     @Test
     public void testNegatedHighComplementFallsBackToScan() throws Exception {
         assertMemoryLeak(() -> {
@@ -2754,11 +2519,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP2 negated index path: when the complement is small enough (&le; threshold) the factory uses the
-     * index-merge complement scan. With 5 distinct symbols and {@code NOT LIKE 'A%'} the complement is
-     * 2 keys (BA, BB) — well under 100 — so the index counter must increment and the fallback stay at zero.
-     */
     @Test
     public void testNegatedLowComplementUsesIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -2781,12 +2541,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Parity oracle sweep: for a matrix of predicate shapes the fast index path (unhinted) must return
-     * byte-identical rows to the scan+filter ground truth (hint immediately after SELECT). Covers
-     * LIKE, ILIKE, regex (~), underscore-escaped LIKE, residual conjunct, empty match, and a no-match
-     * pattern — on a table that includes NULL symbols and multiple partitions.
-     */
     @Test
     public void testParitySweep() throws Exception {
         assertMemoryLeak(() -> {
@@ -2817,14 +2571,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Ground-truth oracle for SP2: QuestDB's symbol-pattern functions evaluate a NULL symbol as no match,
-     * so {@code NOT LIKE} and {@code !~} include NULL-symbol rows. The adaptive complement route must
-     * reproduce that established engine behavior exactly.
-     *
-     * <p>Concretely: with 300 rows of {@code rnd_symbol('alpha','beta','gamma')} and 50 explicit NULL rows,
-     * {@code sym NOT LIKE 'al%'} must return exactly (non-alpha non-null rows) + (null rows).
-     */
+    // QuestDB pattern functions do not match NULL, so their negations include NULL rows.
     @Test
     public void testNegationIncludesNullRows_groundTruth() throws Exception {
         assertMemoryLeak(() -> {
@@ -2845,17 +2592,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP2 negation parity sweep: for a matrix of negated predicate shapes the fast index path
-     * (unhinted) must return byte-identical rows to the scan+filter ground truth (hint immediately
-     * after SELECT). Covers NOT LIKE, NOT ILIKE, !~, underscore escape, residual conjunct, no-match
-     * pattern, and the non-lift {@code NOT LIKE '%'} case — on a table WITH NULL symbols and
-     * MULTIPLE partitions.
-     *
-     * <p>The {@code not like '%'} case: {@code LIKE '%'} compiles to a not-null check (not a
-     * SymbolKeySetProvider), so the {@code instanceof} gate in {@code tryGenerateSymbolPatternIndex}
-     * returns null and the query falls back to scan+filter. Parity must hold regardless.
-     */
+    // LIKE '%' compiles to a not-null check rather than a SymbolKeySetProvider.
     @Test
     public void testNegationParitySweep() throws Exception {
         assertMemoryLeak(() -> {
@@ -2886,11 +2623,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Deferred-symbol test: compile a fast-path factory, then insert a new matching symbol, then
-     * execute the cached factory — asserts the new symbol's rows are included (keys resolved at
-     * execution time, not at compile time).
-     */
     @Test
     public void testDeferredSymbolAddedAfterCompile() throws Exception {
         assertMemoryLeak(() -> {
@@ -2908,18 +2640,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP3: a POSITIVE pattern over a COVERED projection (all selected columns are the indexed symbol or
-     * INCLUDE-d covered columns) must route through the {@code CoveringIndex} merge (reading covered
-     * values from the posting sidecars), NOT the bitmap {@code SymbolPatternIndex}. Asserts recognition
-     * (unhinted plan contains {@code CoveringIndex}) and byte-identical row parity vs the scan+filter
-     * ground truth.
-     *
-     * <p>Ground-truth hint note: {@code no_symbol_pattern_index(t)} alone does NOT disable the covering
-     * path (a positive covered pattern would still hit {@code CoveringIndex} via this new route), so the
-     * scan+filter oracle must ALSO carry {@code no_covering(t)}. Both hints are space-separated in a
-     * single hint block immediately after SELECT.
-     */
+    // The scan oracle needs both hints because no_symbol_pattern_index does not disable covering.
     @Test
     public void testCoveringPositivePlanAndParity() throws Exception {
         assertMemoryLeak(() -> {
@@ -2934,12 +2655,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP3 covering + residual: a positive covered pattern with a residual conjunct on a covered column
-     * ({@code AND price > 1000}) must still route through {@code CoveringIndex} (wrapped by a residual
-     * filter) and match the scan+filter ground truth. The residual predicate references only covered
-     * columns so the covering projection remains valid.
-     */
     @Test
     public void testCoveringPositiveWithResidualParity() throws Exception {
         assertMemoryLeak(() -> {
@@ -2952,11 +2667,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP3 covering + deferred symbol: keys are resolved at execution time from the provider, so a matching
-     * symbol inserted AFTER the covering factory is compiled must appear in the covered result. Exercises
-     * the getCursor provider seam re-populating {@code multiKeys} per execution (never cached at compile).
-     */
     @Test
     public void testCoveringPositiveDeferredSymbol() throws Exception {
         assertMemoryLeak(() -> {
@@ -2972,14 +2682,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP3 covering page-frame path: a parallel GROUP BY aggregation ({@code sum(price)}) over a positive
-     * covered pattern drives the covering factory's {@code getPageFrameCursor} multi-key provider branch
-     * (the parallel/vectorized aggregation consumes page frames, not the record cursor). Asserts the plan
-     * routes through {@code CoveringIndex} and that the aggregate equals the scan+filter ground truth --
-     * proving the page-frame provider seam fills {@code multiKeys} correctly (right symbol-table basis,
-     * no NULL key, deferred-safe).
-     */
     @Test
     public void testCoveringPositivePageFrameAggregationParity() throws Exception {
         assertMemoryLeak(() -> {
@@ -2993,11 +2695,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP3 negated stays classic: a NEGATED pattern ({@code NOT LIKE}) over a covered projection must NOT use
-     * the covering route (covering only serves the positive match set; NOT LIKE includes NULL-symbol rows
-     * which the covered merge cannot produce). It stays on the SP2 classic complement scan.
-     */
     @Test
     public void testCoveringNegatedStaysClassic() throws Exception {
         assertMemoryLeak(() -> {
@@ -3012,22 +2709,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP3 covering parity sweep: a data-driven sweep on a COVERED-projection table that includes explicit
-     * NULL-symbol rows and MULTIPLE partitions. For each predicate shape the covered fast path (unhinted)
-     * must return byte-identical rows to the scan+filter oracle (forced by
-     * {@code no_symbol_pattern_index(t) no_covering(t)} hints). KEY invariant: a POSITIVE pattern never
-     * matches NULL, so the covered result must contain ZERO null-symbol rows for every predicate. This tests
-     * the NULL-exclusion property of the covering path (correct key-set from provider excludes key 0 / the
-     * NULL sentinel).
-     *
-     * <p>Covered DDL: {@code sym symbol index type posting include (price)}, so {@code price} and {@code sym}
-     * are both covered. The projection selects ONLY covered columns ({@code price, sym}) and orders by
-     * {@code price}; {@code ts} is intentionally excluded because it is NOT in the INCLUDE set and would
-     * cause {@code buildCoveringIndexMapping} to return null, silently falling back to the bitmap path.
-     * {@code price} values come from {@code x::double} over {@code long_sequence(4000)}, yielding unique
-     * values 1.0–4000.0 for non-null rows, so ORDER BY price is deterministic within the compared row-sets.
-     */
+    // Excluding ts keeps the projection covered; positive patterns must still exclude NULL keys.
     @Test
     public void testCoveringParitySweep() throws Exception {
         assertMemoryLeak(() -> {
@@ -3063,18 +2745,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SP3 covering routing: asserts that the query planner routes correctly based on whether the
-     * projection is fully covered by the posting index.
-     *
-     * <ul>
-     *   <li>Covered projection ({@code select sym, price}) -&gt; plan must contain {@code CoveringIndex}.</li>
-     *   <li>NOT-covered projection (column {@code extra} is not in the INCLUDE set) -&gt; plan must fall
-     *       back to the classic bitmap {@code SymbolPatternIndex}.</li>
-     *   <li>{@code no_covering(t)} hint on a covered query -&gt; forces the classic bitmap
-     *       {@code SymbolPatternIndex} (not covering, but still a fast path).</li>
-     * </ul>
-     */
     @Test
     public void testCoveringVsBitmapRouting() throws Exception {
         assertMemoryLeak(() -> {
@@ -3130,12 +2800,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Same shape as {@link #testAsOfJoinOnPatternFilteredMaster()}, but the master declares its
-     * designated timestamp explicitly. {@code generateSelectChoose()} pushes a {@code false}
-     * timestamp-required flag for such a model, so the factory cannot lean on that flag: it has to
-     * scan in timestamp order and say so.
-     */
+    // An explicit timestamp clears timestampRequired, so the factory must advertise forward order.
     @Test
     public void testAsOfJoinOnPatternFilteredMasterWithExplicitTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -3153,14 +2818,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Same shape again, but the explicit {@code timestamp(ts)} sits on a parenthesised sub-query that
-     * the join then aliases. That extra nesting level puts a {@code generateSelectChoose()} model
-     * between the pattern route and {@code validateBothTimestampOrders()}, and
-     * {@code generateSelectChoose()} pushes {@code timestampRequired = false} for a model carrying its
-     * own timestamp clause. So neither the factory nor its parent can lean on the execution context
-     * here: only an honest {@code SCAN_DIRECTION_FORWARD} keeps this query compiling.
-     */
+    // Nested explicit timestamps also clear timestampRequired before join-order validation.
     @Test
     public void testAsOfJoinOnPatternFilteredMasterWithNestedExplicitTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -3215,11 +2873,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SAMPLE BY over a nested pattern-filtered model: {@code generateSelectChoose()} demands ASC
-     * timestamp order from the sub-query whenever the context requires a timestamp, and reports
-     * {@code [25] ASC order over TIMESTAMP column is required but not provided} when the base does not.
-     */
     @Test
     public void testSampleByOverPatternFilteredSubQuery() throws Exception {
         assertMemoryLeak(() -> {
@@ -3233,10 +2886,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SAMPLE BY with FILL takes the non-parallel route, which rejects a base factory that does not
-     * report ASC designated-timestamp order.
-     */
     @Test
     public void testSampleByFillOverPatternFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -3250,12 +2899,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SAMPLE BY with FILL over a nested model that declares its own designated timestamp. The FILL
-     * route rejects a base factory that does not report ASC designated-timestamp order, and the
-     * nested {@code timestamp(ts)} model reaches it with {@code timestampRequired = false}, so the
-     * rejection depends only on what the pattern route advertises.
-     */
+    // The explicit timestamp clears timestampRequired, leaving factory order as the only guard.
     @Test
     public void testSampleByFillOverPatternFilteredSubQueryWithExplicitTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -3270,11 +2914,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A LIKE residual owns mutable matcher state, so the async filter must compile one filter per
-     * worker. The plain bitmap pattern route cannot expose page frames and would force this shape
-     * through a serial outer filter; retain the ordinary scan route instead.
-     */
+    // LIKE residuals own mutable matcher state and require one filter clone per worker.
     @Test
     public void testNonThreadSafeResidualPreservesParallelFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -3295,10 +2935,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A covered POSTING route can expose page frames, so a non-thread-safe LIKE residual must use
-     * worker-local filter clones without giving up the adaptive covering route.
-     */
     @Test
     public void testNonThreadSafeResidualPreservesCoveredParallelFilter() throws Exception {
         assertMemoryLeak(() -> {
@@ -3619,16 +3255,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * C3: with no covering delegate the bitmap index route is reachable, and it cannot supply page
-     * frames, so the only wrapper the code generator could put above the adaptive factory was a serial
-     * filter -- on EVERY open, including the majority that fall back to a full scan. The plan must now
-     * show the adaptive node itself dispatching between a serial index child and a parallel
-     * {@code Async Filter} child, and must keep the base plan's parallelism for the fallback.
-     * <p>
-     * Asserts the nested plan text rather than bare node names: the adaptive factory prints all of its
-     * delegates unconditionally, so only the parent/child shape proves which wrapper carries the filter.
-     */
+    // Nested plan shape matters because the adaptive factory prints every delegate.
     @Test
     public void testBitmapPatternRouteFiltersFallbackScanInParallel() throws Exception {
         assertMemoryLeak(() -> {
@@ -3675,13 +3302,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A POSTING index without an {@code INCLUDE (...)} clause, and a POSTING index whose {@code INCLUDE}
-     * does not cover the projection, both reach the same no-covering-delegate shape as a plain BITMAP
-     * index. So does a negated pattern on a fully covered projection, because
-     * {@code tryGenerateSymbolPatternIndex} guards the covering delegate with {@code !isNegated}. All
-     * three must keep the parallel filter on the fallback scan.
-     */
+    // Uncovered posting routes and negated covered routes have no covering delegate.
     @Test
     public void testPostingPatternRouteFiltersFallbackScanInParallel() throws Exception {
         assertMemoryLeak(() -> {
@@ -3713,12 +3334,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The covered positive pattern keeps the OTHER wrapper shape: the async filter stays ABOVE the
-     * adaptive factory, which is what lets a downstream group by steal the filter and run as
-     * {@code Async Group By}. A fix that moved filtering inside the factory for every shape would have
-     * silently given that up, so pin the parent/child order and the group-by node.
-     */
+    // Keeping the async filter above the adaptive factory enables downstream filter stealing.
     @Test
     public void testCoveredPositivePatternKeepsAsyncFilterAboveAdaptiveFactory() throws Exception {
         assertMemoryLeak(() -> {
@@ -3739,10 +3355,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * With the parallel filter switched off there is no async wrapper to hand the scan route, so the
-     * factory falls back to the pre-existing serial shape. Rows must be identical either way.
-     */
     @Test
     public void testPatternRouteStaysSerialWhenParallelFilterDisabled() throws Exception {
         assertMemoryLeak(() -> {
@@ -3771,13 +3383,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Self-filtering mode adds owned objects to the construction sequence: the async wrapper takes the
-     * scan factory AND the prepared pattern filter. This throws from
-     * {@code isParallelFilterEnabled()} -- the first call after the index delegate, the scan delegate
-     * and the prepared filter exist but before any of them changes owner -- and asserts nothing is
-     * stranded and the partition frame factory is closed exactly once.
-     */
+    // Inject failure before the scan factory and prepared filter transfer ownership.
     @Test
     public void testSelfFilteringConstructionFreesDelegatesExactlyOnceOnThrow() throws Exception {
         assertMemoryLeak(() -> {
@@ -3809,45 +3415,17 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Same contract as
-     * {@link #testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithHeapCursor()},
-     * for the other row cursor factory the constructor can pick: ORDER_BY_INVARIANT without a
-     * timestamp order builds a {@code SequentialRowCursorFactory} instead of a heap one, so it is a
-     * different owned object on the same cleanup chain.
-     */
     @Test
     public void testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithSequentialCursor() throws Exception {
         assertIndexFactoryCloseReleasesResourcesOnThrow(OrderByMnemonic.ORDER_BY_INVARIANT);
     }
 
-    /**
-     * {@code AbstractPageFrameRecordCursorFactory._close()} ends in
-     * {@code CairoException.rethrowCleanupFailure(...)}, so a partition-frame cleanup failure
-     * propagates into {@code SymbolPatternIndexRecordCursorFactory._close()} at its very first
-     * statement. {@code AbstractRecordCursorFactory.close()} sets its closed flag BEFORE calling
-     * {@code _close()}, so no retry ever comes and a sequential free chain strands everything the
-     * throw skipped -- here the index cursor, whose {@code PageFrameAddressCache} holds four native
-     * {@code DirectLongList}s allocated in its constructor.
-     * <p>
-     * The test injects that failure by handing the factory a partition frame cursor factory that
-     * releases everything it owns and only then throws from {@code close()}, which is the shape a
-     * real cleanup failure takes: the throw is the last thing that happens, so nothing below this
-     * factory leaks and the only thing {@code assertMemoryLeak()} can still see is what this
-     * factory's own chain abandoned.
-     */
+    // close() cannot retry after a partition-factory failure, so later native owners must still close.
     @Test
     public void testIndexFactoryCloseReleasesResourcesWhenPartitionFactoryCloseThrowsWithHeapCursor() throws Exception {
         assertIndexFactoryCloseReleasesResourcesOnThrow(OrderByMnemonic.ORDER_BY_UNKNOWN);
     }
 
-    /**
-     * The serial index branch and the parallel scan branch share ONE filter instance, so a re-bound
-     * pattern cannot make them disagree. Prove it on a single compiled factory whose selectivity, and
-     * therefore whose branch, flips between executions: selective -&gt; index branch, broad -&gt; parallel
-     * scan branch, and back. Each execution is compared against the scan+filter oracle, and the branch
-     * counters prove the route actually flipped rather than both executions taking the same one.
-     */
     @Test
     public void testBindVariablePatternAgreesAcrossRouteFlip() throws Exception {
         assertMemoryLeak(() -> {
@@ -3878,16 +3456,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * {@code PreparedSymbolPatternFilter.isThreadSafe()} answers true while ignoring
-     * {@code providerFunction.isThreadSafe()}, which is false for every LIKE/ILIKE and regex provider.
-     * That answer is only sound after {@code prepare()} has run: until then
-     * {@code MatchStaticSymbolTableConstPatternFunction.getBool()} and its runtime-const sibling take a
-     * lazy-init branch that rebuilds their key list through a shared {@code Matcher}, and the async
-     * filter this factory builds passes {@code perWorkerFilters == null}, so every worker would drive
-     * that branch on the same instance. Pin the precondition: {@code getBool()} before {@code prepare()}
-     * fails the assertion, and succeeds after it.
-     */
+    // The shared provider is thread-safe only after prepare() initializes its matcher-backed keys.
     @Test
     public void testPreparedFilterAssertsPrepareRanBeforeGetBool() {
         boolean isAssertionEnabled = false;
@@ -3910,17 +3479,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         }
     }
 
-    /**
-     * A keyed GROUP BY over a plain (non-covering) {@code SYMBOL INDEX} pattern must still compile to
-     * the PARALLEL aggregate. In self-filtering mode the adaptive factory is the top-level operator and
-     * advertises neither page frames nor filter stealing, so the parallel GROUP BY admission gate in
-     * {@code SqlCodeGenerator} fell through to the serial aggregate - a measured 3.35x latency
-     * regression on a broad pattern over 10M rows with four workers.
-     * <p>
-     * The {@code no_symbol_pattern_index} opt-out is the ground truth: it compiles the very plan the
-     * base revision compiled for the same query, so asserting it first proves the fixture is
-     * parallel-eligible rather than assuming it.
-     */
+    // The opt-out plan proves that this fixture remains eligible for parallel aggregation.
     @Test
     public void testKeyedGroupByOverSelfFilteringPatternRunsParallelAggregate() throws Exception {
         assertMemoryLeak(() -> {
@@ -3966,9 +3525,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The same shape on a WAL table, which reaches the reader through a different sequencer path.
-     */
     @Test
     public void testKeyedGroupByOverSelfFilteringPatternRunsParallelAggregateOnWalTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -3996,13 +3552,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Wrapped mode - a covering POSTING index exists - was never degraded and must stay that way. There
-     * the adaptive factory DOES supply page frames, so the parent steals from the async filter above it
-     * and aggregates over the adaptive factory's own frames: the aggregate is parallel AND the covering
-     * route survives under it. This is the bound on the fix, and the only shape where an aggregating
-     * parent still reaches an index route.
-     */
+    // Only the covered adaptive route supplies page frames while preserving its index route.
     @Test
     public void testKeyedGroupByOverWrappedPatternKeepsBothParallelismAndIndexRoute() throws Exception {
         assertMemoryLeak(() -> {
@@ -4033,11 +3583,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * SAMPLE BY over the same shape. It rewrites to a keyed GROUP BY on the timestamp floor and passes
-     * through the same admission gate, which is why the finding measured it at 3.88x rather than at a
-     * separate ratio.
-     */
     @Test
     public void testSampleByOverSelfFilteringPatternRunsParallelAggregate() throws Exception {
         assertMemoryLeak(() -> {
@@ -4061,12 +3606,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The other parent the same admission gate degraded: an ORDER BY with a LIMIT, which the opt-out
-     * compiles to the parallel top-K and the adaptive plan compiled to a serial sort. Includes the
-     * DESCENDING leg, where the stolen scan runs backward and the pattern filter's key set is rebuilt
-     * against the backward cursor rather than an ascending pin.
-     */
     @Test
     public void testOrderByLimitOverSelfFilteringPatternRunsParallelTopK() throws Exception {
         assertMemoryLeak(() -> {
@@ -4098,14 +3637,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * The ASOF join steals a slave-side filter too, and it is the sharpest test of where the stolen
-     * filter's matched-key set comes from: the join drives a TIME FRAME cursor, not page frames, and
-     * {@code PreparedSymbolPatternFilter.init()} deliberately leaves the provider alone. The set is
-     * built solely by the shared partition-frame wrapper calling back into {@code prepareKeysFor()},
-     * which is the hand-off the reader-coherence fix installed. A pattern the provider never prepared
-     * matches nothing, so wrong rows - not an exception - are the failure mode this pins.
-     */
+    // Time-frame joins rely on the shared frame wrapper to prepare a stolen filter's keys.
     @Test
     public void testAsOfJoinStealsSelfFilteringPatternFromSlave() throws Exception {
         assertMemoryLeak(() -> {
@@ -4128,13 +3660,6 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * What the parallel aggregate COSTS. A parent that steals the filter aggregates over the scan
-     * delegate's page frames, so the bitmap-index route is unreachable under it - even for a pattern
-     * selective enough that the per-open estimate would have admitted the index. The same fixture and
-     * the same pattern DO take the index route when the pattern factory is the top-level operator, so
-     * this asserts a parent-dependent loss, not a dead route.
-     */
     @Test
     public void testSelectivePatternUnderParallelAggregateForgoesIndexRoute() throws Exception {
         assertMemoryLeak(() -> {
@@ -4258,6 +3783,38 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             }
         }
         return count;
+    }
+
+    private static IntList getAdaptiveEffectiveKeys(RecordCursorFactory factory) throws ReflectiveOperationException {
+        RecordCursorFactory current = factory;
+        while (current != null && !(current instanceof AdaptiveSymbolPatternRecordCursorFactory)) {
+            current = current.getBaseFactory();
+        }
+        Assert.assertNotNull("expected an adaptive symbol-pattern factory", current);
+        final Field effectiveKeysField = AdaptiveSymbolPatternRecordCursorFactory.class.getDeclaredField("effectiveKeys");
+        effectiveKeysField.setAccessible(true);
+        return (IntList) effectiveKeysField.get(current);
+    }
+
+    private void assertOverProbeCapDoesNotRetainEffectiveKeys(String predicate) throws Exception {
+        final String query = "SELECT sym, v FROM t WHERE " + predicate + " ORDER BY v";
+        final String oracle = "SELECT /*+ no_symbol_pattern_index(t) */ sym, v FROM t WHERE " + predicate + " ORDER BY v";
+        try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+            final IntList effectiveKeys = getAdaptiveEffectiveKeys(factory);
+            final int initialCapacity = effectiveKeys.capacity();
+            final String expected = select(oracle);
+            for (int open = 0; open < 2; open++) {
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                TestUtils.assertEquals(expected, printFactory(factory));
+                Assert.assertEquals("an over-cap set must not be copied for " + predicate + " on open " + open,
+                        0, effectiveKeys.size());
+                Assert.assertEquals("an over-cap set must not grow retained capacity for " + predicate + " on open " + open,
+                        initialCapacity, effectiveKeys.capacity());
+                Assert.assertTrue("the over-cap set must use the scan route for " + predicate,
+                        SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0);
+                Assert.assertEquals(0, SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get());
+            }
+        }
     }
 
     /**

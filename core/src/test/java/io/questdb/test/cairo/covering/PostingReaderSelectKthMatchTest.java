@@ -168,6 +168,112 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRankedEfBackwardReaderRetainsCheckpointState() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "ranked_ef_bwd_checkpoint_state";
+                final int pathLen = path.size();
+                final int count = 1_000;
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_EF)) {
+                    writer.of(path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(0);
+                    long rowId = 0;
+                    for (int i = 0; i < count; i++) {
+                        rowId += 11 + (i & 15);
+                        writer.add(0, rowId);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0, null, null, 0);
+                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                    int previousHighWord = (int) fieldValue(cursor, "efHighWordIdx");
+                    final int highWordCount = previousHighWord + 1;
+                    assertTrue("fixture must span multiple rank checkpoints", previousHighWord >= 16);
+                    int checkpointTransitions = 0;
+                    int previousCheckpoint = -1;
+                    int rows = 0;
+                    while (cursor.hasNext()) {
+                        cursor.next();
+                        rows++;
+                        final int currentHighWord = (int) fieldValue(cursor, "efHighWordIdx");
+                        if (currentHighWord != previousHighWord) {
+                            assertEquals("dense fixture must visit every high word", previousHighWord - 1, currentHighWord);
+                            final int decodedHighWord = currentHighWord + 1;
+                            final int checkpoint = decodedHighWord >>> 3;
+                            assertEquals("backward scan must retain the validated checkpoint across adjacent words",
+                                    checkpoint, fieldValue(cursor, "efRankedCheckpoint"));
+                            if (checkpoint != previousCheckpoint) {
+                                checkpointTransitions++;
+                                previousCheckpoint = checkpoint;
+                            }
+                            previousHighWord = currentHighWord;
+                        }
+                    }
+                    assertEquals(count, rows);
+                    assertEquals("full traversal must enter each checkpoint exactly once",
+                            (highWordCount + 7) >>> 3, checkpointTransitions);
+                    assertEquals("ranked EF must not build the legacy lazy rank directory",
+                            0, fieldValue(cursor, "efRankDirAddr"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRankedEfBackwardReaderResetsStateAfterSparseHighWords() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "ranked_ef_bwd_sparse_state";
+                final int pathLen = path.size();
+                final int count = 1_000;
+                final long[] values = new long[count];
+                try (PostingIndexWriter writer = new PostingIndexWriter(configuration, PostingIndexUtils.ENCODING_EF)) {
+                    writer.of(path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, true);
+                    writer.setNextTxnAtSeal(0);
+                    long rowId = 0;
+                    for (int i = 0; i < count; i++) {
+                        rowId += i == count - 1 ? 1_000_000 : 1;
+                        values[i] = rowId;
+                        writer.add(0, rowId);
+                    }
+                    writer.setMaxValue(rowId);
+                    writer.commit();
+                }
+
+                try (PostingIndexBwdReader reader = new PostingIndexBwdReader(
+                        configuration, path.trimTo(pathLen), name, COLUMN_NAME_TXN_NONE, 0, 0, null, null, 0)) {
+                    try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                        int previousHighWord = (int) fieldValue(cursor, "efHighWordIdx");
+                        boolean hasSkippedHighWord = false;
+                        for (int i = count - 1; i >= 0; i--) {
+                            assertTrue(cursor.hasNext());
+                            assertEquals(values[i], cursor.next());
+                            final int currentHighWord = (int) fieldValue(cursor, "efHighWordIdx");
+                            hasSkippedHighWord |= currentHighWord < previousHighWord - 1;
+                            previousHighWord = currentHighWord;
+                        }
+                        assertFalse(cursor.hasNext());
+                        assertTrue("fixture must exercise empty high words", hasSkippedHighWord);
+                    }
+
+                    try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE)) {
+                        assertEquals("pooled cursor must reset ranked checkpoint state",
+                                -1, fieldValue(cursor, "efRankedCheckpoint"));
+                        for (int i = count - 1; i >= 0; i--) {
+                            assertTrue(cursor.hasNext());
+                            assertEquals(values[i], cursor.next());
+                        }
+                        assertFalse(cursor.hasNext());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testRankedEfBackwardReaderRejectsPairedCheckpointCorruption() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {

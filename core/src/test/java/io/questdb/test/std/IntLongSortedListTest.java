@@ -62,11 +62,6 @@ public class IntLongSortedListTest {
         }
     }
 
-    /**
-     * Randomised heapsort property test: push M distinct (index, value) pairs,
-     * poll all via pollValue(), assert the polled value sequence is
-     * non-decreasing and every pushed pair is returned exactly once.
-     */
     @Test
     public void testHeapsortProperty() {
         final int M = 500;
@@ -106,11 +101,6 @@ public class IntLongSortedListTest {
         Assert.assertEquals(sortedInserted, sortedPolled);
     }
 
-    /**
-     * Tests pollAndReplace: after adding several entries, replacing the root
-     * with a larger value must still yield values in non-decreasing order when
-     * the remaining entries are drained via pollValue().
-     */
     @Test
     public void testPollAndReplace() {
         IntLongSortedList heap = new IntLongSortedList();
@@ -145,9 +135,6 @@ public class IntLongSortedListTest {
         Assert.assertEquals(0, heap.size());
     }
 
-    /**
-     * Tests that clear() resets the heap and it can be reused.
-     */
     @Test
     public void testClearAndReuse() {
         IntLongSortedList heap = new IntLongSortedList();

@@ -69,6 +69,7 @@ import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -389,7 +390,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             if (multiKeyPageFrameCursor != null) {
                 if (patternKeys != null) {
                     multiKeyPageFrameCursor.multiKeys = patternKeys;
-                    multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false);
+                    multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                     return multiKeyPageFrameCursor;
                 }
                 if (keyValueFuncs != null) {
@@ -411,7 +412,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 }
                 // Always wire the frame cursor; callers may probe getSymbolTable()
                 // before iteration. Empty multiKeys list yields no frames.
-                multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false);
+                multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                 return multiKeyPageFrameCursor;
             }
             // Single-key path: see the matching block in getCursor().
@@ -425,7 +426,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
             }
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
-            singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending);
+            singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending, executionContext.getMemoryTracker());
             return singleKeyPageFrameCursor;
         } catch (Throwable th) {
             Misc.free(frameCursor);
@@ -1048,6 +1049,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected final int queryColCount;
         protected final int[] queryColToIncludeIdx;
         protected final int[] requiredIncludeIndices;
+        private MemoryTracker memoryTracker;
         // When true, emit frames in descending timestamp order (DESC partition
         // iteration, high row-range sub-frames first) to serve a negative LIMIT.
         protected boolean descending;
@@ -1154,6 +1156,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             closePendingCursor();
             frameCursor = Misc.free(frameCursor);
             freeBuffers();
+            memoryTracker = null;
         }
 
         @Override
@@ -1195,7 +1198,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             return nextImpl();
         }
 
-        // Initialized via the package-private of(PartitionFrameCursor, int, boolean) below.
+        // Initialized via the package-private of(PartitionFrameCursor, int, boolean, MemoryTracker) below.
         @Override
         public TablePageFrameCursor of(SqlExecutionContext executionContext, PartitionFrameCursor partitionFrameCursor) {
             throw new UnsupportedOperationException();
@@ -1223,9 +1226,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         protected long allocBuffer(long bytes) {
-            long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_INDEX_READER);
-            allocatedBuffers.add(addr, bytes);
-            return addr;
+            long addr = Unsafe.malloc(bytes, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+            try {
+                allocatedBuffers.add(addr, bytes);
+                return addr;
+            } catch (Throwable th) {
+                Unsafe.free(addr, bytes, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+                throw th;
+            }
         }
 
         private void ensureVarDataCapacity(long[] varDataAddrs, int[] varDataPos, int[] varDataCap, int q, int needed) {
@@ -1251,7 +1259,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             for (int i = 0, n = allocatedBuffers.size(); i < n; i += 2) {
                 long addr = allocatedBuffers.getQuick(i);
                 if (addr != 0) {
-                    Unsafe.free(addr, allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_INDEX_READER);
+                    Unsafe.free(addr, allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_INDEX_READER, memoryTracker);
                 }
             }
             allocatedBuffers.clear();
@@ -1272,24 +1280,34 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * just (new size) once the old buffer is released.
          */
         private long growBuffer(long oldAddr, long oldSize, long newSize, long usedBytes) {
-            long newAddr = Unsafe.malloc(newSize, MemoryTag.NATIVE_INDEX_READER);
-            if (usedBytes > 0) {
-                Unsafe.copyMemory(oldAddr, newAddr, usedBytes);
+            long newAddr = Unsafe.malloc(newSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+            try {
+                if (usedBytes > 0) {
+                    Unsafe.copyMemory(oldAddr, newAddr, usedBytes);
+                }
+            } catch (Throwable th) {
+                Unsafe.free(newAddr, newSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+                throw th;
             }
             int n = allocatedBuffers.size();
             for (int i = 0; i < n; i += 2) {
                 if (allocatedBuffers.getQuick(i) == oldAddr) {
                     allocatedBuffers.setQuick(i, newAddr);
                     allocatedBuffers.setQuick(i + 1, newSize);
-                    Unsafe.free(oldAddr, oldSize, MemoryTag.NATIVE_INDEX_READER);
+                    Unsafe.free(oldAddr, oldSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
                     return newAddr;
                 }
             }
             // Untracked old address. Should not happen for buffers
             // allocated via allocBuffer; defensive path keeps the new
             // buffer reachable so freeBuffers cleans it up at close.
-            allocatedBuffers.add(newAddr, newSize);
-            Unsafe.free(oldAddr, oldSize, MemoryTag.NATIVE_INDEX_READER);
+            try {
+                allocatedBuffers.add(newAddr, newSize);
+            } catch (Throwable th) {
+                Unsafe.free(newAddr, newSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
+                throw th;
+            }
+            Unsafe.free(oldAddr, oldSize, MemoryTag.NATIVE_INDEX_READER, memoryTracker);
             return newAddr;
         }
 
@@ -1846,19 +1864,28 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             pendingPartitionIndex = -1;
         }
 
-        void of(PartitionFrameCursor frameCursor, int configMaxRows, boolean descending) {
+        void of(
+                PartitionFrameCursor frameCursor,
+                int configMaxRows,
+                boolean descending,
+                MemoryTracker memoryTracker
+        ) {
             closePendingCursor();
+            resetIterationState();
+            // A factory can reuse this cursor for another execution. Release any prior
+            // execution's frames against the tracker that paid for them before binding
+            // the new execution's tracker.
+            freeBuffers();
+            this.memoryTracker = memoryTracker;
             this.frameCursor = frameCursor;
             this.tableReader = frameCursor.getTableReader();
             this.maxRowsPerFrame = maxRowsPerFrameOverride >= 0 ? maxRowsPerFrameOverride : configMaxRows;
             this.descending = descending;
             this.isExhausted = false;
-            resetIterationState();
             columnMapping.clear();
             for (int i = 0, n = columnIndexes.size(); i < n; i++) {
                 columnMapping.addColumn(columnIndexes.getQuick(i), columnIndexes.getQuick(i), columnIndexes.getQuick(i));
             }
-            freeBuffers();
         }
 
         abstract void resetIterationState();

@@ -566,17 +566,7 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * C1 tight guard: {@code populateCacheForKey} MUST prime the sparse-gen sidecar prefix-sum memo
-     * for every covered sparse gen it caches, single-threaded, BEFORE the freeze. On the cheap
-     * metadata-only covered production path this is the only thing that warms the memo -- the frozen
-     * reduce workers then read it read-only. If it did not prime, the workers would build the memo
-     * lazily with non-volatile stores from N threads over one shared reader (a data race that
-     * silently corrupts covered values). This pins the prime directly and deterministically: no
-     * cursor is positioned before the assertion, so ONLY populateCacheForKey can have built the memo
-     * row. Removing the prime (or letting it miss a cached gen) fails this immediately -- unlike the
-     * end-to-end tests, whose sparse data can bail to a traverse that pre-warms the memo anyway.
-     */
+    // populateCacheForKey() must prime every sparse-generation memo before readers freeze.
     @Test
     public void testPopulateCacheForKeyPrimesSidecarMemo() throws Exception {
         assertMemoryLeak(() -> {

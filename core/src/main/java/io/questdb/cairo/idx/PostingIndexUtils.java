@@ -349,7 +349,7 @@ public final class PostingIndexUtils {
     // the prefix extent from this header and ignore the trailer, preserving downgrade reads.
     static final int EF_HEADER_SIZE = 17;
     private static final int EF_RANK_CHECKPOINT_ENTRY_SIZE = 2 * Integer.BYTES;
-    private static final int EF_RANK_CHECKPOINT_SHIFT = 3;
+    static final int EF_RANK_CHECKPOINT_SHIFT = 3;
     private static final int EF_RANK_CHECKPOINT_WORDS = 1 << EF_RANK_CHECKPOINT_SHIFT;
     private static final int EF_RANK_TRAILER_HEADER_SIZE = 16;
     private static final int EF_RANK_TRAILER_MAGIC = 0x32465245; // "EFR2" in little-endian bytes
