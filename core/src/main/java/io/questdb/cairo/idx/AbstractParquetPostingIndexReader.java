@@ -338,11 +338,10 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * packed values, or 0 when the blob cannot be addressed in the mapping and
      * the group has to be decoded.
      * <p>
-     * After a non-zero return {@link #packedBase(int)} and
-     * {@link #packedBitWidth(int)} answer for the same group. All three come
-     * out of the blob's own header rather than the {@code _im}, so a mismatched
-     * or corrupt {@code _im} cannot silently make the payload decode as
-     * different row ids.
+     * After a non-zero return, a flat group's base and bit width are resolved
+     * too. Both come out of the blob's own header rather than the {@code _im},
+     * so a mismatched or corrupt {@code _im} cannot silently make the payload
+     * decode as different row ids.
      */
     protected long packedDataAddr(int rowGroup) {
         if (packedDataAddrs == null) {
@@ -378,18 +377,6 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
                     packedBases[rowGroup] = Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.STRIDE_FLAT_BASE_OFFSET);
                     packedBitWidths[rowGroup] = Unsafe.getUnsafe().getByte(blob + 1) & 0xFF;
                     dataAddr = blob + PostingIndexUtils.PACKED_PAYLOAD_HEADER_SIZE;
-                } else if (mode == PostingIndexUtils.PACKED_MODE_PER_KEY) {
-                    // The base is per KEY here, so it cannot be resolved until
-                    // the caller says which key. The blob address is kept for
-                    // that lookup; packedBases holds the group base the per-key
-                    // deltas are relative to, which is what a caller that asks
-                    // without a key would otherwise silently get wrong -- so
-                    // packedBase(int) refuses instead.
-                    final int keySpan = Unsafe.getUnsafe().getInt(blob + PostingIndexUtils.PACKED_PER_KEY_SPAN_OFFSET);
-                    packedBlobAddrs[rowGroup] = blob;
-                    packedBases[rowGroup] = Unsafe.getUnsafe().getLong(blob + PostingIndexUtils.PACKED_PER_KEY_BASE_OFFSET);
-                    packedBitWidths[rowGroup] = Unsafe.getUnsafe().getByte(blob + 1) & 0xFF;
-                    dataAddr = blob + PostingIndexUtils.packedPerKeyHeaderSize(keySpan);
                 }
             }
             packedDataAddrs[rowGroup] = dataAddr;
@@ -507,31 +494,6 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
             return PostingIndexUtils.packedUniformBlock(blob, firstKey, key);
         }
         return PostingIndexUtils.coverPerKeyBlock(blob, firstKey, key);
-    }
-
-    /**
-     * Value subtracted from {@code key}'s row ids before packing. Valid only
-     * after {@link #packedDataAddr(int)} has returned non-zero for the group.
-     * <p>
-     * Takes the key because a blob may carry one base per key rather than one
-     * per group -- see {@link PostingIndexUtils#PACKED_MODE_PER_KEY}. Under the
-     * per-group mode the key is ignored, so both modes are read the same way and
-     * the caller never branches.
-     */
-    protected long packedBase(int rowGroup, int key) {
-        final long blob = packedBlobAddrs[rowGroup];
-        if (blob == 0) {
-            return packedBases[rowGroup];
-        }
-        return PostingIndexUtils.packedPerKeyBase(blob, imReader.getRowGroupFirstKey(rowGroup), key);
-    }
-
-    /**
-     * Bits each of {@code rowGroup}'s packed row ids occupies. Valid only after
-     * {@link #packedDataAddr(int)} has returned non-zero for it.
-     */
-    protected int packedBitWidth(int rowGroup) {
-        return packedBitWidths[rowGroup];
     }
 
     /**

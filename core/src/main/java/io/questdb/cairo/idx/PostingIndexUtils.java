@@ -254,49 +254,7 @@ public final class PostingIndexUtils {
      * See {@link #encodePackedPayloadBlob}.
      */
     public static final int PACKED_PAYLOAD_HEADER_SIZE = STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
-    /**
-     * Packed payload mode 2: one frame-of-reference base per KEY instead of one
-     * per row group.
-     * <p>
-     * A row group holds a contiguous run of whole keys, and its extent is the
-     * union of theirs. That union is the whole partition unless the keys happen
-     * to sit near each other, so a per-GROUP base subtracts nothing and every
-     * row id is stored at the partition's full width. Real symbol data is
-     * clustered -- a ticker trades in bursts -- so each key's OWN extent is
-     * narrow even though the group's is not.
-     * <p>
-     * The width stays shared across the group, chosen as the widest key's own
-     * range. That is what keeps this cheap: addressing is unchanged, key
-     * {@code k}'s value {@code j} still sits at bit {@code (ordinal + j) *
-     * bitWidth}, so only the base lookup differs from mode 1.
-     * <p>
-     * Layout: {@code mode(1B) | bitWidth(1B) | pad(2B) | groupBase(8B) |
-     * keySpan(4B) | pad(4B) | baseDelta[keySpan](4B each) | packed values}.
-     * Key {@code k}'s base is {@code groupBase + baseDelta[k - firstKey]}, and
-     * the deltas are unsigned 32-bit, which bounds a partition at 2^32 rows --
-     * the seal falls back to mode 1 rather than exceed it.
-     */
-    public static final byte PACKED_MODE_PER_KEY = 2;
-    public static final int PACKED_PER_KEY_BASE_OFFSET = STRIDE_FLAT_BASE_OFFSET;
-    public static final int PACKED_PER_KEY_SPAN_OFFSET = PACKED_PER_KEY_BASE_OFFSET + Long.BYTES;
-    public static final int PACKED_PER_KEY_TABLE_OFFSET = PACKED_PER_KEY_SPAN_OFFSET + 2 * Integer.BYTES;
 
-    /**
-     * Covered-value blob, mode 0: the group's values for one covered column,
-     * laid out raw in posting order.
-     * <p>
-     * Exists so the packed payload can carry covered columns at all. Every
-     * column of a parquet row group shares one row count, so once {@code row_id}
-     * became one blob per GROUP the covered columns had to follow or be refused
-     * -- and they were refused, which left the packed arm unusable by the very
-     * thing a covering index is for.
-     * <p>
-     * Layout: {@code mode(1B) | width(1B) | pad(2B) | values}. Value {@code j}
-     * of the group sits at {@code COVER_BLOB_HEADER_SIZE + j * width}, and
-     * {@code j} is the group ordinal the {@code _im} key directory already
-     * gives -- the same ordinal that addresses the row id.
-     */
-    public static final byte COVER_MODE_RAW = 0;
     public static final int COVER_BLOB_HEADER_SIZE = 4;
 
     /**
@@ -398,37 +356,7 @@ public final class PostingIndexUtils {
         return COVER_BLOB_HEADER_SIZE + valueCount * width;
     }
 
-    /**
-     * Writes a covered-value blob: the group's slice of a covered column,
-     * already gathered into posting order by the seal's key-major sort.
-     */
-    public static void encodeCoverBlob(long destAddr, long valuesAddr, int valueCount, int width) {
-        Unsafe.getUnsafe().putByte(destAddr, COVER_MODE_RAW);
-        Unsafe.getUnsafe().putByte(destAddr + 1, (byte) width);
-        Vect.memcpy(destAddr + COVER_BLOB_HEADER_SIZE, valuesAddr, (long) valueCount * width);
-    }
 
-    /** Header size of a mode 2 blob covering {@code keySpan} directory entries. */
-    public static int packedPerKeyHeaderSize(int keySpan) {
-        return PACKED_PER_KEY_TABLE_OFFSET + keySpan * Integer.BYTES;
-    }
-
-    /** Total size of a mode 2 blob. */
-    public static int packedPerKeyBlobSize(int keySpan, int valueCount, int bitWidth) {
-        return packedPerKeyHeaderSize(keySpan) + BitpackUtils.packedDataSize(valueCount, bitWidth);
-    }
-
-    /**
-     * Base of {@code key} in a mode 2 blob. {@code firstKey} is the row group's
-     * first key, that is the key the directory's entry 0 describes.
-     */
-    public static long packedPerKeyBase(long blobAddr, int firstKey, int key) {
-        final long groupBase = Unsafe.getUnsafe().getLong(blobAddr + PACKED_PER_KEY_BASE_OFFSET);
-        final long delta = Unsafe.getUnsafe().getInt(
-                blobAddr + PACKED_PER_KEY_TABLE_OFFSET + (long) (key - firstKey) * Integer.BYTES
-        ) & 0xFFFFFFFFL;
-        return groupBase + delta;
-    }
     // v2 chain layout — append-only chain of immutable seal entries.
     // The two header pages (A/B) at offsets 0 and 4096 are seqlock-protected
     // and contain only the chain head pointer and counters. Each entry lives
@@ -1802,57 +1730,6 @@ public final class PostingIndexUtils {
         );
     }
 
-    /**
-     * Writes a mode 2 blob: the same packed values a mode 1 blob would hold at
-     * the same ordinals, but rebased per key.
-     *
-     * @param destAddr    destination, at least {@link #packedPerKeyBlobSize} bytes, ZERO-FILLED
-     * @param rowIdsAddr  the group's row ids, key-major, {@code valueCount} longs
-     * @param keyStarts   the group's key directory: {@code keySpan + 1} cumulative
-     *                    start ordinals, entry {@code i} describing key {@code firstKey + i}
-     * @param keyBases    per-key minimum row id, {@code keySpan} entries, ignored where
-     *                    the key holds no row
-     * @param groupBase   value every per-key base is stored relative to
-     * @param bitWidth    shared width, the widest key's own range
-     */
-    public static void encodePerKeyBlob(
-            long destAddr,
-            long rowIdsAddr,
-            int valueCount,
-            int keySpan,
-            int[] keyStarts,
-            long[] keyBases,
-            long groupBase,
-            int bitWidth
-    ) {
-        Unsafe.getUnsafe().putByte(destAddr, PACKED_MODE_PER_KEY);
-        Unsafe.getUnsafe().putByte(destAddr + 1, (byte) bitWidth);
-        Unsafe.getUnsafe().putLong(destAddr + PACKED_PER_KEY_BASE_OFFSET, groupBase);
-        Unsafe.getUnsafe().putInt(destAddr + PACKED_PER_KEY_SPAN_OFFSET, keySpan);
-        final long table = destAddr + PACKED_PER_KEY_TABLE_OFFSET;
-        final long data = destAddr + packedPerKeyHeaderSize(keySpan);
-        for (int i = 0; i < keySpan; i++) {
-            final int lo = keyStarts[i];
-            final int hi = keyStarts[i + 1];
-            if (lo >= hi) {
-                // No rows for this key. Its base is never read; zero keeps the
-                // blob deterministic.
-                continue;
-            }
-            final long base = keyBases[i];
-            Unsafe.getUnsafe().putInt(table + (long) i * Integer.BYTES, (int) (base - groupBase));
-            // Packed in place at the key's own ordinals, so the reader's
-            // addressing is identical to mode 1.
-            for (int j = lo; j < hi; j++) {
-                BitpackUtils.packValue(
-                        data,
-                        j,
-                        bitWidth,
-                        Unsafe.getUnsafe().getLong(rowIdsAddr + (long) j * Long.BYTES) - base
-                );
-            }
-        }
-    }
 
     /**
      * Size of a flat-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.
