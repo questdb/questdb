@@ -1379,20 +1379,22 @@ public class TableReader implements Closeable, SymbolTableSource {
             ObjList<MemoryCMR> columns,
             int primaryIndex,
             @Nullable MemoryCMR mem,
-            long columnSize,
-            boolean keepFdOpen
+            long columnSize
     ) {
         // Sequential scan profiles hint the kernel to read ahead and to
         // release page cache after reading, avoiding memory pressure during
         // large scans. closePartitionColumn() applies the matching DONTNEED
         // hint at unmap time.
         final int madviseOpts = scanProfile != ReaderScanProfile.DEFAULT ? Files.POSIX_MADV_SEQUENTIAL : -1;
+        // The fd stays open for as long as the mapping stays open (see the caller), so a later,
+        // non-overlapping reader that maps the same file can still find it in the FdCache/MmapCache
+        // and share the mapping instead of creating its own independent one.
         MemoryCMRDetachedImpl memory;
         if (mem != null && mem != NullMemoryCMR.INSTANCE) {
             memory = (MemoryCMRDetachedImpl) mem;
-            memory.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_READER, 0, madviseOpts, keepFdOpen);
+            memory.of(ff, path.$(), columnSize, columnSize, MemoryTag.MMAP_TABLE_READER, 0, madviseOpts, true);
         } else {
-            memory = new MemoryCMRDetachedImpl(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER, keepFdOpen, madviseOpts);
+            memory = new MemoryCMRDetachedImpl(ff, path.$(), columnSize, MemoryTag.MMAP_TABLE_READER, true, madviseOpts);
             columns.setQuick(primaryIndex, memory);
         }
         return memory;
@@ -1861,11 +1863,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                     final int columnType = metadata.getColumnType(columnIndex);
 
                     final MemoryCMR dataMem = columns.getQuick(primaryIndex);
-                    // We intend to keep the file handle open only for the last partition. All other
-                    // partitions will have the file handle closed after memory is mapped. The potential knock-on
-                    // effect of that is when user workload is such that it involved appending to non-last partition,
-                    // the reader will incur file-reopen and re-map instead of "realloc" call
-                    boolean lastPartition = partitionIndex == partitionCount - 1;
+                    // Keep the file handle open for as long as the reader keeps the column mapped, for
+                    // every partition, not just the last one. Closing the fd right after mapping (the old
+                    // fd-usage optimisation) evicted the FdCache/MmapCache record immediately, so a second
+                    // reader that later mapped the same historical partition's file always got its own,
+                    // independent mapping instead of sharing the first one. With many long-lived readers
+                    // sweeping the same table, those independent mappings add up and can exhaust the
+                    // process's virtual address space even though each one individually is cheap.
                     if (ColumnType.isVarSize(columnType)) {
                         final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                         long auxSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
@@ -1873,7 +1877,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         MemoryCMR auxMem = columns.getQuick(secondaryIndex);
                         // Keep aux files fds open, they are read every time TableReader partition is reopened
                         // to find out what memory to map of the data file.
-                        auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize, lastPartition);
+                        auxMem = openOrCreateColumnMemory(path, columns, secondaryIndex, auxMem, auxSize);
                         long dataSize = columnTypeDriver.getDataVectorSizeAt(auxMem.addressOf(0), columnRowCount - 1);
                         if (dataSize < columnTypeDriver.getDataVectorMinEntrySize() || dataSize >= (1L << 40)) {
                             LOG.critical().$("Invalid var len column size [column=").$safe(name)
@@ -1885,7 +1889,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                     .put(']');
                         }
                         TableUtils.dFile(path.trimTo(plen), name, columnTxn);
-                        openOrCreateColumnMemory(path, columns, primaryIndex, dataMem, dataSize, lastPartition);
+                        openOrCreateColumnMemory(path, columns, primaryIndex, dataMem, dataSize);
                     } else {
                         TableUtils.dFile(path.trimTo(plen), name, columnTxn);
                         openOrCreateColumnMemory(
@@ -1893,8 +1897,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                                 columns,
                                 primaryIndex,
                                 dataMem,
-                                columnRowCount << ColumnType.pow2SizeOf(columnType),
-                                lastPartition
+                                columnRowCount << ColumnType.pow2SizeOf(columnType)
                         );
                         Misc.free(columns.getAndSetQuick(secondaryIndex, null));
                     }
@@ -1961,9 +1964,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         return true;
     }
 
-    private boolean reloadColumnVersion(long columnVersion, long deadline) {
+    private boolean reloadColumnVersion(long columnVersion) {
         if (columnVersionReader.getVersion() != columnVersion) {
-            columnVersionReader.readSafe(clock, deadline);
+            // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take.
+            columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout());
         }
         return columnVersionReader.getVersion() == columnVersion;
     }
@@ -2018,7 +2022,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             // Reload _meta if the structure version updated, reload _cv if column version updated
         } while (
             // Reload column versions, column version used in metadata reload column shuffle
-                !reloadColumnVersion(txFile.getColumnVersion(), deadline)
+                !reloadColumnVersion(txFile.getColumnVersion())
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );

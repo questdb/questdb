@@ -50,6 +50,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * State management for QWP v1 processing.
@@ -235,18 +236,30 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     // server never wrote. Enforced in setHighestProcessedSequence.
     private long firstUnresolvedSequence = -1;
     private SecurityContext securityContext;
+    // Lowest sequence of a FLAG_DEFER_COMMIT frame that appended NO rows and is
+    // still uncovered; -1 when there is none. Survives per-message clear();
+    // reset by a successful commitAll and by onDisconnected().
+    private long firstRowlessDeferredSequence = -1;
+    // True when the message currently being processed appended at least one row.
+    // Reset at the top of every processMessage(), so it describes THIS frame and
+    // not the connection. A frame that registers symbols and nothing else -- the
+    // client's dictionary-chunk frames, which carry tableCount=0 and
+    // FLAG_DEFER_COMMIT -- leaves it false.
+    private boolean messageAppendedRows;
     // True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
-    // uncommitted. Set when a deferred frame's rows are buffered, cleared when
-    // commitAll() succeeds (the group-closing commit frame) or when clear()
-    // rolls the rows back. While true, the cumulative-ack watermark must not
-    // advance: a cumulative OK ack confirms every sequence up to and including
-    // its value, so covering an uncommitted deferred frame would let a
+    // uncommitted. Updated from the force-commit traversal after every deferred
+    // frame, cleared when commitAll() succeeds (the group-closing commit frame)
+    // or when clear() rolls the rows back, and set
+    // outright by markUncommittedDeferredRows where the fact is known without a
+    // cache to ask. While true, the cumulative-ack watermark must not advance:
+    // a cumulative OK ack confirms every sequence up to and including its
+    // value, so covering an uncommitted deferred frame would let a
     // store-and-forward client trim slots whose rows the server can still roll
     // back -- silent data loss. This is the contract stated (but previously not
     // enforced) by the deferred-commit feature (#7144): "the client's
     // store-and-forward replays all unacknowledged messages on reconnect" --
-    // deferred frames must therefore stay unacknowledged until their group
-    // commits. Enforced in setHighestProcessedSequence as a last resort; the
+    // deferred frames must therefore stay unacknowledged until their rows are
+    // committed. Enforced in setHighestProcessedSequence as a last resort; the
     // upgrade processor's ack path must not attempt the advance to begin with.
     private boolean uncommittedDeferredRows;
     private int sendState = SEND_STATE_READY;
@@ -287,6 +300,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     -1,
                     configuration.getQwpMaxUncommittedRows()
             );
+            // Salvage commits in evictStaleTud bypass commitAll(consumer), so
+            // the cache needs its own hook into recordCommittedTable to keep
+            // durable-ack bookkeeping in sync with a salvaged txn.
+            this.tudCache.setCommittedTxnConsumer(committedTxnConsumer);
 
             this.bufferSize = initBufferSize;
             this.bufferAddress = Unsafe.malloc(bufferSize, MemoryTag.NATIVE_HTTP_CONN);
@@ -344,13 +361,22 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     @Override
     public void close() {
-        tudCache = Misc.free(tudCache);
-        streamingDecoder = Misc.free(streamingDecoder);
-        walAppender = Misc.free(walAppender);
+        final var tudCacheToFree = tudCache;
+        tudCache = null;
+        Throwable cleanupFailure = Misc.freeBestEffort(null, tudCacheToFree);
+        final var streamingDecoderToFree = streamingDecoder;
+        streamingDecoder = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingDecoderToFree);
+        final var walAppenderToFree = walAppender;
+        walAppender = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, walAppenderToFree);
+        // The native buffer free cannot throw and must run even when a free
+        // above failed -- previously a tudCache close failure leaked it.
         if (bufferAddress != 0) {
             Unsafe.free(bufferAddress, bufferSize, MemoryTag.NATIVE_HTTP_CONN);
             bufferAddress = 0;
         }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**
@@ -401,6 +427,8 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             // deferred group (if any) is now durable in the WAL and the
             // cumulative-ack watermark may advance over it.
             uncommittedDeferredRows = false;
+            // commitAll covered every frame of the group, rowless ones included.
+            firstRowlessDeferredSequence = -1;
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] commit error: ").$(th).$();
@@ -410,7 +438,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
 
     public void commitIfMaxUncommittedRowsReached() {
         try {
-            tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
+            uncommittedDeferredRows = tudCache.commitIfMaxUncommittedRowsReached(committedTxnConsumer);
         } catch (Throwable th) {
             tudCache.setDistressed();
             LOG.error().$('[').$(fd).$("] deferred commit error: ").$(th).$();
@@ -492,6 +520,11 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         return currentStatus;
     }
 
+    @TestOnly
+    public QwpStreamingDecoder getStreamingDecoder() {
+        return streamingDecoder;
+    }
+
     /**
      * True when frame sync was lost during the close-echo wait and the recv
      * path is in read-and-discard mode -- see {@link #onCloseEchoSyncLost}.
@@ -527,9 +560,28 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
+     * Whether the message just processed appended at least one row.
+     * <p>
+     * A deferred frame may only be ack-covered when THIS frame's own rows are
+     * durable. "Nothing is uncommitted on the connection" is not the same claim:
+     * it is vacuously true for a frame that appended nothing.
+     *
+     * @see #markRowlessDeferredSequence(long) for why a rowless deferred frame
+     * needs more than withholding its own ack
+     */
+    @TestOnly
+    public boolean hasAppendedRowsInMessage() {
+        return messageAppendedRows;
+    }
+
+    /**
      * True while WAL rows appended by FLAG_DEFER_COMMIT frames remain
      * uncommitted. While true, no cumulative OK ack may cover the deferred
      * frames' sequences -- see {@link #setHighestProcessedSequence}.
+     * <p>
+     * {@code QwpIngressUpgradeProcessor.handleBinaryMessage} also reads it to
+     * decide whether an outgoing ack closes a run of withheld deferred frames
+     * and so must flush eagerly rather than wait for the batch threshold.
      */
     public boolean hasUncommittedDeferredRows() {
         return uncommittedDeferredRows;
@@ -744,15 +796,112 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
     }
 
     /**
-     * Records that a FLAG_DEFER_COMMIT frame buffered rows into WAL writers
-     * without a covering commit. Cleared by {@link #commit()} (successful
-     * commitAll) or {@link #clear()} (rollback). The per-table force-commit
-     * at the max-uncommitted-rows cap does NOT clear this: it commits single
-     * tables and gives no full-coverage guarantee, so the watermark stays put
-     * and those rows are simply replayed (at-least-once) after a reconnect.
+     * Records that a FLAG_DEFER_COMMIT frame which appended NO rows was withheld
+     * at {@code seq}, so no later ack may cover it until the group commits.
+     * Keeps the minimum across calls.
+     * <p>
+     * Withholding such a frame's own ack is not enough, because an OK ack is
+     * CUMULATIVE and {@link #setHighestProcessedSequence} assigns rather than
+     * increments: a later row-bearing deferred frame whose own rows have become
+     * durable would otherwise jump the watermark straight over it.
+     * <p>
+     * The row-bearing case needs no such marker, but not because those frames
+     * are self-contained -- in delta-dictionary mode they carry a delta section
+     * that later frames reference by id. It is safe because the client can
+     * re-derive that: it keeps a lifetime mirror of every delta it has sent and
+     * replays the whole dictionary as a catch-up before any post-reconnect
+     * traffic, so trimming such a frame orphans nothing.
+     * <p>
+     * A rowless deferred frame is the case with no such re-derivation. The
+     * full-dictionary chunks of the client's dictionary-chunk publisher carry symbol
+     * state that the data frames after them reference, and that mode
+     * deliberately sends no catch-up. Its own contract says so -- the chunks
+     * "cannot be trimmed away ahead of the data frames that depend on them".
      */
+    public void markRowlessDeferredSequence(long seq) {
+        if (firstRowlessDeferredSequence == -1 || seq < firstRowlessDeferredSequence) {
+            firstRowlessDeferredSequence = seq;
+        }
+    }
+
+    /**
+     * Records a FLAG_DEFER_COMMIT frame at {@code seq} whose ack is being
+     * withheld. A frame that appended rows needs nothing beyond the withholding
+     * itself -- once its rows commit, a later cumulative ack may cover it. A
+     * rowless one must additionally block coverage; see
+     * {@link #markRowlessDeferredSequence(long)}.
+     */
+    public void withholdDeferredFrame(long seq) {
+        if (!messageAppendedRows) {
+            markRowlessDeferredSequence(seq);
+        }
+    }
+
+    /**
+     * Arms the deferred-rows clamp outright, without asking the TUD cache.
+     * <p>
+     * No production caller remains: the deferred-frame path derives the clamp
+     * through {@link #commitIfMaxUncommittedRowsReached()}. Kept so tests can put
+     * the clamp into a known state without standing up a cache that holds
+     * uncommitted rows. Cleared by {@link #commit()} (successful commitAll) or
+     * {@link #clear()} (rollback).
+     */
+    @TestOnly
     public void markUncommittedDeferredRows() {
         uncommittedDeferredRows = true;
+    }
+
+    /**
+     * Recomputes the deferred-rows clamp from what this connection actually
+     * holds uncommitted, and returns the result.
+     * <p>
+     * The per-table force-commit at the max-uncommitted-rows cap fires for
+     * whichever tables crossed the cap, so after a deferred frame the
+     * connection may hold everything, something, or nothing uncommitted. The
+     * clamp exists to keep the cumulative-ack watermark off sequences whose
+     * rows the server can still roll back (#7144); once a force-commit has left
+     * nothing uncommitted, the deferred frames are as durable as a committed
+     * one and the watermark may cover them. Acking there is what keeps a
+     * mid-group reconnect from replaying -- and so duplicating -- rows the
+     * server has already written.
+     * <p>
+     * The clamp releases only when NO live table holds uncommitted rows; any
+     * table still holding rows keeps it set, so the "ack implies committed"
+     * guarantee is unchanged.
+     *
+     * @return {@code true} if rows remain uncommitted (the watermark stays clamped)
+     */
+    public boolean refreshUncommittedDeferredRows() {
+        uncommittedDeferredRows = tudCache.hasUncommittedRows();
+        return uncommittedDeferredRows;
+    }
+
+    /**
+     * Answers whether a cumulative OK ack may cover the FLAG_DEFER_COMMIT frame
+     * just processed. The preceding force-commit traversal updates the clamp,
+     * so this decision does not rescan the table cache. This is the whole ack
+     * decision for the deferred path; {@code QwpIngressUpgradeProcessor.handleBinaryMessage}
+     * only wires it up.
+     * <p>
+     * Both terms are load-bearing, and each guards a different failure:
+     * <ul>
+     * <li>Nothing uncommitted -- otherwise an ack would let a store-and-forward
+     * client trim rows the server can still roll back (#7144).</li>
+     * <li>This frame appended rows -- "nothing uncommitted" is vacuously true
+     * for a frame that appended none, and the client emits exactly such frames:
+     * its dictionary chunks carry {@code tableCount=0} with FLAG_DEFER_COMMIT,
+     * and the data frames after them reference the ids those chunks register.
+     * Acking a chunk would let the client trim it away from the frames that
+     * depend on it, and a reconnect would then replay symbol ids nothing
+     * registered.</li>
+     * </ul>
+     * The force-commit traversal runs even for a frame that appended nothing,
+     * so the clamp cannot stay stale from an earlier frame.
+     *
+     * @return {@code true} if the ack may cover this frame
+     */
+    public boolean refreshDeferredAckCoverage() {
+        return !uncommittedDeferredRows && messageAppendedRows;
     }
 
     public long nextMessageSequence() {
@@ -925,6 +1074,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         roleChangeCloseInitiated = false;
         roleChangeCloseReason.clear();
         firstUnresolvedSequence = -1;
+        firstRowlessDeferredSequence = -1;
         wsHandshakeSent = false;
 
         // Drop any durable-ack state; the connection is going away, so even if
@@ -1104,6 +1254,7 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
             return;
         }
 
+        messageAppendedRows = false;
         try {
             // Re-check the LIVE write-refusal state on every batch. A QWP ingress connection
             // caches its SecurityContext (and a per-table WAL writer) at handshake time, so a
@@ -1188,10 +1339,17 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     return;
                 }
 
+                // Read BEFORE the append: the cursor is consumed by it, and a
+                // metadata-change retry resets row iteration.
+                final boolean blockHasRows = tableBlock.getRowCount() > 0;
                 walAppender.appendToWalStreaming(securityContext, tableBlock, tud);
+                messageAppendedRows |= blockHasRows;
             }
 
         } catch (QwpParseException e) {
+            if (e.getErrorCode() != QwpParseException.ErrorCode.DELTA_DICT_GAP) {
+                streamingDecoder.releaseCachedResources();
+            }
             LOG.error().$('[').$(fd).$("] QWP v1 parse error: ").$(e.getFlyweightMessage()).$();
             reject(statusForParseError(e.getErrorCode()), e.getFlyweightMessage(), fd);
         } catch (CommitFailedException e) {
@@ -1290,9 +1448,10 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         // LAST-RESORT CONTAINMENT for the deferred-commit ack hole (#7144): while
         // FLAG_DEFER_COMMIT rows sit uncommitted in WAL writers, a cumulative OK
         // ack covering their frames would let the client trim slots the server
-        // can still roll back. The upgrade processor's ack path skips the
-        // advance for deferred frames entirely; if the watermark still tries to
-        // move while deferred rows are uncommitted, that path has regressed.
+        // can still roll back. The upgrade processor's ack path advances over a
+        // deferred frame only once the force-commit traversal reports that
+        // nothing is uncommitted; if the watermark still tries to move while
+        // deferred rows ARE uncommitted, that path has regressed.
         // Clamp and scream: the client stalls on acks and replays after the
         // close -- an availability hit, never data loss.
         if (uncommittedDeferredRows && highestProcessedSequence > this.highestProcessedSequence) {
@@ -1301,6 +1460,23 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
                     .$(highestProcessedSequence)
                     .$(", current=").$(this.highestProcessedSequence)
                     .$(']').$();
+            return;
+        }
+        // A rowless deferred frame carries symbol-dictionary state that later
+        // frames reference, and a cumulative ack past it lets the client trim it
+        // away from them. Withholding its own ack cannot express that, because
+        // the watermark is assigned, not incremented.
+        //
+        // Stop just short of it rather than refusing outright. Everything BEFORE
+        // a rowless frame precedes it on the wire, so nothing there can depend on
+        // it, and reaching this line means the uncommitted-rows clamp above
+        // already found nothing uncommitted -- so those frames' rows are durable
+        // and covering them is exactly what the ack promises. Refusing the whole
+        // advance would leave them in the client's replay queue to be re-sent and
+        // duplicated, which is the very thing this change exists to stop.
+        if (firstRowlessDeferredSequence != -1 && highestProcessedSequence >= firstRowlessDeferredSequence) {
+            this.highestProcessedSequence =
+                    Math.max(this.highestProcessedSequence, firstRowlessDeferredSequence - 1);
             return;
         }
         this.highestProcessedSequence = highestProcessedSequence;
@@ -1374,6 +1550,9 @@ public class QwpIngressProcessorState implements QuietCloseable, ConnectionAware
         }
         if (e.isSchemaMismatch()) {
             return Status.SCHEMA_MISMATCH;
+        }
+        if (e.isMalformedUtf8()) {
+            return Status.PARSE_ERROR;
         }
         return e.isCritical() ? Status.INTERNAL_ERROR : Status.NOT_ACCEPTING_WRITES;
     }

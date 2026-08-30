@@ -345,7 +345,7 @@ public class ExpressionParser {
     }
 
     private boolean isCount() {
-        return opStack.size() == 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
+        return opStack.size() >= 2 && Chars.equals(opStack.peek().token, '(') && SqlKeywords.isCountKeyword(opStack.peek(1).token);
     }
 
     private boolean isExtractFunctionOnStack() {
@@ -1351,7 +1351,9 @@ public class ExpressionParser {
                                 while ((node = opStack.pop()) != null && (node.type != ExpressionNode.CONTROL || node.token.charAt(0) != '(')) {
                                     // special case - (*) expression
                                     if (Chars.equals(node.token, '*') && argStackDepth == 0 && isCount()) {
-                                        argStackDepth = onNode(listener, node, 2, prevBranch);
+                                        // the rescued star is count's argument, not a binary operator
+                                        node.paramCount = 0;
+                                        argStackDepth = onNode(listener, node, argStackDepth, prevBranch);
                                         continue;
                                     }
                                     if (thisWasCast && prevBranch != BRANCH_GEOHASH && prevBranch != BRANCH_DECIMAL) {
@@ -1636,7 +1638,13 @@ public class ExpressionParser {
 
                         if (prevBranch != BRANCH_LITERAL && SqlKeywords.isSelectKeyword(tok)) {
                             thisBranch = BRANCH_LAMBDA;
-                            if (betweenCount > 0) {
+                            // A scalar subquery is a valid BETWEEN bound, e.g.
+                            // `ts BETWEEN (select ...) AND (select ...)`. It is always parenthesised,
+                            // so it lives at a deeper scope than the BETWEEN itself; only a bare
+                            // SELECT directly in the operand position (same scope) is rejected. The
+                            // AND separator is matched at betweenStartScopeDepth (see the 'a'/'A'
+                            // branch), so a subquery's own AND at a deeper scope is not miscounted.
+                            if (betweenCount > 0 && scopeStack.size() == betweenStartScopeDepth) {
                                 throw SqlException.$(lastPos, "constant expected");
                             }
                             argStackDepth = processLambdaQuery(lexer, listener, argStackDepth, sqlParserCallback, decls);

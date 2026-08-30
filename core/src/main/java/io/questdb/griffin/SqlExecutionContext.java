@@ -122,7 +122,19 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     Decimal64 getDecimal64();
 
+    default @Nullable ExecutionState getExecutionState() {
+        return null;
+    }
+
     int getIntervalFunctionType();
+
+    /**
+     * Returns the dynamic-interval plan handoff generation: zero outside EXPLAIN, negative while
+     * EXPLAIN prepares its base cursor, and positive while it renders the successfully prepared plan.
+     */
+    default long getIntervalPlanGeneration() {
+        return 0;
+    }
 
     int getJitMode();
 
@@ -222,6 +234,18 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
     }
 
+    /**
+     * Tells the context which name the statement being compiled uses for the table it targets - the
+     * table named by {@code UPDATE <name>} or {@code ALTER TABLE <name>}. Called before that name,
+     * or any other table in the statement, is resolved.
+     * <p>
+     * Only contexts that resolve a target differently from the name in the SQL need this; for
+     * everything else it is a no-op. See {@code WalApplySqlExecutionContext}, where the stored SQL
+     * may name a table that has since been renamed, or whose name now belongs to a different table.
+     */
+    default void setStatementTargetTableName(CharSequence tableName) {
+    }
+
     WindowContext getWindowContext();
 
     int hasInterval();
@@ -277,6 +301,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isWalApplication();
 
+    /**
+     * Starts a new dynamic-interval plan preparation and returns its negative generation.
+     */
+    default long nextIntervalPlanGeneration() {
+        return 0;
+    }
+
     // This method is used to override intrinsic values in the query execution context
     // Its initial usage is in the materialized view refresh
     // where the queried timestamp of the base table is limited to the range affected since last refresh
@@ -310,6 +341,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
     void setIntervalFunctionType(int intervalType);
+
+    default void setIntervalPlanGeneration(long generation) {
+    }
 
     void setJitMode(int jitMode);
 

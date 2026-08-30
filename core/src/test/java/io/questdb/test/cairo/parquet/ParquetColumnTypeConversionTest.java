@@ -44,9 +44,11 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1063,6 +1065,41 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalToBinaryFloat() throws Exception {
+        // DECIMAL <-> DOUBLE and DECIMAL <-> FLOAT have no Rust decoder arm; ConvertOperatorImpl
+        // rewrites the parquet partition to native before converting, so both tables here take the
+        // same native path.
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "DOUBLE");
+            assertPrePassMadePartitionNative("DECIMAL(18, 4)", "FLOAT");
+            String values = """
+                    (12345.6789m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0000m, '2024-01-01T00:00:02.000000Z'),
+                    (-99.9999m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(18, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(38, 4)", "DOUBLE", values);
+            assertConversion("DECIMAL(76, 4)", "DOUBLE", values);
+
+            String narrow = """
+                    (1.2m, '2024-01-01T00:00:01.000000Z'),
+                    (0.0m, '2024-01-01T00:00:02.000000Z'),
+                    (-9.9m, '2024-01-01T00:00:03.000000Z'),
+                    (NULL, '2024-01-01T00:00:04.000000Z')""";
+            assertConversion("DECIMAL(2, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(4, 1)", "DOUBLE", narrow);
+            assertConversion("DECIMAL(9, 1)", "DOUBLE", narrow);
+
+            assertConversion("DECIMAL(18, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(38, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(76, 4)", "FLOAT", values);
+            assertConversion("DECIMAL(2, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(4, 1)", "FLOAT", narrow);
+            assertConversion("DECIMAL(9, 1)", "FLOAT", narrow);
+        });
+    }
+
+    @Test
     public void testDecimalToStringTypes() throws Exception {
         assertMemoryLeak(() -> {
             String values = """
@@ -1073,6 +1110,39 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             for (String target : new String[]{"STRING", "VARCHAR"}) {
                 assertConversion("DECIMAL(18, 4)", target, values);
             }
+        });
+    }
+
+    @Test
+    public void testBinaryFloatToDecimal() throws Exception {
+        assertMemoryLeak(() -> {
+            assertPrePassMadePartitionNative("DOUBLE", "DECIMAL(18, 4)");
+            assertPrePassMadePartitionNative("FLOAT", "DECIMAL(18, 4)");
+            String values = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-3.14159, '2024-01-01T00:00:03.000000Z'),
+                    (1e300, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
+            assertConversion("DOUBLE", "DECIMAL(18, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(38, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(76, 4)", values);
+            assertConversion("DOUBLE", "DECIMAL(9, 2)", values);
+            assertConversion("DOUBLE", "DECIMAL(4, 1)", values);
+            assertConversion("DOUBLE", "DECIMAL(2, 1)", values);
+
+            String floatValues = """
+                    (1.5, '2024-01-01T00:00:01.000000Z'),
+                    (0.0, '2024-01-01T00:00:02.000000Z'),
+                    (-3.14159, '2024-01-01T00:00:03.000000Z'),
+                    (1e30, '2024-01-01T00:00:04.000000Z'),
+                    (NULL, '2024-01-01T00:00:05.000000Z')""";
+            assertConversion("FLOAT", "DECIMAL(18, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(38, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(76, 4)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(9, 2)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(4, 1)", floatValues);
+            assertConversion("FLOAT", "DECIMAL(2, 1)", floatValues);
         });
     }
 
@@ -1747,6 +1817,51 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
             for (String target : new String[]{"BOOLEAN", "BYTE", "SHORT", "INT", "DATE", "TIMESTAMP", "FLOAT", "DOUBLE"}) {
                 assertConversion("LONG", target, values);
             }
+        });
+    }
+
+    @Test
+    public void testMalformedVarcharToFixedIsNullInLazyAndO3Conversions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (val VARCHAR, uid VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+
+            try (TableWriter writer = getWriter("pt")) {
+                TableWriter.Row row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:02.000000Z"));
+                row.putVarchar(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.putVarchar(1, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                row.append();
+
+                row = writer.newRow(MicrosFormatUtils.parseTimestamp("2024-01-02T00:00:00.000000Z"));
+                row.putVarchar(0, new Utf8String("3"));
+                row.putVarchar(1, new Utf8String("00000000-0000-0000-0000-000000000003"));
+                row.append();
+                writer.commit();
+            }
+
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE pt ALTER COLUMN val TYPE INT");
+            // The UUID target guards the null that a malformed UTF-8 decode yields:
+            // Uuid.checkDashesAndLength() dereferences it and throws NPE, which the
+            // NumericException catch does not cover. The INT target alone does not
+            // exercise this - Numbers.parseInt() rejects null with NumericException.
+            execute("ALTER TABLE pt ALTER COLUMN uid TYPE UUID");
+
+            assertQuery("SELECT val, uid FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val\tuid
+                            null\t
+                            """);
+
+            execute("INSERT INTO pt VALUES (2, '00000000-0000-0000-0000-000000000002', '2024-01-01T00:00:01.000000Z')");
+
+            assertQuery("SELECT val, uid FROM pt WHERE ts < '2024-01-02' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            val\tuid
+                            2\t00000000-0000-0000-0000-000000000002
+                            null\t
+                            """);
         });
     }
 
@@ -3872,6 +3987,27 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         } finally {
             tryDrop("nt");
             tryDrop("pt");
+        }
+    }
+
+    private void assertPrePassMadePartitionNative(String sourceType, String targetType) throws Exception {
+        try {
+            execute("CREATE TABLE pp (ts TIMESTAMP, val " + sourceType + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO pp VALUES ('2024-01-01T00:00:01.000000Z', 1)");
+            drainWalQueue();
+            execute("ALTER TABLE pp CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            try (TableReader reader = getReader("pp")) {
+                Assert.assertEquals(PartitionFormat.PARQUET, reader.getPartitionFormat(0));
+            }
+
+            execute("ALTER TABLE pp ALTER COLUMN val TYPE " + targetType);
+            drainWalQueue();
+            try (TableReader reader = getReader("pp")) {
+                Assert.assertEquals(PartitionFormat.NATIVE, reader.getPartitionFormat(0));
+            }
+        } finally {
+            tryDrop("pp");
         }
     }
 

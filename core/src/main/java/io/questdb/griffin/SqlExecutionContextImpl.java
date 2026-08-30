@@ -72,6 +72,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private final Decimal64 decimal64 = new Decimal64();
     private final int defaultPageFrameMaxRows;
     private final int defaultPageFrameMinRows;
+    private final ExecutionState executionState;
     private final IntStack hasIntervalStack = new IntStack();
     private final ObjStack<RuntimeIntrinsicIntervalModel> intervalModelObjStack = new ObjStack<>();
     private final MicrosecondClock microClock;
@@ -91,6 +92,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private boolean cloneSymbolTables;
     private boolean containsSecret;
     private int intervalFunctionType;
+    private long intervalPlanGeneration;
+    private long intervalPlanGenerationCounter;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -123,6 +126,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         cairoConfiguration = cairoEngine.getConfiguration();
         microClock = cairoConfiguration.getMicrosecondClock();
         nanoClock = cairoConfiguration.getNanosecondClock();
+        executionState = cairoEngine.createExecutionState();
         securityContext = DenyAllSecurityContext.INSTANCE;
         jitMode = cairoConfiguration.getSqlJitMode();
         parallelFilterEnabled = cairoConfiguration.isSqlParallelFilterEnabled() && sharedQueryWorkerCount > 0;
@@ -265,8 +269,18 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public @Nullable ExecutionState getExecutionState() {
+        return executionState;
+    }
+
+    @Override
     public int getIntervalFunctionType() {
         return intervalFunctionType;
+    }
+
+    @Override
+    public long getIntervalPlanGeneration() {
+        return intervalPlanGeneration;
     }
 
     @Override
@@ -363,6 +377,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     public void initNow() {
         this.nowNanos = nanoClock.getTicks();
         this.nowMicros = microClock.getTicks();
+        if (executionState != null) {
+            executionState.onExecutionStart(this);
+        }
     }
 
     public boolean isCacheHit() {
@@ -425,6 +442,14 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public long nextIntervalPlanGeneration() {
+        if (intervalPlanGenerationCounter == Long.MAX_VALUE) {
+            intervalPlanGenerationCounter = 0;
+        }
+        return intervalPlanGeneration = -(++intervalPlanGenerationCounter);
+    }
+
+    @Override
     public RuntimeIntrinsicIntervalModel peekIntervalModel() {
         return intervalModelObjStack.peek();
     }
@@ -465,6 +490,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         this.useSimpleCircuitBreaker = false;
         this.cacheHit = false;
         this.allowNonDeterministicFunction = true;
+        this.intervalPlanGeneration = 0;
         this.validationOnly = false;
         this.validationSecurityContext = null;
         // Defensive: production callers arm live-view compile mode inside a try/finally
@@ -516,6 +542,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setIntervalFunctionType(int intervalType) {
         this.intervalFunctionType = intervalType;
+    }
+
+    @Override
+    public void setIntervalPlanGeneration(long generation) {
+        this.intervalPlanGeneration = generation;
     }
 
     @Override

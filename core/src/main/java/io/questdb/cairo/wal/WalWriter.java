@@ -610,10 +610,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (isDistressed()) {
             return;
         }
-        if (isInColumnarWrite()) {
-            columnarAppender.cancelColumnarWrite();
+        try {
+            if (isInColumnarWrite()) {
+                columnarAppender.cancelColumnarWrite();
+            }
+            rollback0();
+        } catch (Throwable th) {
+            // Latch so the expel path's second close attempt short-circuits on
+            // the distressed check above instead of retrying the failed IO and
+            // replacing the original exception. rollback0() already latches
+            // its own failures; this extends the same guarantee to the
+            // columnar cancel.
+            distressed = true;
+            throw th;
         }
-        rollback0();
     }
 
     private void rollback0() {
@@ -663,6 +673,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      */
     public void setRowValueNotNullColumnar(int columnIndex, long lastWrittenRow) {
         rowValueIsNotNull.setQuick(columnIndex, lastWrittenRow);
+    }
+
+    @TestOnly
+    public void setSymbolMapReader(int columnIndex, SymbolMapReader symbolMapReader) {
+        symbolMapReaders.setQuick(columnIndex, symbolMapReader);
     }
 
     /**
@@ -2161,9 +2176,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             if (key == SymbolTable.VALUE_NOT_FOUND) {
                 // Add it to in-memory symbol map
                 final int initialSymCount = initialSymbolCounts.get(columnIndex);
-                key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
+                key = initialSymCount + localSymbolIds.get(columnIndex);
+                utf16Map.putAt(index, symbolValue, key, hashCode);
+                localSymbolIds.increment(columnIndex);
+            } else {
+                utf16Map.putAt(index, symbolValue, key, hashCode);
             }
-            utf16Map.putAt(index, symbolValue, key, hashCode);
             return key;
         } else {
             return utf16Map.valueAt(index);
@@ -2196,9 +2214,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     if (key == SymbolTable.VALUE_NOT_FOUND) {
                         // Add it to in-memory symbol map
                         // Locally added symbols must have a continuous range of keys
-                        key = localSymbolIds.postIncrement(columnIndex);
+                        key = localSymbolIds.get(columnIndex);
+                        utf16Map.putAt(index, utf16Value, key, hashCode);
+                        localSymbolIds.increment(columnIndex);
+                    } else {
+                        utf16Map.putAt(index, utf16Value, key, hashCode);
                     }
-                    utf16Map.putAt(index, utf16Value, key, hashCode);
                 } else {
                     key = utf16Map.valueAt(index);
                 }
@@ -2821,9 +2842,21 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
 
         @Override
+        public void putDecimalChar(int columnIndex, char decimalValue) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalChar(columnIndex, decimal256Sink, decimalValue, columnType, this);
+        }
+
+        @Override
         public void putDecimalStr(int columnIndex, CharSequence decimalValue) {
             int columnType = metadata.getColumnType(columnIndex);
             WriterRowUtils.putDecimalStr(columnIndex, decimal256Sink, decimalValue, columnType, this);
+        }
+
+        @Override
+        public void putDecimalVarchar(int columnIndex, Utf8Sequence decimalValue) {
+            int columnType = metadata.getColumnType(columnIndex);
+            WriterRowUtils.putDecimalVarchar(columnIndex, decimal256Sink, decimalValue, columnType, this);
         }
 
         @Override
@@ -2963,21 +2996,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
         @Override
         public void putStrUtf8(int columnIndex, Utf8Sequence value) {
-            if (value == null) {
-                putStr(columnIndex, null);
+            if (value instanceof DirectUtf8Sequence directValue) {
+                putStrUtf8(columnIndex, directValue);
                 return;
             }
-            if (value instanceof DirectUtf8Sequence ds) {
-                putStrUtf8(columnIndex, ds);
-                return;
-            }
-            if (value.isAscii()) {
-                putStr(columnIndex, value.asAsciiCharSequence());
-            } else {
-                tempSink.clear();
-                Utf8s.utf8ToUtf16(value, tempSink);
-                putStr(columnIndex, tempSink);
-            }
+            putStr(columnIndex, value != null ? Utf8s.utf8ToUtf16OrThrow(value, tempSink) : null);
         }
 
         @Override
@@ -3086,9 +3109,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // Add it to in-memory symbol map
                         // Locally added symbols must have a continuous range of keys
                         final int initialSymCount = initialSymbolCounts.get(columnIndex);
-                        key = initialSymCount + localSymbolIds.postIncrement(columnIndex);
+                        key = initialSymCount + localSymbolIds.get(columnIndex);
+                        utf16Map.putAt(index, utf16Value, key, hashCode);
+                        localSymbolIds.increment(columnIndex);
+                    } else {
+                        utf16Map.putAt(index, utf16Value, key, hashCode);
                     }
-                    utf16Map.putAt(index, utf16Value, key, hashCode);
                 } else {
                     key = utf16Map.valueAt(index);
                 }

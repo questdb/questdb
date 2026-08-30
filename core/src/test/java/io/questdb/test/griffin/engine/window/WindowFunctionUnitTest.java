@@ -79,7 +79,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         2,
                         0,
                         null,
-                        false
+                        false,
+                        configuration
                 ),
                 Double::sum
         );
@@ -218,7 +219,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                         TestDefaults.createLongFunction(x -> x.getLong(2)),
                         CountDoubleWindowFunctionFactory.isRecordNotNull,
                         null,
-                        false
+                        false,
+                        configuration
                 ),
                 Long::sum,
                 CountDoubleWindowFunctionFactory.isRecordNotNull
@@ -416,7 +418,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             2,
                             0,
                             null,
-                            false
+                            false,
+                            configuration
                     );
                 },
                 (a, b) -> a
@@ -537,7 +540,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                             2,
                             0,
                             null,
-                            false
+                            false,
+                            configuration
                     );
                 },
                 (a, b) -> a
@@ -625,13 +629,15 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
 
     @Test
     public void testMaxMinValueLayoutHasNoLiveViewFlagOutsideLiveView() {
-        // The live-view ANCHOR contract needs an explicit "initialized" byte in the map value so
-        // resetPartition can re-arm a partition without deleting its entry: MapValue.isNew() flips
-        // on first access and is too coarse for repeated resets within one partition.
+        // The live-view ANCHOR contract needs resetPartition to re-arm a partition without
+        // deleting its entry: MapValue.isNew() flips on first access and is too coarse for
+        // repeated resets within one partition. What says "re-armed" is the value slot's own
+        // null sentinel - NaN or LONG_NULL - which no contributing row can write, so the two
+        // layouts differ by the tombstone byte alone.
         //
         // That byte belongs to the live-view layout ONLY. resetPartition never runs outside a live
         // view - a live view drives the ZERO_PASS streaming factory, and LiveViewWindow is the sole
-        // dispatcher of resetPartition - so carrying the byte in the shared layout made every
+        // dispatcher of resetPartition - so carrying the byte in the shared layout would make every
         // ordinary max()/min() OVER (PARTITION BY ...) query pay for a flag it can never read: an
         // extra per-row byte load plus a wider map entry on a hot path, for nothing. Unordered8Map
         // sizes entries as align8b(8 + valueSize), so a 9th value byte pushes them 16 -> 24 bytes;
@@ -1109,7 +1115,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0,
                 null,
-                false
+                false,
+                configuration
         );
         f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1, 2, (long) 1));
@@ -1155,7 +1162,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 2,
                 0,
                 null,
-                false
+                false,
+                configuration
         );
         f.reopen();
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 1472, 6, (long) 1));
@@ -1179,7 +1187,8 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
                 1024,
                 0,
                 null,
-                false
+                false,
+                configuration
         );
         f.reopen();
         long a = -1930193130;

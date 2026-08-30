@@ -157,14 +157,55 @@ public class IntrinsicModel implements Mutable {
 
     public void mergeIntervalModel(RuntimeIntervalModel model, long loOffset, long hiOffset) {
         runtimeIntervalBuilder.merge(model, loOffset, hiOffset);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     /**
      * Merges intervals from another IntrinsicModel with calendar-aware offset adjustment.
      * This avoids allocating an intermediate RuntimeIntervalModel.
+     * <p>
+     * A source predicate that the analysis folded to a contradiction is handled here rather than in
+     * the builder: some analyze methods report a contradiction by setting {@code intrinsicValue} to
+     * FALSE alone and never touch the interval builder (self-comparison in {@code analyzeNotEquals0},
+     * for instance). The builder cannot see that flag, so it would find no intervals, report the
+     * predicate as fully represented, and let the caller consume it with no constraint at all - the
+     * offset scan would then return every row instead of none. Shifting an empty row set by an offset
+     * leaves it empty, so this model intersects to empty instead.
+     *
+     * @return true if the offset predicate was fully represented as an interval (the caller may
+     * consume it); false if it must be left as a residual filter
      */
-    public void mergeIntervalModelWithAddMethod(IntrinsicModel other, TimestampDriver.TimestampAddMethod addMethod, int offset) throws SqlException {
-        runtimeIntervalBuilder.mergeWithAddMethod(other.runtimeIntervalBuilder, addMethod, offset);
+    public boolean mergeIntervalModelWithAddMethod(
+            IntrinsicModel other,
+            TimestampDriver.TimestampAddMethod addMethod,
+            int offset,
+            boolean isInjective,
+            long maxTimestamp
+    ) throws SqlException {
+        if (other.intrinsicValue == FALSE) {
+            // This model absorbs the contradiction, so nothing merges out of other. Free any dynamic
+            // bound Function the source analysis compiled into it - the caller only clears other on
+            // the residual path, and a true return consumes the predicate.
+            other.clearIntervalFilters();
+            intersectEmpty();
+            return true;
+        }
+        final boolean isConsumed = runtimeIntervalBuilder.mergeWithAddMethod(
+                other.runtimeIntervalBuilder,
+                addMethod,
+                offset,
+                isInjective,
+                maxTimestamp
+        );
+        // The builder can reach an empty set inside the merge (an empty source interval list shifts
+        // to empty). The builder cannot see intrinsicValue, so mirror the emptiness onto the model
+        // here - otherwise the caller reads an unconstrained model and returns every row.
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
+        return isConsumed;
     }
 
     public void of(int timestampType, int partitionBy, CairoConfiguration configuration) {
@@ -173,10 +214,16 @@ public class IntrinsicModel implements Mutable {
 
     public void setBetweenBoundary(long timestamp) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void setBetweenBoundary(Function timestamp, int functionPosition) {
         runtimeIntervalBuilder.setBetweenBoundary(timestamp, functionPosition);
+        if (runtimeIntervalBuilder.isEmptySet()) {
+            intrinsicValue = FALSE;
+        }
     }
 
     public void setBetweenNegated(boolean isNegated) {

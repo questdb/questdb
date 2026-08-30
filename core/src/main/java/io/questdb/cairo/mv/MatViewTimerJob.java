@@ -278,7 +278,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                     LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken)
                             .$(", type=").$(timer.getType())
                             .I$();
-                } else if (!state.isPendingInvalidation() && !state.isInvalid()) {
+                } else if (!state.hasPendingInvalidationReason() && !state.isInvalid()) {
                     switch (timer.getType()) {
                         case Timer.INCREMENTAL_REFRESH_TYPE:
                             // Enqueue when refreshSeq advanced (a prior refresh finished). If seq is
@@ -351,7 +351,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             final TableToken viewToken = entry.viewToken;
             releaseRetryEntry(entry);
             final MatViewState state = matViewStateStore.getViewState(viewToken);
-            if (state == null || state.isDropped() || state.isInvalid() || state.isPendingInvalidation()) {
+            if (state == null || state.isDropped() || state.isInvalid() || state.hasPendingInvalidationReason()) {
                 // The view went away or no longer needs re-driving; drop the stale heap entry.
                 continue;
             }

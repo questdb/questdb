@@ -81,6 +81,11 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     private final LiveViewCheckpointTimelineReader timelineReader;
     private int dataReaderClock;
     private boolean isOpen;
+    // Logical bytes the root being restored charges for the anchor map, or for the
+    // function currently being restored. Accumulated by the entry callbacks, which
+    // are lambdas the restore walk drives, so it lives on the reader rather than in
+    // a per-restore box.
+    private long restoredLogicalStateBytes;
 
     public LiveViewCheckpointTimelineStoreReader(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -473,6 +478,21 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         }
         // Read before anything else navigates the tree and overwrites it.
         final int lookupDepth = timelineReader.getLastLookupDepth();
+        // The runtime may adopt the root it is about to read as its incremental
+        // checkpoint baseline only when that root is the one the next cadence seal
+        // builds on top of - this generation's timeline head. A restore that
+        // deliberately selected an older root (the durable-compatibility floor, or a
+        // predecessor the corrupt-root fallback reached) leaves the baseline unset,
+        // and the seal that follows full-scans as it always did. Only a publication
+        // moves the timeline, and a publication also moves the generation, so a head
+        // established here stays the head for exactly as long as the generation the
+        // baseline is stamped with survives.
+        final LiveViewCheckpointTimelineEntry headEntry = new LiveViewCheckpointTimelineEntry();
+        final long baselineGeneration = timelineReader.last(pin.getTimelineRootRef(), headEntry)
+                && headEntry.maxTimestamp == maxTimestamp
+                && headEntry.checkpointId == checkpointId
+                ? pin.getGeneration()
+                : Numbers.LONG_NULL;
         root.of(checkpointsDir, entry.rootRef);
         if (root.getCheckpointId() != checkpointId
                 || root.getMaxTimestamp() != maxTimestamp
@@ -486,8 +506,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
 
         validateAnchor(anchorWindow);
         validateFunctions(functions);
-        restoreFunctions(functions);
-        restoreAnchor(anchorWindow);
+        restoreFunctions(functions, baselineGeneration);
+        restoreAnchor(anchorWindow, baselineGeneration);
 
         final long effectiveLvRowPosition = deltaReader.effectivePosition(
                 pin.getRowPositionDeltaRootRef(),
@@ -508,7 +528,17 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         );
     }
 
-    private void restoreAnchor(@Nullable LiveViewWindow anchorWindow) {
+    /**
+     * Rehydrates the anchor map from the restored root, then - when
+     * {@code baselineGeneration} names one - hands the window the logical size of
+     * what it just read as its incremental checkpoint baseline. The walk visits
+     * every entry regardless, so the accumulation is free.
+     *
+     * @param baselineGeneration the generation to stamp the window's incremental
+     *                           baseline with, or {@link Numbers#LONG_NULL} to leave
+     *                           the window on the post-restore full scan
+     */
+    private void restoreAnchor(@Nullable LiveViewWindow anchorWindow, long baselineGeneration) {
         if (anchorWindow == null) {
             return;
         }
@@ -520,13 +550,40 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         // validateAnchor already walked every entry, so the map cannot be
         // half-restored by a framing failure discovered mid-iteration.
         anchorWindow.beginCheckpointRestore();
-        partitionReader.iterateAll(anchorMapRootRef, entry -> anchorWindow.restoreCheckpointEntry(
-                openKeyPage(entry.getKey()),
-                LiveViewCheckpointAnchorRoot.readAnchorValue(entry)
-        ));
+        restoredLogicalStateBytes = 0;
+        partitionReader.iterateAll(anchorMapRootRef, entry -> {
+            anchorWindow.restoreCheckpointEntry(
+                    openKeyPage(entry.getKey()),
+                    LiveViewCheckpointAnchorRoot.readAnchorValue(entry)
+            );
+            // Mirrors what a complete freeze charges per live anchor entry - see
+            // LiveViewWindow.freezeCheckpointEntries.
+            restoredLogicalStateBytes += entry.getKey().length + LiveViewCheckpointAnchorRoot.ENTRY_STATE_SIZE;
+        });
+        if (baselineGeneration != Numbers.LONG_NULL) {
+            anchorWindow.onCheckpointPersisted(restoredLogicalStateBytes, baselineGeneration);
+        }
     }
 
-    private void restoreFunction(WindowFunction function, LiveViewCheckpointPageRef functionRootRef) {
+    /**
+     * Rehydrates one function from its root, then - when {@code baselineGeneration}
+     * names one and the function's state is not ring-shaped - hands it the logical
+     * size of what it just read as its incremental checkpoint baseline.
+     * <p>
+     * Ring-shaped and scalar functions are left on the full scan. Neither can freeze
+     * incrementally (see {@code freezeFunction}), and a ring partition's logical size
+     * is the rows its chunks carry rather than the page lengths the walk sees, so
+     * accumulating one here would be inventing a figure nothing reads.
+     *
+     * @param baselineGeneration the generation to stamp the function's incremental
+     *                           baseline with, or {@link Numbers#LONG_NULL} to leave
+     *                           the function on the post-restore full scan
+     */
+    private void restoreFunction(
+            WindowFunction function,
+            LiveViewCheckpointPageRef functionRootRef,
+            long baselineGeneration
+    ) {
         functionRoot.of(checkpointsDir, functionRootRef);
         function.onCheckpointRestoreBegin();
         final LiveViewCheckpointStatePageRef scalarRef = new LiveViewCheckpointStatePageRef();
@@ -541,6 +598,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         final boolean isRingShaped = function.supportsCheckpointRingState();
         final LiveViewCheckpointPageRef partitionRootRef = new LiveViewCheckpointPageRef();
         functionRoot.getPartitionMapRootRef(partitionRootRef);
+        restoredLogicalStateBytes = 0;
         partitionReader.iterateAll(partitionRootRef, entry -> {
             final byte[] encodedKey = entry.getKey();
             final MapKey key = map.withKey();
@@ -562,14 +620,20 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 function.restoreCheckpointRingState(ringStateReader, value);
                 return;
             }
+            // Mirrors what a complete freeze charges per partition - see the
+            // non-incremental arm of freezeFunction.
             final LiveViewCheckpointStatePageRef ref = entry.getStatePageRef(0);
             final LiveViewCheckpointDataSegmentReader reader = openStatePage(ref);
             final long consumed = function.restoreCheckpointState(statePageReader, 0, value);
             reader.assertFullyConsumed(ref.getStoredLength(), consumed, 1);
+            restoredLogicalStateBytes += encodedKey.length + ref.getDecodedLength();
         });
+        if (!isRingShaped && baselineGeneration != Numbers.LONG_NULL) {
+            function.onCheckpointPersisted(restoredLogicalStateBytes, baselineGeneration);
+        }
     }
 
-    private void restoreFunctions(@NotNull ObjList<WindowFunction> functions) {
+    private void restoreFunctions(@NotNull ObjList<WindowFunction> functions, long baselineGeneration) {
         final LiveViewCheckpointPageRef functionRootRef = new LiveViewCheckpointPageRef();
         for (int i = 0, n = functions.size(); i < n; i++) {
             final WindowFunction function = functions.getQuick(i);
@@ -577,7 +641,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                 continue;
             }
             functionDirectory.find(function.checkpointFunctionIdentity().getEncoded(), functionRootRef);
-            restoreFunction(function, functionRootRef);
+            restoreFunction(function, functionRootRef, baselineGeneration);
         }
     }
 
@@ -604,6 +668,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         if (anchorWindow == null) {
             return;
         }
+
         anchorRoot.of(checkpointsDir, anchorRootRef);
         if (!Arrays.equals(
                 anchorWindow.getWindowName().getBytes(StandardCharsets.UTF_8),

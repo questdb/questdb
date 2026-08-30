@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.mv;
 
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
@@ -38,8 +39,10 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicIntegerFieldUpdater;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicLongFieldUpdater;
+import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 
 import static io.questdb.TelemetryEvent.*;
 
@@ -47,8 +50,14 @@ import static io.questdb.TelemetryEvent.*;
  * Mat view refresh state serves the purpose of synchronizing and coordinating
  * {@link MatViewRefreshJob}s.
  * <p>
- * Unlike {@link MatViewStateReader}, it doesn't include invalidation reason
- * string as that field is not needed for refresh jobs.
+ * Unlike {@link MatViewStateReader}, it does not carry a persisted invalidation
+ * reason string. The {@link #pendingInvalidationMarker} is a transient in-memory marker
+ * with two facets: a deferred invalidation (reason plus optional base-table txn
+ * provenance) and a pending full-refresh owner. Either facet can be present alone or
+ * combined on one marker; publications merge facets keep-strongest. A lock-holder's
+ * finalize wakes whichever facets remain after its hold, and each facet is cleared only
+ * by the operation that consumes it (an invalid-state mint, or a covering or terminal
+ * full refresh). It is distinct from the reader's durable invalidationReason.
  */
 public class MatViewState implements QuietCloseable {
     // Cold-start gap-width threshold used when no scan/commit samples have
@@ -73,6 +82,15 @@ public class MatViewState implements QuietCloseable {
     // single outlier (GC pause, O3 partition rewrite) from poisoning the EMA
     // for the next several refreshes.
     static final int EMA_OUTLIER_MULTIPLIER = 5;
+    static final int PENDING_TASK_RETRY_FULL_REFRESH = 1;
+    static final int PENDING_TASK_RETRY_INVALIDATION = 2;
+    // Enables atomic ownership transfers of the pending-invalidation marker. A fresh marker object
+    // identifies each reason publication, so a refresh can clear only the exact invalidation its
+    // snapshot covered without erasing a newer publication carrying the same reason string.
+    private static final AtomicReferenceFieldUpdater<MatViewState, Object> PENDING_INVALIDATION_MARKER_UPDATER =
+            AtomicReferenceFieldUpdater.newUpdater(MatViewState.class, Object.class, "pendingInvalidationMarker");
+    private static final AtomicIntegerFieldUpdater<MatViewState> PENDING_TASK_RETRY_FLAGS_UPDATER =
+            AtomicIntegerFieldUpdater.newUpdater(MatViewState.class, "pendingTaskRetryFlags");
     // Enables an off-latch CAS on refreshRetryAfterMicros so MatViewTimerJob can clear only the
     // exact deadline it observed due, without clobbering a fresh backoff a concurrent under-latch
     // refresh may have just armed. See clearRefreshRetry(long).
@@ -124,6 +142,10 @@ public class MatViewState implements QuietCloseable {
     private RecordCursorFactory cursorFactory;
     private volatile boolean dropped;
     private volatile boolean invalid;
+    // Atomic token/txn pair covered by the last successful FULL refresh. This is intentionally
+    // independent of lastRefreshBaseTxn: incremental and range refreshes cannot repair arbitrary
+    // UPDATE, TRUNCATE, or schema invalidations even when they advance another watermark.
+    private volatile FullRefreshCoverage lastFullRefreshCoverage;
     // Stands for last successful period (range) refresh high boundary.
     // Increases monotonically as long as mat view stays valid.
     private volatile long lastPeriodHi = Numbers.LONG_NULL;
@@ -132,10 +154,32 @@ public class MatViewState implements QuietCloseable {
     private volatile long lastRefreshBaseTxn = -1;
     private volatile long lastRefreshFinishTimestampUs = Numbers.LONG_NULL;
     private volatile long lastRefreshStartTimestampUs = Numbers.LONG_NULL;
-    private volatile boolean pendingInvalidation;
+    @TestOnly
+    private volatile Runnable onClearPendingFullRefreshForTesting;
+    @TestOnly
+    private volatile Runnable onPendingFullRefreshMarkerReadForTesting;
+    @TestOnly
+    private volatile Runnable onPendingInvalidationMarkerReadForTesting;
+    // Single atomic marker for a deferred invalidation, collapsing the former
+    // (pendingInvalidation, pendingInvalidationReason) two-volatile composite. Writers publish
+    // off-latch before attempting the view latch; holders inspect the same atomic reference after
+    // releasing it. One volatile reference makes every transition a single atomic write/read:
+    //   null                             -> not pending
+    //   PendingInvalidation(null, ..., owner) -> pending full-refresh reschedule
+    //   PendingInvalidation(reason, ..., *)   -> pending invalidation, optionally also a full refresh
+    // Every reason publication gets a distinct object identity, allowing a latch-holder to clear only
+    // the exact marker it owns. Reason publications coalesce their base token/txn provenance atomically;
+    // unknown or mismatched epochs dominate. A full-refresh publication gets a separate owner identity
+    // that survives reason replacement and invalidation success, so terminal cleanup cannot erase a newer
+    // full request.
+    private volatile Object pendingInvalidationMarker;
     // Set when an UPDATE_REFRESH_INTERVALS task cannot take the latch. The intervals timer
     // re-enqueues on its next tick instead of hot-spinning the refresh worker queue.
     private volatile boolean pendingRefreshIntervalsUpdate;
+    // Facets whose queue publication failed after their marker became authoritative. A refresh-job tick
+    // claims these bits and retries only the failed facets, avoiding duplicate queue amplification when
+    // one facet succeeded before another allocation failed.
+    private volatile int pendingTaskRetryFlags;
     // Protected by this.latch.
     private long recordRowCopierMetadataVersion;
     // Protected by this.latch.
@@ -341,6 +385,103 @@ public class MatViewState implements QuietCloseable {
         return factory;
     }
 
+    int claimPendingTaskRetryFlags() {
+        return PENDING_TASK_RETRY_FLAGS_UPDATER.getAndSet(this, 0);
+    }
+
+    boolean clearPendingFullRefresh(Object expectedOwner) {
+        assert latch.get();
+        final Runnable onClear = onClearPendingFullRefreshForTesting;
+        if (onClear != null) {
+            onClearPendingFullRefreshForTesting = null;
+            onClear.run();
+        }
+        while (true) {
+            final Object marker = pendingInvalidationMarker;
+            if (!(marker instanceof PendingInvalidation pending) || pending.fullRefreshOwner != expectedOwner) {
+                return false;
+            }
+            final Object replacement = pending.reason != null
+                    ? new PendingInvalidation(
+                    pending.reason,
+                    pending.invalidationBaseTableToken,
+                    pending.invalidationBaseTxn,
+                    pending.isInvalidationForced,
+                    null
+            )
+                    : null;
+            if (PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, marker, replacement)) {
+                return true;
+            }
+        }
+    }
+
+    /**
+     * Clears the marker only when it still identifies {@code expectedMarker}. The caller must hold
+     * the view latch. A refresh uses this ownership check after reading a fixed base snapshot so it
+     * cannot erase a newer invalidation that arrived during the refresh.
+     */
+    boolean clearPendingInvalidation(Object expectedMarker) {
+        assert latch.get();
+        if (!(expectedMarker instanceof PendingInvalidation pending)) {
+            return false;
+        }
+        final Object replacement = pending.fullRefreshOwner != null
+                ? new PendingInvalidation(null, null, Numbers.LONG_NULL, false, pending.fullRefreshOwner)
+                : null;
+        return PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, expectedMarker, replacement);
+    }
+
+    /**
+     * Clears the pending-invalidation marker without touching the {@link #invalid} flag.
+     * Test callers must hold the view latch.
+     */
+    @TestOnly
+    public void clearPendingInvalidationForTesting() {
+        assert latch.get();
+        this.pendingInvalidationMarker = null;
+    }
+
+    boolean clearPendingInvalidationIfCoveredByLastFullRefresh() {
+        assert latch.get();
+        while (true) {
+            final Object marker = pendingInvalidationMarker;
+            if (!(marker instanceof PendingInvalidation pending) || pending.reason == null) {
+                return true;
+            }
+            final FullRefreshCoverage coverage = lastFullRefreshCoverage;
+            if (coverage == null
+                    || pending.invalidationBaseTableToken == null
+                    || pending.invalidationBaseTxn == Numbers.LONG_NULL
+                    || !coverage.baseTableToken.equals(pending.invalidationBaseTableToken)
+                    || pending.invalidationBaseTxn > coverage.baseTableTxn) {
+                return false;
+            }
+            final Object replacement = pending.fullRefreshOwner != null
+                    ? new PendingInvalidation(null, null, Numbers.LONG_NULL, false, pending.fullRefreshOwner)
+                    : null;
+            if (PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, marker, replacement)) {
+                return true;
+            }
+        }
+    }
+
+    void clearPendingInvalidationReason() {
+        assert latch.get();
+        while (true) {
+            final Object marker = pendingInvalidationMarker;
+            if (!(marker instanceof PendingInvalidation pending) || pending.reason == null) {
+                return;
+            }
+            final Object replacement = pending.fullRefreshOwner != null
+                    ? new PendingInvalidation(null, null, Numbers.LONG_NULL, false, pending.fullRefreshOwner)
+                    : null;
+            if (PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, marker, replacement)) {
+                return;
+            }
+        }
+    }
+
     @Override
     public void close() {
         // Flag the state as torn down BEFORE attempting the free so a refresh
@@ -443,6 +584,46 @@ public class MatViewState implements QuietCloseable {
         return lastRefreshStartTimestampUs;
     }
 
+    Object getPendingFullRefreshOwner(Object marker) {
+        return marker instanceof PendingInvalidation pending ? pending.fullRefreshOwner : null;
+    }
+
+    @TestOnly
+    public Object getPendingFullRefreshOwnerForTesting() {
+        return getPendingFullRefreshOwner(pendingInvalidationMarker);
+    }
+
+    TableToken getPendingInvalidationBaseTableToken(Object marker) {
+        return marker instanceof PendingInvalidation pending ? pending.invalidationBaseTableToken : null;
+    }
+
+    @TestOnly
+    public TableToken getPendingInvalidationBaseTableTokenForTesting() {
+        return getPendingInvalidationBaseTableToken(pendingInvalidationMarker);
+    }
+
+    long getPendingInvalidationBaseTxn(Object marker) {
+        return marker instanceof PendingInvalidation pending ? pending.invalidationBaseTxn : Numbers.LONG_NULL;
+    }
+
+    @TestOnly
+    public long getPendingInvalidationBaseTxnForTesting() {
+        return getPendingInvalidationBaseTxn(pendingInvalidationMarker);
+    }
+
+    Object getPendingInvalidationMarker() {
+        return pendingInvalidationMarker;
+    }
+
+    @TestOnly
+    public String getPendingInvalidationReason() {
+        return getPendingInvalidationReason(pendingInvalidationMarker);
+    }
+
+    String getPendingInvalidationReason(Object marker) {
+        return marker instanceof PendingInvalidation pending ? pending.reason : null;
+    }
+
     public long getRecordRowCopierMetadataVersion() {
         return recordRowCopierMetadataVersion;
     }
@@ -485,6 +666,22 @@ public class MatViewState implements QuietCloseable {
         return viewDefinition;
     }
 
+    @TestOnly
+    public boolean hasPendingFullRefreshOwnerForTesting() {
+        return getPendingFullRefreshOwner(pendingInvalidationMarker) != null;
+    }
+
+    /**
+     * Returns true only when the pending marker carries an invalidation reason. The refresh and
+     * WAL-purge gates use this reason-only view: a full-refresh-only marker must not freeze a
+     * valid view's refreshes -- those refreshes' post-release finalize is the redelivery channel
+     * for a retained full-refresh owner. Use {@link #isPendingInvalidation()} when either facet
+     * matters.
+     */
+    public boolean hasPendingInvalidationReason() {
+        return pendingInvalidationMarker instanceof PendingInvalidation pending && pending.reason != null;
+    }
+
     public void incrementRefreshIntervalsSeq() {
         refreshIntervalsSeq.incrementAndGet();
     }
@@ -523,6 +720,36 @@ public class MatViewState implements QuietCloseable {
         return latch.get();
     }
 
+    boolean isPendingFullRefresh() {
+        return isPendingFullRefresh(pendingInvalidationMarker);
+    }
+
+    boolean isPendingFullRefresh(Object marker) {
+        return marker instanceof PendingInvalidation pending && pending.fullRefreshOwner != null;
+    }
+
+    boolean isPendingFullRefreshOwner(Object expectedOwner) {
+        return getPendingFullRefreshOwner(pendingInvalidationMarker) == expectedOwner;
+    }
+
+    @TestOnly
+    public boolean isPendingInvalidation() {
+        return pendingInvalidationMarker != null;
+    }
+
+    boolean isPendingInvalidationForced(Object marker) {
+        return marker instanceof PendingInvalidation pending && pending.isInvalidationForced;
+    }
+
+    @TestOnly
+    public boolean isPendingInvalidationForcedForTesting() {
+        return isPendingInvalidationForced(pendingInvalidationMarker);
+    }
+
+    public boolean isPendingRefreshIntervalsUpdate() {
+        return pendingRefreshIntervalsUpdate;
+    }
+
     /**
      * Returns true if the view is not currently inside a transient-refresh backoff window,
      * i.e. it is eligible to be refreshed now. See {@link #scheduleRefreshRetry(long)}.
@@ -530,14 +757,6 @@ public class MatViewState implements QuietCloseable {
     public boolean isRefreshDue(long nowMicros) {
         final long retryAfter = refreshRetryAfterMicros;
         return retryAfter == Numbers.LONG_NULL || nowMicros >= retryAfter;
-    }
-
-    public boolean isPendingInvalidation() {
-        return pendingInvalidation;
-    }
-
-    public boolean isPendingRefreshIntervalsUpdate() {
-        return pendingRefreshIntervalsUpdate;
     }
 
     public void markAsDropped() {
@@ -552,13 +771,112 @@ public class MatViewState implements QuietCloseable {
         this.invalid = true;
     }
 
-    public void markAsPendingInvalidation() {
-        pendingInvalidation = true;
+    Object markAsPendingFullRefreshAndGetOwner() {
+        final Object fullRefreshOwner = new Object();
+        while (true) {
+            final Object marker = pendingInvalidationMarker;
+            final Runnable onMarkerRead = onPendingFullRefreshMarkerReadForTesting;
+            if (onMarkerRead != null) {
+                onPendingFullRefreshMarkerReadForTesting = null;
+                onMarkerRead.run();
+            }
+            final PendingInvalidation pending = marker instanceof PendingInvalidation p ? p : null;
+            final Object replacement = pending != null
+                    ? new PendingInvalidation(
+                    pending.reason,
+                    pending.invalidationBaseTableToken,
+                    pending.invalidationBaseTxn,
+                    pending.isInvalidationForced,
+                    fullRefreshOwner
+            )
+                    : new PendingInvalidation(null, null, Numbers.LONG_NULL, false, fullRefreshOwner);
+            if (PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, marker, replacement)) {
+                return fullRefreshOwner;
+            }
+        }
+    }
+
+    @TestOnly
+    public void markAsPendingFullRefreshForTesting() {
+        markAsPendingFullRefreshAndGetOwner();
+    }
+
+    @TestOnly
+    public void markAsPendingInvalidation(String invalidationReason) {
+        markAsPendingInvalidationAndGetMarker(invalidationReason);
+    }
+
+    Object markAsPendingInvalidationAndGetMarker(String invalidationReason) {
+        return markAsPendingInvalidationAndGetMarker(invalidationReason, null, Numbers.LONG_NULL, true);
+    }
+
+    Object markAsPendingInvalidationAndGetMarker(
+            String invalidationReason,
+            TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isInvalidationForced
+    ) {
+        if (invalidationReason == null) {
+            throw new IllegalArgumentException("invalidation reason must not be null");
+        }
+        while (true) {
+            final Object marker = pendingInvalidationMarker;
+            final Runnable onMarkerRead = onPendingInvalidationMarkerReadForTesting;
+            if (onMarkerRead != null) {
+                onPendingInvalidationMarkerReadForTesting = null;
+                onMarkerRead.run();
+            }
+            final PendingInvalidation pending = marker instanceof PendingInvalidation p ? p : null;
+            final Object fullRefreshOwner = pending != null ? pending.fullRefreshOwner : null;
+            TableToken combinedBaseTableToken = invalidationBaseTableToken;
+            long combinedBaseTxn = invalidationBaseTxn;
+            boolean isCombinedForced = isInvalidationForced;
+            if (pending != null && pending.reason != null) {
+                isCombinedForced |= pending.isInvalidationForced;
+                if (combinedBaseTableToken == null
+                        || combinedBaseTxn == Numbers.LONG_NULL
+                        || pending.invalidationBaseTableToken == null
+                        || pending.invalidationBaseTxn == Numbers.LONG_NULL
+                        || !combinedBaseTableToken.equals(pending.invalidationBaseTableToken)) {
+                    combinedBaseTableToken = null;
+                    combinedBaseTxn = Numbers.LONG_NULL;
+                } else {
+                    combinedBaseTxn = Math.max(combinedBaseTxn, pending.invalidationBaseTxn);
+                }
+            } else if (combinedBaseTableToken == null || combinedBaseTxn == Numbers.LONG_NULL) {
+                combinedBaseTableToken = null;
+                combinedBaseTxn = Numbers.LONG_NULL;
+            }
+            final Object replacement = new PendingInvalidation(
+                    invalidationReason,
+                    combinedBaseTableToken,
+                    combinedBaseTxn,
+                    isCombinedForced,
+                    fullRefreshOwner
+            );
+            if (PENDING_INVALIDATION_MARKER_UPDATER.compareAndSet(this, marker, replacement)) {
+                return replacement;
+            }
+        }
+    }
+
+    @TestOnly
+    public void markAsPendingInvalidationForTesting(
+            String invalidationReason,
+            TableToken invalidationBaseTableToken,
+            long invalidationBaseTxn,
+            boolean isInvalidationForced
+    ) {
+        markAsPendingInvalidationAndGetMarker(
+                invalidationReason,
+                invalidationBaseTableToken,
+                invalidationBaseTxn,
+                isInvalidationForced
+        );
     }
 
     public void markAsValid() {
         this.invalid = false;
-        this.pendingInvalidation = false;
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
         this.refreshRetryCount = 0;
     }
@@ -674,6 +992,11 @@ public class MatViewState implements QuietCloseable {
         avgCommitNanos = foldEma(avgCommitNanos, sampleNanos);
     }
 
+    void recordFullRefreshSuccess(TableToken baseTableToken, long baseTableTxn) {
+        assert latch.get();
+        lastFullRefreshCoverage = new FullRefreshCoverage(baseTableToken, baseTableTxn);
+    }
+
     /**
      * Folds a sampled base-table scan into the two rolling scan averages
      * (wall-clock duration and timestamp range width) used by the gap-merge
@@ -781,6 +1104,15 @@ public class MatViewState implements QuietCloseable {
         );
     }
 
+    void requestPendingTaskRetry(int retryFlags) {
+        while (true) {
+            final int currentFlags = pendingTaskRetryFlags;
+            if (PENDING_TASK_RETRY_FLAGS_UPDATER.compareAndSet(this, currentFlags, currentFlags | retryFlags)) {
+                return;
+            }
+        }
+    }
+
     public void setLastPeriodHi(long lastPeriodHi) {
         this.lastPeriodHi = lastPeriodHi;
     }
@@ -795,6 +1127,38 @@ public class MatViewState implements QuietCloseable {
 
     public void setLastRefreshTimestampUs(long timestampUs) {
         this.lastRefreshFinishTimestampUs = timestampUs;
+    }
+
+    /**
+     * Test seam: runs once at the start of {@code clearPendingFullRefresh}, before it reads the pending
+     * marker. Tests use it to race a marker replacement against the clear.
+     * One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnClearPendingFullRefreshForTesting(Runnable onClearPendingFullRefreshForTesting) {
+        this.onClearPendingFullRefreshForTesting = onClearPendingFullRefreshForTesting;
+    }
+
+    /**
+     * Test seam: runs once inside {@code markAsPendingFullRefreshAndGetOwner}'s CAS loop, after it reads
+     * the pending marker but before it builds the replacement. Tests use it to race a concurrent marker
+     * update against the CAS.
+     * One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnPendingFullRefreshMarkerReadForTesting(Runnable onPendingFullRefreshMarkerReadForTesting) {
+        this.onPendingFullRefreshMarkerReadForTesting = onPendingFullRefreshMarkerReadForTesting;
+    }
+
+    /**
+     * Test seam: runs once inside {@code markAsPendingInvalidationAndGetMarker}'s CAS loop, after it reads
+     * the pending marker but before it builds the replacement. Tests use it to race a concurrent marker
+     * update against the CAS.
+     * One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnPendingInvalidationMarkerReadForTesting(Runnable onPendingInvalidationMarkerReadForTesting) {
+        this.onPendingInvalidationMarkerReadForTesting = onPendingInvalidationMarkerReadForTesting;
     }
 
     public void setRefreshIntervals(LongList refreshIntervals) {
@@ -858,6 +1222,38 @@ public class MatViewState implements QuietCloseable {
         refreshLockTimestampUs = Numbers.LONG_NULL;
         if (!latch.compareAndSet(true, false)) {
             throw new IllegalStateException("cannot unlock, not locked");
+        }
+    }
+
+    private static final class FullRefreshCoverage {
+        private final TableToken baseTableToken;
+        private final long baseTableTxn;
+
+        private FullRefreshCoverage(TableToken baseTableToken, long baseTableTxn) {
+            this.baseTableToken = baseTableToken;
+            this.baseTableTxn = baseTableTxn;
+        }
+    }
+
+    private static final class PendingInvalidation {
+        private final Object fullRefreshOwner;
+        private final TableToken invalidationBaseTableToken;
+        private final long invalidationBaseTxn;
+        private final boolean isInvalidationForced;
+        private final String reason;
+
+        private PendingInvalidation(
+                String reason,
+                TableToken invalidationBaseTableToken,
+                long invalidationBaseTxn,
+                boolean isInvalidationForced,
+                Object fullRefreshOwner
+        ) {
+            this.fullRefreshOwner = fullRefreshOwner;
+            this.invalidationBaseTableToken = invalidationBaseTableToken;
+            this.invalidationBaseTxn = invalidationBaseTxn;
+            this.isInvalidationForced = isInvalidationForced;
+            this.reason = reason;
         }
     }
 }

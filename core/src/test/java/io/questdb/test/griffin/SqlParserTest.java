@@ -8956,8 +8956,11 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testNullChecks() throws SqlException {
+        // the dangling select parses into a tokenless sub-query conjunct; it is
+        // retained in the model (and rejected later by filter compilation) instead
+        // of being silently dropped from the WHERE clause
         assertQuery(
-                "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z', '2020-09-20T17:00:00.312334Z'))",
+                "select-choose a from (select [a, time] from x timestamp (time) where time in ('2020-08-01T17:00:00.305314Z', '2020-09-20T17:00:00.312334Z') and (select-choose x from (select [x] from long_sequence(1))))",
                 """
                         SELECT\s
                         a
@@ -10004,6 +10007,33 @@ public class SqlParserTest extends AbstractSqlParserTest {
         assertQuery(
                 "select-virtual 1 1, x, concat('2', (x + 1)::string, '3') concat from (select [x] from tab)",
                 "select 1, x, '2' || cast(x + 1 as string) || '3' from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPipeConcatWithSingleArgFunctionConcatOnLeft() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat((x + 1)::string, '3') concat from (select [x] from tab)",
+                "select 1, x, concat(cast(x + 1 as string)) || '3' from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPipeConcatWithSingleArgFunctionConcatOnRight() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2', (x + 1)::string) concat from (select [x] from tab)",
+                "select 1, x, '2' || concat(cast(x + 1 as string)) from tab",
+                modelOf("tab").col("x", ColumnType.INT)
+        );
+    }
+
+    @Test
+    public void testPipeConcatWithSingleArgFunctionConcatOnRightNested() throws SqlException {
+        assertQuery(
+                "select-virtual 1 1, x, concat('2', (x + 1)::string, '3') concat from (select [x] from tab)",
+                "select 1, x, '2' || concat(cast(x + 1 as string)) || '3' from tab",
                 modelOf("tab").col("x", ColumnType.INT)
         );
     }

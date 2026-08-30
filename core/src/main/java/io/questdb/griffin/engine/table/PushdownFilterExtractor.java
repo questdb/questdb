@@ -78,6 +78,8 @@ public class PushdownFilterExtractor implements Mutable {
     public static final int OP_IS_NULL = 5;
     public static final int OP_LE = 2;
     public static final int OP_LT = 1;
+    // Not an op the native side knows about: it marks a condition that cannot be pushed down.
+    public static final int OP_UNSUPPORTED = -1;
 
     private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
     private final ObjList<ExpressionNode> orValues = new ObjList<>();
@@ -244,6 +246,19 @@ public class PushdownFilterExtractor implements Mutable {
      * This gates on the column's <em>metadata</em> type; soundness also needs the file's stored
      * type to agree, which {@link ParquetRowGroupFilter} enforces separately by dropping any
      * condition whose parquet column type differs, before it reaches the null-op branch.
+     * <p>
+     * Relaxing either arm would recover no pruning, so the two {@code false} answers cost nothing.
+     * The native side declines the same skips independently: {@code writer_undercounts_nulls}
+     * refuses the {@code null_count == 0} skip for CHAR, FLOAT and DOUBLE, and
+     * {@code is_null_free_type} refuses the {@code null_count == num_values} skip for BOOLEAN, BYTE
+     * and SHORT, both in {@code parquet_read::row_groups} and its {@code parquet_metadata::skip}
+     * twin. A newly pushed condition would therefore prune nothing and merely mark pushdown active,
+     * which costs the page frame cursor its up-front {@code size()}. For BOOLEAN, BYTE and SHORT it
+     * would also reopen the {@code filter == null} alongside active pushdown state that
+     * {@code ParquetRowGroupPruningTest.testLimitOverConstantFoldedByteNullFilter} pins closed,
+     * because {@code b IS NOT NULL} folds to a constant TRUE the code generator drops. The
+     * remaining pair - IS NULL over those three - folds to a constant FALSE that
+     * {@code SqlCodeGenerator} replaces with an empty factory, so no scan runs there to prune.
      */
     private static boolean isNullOpPushable(int columnType, int opType) {
         return switch (ColumnType.tagOf(columnType)) {
@@ -307,7 +322,11 @@ public class PushdownFilterExtractor implements Mutable {
 
         while (!stack.isEmpty() || node != null) {
             if (node != null) {
-                if (SqlKeywords.isAndKeyword(node.token)) {
+                if (node.token == null) {
+                    // tokenless node (e.g. subquery); not extractable, skip it -
+                    // extraction is best-effort and fewer conditions is always safe
+                    node = null;
+                } else if (SqlKeywords.isAndKeyword(node.token)) {
                     if (node.rhs != null) {
                         stack.push(node.rhs);
                     }
@@ -514,6 +533,10 @@ public class PushdownFilterExtractor implements Mutable {
             if (cur == null) {
                 cur = orStack.poll();
             }
+            if (cur.token == null) {
+                // tokenless OR operand (e.g. subquery); the whole OR chain is not extractable
+                return;
+            }
             if (SqlKeywords.isOrKeyword(cur.token)) {
                 if (cur.lhs == null || cur.rhs == null) {
                     return;
@@ -574,6 +597,14 @@ public class PushdownFilterExtractor implements Mutable {
         private final int operationType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
         private final ObjList<ExpressionNode> values = new ObjList<>();
+        // Set when value serialization declined this condition AND every one of its values is a
+        // compile-time constant, so re-running it cannot reach a different answer.
+        // ParquetRowGroupFilter.prepareFilterList runs once per parquet partition and re-raised the
+        // same ImplicitCastException every time - a string bound on a TIMESTAMP column arrives as a
+        // StrConstant whose getLong() throws - which over thousands of partitions is thousands of
+        // exceptions for one permanent answer. A bind variable is a RUNTIME constant, not a
+        // constant, so a value that can be re-bound is never cached.
+        private boolean isSerializationDeclined;
 
         public PushdownFilterCondition(CharSequence columnName, int columnWriterIndex, int columnType) {
             this(columnName, columnWriterIndex, columnType, OP_EQ);
@@ -627,10 +658,32 @@ public class PushdownFilterExtractor implements Mutable {
             return values;
         }
 
+        /**
+         * Reports whether every value is a compile-time constant, i.e. whether an outcome computed
+         * from the values holds for the life of the condition. A bind variable is a runtime
+         * constant and answers false.
+         */
+        public boolean hasConstantValuesOnly() {
+            for (int i = 0, n = valueFunctions.size(); i < n; i++) {
+                if (!valueFunctions.getQuick(i).isConstant()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
         public void init(SqlExecutionContext executionContext) throws SqlException {
             for (int i = 0, n = valueFunctions.size(); i < n; i++) {
                 valueFunctions.getQuick(i).init(null, executionContext);
             }
+        }
+
+        public boolean isSerializationDeclined() {
+            return isSerializationDeclined;
+        }
+
+        public void setSerializationDeclined() {
+            isSerializationDeclined = true;
         }
     }
 }

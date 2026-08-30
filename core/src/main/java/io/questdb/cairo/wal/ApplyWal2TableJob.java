@@ -650,6 +650,13 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 }
 
                 if (initialSeqTxn < writer.getSeqTxn()) {
+                    if (mvRefreshTask.operation == MatViewRefreshTask.INVALIDATE) {
+                        // One INVALIDATE notification replaces every incremental notification in this
+                        // apply batch. Treat the batch end as the covered frontier so a full snapshot may
+                        // consume it only when it also includes later transactions that got no notification.
+                        mvRefreshTask.invalidationBaseTableToken = mvRefreshTask.baseTableToken;
+                        mvRefreshTask.invalidationBaseTxn = writer.getSeqTxn();
+                    }
                     engine.notifyMatViewBaseTableCommit(mvRefreshTask, writer.getSeqTxn());
                 }
             } catch (Throwable th) {
@@ -1008,6 +1015,20 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         return;
                     }
                     if (!ex.isTableDoesNotExist()) {
+                        throw ex;
+                    }
+                    // The recovery below refreshes the target's token, so it can only help when the
+                    // name that failed to resolve is the one the statement declared as its target.
+                    // Any other table the statement names - a sub-query's - stays missing however
+                    // often the target token is refreshed, and the retry then re-notifies itself
+                    // forever: the table applies nothing further yet is never suspended, so nothing
+                    // reports the stall. Rethrow instead, so handleWalApplyFailure suspends the
+                    // table; that is visible in wal_tables() and recoverable with RESUME WAL once
+                    // the missing table is back. A statement that declared no target answers false
+                    // here and takes the same route, for the same reason: with nothing to match, no
+                    // token refresh can resolve the name either.
+                    final CharSequence missingTableName = ex.getTableName();
+                    if (!operationExecutor.isStatementTargetTableName(missingTableName)) {
                         throw ex;
                     }
                 } catch (TableReferenceOutOfDateException ex) {
