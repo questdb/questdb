@@ -543,7 +543,7 @@ fn simd_single_view_required_page<T: SimdEncodable>(
     view: PartitionChunkView<'_, T>,
     options: WriteOptions,
     primitive_type: PrimitiveType,
-    mut bloom_hashes: Option<&mut HashSet<u64>>,
+    bloom_hashes: Option<&mut HashSet<u64>>,
 ) -> ParquetResult<Page> {
     let num_rows = view.num_rows();
     // The def-level pass is what computes min/max and feeds the bloom filter, so
@@ -556,7 +556,9 @@ fn simd_single_view_required_page<T: SimdEncodable>(
         view.slice,
         0,
         options.write_statistics,
-        bloom_hashes.as_deref_mut(),
+        // Moved, not reborrowed: this is the only use in this function, and
+        // as_deref_mut on an Option<&mut _> is an identity that clippy rejects.
+        bloom_hashes,
     )?;
     if result.null_count != 0 {
         return Err(fmt_err!(

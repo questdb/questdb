@@ -332,7 +332,17 @@ pub extern "system" fn Java_io_questdb_griffin_engine_table_parquet_ParquetFileD
             return Ok(-1);
         }
         let decoder = unsafe { &*decoder };
-        decoder.plain_column_data_offset(file_ptr, file_size as u64, row_group_index, column_index)
+        // SAFETY: file_ptr and file_size are the mapping this decoder was
+        // built over, passed down from the Java reader that owns both, and are
+        // null/size checked above.
+        unsafe {
+            decoder.plain_column_data_offset(
+                file_ptr,
+                file_size as u64,
+                row_group_index,
+                column_index,
+            )
+        }
     })();
 
     match res {

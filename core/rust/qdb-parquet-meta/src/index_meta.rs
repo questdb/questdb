@@ -685,7 +685,11 @@ impl IndexMetaWriter {
         buf.extend_from_slice(&self.pidx_footer_offset.to_le_bytes());
         buf.extend_from_slice(&self.pidx_footer_length.to_le_bytes());
         buf.extend_from_slice(&self.first_cover_column.to_le_bytes());
-        let key_dir_entry_count: usize = self.row_groups.iter().map(|rg| rg.key_row_offsets.len()).sum();
+        let key_dir_entry_count: usize = self
+            .row_groups
+            .iter()
+            .map(|rg| rg.key_row_offsets.len())
+            .sum();
         let key_dir_entry_count = u32::try_from(key_dir_entry_count).map_err(|_| {
             parquet_meta_err!(
                 ParquetMetaErrorKind::InvalidValue,
@@ -1330,7 +1334,11 @@ impl<'a> IndexMetaReader<'a> {
         let at = self.key_row_offset_off + (base + idx) * 4;
         let lo = read_u32(self.data, at);
         let hi = read_u32(self.data, at + 4);
-        if lo >= hi { None } else { Some((lo, hi)) }
+        if lo >= hi {
+            None
+        } else {
+            Some((lo, hi))
+        }
     }
 
     pub fn key_space_size(&self) -> u32 {
@@ -1972,7 +1980,13 @@ mod tests {
             block
                 .set_column_chunk(0, key_id_chunk(*first_key, *first_key, 8))
                 .unwrap();
-            w.add_row_group(*first_key, i as i64 * 1_000, i as i64 * 1_000 + 999, &[], block);
+            w.add_row_group(
+                *first_key,
+                i as i64 * 1_000,
+                i as i64 * 1_000 + 999,
+                &[],
+                block,
+            );
         }
         w.set_data_row_group_boundaries(&[0, 2_000]);
         w.finish().unwrap()
@@ -2029,8 +2043,8 @@ mod tests {
         assert_eq!(r.key_row_range(1, 12), None);
 
         assert_eq!(r.key_row_range(2, 3), None); // no such row group
-        // The last group's directory length comes from the header count, not
-        // from a following base.
+                                                 // The last group's directory length comes from the header count, not
+                                                 // from a following base.
         assert_eq!(read_u32(&bytes, OFF_KEY_DIR_ENTRY_COUNT), 7);
     }
 
@@ -2348,7 +2362,13 @@ mod tests {
             block
                 .set_column_chunk(0, key_id_chunk(*first_key, *first_key, 8))
                 .unwrap();
-            w.add_row_group(*first_key, i as i64 * 1_000, i as i64 * 1_000 + 999, &[], block);
+            w.add_row_group(
+                *first_key,
+                i as i64 * 1_000,
+                i as i64 * 1_000 + 999,
+                &[],
+                block,
+            );
         }
         w.set_data_row_group_boundaries(&[0, 2_000]);
         let bytes = w.finish().unwrap();
@@ -2409,10 +2429,10 @@ mod tests {
         assert_eq!(read_u64(&bytes, 64), SAMPLE_PIDX_FOOTER_OFF); // PIDX_FOOTER_OFFSET
         assert_eq!(read_u32(&bytes, 72), SAMPLE_PIDX_FOOTER_LEN); // PIDX_FOOTER_LENGTH
         assert_eq!(read_u32(&bytes, 76), 2); // FIRST_COVER_COLUMN
-        // KEY_DIR_OFFSET at 88 and KEY_DIR_CRC at 96, then the RESERVED area
-        // they were spent from. This fixture writes no key directory, so the
-        // boundary lands on the trailer and the directory checksum covers
-        // nothing -- crc32 of an empty range is 0.
+                                             // KEY_DIR_OFFSET at 88 and KEY_DIR_CRC at 96, then the RESERVED area
+                                             // they were spent from. This fixture writes no key directory, so the
+                                             // boundary lands on the trailer and the directory checksum covers
+                                             // nothing -- crc32 of an empty range is 0.
         assert_eq!(read_u64(&bytes, 88), 1_192); // KEY_DIR_OFFSET
         assert_eq!(read_u32(&bytes, 96), 0); // KEY_DIR_CRC, empty range
         assert_eq!(&bytes[100..128], &[0u8; 28]); // RESERVED
@@ -2767,10 +2787,13 @@ mod tests {
         // one block of 8 + 3 * 64 plus 32 out-of-line bytes, then the index
         // sections: RG_BLOCK_OFFSET 4 padded to 8, RG_FIRST_KEY 8,
         // RG_ROW_ID_MIN 8, RG_ROW_ID_MAX 8, DATA_RG_BOUNDARY 16,
-        // RG_KEY_DIR_BASE 4 padded to 8, KEY_ROW_OFFSET 0, CRC 4.
+        // RG_KEY_DIR_BASE 4 padded to 8, CRC 4. KEY_ROW_OFFSET contributes
+        // nothing -- this fixture writes no key directory -- and is left out of
+        // the sum rather than added as a zero term, which clippy reads as an
+        // identity operation and rejects under -D warnings.
         assert_eq!(
             bytes.len(),
-            128 + 96 + 16 + (8 + 192 + 32) + 8 + 8 + 8 + 8 + 16 + 8 + 0 + 4
+            128 + 96 + 16 + (8 + 192 + 32) + 8 + 8 + 8 + 8 + 16 + 8 + 4
         );
         assert_eq!(bytes.len(), 532);
     }

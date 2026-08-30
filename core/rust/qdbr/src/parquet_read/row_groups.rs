@@ -1718,7 +1718,14 @@ impl ParquetDecoder {
     /// Returns `-1` rather than failing for every shape it does not cover, so
     /// the caller simply keeps decoding. Anything else would make a format
     /// detail a hard error on a path that has a perfectly good fallback.
-    pub fn plain_column_data_offset(
+    /// # Safety
+    ///
+    /// `file_ptr` must point at the start of the mapping this decoder was
+    /// built over, and that mapping must be valid for at least `file_size`
+    /// bytes. Only the caller knows this: the bound below checks the column's
+    /// range against `file_size`, but nothing here can check that `file_ptr`
+    /// and `file_size` describe the decoder's own file.
+    pub unsafe fn plain_column_data_offset(
         &self,
         file_ptr: *const u8,
         file_size: u64,
