@@ -32,6 +32,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Zip;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Memory-mapped reader for the {@code _im} covering-index metadata file,
@@ -150,13 +151,17 @@ public class IndexMetaFileReader implements QuietCloseable {
     /**
      * How many times the _im CRC has been computed, and over how many bytes.
      * <p>
-     * The check is per BIND and covers the whole file, so its cost depends
-     * entirely on how often a reader rebinds -- which is a property of
-     * TableReader's cache invalidation, not of this class. Counting it is the
-     * only way to answer that without tracing every path that drops a cached
-     * index reader.
+     * How often a bind happens is a property of TableReader's cache lifetime,
+     * not of this class, and counting is the only way to answer it without
+     * tracing every path that can drop a cached index reader -- which was tried
+     * and got the answer wrong.
+     * <p>
+     * PROCESS-WIDE and never reset except on bind, so a reader of these must
+     * take a delta and must not assume it is the only thing binding.
      */
+    @TestOnly
     public static final java.util.concurrent.atomic.AtomicLong CRC_BYTES = new java.util.concurrent.atomic.AtomicLong();
+    @TestOnly
     public static final java.util.concurrent.atomic.AtomicLong CRC_VERIFICATIONS = new java.util.concurrent.atomic.AtomicLong();
     private static final boolean VERIFY_CRC = !Boolean.getBoolean("questdb.idx.im.crc.skip");
     public static final int IM_HEADER_SIZE = 128;

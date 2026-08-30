@@ -238,6 +238,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
     }
 
     /** @see #widenedRowIdCount */
+    @TestOnly
     public long getWidenedRowIdCount() {
         return widenedRowIdCount.get();
     }

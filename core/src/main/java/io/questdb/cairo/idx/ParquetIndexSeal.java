@@ -122,6 +122,17 @@ public final class ParquetIndexSeal {
      * back anyway.
      */
     private static final int PARQUET_CONFIG_REQUIRED_FLAG = 1 << 26;
+    /**
+     * Measurement-only knobs, read ONCE at class init.
+     * <p>
+     * Hoisted rather than read per row group: a synchronized property lookup
+     * inside the seal's group loop is needless, and a property that changed
+     * mid-seal would produce one file with two layout policies in it. Both make
+     * the index bigger or slower on purpose, so they exist to measure the
+     * alternative, never to tune a server.
+     */
+    private static final boolean PACKED_ALIGN = Boolean.getBoolean("questdb.idx.packed.align");
+    private static final boolean PACKED_NO_FLAT = Boolean.getBoolean("questdb.idx.packed.noflat");
     private static final long TARGET_ROW_GROUP_ROWS = 100_000;
     // The streaming writer's fixed threshold stays live and would split a key
     // wherever it fired, so it is put beyond any partition's posting count.
@@ -515,7 +526,7 @@ public final class ParquetIndexSeal {
         // 34% of the index is a steep price for it.
         //
         // questdb.idx.packed.align=true restores the aligned widths.
-        if (!Boolean.getBoolean("questdb.idx.packed.align")) {
+        if (!PACKED_ALIGN) {
             return needed;
         }
         if (needed <= 8) {
@@ -709,7 +720,7 @@ public final class ParquetIndexSeal {
                 // vanish when it is off, on the same build and the same run.
                 final int at;
                 if (flatSize < tableSize && flatSize < uniformBlobSize
-                        && !Boolean.getBoolean("questdb.idx.packed.noflat")) {
+                        && !PACKED_NO_FLAT) {
                     PostingIndexUtils.encodePackedPayloadBlob(blob, groupRowIds, rows, flatMin, flatBitWidth);
                     at = flatSize;
                 } else if (uniformBlobSize <= tableSize) {
