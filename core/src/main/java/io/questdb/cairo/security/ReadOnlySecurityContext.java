@@ -172,6 +172,10 @@ public class ReadOnlySecurityContext implements SecurityContext {
     }
 
     @Override
+    public void authorizeHealthCheck() {
+    }
+
+    @Override
     public void authorizeHttp() {
     }
 
@@ -197,6 +201,10 @@ public class ReadOnlySecurityContext implements SecurityContext {
     @Override
     public void authorizeMatViewRefresh(TableToken tableToken) {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
+    public void authorizeMetrics() {
     }
 
     @Override

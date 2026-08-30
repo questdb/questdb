@@ -103,6 +103,12 @@ public interface SecurityContext extends Mutable {
 
     void authorizeDatabaseSnapshot();
 
+    /**
+     * Authorizes the health-check endpoint served by the min HTTP server. Enforced only when that
+     * listener requires authentication; with authentication off there is no principal to check.
+     */
+    void authorizeHealthCheck();
+
     void authorizeHttp();
 
     void authorizeInsert(TableToken tableToken);
@@ -114,6 +120,12 @@ public interface SecurityContext extends Mutable {
     void authorizeMatViewDrop(TableToken tableToken);
 
     void authorizeMatViewRefresh(TableToken tableToken);
+
+    /**
+     * Authorizes the Prometheus metrics endpoint served by the min HTTP server. Enforced only when
+     * that listener requires authentication; with authentication off there is no principal to check.
+     */
+    void authorizeMetrics();
 
     void authorizePGWire();
 

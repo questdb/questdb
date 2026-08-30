@@ -24,6 +24,7 @@
 
 package io.questdb.cutlass.http.processors;
 
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cutlass.http.HttpChunkedResponse;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpRequestHandler;
@@ -53,6 +54,11 @@ public class PrometheusMetricsProcessor implements HttpRequestProcessor, HttpReq
         this.metrics = metrics;
         this.requiredAuthType = configuration.getRequiredAuthType();
         this.pool = pool;
+    }
+
+    @Override
+    public void authorize(SecurityContext securityContext) {
+        securityContext.authorizeMetrics();
     }
 
     @Override
