@@ -136,7 +136,7 @@ public class LastNotNullDoubleGroupByFunction extends FirstDoubleGroupByFunction
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcVal = srcValue.getDouble(valueIndex + 1);
-        if (Numbers.isNull(srcVal)) {
+        if (!isArgNotNull && Numbers.isNull(srcVal)) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);

@@ -61,7 +61,7 @@ public class SignFloatFunctionFactory implements FunctionFactory {
         @Override
         public float getFloat(Record rec) {
             final float value = arg.getFloat(rec);
-            return isNotNull() || Numbers.isFinite(value) ? Math.signum(value) : Float.NaN;
+            return getArg().isNotNull() || Numbers.isFinite(value) ? Math.signum(value) : Float.NaN;
         }
 
         @Override

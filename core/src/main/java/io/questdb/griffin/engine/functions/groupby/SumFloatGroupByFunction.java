@@ -202,11 +202,6 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     }
 
     @Override
-    public boolean isNotNull() {
-        return isArgNotNull;
-    }
-
-    @Override
     public boolean supportsBatchComputation() {
         return !isArgNotNull;
     }

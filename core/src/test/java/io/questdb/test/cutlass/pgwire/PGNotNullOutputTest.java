@@ -105,13 +105,10 @@ public class PGNotNullOutputTest extends BasePGTest {
 
     @Test
     public void testNotNullDecimalAllPrecisions() throws Exception {
-        // outColTxtDecimal8/16/32/64: each has `if (notNull || v != DECIMAL*_NULL)`.
-        // The NOT NULL branch uses `Decimals.appendNonNull` which formats the raw
-        // sentinel bits as a decimal with the column's scale. With the Decimal64
-        // Long.MIN_VALUE fix, the d64 sentinel surfaces as "-92233720368547758.08"
-        // (scale 2) rather than an empty token. Binary mode now threads the
-        // notNull flag through outColBinDecimal, so the sentinel is rendered
-        // as a concrete numeric rather than wired as NULL.
+        // Text and binary modes must expose each signed-minimum storage sentinel as
+        // the same concrete decimal. The sentinel magnitude has one more digit than
+        // the column's declared precision, so the binary encoder cannot derive its
+        // layout from precision alone.
         assertWithPgServer(CONN_AWARE_ALL, (connection, binary, mode, port) -> {
             try (Statement s = connection.createStatement()) {
                 s.execute("""
@@ -120,22 +117,33 @@ public class PGNotNullOutputTest extends BasePGTest {
                             d16 DECIMAL(4, 0) NOT NULL,
                             d32 DECIMAL(9, 0) NOT NULL,
                             d64 DECIMAL(18, 2) NOT NULL,
+                            d128 DECIMAL(38, 2) NOT NULL,
+                            d256 DECIMAL(76, 2) NOT NULL,
                             ts TIMESTAMP NOT NULL
                         ) TIMESTAMP(ts)
                         """);
-                s.execute("INSERT INTO t VALUES (NULL, NULL, NULL, NULL, '2024-01-01')");
+                s.execute("INSERT INTO t VALUES (NULL, NULL, NULL, NULL, NULL, NULL, '2024-01-01')");
                 s.execute("""
                         INSERT INTO t VALUES (
                             1::DECIMAL(2, 0), 100::DECIMAL(4, 0), 1000::DECIMAL(9, 0),
-                            12.34::DECIMAL(18, 2), '2024-01-02'
+                            12.34::DECIMAL(18, 2), 123.45::DECIMAL(38, 2),
+                            1234.56::DECIMAL(76, 2), '2024-01-02'
                         )
                         """);
             }
-            try (PreparedStatement ps = connection.prepareStatement("SELECT d8, d16, d32, d64 FROM t ORDER BY ts")) {
+            try (PreparedStatement ps = connection.prepareStatement("SELECT d8, d16, d32, d64, d128, d256 FROM t ORDER BY ts")) {
                 try (ResultSet rs = ps.executeQuery()) {
+                    final String[] sentinelValues = {
+                            "-128",
+                            "-32768",
+                            "-2147483648",
+                            "-92233720368547758.08",
+                            "-1701411834604692317316873037158841057.28",
+                            "-578960446186580977117854925043439539266349923328202820197287920039565648199.68"
+                    };
                     Assert.assertTrue(rs.next());
-                    for (int col = 1; col <= 4; col++) {
-                        rs.getString(col);
+                    for (int col = 1; col <= sentinelValues.length; col++) {
+                        Assert.assertEquals(sentinelValues[col - 1], rs.getBigDecimal(col).toPlainString());
                         Assert.assertFalse("sentinel col " + col + " must not wire as NULL", rs.wasNull());
                     }
                     Assert.assertTrue(rs.next());
@@ -143,6 +151,8 @@ public class PGNotNullOutputTest extends BasePGTest {
                     Assert.assertEquals("100", rs.getBigDecimal(2).toPlainString());
                     Assert.assertEquals("1000", rs.getBigDecimal(3).toPlainString());
                     Assert.assertEquals("12.34", rs.getBigDecimal(4).toPlainString());
+                    Assert.assertEquals("123.45", rs.getBigDecimal(5).toPlainString());
+                    Assert.assertEquals("1234.56", rs.getBigDecimal(6).toPlainString());
                 }
             }
         });

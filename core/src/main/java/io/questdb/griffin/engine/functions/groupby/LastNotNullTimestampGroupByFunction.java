@@ -49,7 +49,7 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
                 if (isArgNotNull || value != Numbers.LONG_NULL) {
                     long rowId = startRowId + offset;
                     long existingRowId = mapValue.getLong(valueIndex);
-                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
+                    if (rowId > existingRowId || existingRowId == Numbers.LONG_NULL || (!isArgNotNull && mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL)) {
                         mapValue.putLong(valueIndex, rowId);
                         mapValue.putLong(valueIndex + 1, value);
                     }
@@ -120,7 +120,7 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         if (isArgNotNull || arg.getTimestamp(record) != Numbers.LONG_NULL) {
-            if (mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL || rowId > mapValue.getLong(valueIndex)) {
+            if ((!isArgNotNull && mapValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) || rowId > mapValue.getLong(valueIndex)) {
                 computeFirst(mapValue, record, rowId);
             }
         }
@@ -134,12 +134,12 @@ public class LastNotNullTimestampGroupByFunction extends FirstTimestampGroupByFu
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcVal = srcValue.getTimestamp(valueIndex + 1);
-        if (srcVal == Numbers.LONG_NULL) {
+        if (!isArgNotNull && srcVal == Numbers.LONG_NULL) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);
         long destRowId = destValue.getLong(valueIndex);
-        if (srcRowId > destRowId || destValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL) {
+        if (srcRowId > destRowId || (!isArgNotNull && destValue.getTimestamp(valueIndex + 1) == Numbers.LONG_NULL)) {
             destValue.putLong(valueIndex, srcRowId);
             destValue.putLong(valueIndex + 1, srcVal);
         }

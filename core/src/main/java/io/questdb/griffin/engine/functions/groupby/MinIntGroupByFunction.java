@@ -117,7 +117,8 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int current = mapValue.getInt(valueIndex);
         final int value = arg.getInt(record);
-        if (value < current || (!isArgNotNull && current == Numbers.INT_NULL)) {
+        if ((isArgNotNull || value != Numbers.INT_NULL)
+                && (value < current || (!isArgNotNull && current == Numbers.INT_NULL))) {
             mapValue.putInt(valueIndex, value);
         }
     }
@@ -186,11 +187,6 @@ public class MinIntGroupByFunction extends IntFunction implements GroupByFunctio
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putInt(valueIndex, Numbers.INT_NULL);
-    }
-
-    @Override
-    public boolean isNotNull() {
-        return isArgNotNull;
     }
 
     @Override

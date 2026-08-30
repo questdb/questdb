@@ -128,11 +128,6 @@ class SumDecimal16GroupByFunction extends Decimal64Function implements GroupByFu
     }
 
     @Override
-    public boolean isNotNull() {
-        return isArgNotNull;
-    }
-
-    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }

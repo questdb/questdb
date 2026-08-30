@@ -125,7 +125,7 @@ public class ColumnTypeConverter {
                 default -> throw unsupportedConversion(srcColumnType, dstColumnType);
             };
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
-            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
+            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink, notNull);
         } else if (ColumnType.isVarSize(srcColumnType)) {
             return switch (srcColumnType) {
                 case ColumnType.STRING ->
@@ -176,7 +176,8 @@ public class ColumnTypeConverter {
             int srcColumnType,
             int dstColumnType,
             FilesFacade ff,
-            ColumnConversionOffsetSink columnSizesSink
+            ColumnConversionOffsetSink columnSizesSink,
+            boolean isSrcNotNull
     ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
@@ -195,7 +196,7 @@ public class ColumnTypeConverter {
             dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, dstMapBytes, true, memoryTag);
             columnSizesSink.setDestSizes(dstMapBytes, -1);
 
-            long succeeded = ConvertersNative.fixedToFixed(srcMapAddress, srcColumnType, dstMapAddress, dstColumnType, rowCount);
+            long succeeded = ConvertersNative.fixedToFixed(srcMapAddress, srcColumnType, dstMapAddress, dstColumnType, rowCount, isSrcNotNull);
             return switch ((int) succeeded) {
                 case ConvertersNative.ConversionError.NONE -> true;
                 case ConvertersNative.ConversionError.UNSUPPORTED_CAST ->

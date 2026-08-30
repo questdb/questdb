@@ -92,7 +92,9 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
                 if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.LONG_NULL)) {
+                        Unsafe.putLong(addr, value);
+                    }
                 }
             }
         } else {
@@ -103,7 +105,9 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
                 if (isArgNotNull || value != Numbers.LONG_NULL) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final long current = Unsafe.getLong(addr);
-                    Unsafe.putLong(addr, current != Numbers.LONG_NULL ? Math.min(current, value) : value);
+                    if (Map.isNewBatchEntry(encoded) || value < current || (!isArgNotNull && current == Numbers.LONG_NULL)) {
+                        Unsafe.putLong(addr, value);
+                    }
                 }
             }
         }
@@ -111,7 +115,12 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
 
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
-        mapValue.minLong(valueIndex, arg.getDate(record));
+        final long current = mapValue.getDate(valueIndex);
+        final long value = arg.getDate(record);
+        if ((isArgNotNull || value != Numbers.LONG_NULL)
+                && (value < current || (!isArgNotNull && current == Numbers.LONG_NULL))) {
+            mapValue.putDate(valueIndex, value);
+        }
     }
 
     @Override
@@ -159,7 +168,8 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMin = srcValue.getDate(valueIndex);
         long destMin = destValue.getDate(valueIndex);
-        if (srcMin != Numbers.LONG_NULL && (srcMin < destMin || destMin == Numbers.LONG_NULL)) {
+        if ((isArgNotNull || srcMin != Numbers.LONG_NULL)
+                && (srcMin < destMin || (!isArgNotNull && destMin == Numbers.LONG_NULL))) {
             destValue.putDate(valueIndex, srcMin);
         }
     }
@@ -167,11 +177,6 @@ public class MinDateGroupByFunction extends DateFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putDate(valueIndex, Numbers.LONG_NULL);
-    }
-
-    @Override
-    public boolean isNotNull() {
-        return isArgNotNull;
     }
 
     @Override

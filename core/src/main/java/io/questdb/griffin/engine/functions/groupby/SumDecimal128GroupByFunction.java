@@ -232,11 +232,6 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     }
 
     @Override
-    public boolean isNotNull() {
-        return isArgNotNull;
-    }
-
-    @Override
     public boolean supportsParallelism() {
         return UnaryFunction.super.supportsParallelism();
     }

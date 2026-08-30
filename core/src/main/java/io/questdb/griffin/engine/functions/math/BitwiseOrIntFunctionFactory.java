@@ -65,7 +65,7 @@ public class BitwiseOrIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int l = left.getInt(rec);
             final int r = right.getInt(rec);
-            return isNotNull() || (l != Numbers.INT_NULL && r != Numbers.INT_NULL) ? l | r : Numbers.INT_NULL;
+            return areArgsNotNull() || (l != Numbers.INT_NULL && r != Numbers.INT_NULL) ? l | r : Numbers.INT_NULL;
         }
 
         @Override

@@ -478,7 +478,8 @@ public class NotNullColumnTest extends AbstractCairoTest {
     @Test
     public void testExplicitNotNullPreservedOnTypeChange() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
 
             try (TableReader reader = engine.getReader("t")) {
                 assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
@@ -486,9 +487,29 @@ public class NotNullColumnTest extends AbstractCairoTest {
 
             execute("ALTER TABLE t ALTER COLUMN b TYPE LONG");
 
+            assertQuery("SELECT b FROM t")
+                    .expectSize()
+                    .returns("b\n-2147483648\n");
+
             try (TableReader reader = engine.getReader("t")) {
                 assertTrue(reader.getMetadata().isNotNull(reader.getMetadata().getColumnIndex("b")));
             }
+        });
+    }
+
+    @Test
+    public void testExplicitNotNullSentinelPreservedOnWalTypeChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            drainWalQueue();
+
+            execute("ALTER TABLE t ALTER COLUMN b TYPE LONG");
+            drainWalQueue();
+
+            assertQuery("SELECT b FROM t")
+                    .expectSize()
+                    .returns("b\n-2147483648\n");
         });
     }
 
@@ -1583,6 +1604,46 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyAggregatesRemainNullable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG NOT NULL)");
+
+            assertQuery("SELECT s, s IS NULL s_null, mn, mn IS NULL mn_null, mx, mx IS NULL mx_null FROM (SELECT sum(x) s, min(x) mn, max(x) mx FROM t)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("s\ts_null\tmn\tmn_null\tmx\tmx_null\nnull\ttrue\tnull\ttrue\tnull\ttrue\n");
+        });
+    }
+
+    @Test
+    public void testArithmeticResultsAndMixedNullability() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE NOT NULL, z DOUBLE NOT NULL, x INT NOT NULL, y INT, xl LONG NOT NULL, yl LONG)");
+            execute("INSERT INTO t VALUES (-1, 0, -2147483648, 2, CAST(-9223372036854775807 AS LONG) - 1, 2)");
+
+            assertQuery("SELECT sqrt(d) sq, sqrt(d) IS NULL sq_null, d / z div, (d / z) IS NULL div_null, x / y idiv, x % y irem, xl / yl ldiv, xl % yl lrem FROM t")
+                    .expectSize()
+                    .returns("sq\tsq_null\tdiv\tdiv_null\tidiv\tirem\tldiv\tlrem\nnull\ttrue\tnull\ttrue\t-1073741824\t0\t-4611686018427387904\t0\n");
+        });
+    }
+
+    @Test
+    public void testNullableMinStillSkipsSentinel() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, k INT)");
+            execute("INSERT INTO t VALUES (5, 0), (NULL, 0)");
+
+            assertQuery("SELECT min(x) mn FROM t")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("mn\n5\n");
+            assertQuery("SELECT k, min(x) mn FROM t GROUP BY k")
+                    .expectSize()
+                    .returns("k\tmn\n0\t5\n");
+        });
+    }
+
+    @Test
     public void testParallelAggregatesKeepNotNullSentinels() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 2);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 2);
@@ -1601,16 +1662,16 @@ public class NotNullColumnTest extends AbstractCairoTest {
             assertSql(
                     """
                             k	count_distinct	sum	avg	min	max
-                            a	3	-2147483643	-7.15827881E8	-2147483648	3
-                            b	3	-2147483639	-7.158278796666666E8	-2147483648	5
+                            a	3	-2147483643	-7.15827881E8	null	3
+                            b	3	-2147483639	-7.158278796666666E8	null	5
                             """,
                     "SELECT k, count_distinct(i), sum(i), avg(i), min(i), max(i) FROM t GROUP BY k ORDER BY k"
             );
             assertSql(
                     """
                             k	count_distinct	sum	min	max
-                            a	3	-9223372036854775803	-9223372036854775808	3
-                            b	3	-9223372036854775799	-9223372036854775808	5
+                            a	3	-9223372036854775803	null	3
+                            b	3	-9223372036854775799	null	5
                             """,
                     "SELECT k, count_distinct(l), sum(l), min(l), max(l) FROM t GROUP BY k ORDER BY k"
             );
@@ -1622,6 +1683,9 @@ public class NotNullColumnTest extends AbstractCairoTest {
                             """,
                     "SELECT k, avg(l) < -3.0E18 avg_includes_sentinel FROM t GROUP BY k ORDER BY k"
             );
+            assertQuery("SELECT k, min(f) min_f, max(f) max_f, min(d) min_d, max(d) max_d FROM t GROUP BY k ORDER BY k")
+                    .expectSize()
+                    .returns("k\tmin_f\tmax_f\tmin_d\tmax_d\na\tnull\tnull\tnull\tnull\nb\tnull\tnull\tnull\tnull\n");
             assertSql(
                     """
                             a_first_i	a_first_l	a_first_f	a_first_d	b_last_i	b_last_l	b_last_f	b_last_d

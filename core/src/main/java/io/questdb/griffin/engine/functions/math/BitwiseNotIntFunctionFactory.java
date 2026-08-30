@@ -68,7 +68,7 @@ public class BitwiseNotIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             final int val = value.getInt(rec);
-            return isNotNull() || val != Numbers.INT_NULL ? ~val : Numbers.INT_NULL;
+            return getArg().isNotNull() || val != Numbers.INT_NULL ? ~val : Numbers.INT_NULL;
         }
 
         @Override

@@ -138,7 +138,7 @@ public class FirstNotNullFloatGroupByFunction extends FirstFloatGroupByFunction 
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         float srcVal = srcValue.getFloat(valueIndex + 1);
-        if (Numbers.isNull(srcVal)) {
+        if (!isArgNotNull && Numbers.isNull(srcVal)) {
             return;
         }
         long srcRowId = srcValue.getLong(valueIndex);

@@ -83,7 +83,7 @@ public class AddIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int left = this.left.getInt(rec);
             final int right = this.right.getInt(rec);
-            if (!isNotNull() && (left == Numbers.INT_NULL || right == Numbers.INT_NULL)) {
+            if (!areArgsNotNull() && (left == Numbers.INT_NULL || right == Numbers.INT_NULL)) {
                 return Numbers.INT_NULL;
             }
             return left + right;

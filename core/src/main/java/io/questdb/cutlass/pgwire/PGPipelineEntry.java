@@ -108,7 +108,9 @@ import static io.questdb.cutlass.pgwire.PGUtils.NUMERIC_NEG;
 import static io.questdb.cutlass.pgwire.PGUtils.NUMERIC_POS;
 import static io.questdb.cutlass.pgwire.PGUtils.calculateColumnBinSize;
 import static io.questdb.cutlass.pgwire.PGUtils.estimateColumnTxtSize;
+import static io.questdb.cutlass.pgwire.PGUtils.isDecimalSentinel;
 import static io.questdb.cutlass.pgwire.PGUtils.outColBinDecimal;
+import static io.questdb.cutlass.pgwire.PGUtils.outColBinDecimalSentinel;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_PRINT_FORMAT;
 
@@ -2011,6 +2013,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
             return;
         }
+        if (decimal256.isNull()) {
+            outColBinDecimalSentinel(utf8Sink, type);
+            return;
+        }
 
         final int precision = ColumnType.getDecimalPrecision(type);
         final int scale = ColumnType.getDecimalScale(type);
@@ -2092,6 +2098,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             utf8Sink.setNullValue();
             return;
         }
+        if (decimal128.isNull()) {
+            outColBinDecimalSentinel(utf8Sink, type);
+            return;
+        }
 
         final int precision = ColumnType.getDecimalPrecision(type);
         final int scale = ColumnType.getDecimalScale(type);
@@ -2171,6 +2181,10 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private void outColBinDecimal(PGResponseSink utf8Sink, Decimal64 decimal64, int type, boolean notNull) {
         if (!notNull && decimal64.isNull()) {
             utf8Sink.setNullValue();
+            return;
+        }
+        if (notNull && isDecimalSentinel(decimal64, type)) {
+            outColBinDecimalSentinel(utf8Sink, type);
             return;
         }
 

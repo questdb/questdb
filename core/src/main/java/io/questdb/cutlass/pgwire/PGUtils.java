@@ -67,6 +67,12 @@ public final class PGUtils {
     private static final int MAX_UUID_TEXT_LEN = 36;
     private static final int NULL_LITERAL_TEXT_LEN = 4; // "NULL", as ArrayTypeDriver.arrayToPgWire() writes it
     private static final int PG_NUMERIC_FIXED_BIN_SIZE = Integer.BYTES + 4 * Short.BYTES;
+    private static final String SENTINEL_MAGNITUDE_128 = "170141183460469231731687303715884105728";
+    private static final String SENTINEL_MAGNITUDE_16 = "32768";
+    private static final String SENTINEL_MAGNITUDE_256 = "57896044618658097711785492504343953926634992332820282019728792003956564819968";
+    private static final String SENTINEL_MAGNITUDE_32 = "2147483648";
+    private static final String SENTINEL_MAGNITUDE_64 = "9223372036854775808";
+    private static final String SENTINEL_MAGNITUDE_8 = "128";
 
     private PGUtils() {
     }
@@ -675,27 +681,83 @@ public final class PGUtils {
 
     private static int decimalBinSize(boolean sentinel, boolean notNull, int type, long value) {
         if (sentinel) {
-            return notNull ? maxDecimalBinSize(ColumnType.getDecimalPrecision(type)) : Integer.BYTES;
+            return notNull ? decimalSentinelBinSize(type) : Integer.BYTES;
         }
         return calculateDecimalBinSize(value, ColumnType.getDecimalScale(type));
     }
 
     private static int decimalBinSize(boolean sentinel, boolean notNull, int type, Decimal128 value) {
         if (sentinel) {
-            return notNull ? maxDecimalBinSize(ColumnType.getDecimalPrecision(type)) : Integer.BYTES;
+            return notNull ? decimalSentinelBinSize(type) : Integer.BYTES;
         }
         return calculateDecimalBinSize(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
     }
 
     private static int decimalBinSize(boolean sentinel, boolean notNull, int type, Decimal256 value) {
         if (sentinel) {
-            return notNull ? maxDecimalBinSize(ColumnType.getDecimalPrecision(type)) : Integer.BYTES;
+            return notNull ? decimalSentinelBinSize(type) : Integer.BYTES;
         }
         return calculateDecimalBinSize(value, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type));
     }
 
-    private static int maxDecimalBinSize(int precision) {
-        return PG_NUMERIC_FIXED_BIN_SIZE + ((precision + 3) / 4) * Short.BYTES;
+    public static int decimalSentinelBinSize(int type) {
+        final String magnitude = getDecimalSentinelMagnitude(type);
+        final int scale = ColumnType.getDecimalScale(type);
+        final int wholeDigits = magnitude.length() - scale;
+        final int highestWeight = Math.floorDiv(wholeDigits - 1, 4);
+        final int lowestWeight = scale == 0 ? 0 : -((scale + 3) / 4);
+        return PG_NUMERIC_FIXED_BIN_SIZE + (highestWeight - lowestWeight + 1) * Short.BYTES;
+    }
+
+    static boolean isDecimalSentinel(Decimal64 value, int type) {
+        final long rawValue = value.getValue();
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> rawValue == Decimals.DECIMAL8_NULL;
+            case ColumnType.DECIMAL16 -> rawValue == Decimals.DECIMAL16_NULL;
+            case ColumnType.DECIMAL32 -> rawValue == Decimals.DECIMAL32_NULL;
+            case ColumnType.DECIMAL64 -> rawValue == Decimals.DECIMAL64_NULL;
+            default -> false;
+        };
+    }
+
+    public static void outColBinDecimalSentinel(PGResponseSink utf8Sink, int type) {
+        final String magnitude = getDecimalSentinelMagnitude(type);
+        final int scale = ColumnType.getDecimalScale(type);
+        final int wholeDigits = magnitude.length() - scale;
+        final int highestWeight = Math.floorDiv(wholeDigits - 1, 4);
+        final int lowestWeight = scale == 0 ? 0 : -((scale + 3) / 4);
+        final int digitCount = highestWeight - lowestWeight + 1;
+
+        utf8Sink.putNetworkInt(4 * Short.BYTES + digitCount * Short.BYTES);
+        utf8Sink.putNetworkShort((short) digitCount);
+        utf8Sink.putNetworkShort((short) highestWeight);
+        utf8Sink.putNetworkShort(NUMERIC_NEG);
+        utf8Sink.putNetworkShort((short) scale);
+
+        for (int weight = highestWeight; weight >= lowestWeight; weight--) {
+            final int start = wholeDigits - 4 * (weight + 1);
+            int digit = 0;
+            for (int i = 0; i < 4; i++) {
+                final int charIndex = start + i;
+                digit *= 10;
+                if (charIndex >= 0 && charIndex < magnitude.length()) {
+                    digit += magnitude.charAt(charIndex) - '0';
+                }
+            }
+            utf8Sink.putNetworkShort((short) digit);
+        }
+    }
+
+    private static String getDecimalSentinelMagnitude(int type) {
+        return switch (ColumnType.tagOf(type)) {
+            case ColumnType.DECIMAL8 -> SENTINEL_MAGNITUDE_8;
+            case ColumnType.DECIMAL16 -> SENTINEL_MAGNITUDE_16;
+            case ColumnType.DECIMAL32 -> SENTINEL_MAGNITUDE_32;
+            case ColumnType.DECIMAL64 -> SENTINEL_MAGNITUDE_64;
+            case ColumnType.DECIMAL128 -> SENTINEL_MAGNITUDE_128;
+            case ColumnType.DECIMAL256 -> SENTINEL_MAGNITUDE_256;
+            default -> throw new IllegalArgumentException("not a decimal type: " + type);
+        };
     }
 
     private static int calculateDecimalBinSize(long value, int scale) {

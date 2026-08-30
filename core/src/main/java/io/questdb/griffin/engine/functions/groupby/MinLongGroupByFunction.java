@@ -117,7 +117,8 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long current = mapValue.getLong(valueIndex);
         final long value = arg.getLong(record);
-        if (value < current || (!isArgNotNull && current == Numbers.LONG_NULL)) {
+        if ((isArgNotNull || value != Numbers.LONG_NULL)
+                && (value < current || (!isArgNotNull && current == Numbers.LONG_NULL))) {
             mapValue.putLong(valueIndex, value);
         }
     }
@@ -186,11 +187,6 @@ public class MinLongGroupByFunction extends LongFunction implements GroupByFunct
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, Numbers.LONG_NULL);
-    }
-
-    @Override
-    public boolean isNotNull() {
-        return isArgNotNull;
     }
 
     @Override

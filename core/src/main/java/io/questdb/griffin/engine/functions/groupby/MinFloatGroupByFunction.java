@@ -97,7 +97,8 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final float value = Unsafe.getFloat(argAddr + (rowIndex << 2));
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final float current = Unsafe.getFloat(addr);
-                if (value < current || (!isArgNotNull && Numbers.isNull(current))) {
+                if (Map.isNewBatchEntry(encoded)
+                        || (isArgNotNull ? Float.isNaN(value) || value < current : value < current || Numbers.isNull(current))) {
                     Unsafe.putFloat(addr, value);
                 }
             }
@@ -108,7 +109,8 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final float value = arg.getFloat(record);
                 final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                 final float current = Unsafe.getFloat(addr);
-                if (value < current || (!isArgNotNull && Numbers.isNull(current))) {
+                if (Map.isNewBatchEntry(encoded)
+                        || (isArgNotNull ? Float.isNaN(value) || value < current : value < current || Numbers.isNull(current))) {
                     Unsafe.putFloat(addr, value);
                 }
             }
@@ -119,7 +121,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         float min = mapValue.getFloat(valueIndex);
         float next = arg.getFloat(record);
-        if (next < min || (!isArgNotNull && Numbers.isNull(min))) {
+        if (isArgNotNull ? Float.isNaN(next) || next < min : next < min || Numbers.isNull(min)) {
             mapValue.putFloat(valueIndex, next);
         }
     }
@@ -174,7 +176,7 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     public void merge(MapValue destValue, MapValue srcValue) {
         float srcMin = srcValue.getFloat(valueIndex);
         float destMin = destValue.getFloat(valueIndex);
-        if (srcMin < destMin || (!isArgNotNull && Numbers.isNull(destMin))) {
+        if (isArgNotNull ? Float.isNaN(srcMin) || srcMin < destMin : srcMin < destMin || Numbers.isNull(destMin)) {
             destValue.putFloat(valueIndex, srcMin);
         }
     }
@@ -187,11 +189,6 @@ public class MinFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putFloat(valueIndex, Float.NaN);
-    }
-
-    @Override
-    public boolean isNotNull() {
-        return isArgNotNull;
     }
 
     @Override

@@ -61,7 +61,7 @@ public class SignDoubleFunctionFactory implements FunctionFactory {
         @Override
         public double getDouble(Record rec) {
             final double value = arg.getDouble(rec);
-            if (!isNotNull() && !Numbers.isFinite(value)) {
+            if (!getArg().isNotNull() && !Numbers.isFinite(value)) {
                 return Double.NaN;
             }
             if (value == -0.0d) {

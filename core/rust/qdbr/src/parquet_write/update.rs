@@ -826,9 +826,7 @@ impl ParquetUpdater {
                 .get(&col.id)
                 .and_then(|&old_idx| old_qdb_meta.as_ref().and_then(|m| m.schema.get(old_idx)));
             let ascii = old_meta.and_then(|old_col| old_col.ascii);
-            let not_null = old_meta
-                .map(|old_col| old_col.not_null || col.not_null_hint)
-                .unwrap_or(col.not_null_hint);
+            let not_null = col.not_null_hint;
 
             qdb_meta.schema.push(QdbMetaCol {
                 column_type,
@@ -2296,7 +2294,7 @@ mod tests {
     use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
     use parquet2::compression::CompressionOptions;
     use parquet2::write::{ParquetFile, Version};
-    use qdb_parquet_meta::NoBloomFilterSource;
+    use qdb_parquet_meta::{NoBloomFilterSource, QdbMeta, QDB_META_KEY};
     use std::cell::Cell;
     use std::collections::HashSet;
     use std::env;
@@ -2529,6 +2527,71 @@ mod tests {
             0,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn target_schema_can_clear_not_null_metadata() -> Result<(), Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+
+        let values = [1i32, 2, 3];
+        let mut source_column =
+            make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &values);
+        source_column.not_null_hint = true;
+        let source_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![source_column],
+        };
+        let source = NamedTempFile::new()?;
+        ParquetWriter::new(source.reopen()?).finish(source_partition)?;
+        let source_len = source.as_file().metadata()?.len();
+
+        let output = NamedTempFile::new()?;
+        let allocator = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            allocator.allocator(),
+            source.reopen()?,
+            source_len,
+            output.reopen()?,
+            0,
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+        let target_partition = Partition {
+            table: "t".to_string(),
+            columns: vec![make_column_with_id(
+                1,
+                "val",
+                ColumnTypeTag::Int.into_type(),
+                &values,
+            )],
+        };
+        updater.set_target_schema(&target_partition)?;
+        updater.copy_row_group(0)?;
+        updater.end(None)?;
+
+        let file = output.reopen()?;
+        let len = file.metadata()?.len();
+        let metadata = read_metadata_with_size(&mut &file, len)?;
+        let qdb_raw = metadata
+            .key_value_metadata
+            .as_ref()
+            .and_then(|entries| entries.iter().find(|entry| entry.key == QDB_META_KEY))
+            .and_then(|entry| entry.value.as_ref())
+            .expect("rewritten file must carry qdb_meta");
+        let qdb_meta = QdbMeta::deserialize(qdb_raw)?;
+        assert!(!qdb_meta.schema[0].not_null);
+        Ok(())
     }
 
     fn exercise_hybrid_rewrite(
