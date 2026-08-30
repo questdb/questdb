@@ -370,15 +370,50 @@ Two design decisions worth carrying forward:
   its per-key blocks must be walked; flat mode shares one base and one bitWidth
   across the stride and gives O(1) access to any key's slice, which is what a
   random-access reader needs.
-- **One blob row per ROW GROUP, not per key.** A per-key blob needs a byte offset
-  per key -- a new `_im` section and a format version bump. Per row group, key
-  *k* sits at bit offset `posting_index * bitWidth` and `KEY_ROW_OFFSET` already
-  stores that index, so neither is needed.
+- **One blob row per ROW GROUP.** A blob per KEY would need a byte offset per key
+  in `_im` -- a new section and a format version bump. Per row group, the offset
+  table lives inside the blob when it is needed at all, and `KEY_ROW_OFFSET`
+  supplies the ordinals, so neither is required. What goes *inside* one blob is
+  chosen per group; see "Row-id layout selection".
 - **The blob is NOT the native flat stride**, though its header is byte-identical.
   A native stride follows its base with a cumulative per-key prefix-count array;
   the `_im` key directory already stores exactly that, and a native stride spans
   at most 256 keys while a row group's key SPAN is unbounded, so copying it would
   import a bound that does not hold.
+
+### Row-id layout selection
+
+A blob is one row group's row ids, and the seal picks its internal layout per
+group by **measured size**, emitting the smallest of three. All three are live;
+each has a regime.
+
+| layout | shape it wins on | why |
+| --- | --- | --- |
+| flat frame-of-reference | narrow keys, under ~4 postings each | no per-key header at all -- `KEY_ROW_OFFSET` already gives each key its ordinal range, so nothing inside the blob names a key |
+| per-key blocks + offset table | wide keys, unequal posting counts | a linear-prediction block per key compresses a key's own progression; the table locates each |
+| per-key blocks, uniform | wide keys, equal posting counts | equal block sizes make the address arithmetic, dropping the table and its random load |
+
+**The crossover is a header.** A per-key linear-prediction block costs a 29-byte
+header before it stores a single row id, so a key with two postings spends 29
+bytes describing 16. Below about 29/8 postings a key, the per-key layout costs
+more than the raw ids it replaces: measured at 2 postings a key it was **1.63x
+the per-posting arm it exists to beat**, and laying those groups out flat instead
+made them **0.42x** -- 3,225 KB to 832 KB on the same fixture.
+
+Because a high-cardinality index sits far past L3, those bytes are cache misses
+on the bind path, so the size win is also the read win: the 1,000,000-key range
+read went from 3.90x the native chain to 1.37x, and both high-cardinality scans
+now beat it.
+
+**A flat group has no per-key block to read a start and stride from**, so it
+cannot use the closed-form arithmetic path -- except for runs of one or two,
+where any two ascending values are a progression by definition and the two
+unpacks needed to establish it are the two the widen would have done anyway.
+Bounded at two deliberately: at three the run must be *verified* before the
+closed form is sound, which costs exactly the unpacks it exists to avoid.
+
+Both directions have the closed form. The backward cursor never did, on either
+layout, which is why its scan still regressed once the forward one was fixed.
 
 ### Mechanisms tried and rejected
 
@@ -391,6 +426,11 @@ reasoned about.
 | Narrow `row_id` to INT | all tests green, four faster cells turned **slower** | the width branch lands in the `hasNext` fast path |
 | Flat per-key offset array in `_im` | not built; **ceiling measured at 17.1%, reachable part 4.2%** | see below |
 | Cap the parquet form by cardinality | not built | the range-read crossover sits between 512 and 2,000 keys, so parity everywhere means refusing the parquet form above ~512 distinct keys, which removes the feature rather than fixing it |
+| Hoist the batch offset out of the per-row emission | **no measurable change** | 201 -> 197.6 ops/s on its own target cell, inside a +/-11.9 interval. The JIT was already hoisting it |
+| Emit the progression incrementally instead of `base + i * stride` | **no measurable change** | 200.6 vs 201. The multiply was on the loop-carried chain and looked like the cost; it was not. Both this and the row above were reverted rather than kept unmeasured |
+| Cache `_im` CRC verification per file | not built | superseded. Once the checksum was split, a bind no longer sums the directory, so there is nothing left worth caching |
+| Stop dropping the index reader across the reader-pool cycle | not built | the premise was a measurement error. `assertQuery` releases inactive readers, so the harness -- not the engine -- was rebinding per query. A pooled reader binds once and serves many |
+| Bulk cursor to avoid re-decoding per fetch | not built | nothing is re-decoded. A scan widens at most one row id per row emitted and zero on progression-shaped runs, so batching has no decode work to save; the remaining per-row cost is the cursor protocol |
 
 `key_id` keeps its delta packing: it is written for layout and never read back,
 so the decode cost does not apply.

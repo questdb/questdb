@@ -75,7 +75,9 @@ group entries, they live in the index sections, and the file ends with a CRC.
                  |  rg_first_key[]  + sentinel  |                         |
                  |  rg_row_id_min[] / max[]     |                         |
                  |  data_rg_boundary[] ---------+-------------------------+
-                 |  CRC32                       |
+                 |  rg_key_dir_base[]           |
+                 |  key_row_offset[]  <- KEY_DIR_CRC covers from here       |
+                 |  CRC32  <- covers [8, KEY_DIR_OFFSET)                    |
                  +==============================+
 ```
 
@@ -153,7 +155,10 @@ outside the purge window while it can still reach the superseded artifacts.
 | 72 | 4 | `PIDX_FOOTER_LENGTH` | u32 | length of that parquet footer in bytes |
 | 76 | 4 | `FIRST_COVER_COLUMN` | u32 | descriptor index of cover slot 0 — see "Cover slots" below |
 | 80 | 4 | `KEY_DIR_ENTRY_COUNT` | u32 | total `KEY_ROW_OFFSET` entries |
-| 84 | 44 | `RESERVED` | | must be 0 |
+| 84 | 4 | `ROW_ID_BLOB_COLUMN` | u32 | column holding the packed row-id blob under `PAYLOAD_KIND = 1`, stored as `column + 1` so `0` means absent |
+| 88 | 8 | `KEY_DIR_OFFSET` | u64 | absolute file offset of `KEY_ROW_OFFSET`, and the byte the trailer `CHECKSUM` stops at |
+| 96 | 4 | `KEY_DIR_CRC` | u32 | CRC32 over `[KEY_DIR_OFFSET, IM_FILE_SIZE - 4)` |
+| 100 | 28 | `RESERVED` | | must be 0 |
 
 The index parquet's committed size is derived, exactly as `_pm` derives the data parquet's:
 `pidx_file_size = PIDX_FOOTER_OFFSET + PIDX_FOOTER_LENGTH + 8` (4 bytes of footer length plus the
@@ -285,7 +290,43 @@ lie after the column descriptors and name strings, and the sections it implies m
 | `DATA_RG_BOUNDARY` | `(DATA_RG_COUNT + 1) * 8` | i64: cumulative row counts of `data.parquet`'s row groups. First entry `0`, non-decreasing |
 | `RG_KEY_DIR_BASE` | `INDEX_RG_COUNT * 4` | u32: index into `KEY_ROW_OFFSET` of each row group's first directory entry |
 | `KEY_ROW_OFFSET` | `KEY_DIR_ENTRY_COUNT * 4` | u32: per-key start offsets within the group, terminated by the group's row count |
-| `CHECKSUM` | 4 | CRC32 over bytes `[8, CHECKSUM)` — everything after `IM_FILE_SIZE` |
+| `CHECKSUM` | 4 | CRC32 over bytes `[8, KEY_DIR_OFFSET)` — **not** the whole file; see "Split checksum" |
+
+### Split checksum
+
+The file carries **two** CRC32s, and between them they cover exactly the bytes a single whole-file
+checksum used to:
+
+| checksum | covers | verified |
+| --- | --- | --- |
+| trailer `CHECKSUM` | `[8, KEY_DIR_OFFSET)` | on every bind |
+| `KEY_DIR_CRC` (header, offset 96) | `[KEY_DIR_OFFSET, IM_FILE_SIZE - 4)` | on demand only |
+
+`KEY_ROW_OFFSET` is the only section whose size grows with the **key count**: a million-key column
+has a 4 MB `_im`, almost all of it directory. Checksumming it on every bind cost 649 µs, against
+6.7 µs for the native chain's entire index open — while a bind does not read the directory at all,
+and a lookup reads a handful of its entries. So the directory carries its own checksum and a bind
+does not compute it. Binding a million-key `_im` is 74 µs and no longer grows with key count.
+
+A bind is not per query — a pooled reader binds once and serves many — but it is per reader per
+partition, and again whenever `index_txn` moves, so an actively resealed partition rebinds as often
+as it reseals.
+
+**Why the boundary is stored rather than derived.** A reader must know where to stop checksumming
+before it may trust any header field it would derive the boundary from. Storing it is safe because
+moving it moves the range summed, so a tampered value fails the trailer CRC. After the header is
+trusted, a reader must additionally require
+
+```
+KEY_DIR_OFFSET >= <derived KEY_ROW_OFFSET offset>
+```
+
+which is what guarantees every byte a bind parses lies inside the checksum a bind verifies. A value
+*above* the derived offset is legal and merely slower — the trailer CRC then also covers a prefix of
+the directory — so no byte goes uncovered under either.
+
+**Conformance.** A reader that verifies `KEY_DIR_CRC` on the bind path is not wrong, only slow, and
+one that never verifies it is conforming. A writer MUST emit both.
 
 ### Redundancy is deliberate
 
@@ -426,7 +467,10 @@ Reader:
    this check, or a short file faults on a page beyond EOF.
 3. Map exactly `IM_FILE_SIZE` bytes.
 4. Check `IM_MAGIC` and `FORMAT_VERSION`; reject unknown required feature bits.
-5. Verify the CRC over `[8, IM_FILE_SIZE - 4)` before trusting any offset.
+5. Read `KEY_DIR_OFFSET`, reject it if outside `[128, IM_FILE_SIZE - 4]`, and verify the trailer CRC
+   over `[8, KEY_DIR_OFFSET)` before trusting any offset. The bound comes first because the value is
+   read from bytes nothing has checked yet. Verifying `KEY_DIR_CRC` is **optional** and must not be
+   done on the bind path — see "Split checksum".
 6. Read `INDEX_SECTIONS_OFFSET` and validate it: 8-byte aligned, and **the five sections it implies
    fit within `IM_FILE_SIZE - 4`**. That fit bound is a *precondition*, not merely one check among
    several — it is what proves the descriptor array lies inside the mapping. **No descriptor byte may
