@@ -242,8 +242,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_IN_MEM_ROWS = 11;
         private static final int COLUMN_LAG_MICROS = 15;
         private static final int COLUMN_LAG_SEQTXN = 14;
+        private static final int COLUMN_BASE_SEQUENCER_LAG_SEQTXN = 33;
         private static final int COLUMN_LAST_PROCESSED_SEQTXN = 16;
-        private static final int COLUMN_LV_CONSUMED_SEQTXN = 18;
         private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 23;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
         private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 24;
