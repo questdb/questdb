@@ -41,17 +41,22 @@ import io.questdb.std.ObjList;
  * emission order. {@code hasBind()} returns false when bindSql is null
  * (most queries) or no bindable constant rolled the per-constant coin
  * flip.
+ * <p>
+ * {@code shape} names the generator the query came from. The clause generators leave it
+ * {@link QueryShape#SIMPLE}; {@link QueryGenerator} stamps the real shape on the way out, so the
+ * driver can hold each generator to a minimum accepted-query rate.
  */
 public record GeneratedQuery(
         String sql,
         boolean deterministic,
         String bindSql,
         ObjList<String> bindNames,
-        ObjList<String> bindValues
+        ObjList<String> bindValues,
+        QueryShape shape
 ) {
 
     public GeneratedQuery(String sql, boolean deterministic) {
-        this(sql, deterministic, null, null, null);
+        this(sql, deterministic, null, null, null, QueryShape.SIMPLE);
     }
 
     public boolean hasBind() {
@@ -59,6 +64,10 @@ public record GeneratedQuery(
     }
 
     public GeneratedQuery withBind(String bindSql, ObjList<String> bindNames, ObjList<String> bindValues) {
-        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues);
+        return new GeneratedQuery(this.sql, this.deterministic, bindSql, bindNames, bindValues, this.shape);
+    }
+
+    public GeneratedQuery withShape(QueryShape shape) {
+        return new GeneratedQuery(this.sql, this.deterministic, this.bindSql, this.bindNames, this.bindValues, shape);
     }
 }
