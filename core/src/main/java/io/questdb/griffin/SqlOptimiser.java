@@ -616,6 +616,22 @@ public class SqlOptimiser implements Mutable {
         };
     }
 
+    private static boolean isIndexedSymbolEquality(ExpressionNode column, ExpressionNode value, RecordMetadata metadata) {
+        if (column == null || column.type != LITERAL || value == null || value.type != CONSTANT) {
+            return false;
+        }
+        final CharSequence columnName = column.token;
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        final int columnIndex = metadata.getColumnIndexQuiet(columnName, dot + 1, columnName.length());
+        // A covering index already serves a negative limit through the parallel filter path, which
+        // absorbs the limit into the scan instead of materialising the retained rows. Rewriting
+        // those queries replaces that plan with a sort, so they keep the path they had.
+        return columnIndex > -1
+                && ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                && metadata.isColumnIndexed(columnIndex)
+                && !metadata.getColumnMetadata(columnIndex).isCovering();
+    }
+
     /**
      * Returns true for join types that NULL-extend the master (left) side: SPLICE, FULL OUTER and
      * RIGHT OUTER, plus the JOIN_CROSS_RIGHT / JOIN_CROSS_FULL variants {@code homogenizeCrossJoins}
@@ -4972,6 +4988,54 @@ public class SqlOptimiser implements Mutable {
         return caseNode;
     }
 
+    private boolean hasIndexedSymbolEquality(IQueryModel model, SqlExecutionContext executionContext) {
+        final ExpressionNode tableNameExpr = model.getTableNameExpr();
+        final ExpressionNode whereClause = model.getWhereClause();
+        if (tableNameExpr == null || tableNameExpr.type == FUNCTION || whereClause == null) {
+            return false;
+        }
+
+        final CharSequence tableName = tableNameExpr.token;
+        if (Chars.startsWith(tableName, IQueryModel.NO_ROWID_MARKER)) {
+            return false;
+        }
+        final TableToken tableToken = executionContext.getTableTokenIfExists(tableName);
+        if (tableToken == null) {
+            return false;
+        }
+
+        boolean found = false;
+        try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
+            sqlNodeStack.clear();
+            sqlNodeStack.push(whereClause);
+            while (!sqlNodeStack.isEmpty()) {
+                final ExpressionNode node = sqlNodeStack.pop();
+                if (node.type == OPERATION
+                        && Chars.equals(node.token, '=')
+                        && (isIndexedSymbolEquality(node.lhs, node.rhs, metadata)
+                        || isIndexedSymbolEquality(node.rhs, node.lhs, metadata))) {
+                    found = true;
+                    break;
+                }
+                // Descend through conjunctions only. An equality nested under OR does not restrict
+                // the row set to the indexed key, so the code generator is free to serve the query
+                // with a plain forward scan. The rewrite would then move the limit onto a cursor
+                // that never scanned backwards and return the first N rows instead of the last N.
+                if (node.type == OPERATION && SqlKeywords.isAndKeyword(node.token)) {
+                    if (node.lhs != null) {
+                        sqlNodeStack.push(node.lhs);
+                    }
+                    if (node.rhs != null) {
+                        sqlNodeStack.push(node.rhs);
+                    }
+                }
+            }
+        } finally {
+            sqlNodeStack.clear();
+        }
+        return found;
+    }
+
     private boolean hasLateralCountCompensatedRef(ExpressionNode node, IQueryModel translatingModel, IQueryModel baseModel) {
         if (node == null) {
             return false;
@@ -5348,6 +5412,31 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    /**
+     * Returns true when a one-argument negative limit is a compile-time constant whose magnitude
+     * fits the configured negative limit budget.
+     * <p>
+     * The rewrite replays the retained rows through a sort, which materialises them, while the
+     * streaming path it replaces does not. {@code cairo.sql.max.negative.limit} is the budget the
+     * engine already applies to the buffer in {@link io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory},
+     * so a larger limit keeps the streaming path rather than failing the query on the query memory
+     * limit. A runtime constant does not qualify: its value can differ from the one seen here by
+     * the time the compiled query runs.
+     *
+     * @param limitLo          the negative limit expression
+     * @param executionContext execution context
+     * @return true when the rewrite may materialise this many rows
+     */
+    private boolean isNegativeLimitWithinBudget(ExpressionNode limitLo, SqlExecutionContext executionContext) throws SqlException {
+        final Function loFunction = getLoFunction(limitLo, executionContext);
+        if (loFunction == null || !loFunction.isConstant()) {
+            return false;
+        }
+        final long limitValue = loFunction.getLong(null);
+        return limitValue < 0
+                && limitValue >= -executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit();
     }
 
     private boolean isResolvableColumn(
@@ -8901,7 +8990,7 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * For queries on tables with designated timestamp, no where clause and no order by or order by ts only :
+     * For queries on tables with designated timestamp and no order by or order by ts only:
      * <p>
      * For example:
      * select a,b from X limit -10 -> select a,b from (select * from X order by ts desc limit 10) order by ts asc
@@ -8910,11 +8999,45 @@ public class SqlOptimiser implements Mutable {
      *
      * @param model input model
      */
-    private void rewriteMultipleTermLimitedOrderByPart1(IQueryModel model) {
+    private void rewriteMultipleTermLimitedOrderByPart1(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model == null || !model.isOptimisable()) {
             return;
         }
         if (
+                model.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
+                        && model.getNestedModel() != null
+                        && model.getNestedModel().isOptimisable()
+                        && model.getNestedModel().getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
+                        && model.getNestedModel().getNestedModel() == null
+                        && model.getNestedModel().getTableName() != null
+                        && model.getNestedModel().getTimestamp() != null
+                        && model.getNestedModel().getOrderBy().size() == 0
+                        && model.getNestedModel().getUnionModel() == null
+                        && model.getNestedModel().getJoinModels().size() == 1
+                        && !model.getNestedModel().hasSharedRefs()
+                        && !SqlHints.hasNoIndexHint(model)
+                        && !SqlHints.hasNoIndexHint(model.getNestedModel())
+                        && model.getOrderBy().size() == 0
+                        && model.getUnionModel() == null
+                        && model.getJoinModels().size() == 1
+                        && model.getLimitLo() != null
+                        && model.getLimitHi() == null
+                        && Chars.equals(model.getLimitLo().token, '-')
+                        && isNegativeLimitWithinBudget(model.getLimitLo(), executionContext)
+                        && hasIndexedSymbolEquality(model.getNestedModel(), executionContext)
+        ) {
+            final IQueryModel nested = model.getNestedModel();
+            final ExpressionNode timestamp = nested.getTimestamp();
+
+            model.addOrderBy(timestamp, IQueryModel.ORDER_DIRECTION_ASCENDING);
+            nested.addOrderBy(timestamp, IQueryModel.ORDER_DIRECTION_DESCENDING);
+            nested.getOrderByAdvice().add(timestamp);
+            nested.getOrderByDirectionAdvice().add(IQueryModel.ORDER_DIRECTION_DESCENDING);
+            nested.setAllowPropagationOfOrderByAdvice(false);
+            nested.setLimit(model.getLimitLo().rhs, null);
+            model.setLimit(null, null);
+            rewriteMultipleTermLimitedOrderByPart1(nested.getNestedModel(), executionContext);
+        } else if (
                 model.getSelectModelType() == IQueryModel.SELECT_MODEL_CHOOSE
                         && model.getNestedModel() != null
                         && model.getNestedModel().isOptimisable()
@@ -8969,7 +9092,7 @@ public class SqlOptimiser implements Mutable {
 
                 model.setNestedModel(reversedNested);
                 model.setLimit(null, null);
-                rewriteMultipleTermLimitedOrderByPart1(reversedNested.getNestedModel());
+                rewriteMultipleTermLimitedOrderByPart1(reversedNested.getNestedModel(), executionContext);
             } else {
                 if (nested.getOrderByAdvice().size() == 0) {
                     for (int i = 0, n = nested.getOrderBy().size(); i < n; i++) {
@@ -8986,16 +9109,16 @@ public class SqlOptimiser implements Mutable {
                 nested.setAllowPropagationOfOrderByAdvice(false);
                 nested.setLimit(model.getLimitLo().rhs, null);
                 model.setLimit(null, null);
-                rewriteMultipleTermLimitedOrderByPart1(nested.getNestedModel());
+                rewriteMultipleTermLimitedOrderByPart1(nested.getNestedModel(), executionContext);
             }
         } else {
-            rewriteMultipleTermLimitedOrderByPart1(model.getNestedModel());
+            rewriteMultipleTermLimitedOrderByPart1(model.getNestedModel(), executionContext);
         }
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
         for (int i = 1, n = joinModels.size(); i < n; i++) {
-            rewriteMultipleTermLimitedOrderByPart1(joinModels.getQuick(i));
+            rewriteMultipleTermLimitedOrderByPart1(joinModels.getQuick(i), executionContext);
         }
-        rewriteMultipleTermLimitedOrderByPart1(model.getUnionModel());
+        rewriteMultipleTermLimitedOrderByPart1(model.getUnionModel(), executionContext);
     }
 
     /**
@@ -13173,7 +13296,7 @@ public class SqlOptimiser implements Mutable {
             optimiseJoins(rewrittenModel);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
-            rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
+            rewriteMultipleTermLimitedOrderByPart1(rewrittenModel, sqlExecutionContext);
             pushLimitFromChooseToNone(rewrittenModel, sqlExecutionContext);
             validateWindowFunctions(rewrittenModel, sqlExecutionContext, 0);
             validateWindowJoins(rewrittenModel, sqlExecutionContext, 0);
