@@ -2484,33 +2484,6 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInnerJoinOnConjunctPushesPastNullingJoin() throws Exception {
-        // An inner-join ON conjunct that references only the master (m.c = 1, m.c > 0, abs(m.c) = 1)
-        // gates the inner join, which runs before the downstream RIGHT/FULL OUTER join that NULL-extends
-        // the master. It must push down into the master scan, not stay as a post-join filter - otherwise
-        // the unmatched (NULL-master) slave rows the outer join synthesizes get dropped. Regression: the
-        // master-nulling guard used to intercept these ON conjuncts as if they were WHERE predicates.
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE m (k INT, c INT)");
-            execute("INSERT INTO m VALUES (1, 1)");
-            execute("CREATE TABLE x (k INT)");
-            execute("INSERT INTO x VALUES (1)");
-            execute("CREATE TABLE s (k INT)");
-            execute("INSERT INTO s VALUES (1), (2), (3)");
-
-            final String expected = "sk\tmk\tmc\n1\t1\t1\n2\tnull\tnull\n3\tnull\tnull\n";
-            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
-                for (String onConjunct : new String[]{"m.c = 1", "m.c > 0", "abs(m.c) = 1"}) {
-                    assertQuery("SELECT s.k sk, m.k mk, m.c mc FROM m JOIN x ON x.k = m.k AND " + onConjunct
-                            + " " + joinType + " JOIN s ON s.k = x.k ORDER BY sk")
-                            .noLeakCheck()
-                            .returns(expected);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testInSubQueryWithJoinOnClause() throws Exception {
         // A JOIN nested in a lambda IN sub-query (e.g. "x IN (SELECT ... JOIN ... ON ...)",
         // HORIZON JOIN as first reported) used to drain the shared parser arg stack and consume
@@ -2659,153 +2632,29 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinOnClauseRejectsDeclaredSubQuery() throws Exception {
-        // ON-clause sub-queries are unsupported and rejected during expression parsing. A declared
-        // variable is a literal at parse time and only expands to its definition later, in
-        // rewriteKnownStatements, so a variable bound to a sub-query (e.g. "@q := (SELECT ...)" used
-        // as "ON x IN @q") used to slip past the parse-time block and compile to surprising cross-join
-        // semantics -- the very footgun the literal rejection prevents. The declared form must now
-        // reject with "query is not allowed here", just like the literal one, at every nesting depth
-        // and in every ON-clause position: operator forms, single-column shorthand "ON (@q)", and
-        // multi-column shorthand "ON (@q, ts)" alike.
+    public void testInnerJoinOnConjunctPushesPastNullingJoin() throws Exception {
+        // An inner-join ON conjunct that references only the master (m.c = 1, m.c > 0, abs(m.c) = 1)
+        // gates the inner join, which runs before the downstream RIGHT/FULL OUTER join that NULL-extends
+        // the master. It must push down into the master scan, not stay as a post-join filter - otherwise
+        // the unmatched (NULL-master) slave rows the outer join synthesizes get dropped. Regression: the
+        // master-nulling guard used to intercept these ON conjuncts as if they were WHERE predicates.
         assertMemoryLeak(() -> {
-            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
-            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
-            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
-            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
-            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("CREATE TABLE m (k INT, c INT)");
+            execute("INSERT INTO m VALUES (1, 1)");
+            execute("CREATE TABLE x (k INT)");
+            execute("INSERT INTO x VALUES (1)");
+            execute("CREATE TABLE s (k INT)");
+            execute("INSERT INTO s VALUES (1), (2), (3)");
 
-            // declared sub-query in the ON clause of a join nested in an IN sub-query
-            assertExceptionNoLeakCheck(
-                    "select * from trades where symbol in " +
-                            "(declare @q := (select symbol from trades) " +
-                            "select s.symbol from src s join ref r on s.symbol in @q)",
-                    53,
-                    "query is not allowed here",
-                    sqlExecutionContext
-            );
-            // the same shape at the top level (a pre-existing bypass, now also rejected)
-            assertExceptionNoLeakCheck(
-                    "declare @q := (select symbol from trades) " +
-                            "select s.symbol from src s join ref r on s.symbol in @q",
-                    15,
-                    "query is not allowed here",
-                    sqlExecutionContext
-            );
-            // a scalar operator with a declared sub-query operand hits the same rewrite path
-            assertExceptionNoLeakCheck(
-                    "declare @q := (select max(symbol) from trades) " +
-                            "select s.symbol from src s join ref r on s.symbol = @q",
-                    15,
-                    "query is not allowed here",
-                    sqlExecutionContext
-            );
-            // bare single-column shorthand "ON (@q)" -- declared var expands to a sub-query and is
-            // rejected, instead of leaking a raw "@q" literal as "Invalid column: s.@q"
-            assertExceptionNoLeakCheck(
-                    "declare @q := (select symbol from trades) " +
-                            "select s.symbol from src s join ref r on (@q)",
-                    15,
-                    "query is not allowed here",
-                    sqlExecutionContext
-            );
-            // bare single-column shorthand without parentheses "ON @q"
-            assertExceptionNoLeakCheck(
-                    "declare @q := (select symbol from trades) " +
-                            "select s.symbol from src s join ref r on @q",
-                    15,
-                    "query is not allowed here",
-                    sqlExecutionContext
-            );
-            // multi-column shorthand "ON (@q, ts)" -- the column-list branch rejects the sub-query too
-            assertExceptionNoLeakCheck(
-                    "declare @q := (select symbol from trades) " +
-                            "select s.symbol from src s join ref r on (@q, ts)",
-                    15,
-                    "query is not allowed here",
-                    sqlExecutionContext
-            );
-            // single-column shorthand nested in an IN sub-query, to prove the reject holds at depth
-            assertExceptionNoLeakCheck(
-                    "select * from trades where symbol in " +
-                            "(declare @q := (select symbol from trades) " +
-                            "select s.symbol from src s join ref r on (@q))",
-                    53,
-                    "query is not allowed here",
-                    sqlExecutionContext
-            );
-
-            // A declared variable bound to a column (not a sub-query) in the ON clause is valid and
-            // must still compile and run -- the reject only fires on sub-query nodes.
-            assertQuery(
-                    "declare @x := s.symbol, @y := r.symbol " +
-                            "select s.symbol from src s join ref r on @x = @y"
-            ).noLeakCheck().noRandomAccess().returns(
-                    "symbol\n" +
-                            "A\n" +
-                            "B\n"
-            );
-
-            // A rejected declared ON-clause sub-query must leave the shared parser state clean: the
-            // SAME pooled compiler compiles the next, valid query without carrying over corrupted state.
-            try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                try {
-                    CairoEngine.select(
-                            compiler,
-                            "declare @q := (select symbol from trades) " +
-                                    "select s.symbol from src s join ref r on s.symbol in @q",
-                            sqlExecutionContext
-                    ).close();
-                    Assert.fail("declared ON-clause sub-query must be rejected");
-                } catch (SqlException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+            final String expected = "sk\tmk\tmc\n1\t1\t1\n2\tnull\tnull\n3\tnull\tnull\n";
+            for (String joinType : new String[]{"RIGHT OUTER", "FULL OUTER"}) {
+                for (String onConjunct : new String[]{"m.c = 1", "m.c > 0", "abs(m.c) = 1"}) {
+                    assertQuery("SELECT s.k sk, m.k mk, m.c mc FROM m JOIN x ON x.k = m.k AND " + onConjunct
+                            + " " + joinType + " JOIN s ON s.k = x.k ORDER BY sk")
+                            .noLeakCheck()
+                            .returns(expected);
                 }
-                assertQuery(
-                        "select s.symbol from src s join ref r on s.symbol = r.symbol"
-                ).withCompiler(compiler).noLeakCheck().noRandomAccess().returns(
-                        "symbol\n" +
-                                "A\n" +
-                                "B\n"
-                );
             }
-        });
-    }
-
-    @Test
-    public void testJoinOnClauseDeclaredColumnShorthand() throws Exception {
-        // A declared variable bound to a bare column may be used as a shorthand join column, exactly
-        // like the inline column it expands to. "ON (@c)" with "@c := symbol" behaves like
-        // "ON (symbol)" -> "src.symbol = ref.symbol"; the variable is expanded before the join-column
-        // dispatch instead of leaking a raw "@c" literal as "Invalid column: s.@c".
-        assertMemoryLeak(() -> {
-            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
-            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
-            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
-            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
-
-            final String expected = "symbol\n" +
-                    "A\n" +
-                    "B\n";
-
-            // single-column shorthand with parentheses
-            assertQuery(
-                    "declare @c := symbol " +
-                            "select s.symbol from src s join ref r on (@c) order by s.symbol"
-            ).noLeakCheck().returns(expected);
-            // single-column shorthand without parentheses
-            assertQuery(
-                    "declare @c := symbol " +
-                            "select s.symbol from src s join ref r on @c order by s.symbol"
-            ).noLeakCheck().returns(expected);
-            // multi-column shorthand mixing a declared column var with a plain column
-            assertQuery(
-                    "declare @c := symbol " +
-                            "select s.symbol from src s join ref r on (@c, ts) order by s.symbol"
-            ).noLeakCheck().returns(expected);
-            // baseline: the equivalent inline shorthand must produce the same result
-            assertQuery(
-                    "select s.symbol from src s join ref r on (symbol) order by s.symbol"
-            ).noLeakCheck().returns(expected);
         });
     }
 
@@ -3681,7 +3530,7 @@ public class JoinTest extends AbstractCairoTest {
             execute("CREATE TABLE c (k INT)");
             execute("INSERT INTO c VALUES (2)");
 
-            for (boolean fullFatJoin : new boolean[]{false, true}) {
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
                 for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
                     for (String predicate : new String[]{"a.x = 5", "5 = a.x"}) {
                         assertQuery("""
@@ -3691,7 +3540,7 @@ public class JoinTest extends AbstractCairoTest {
                                 JOIN b ON b.x = a.x AND %s
                                 """.formatted(joinType, predicate))
                                 .noLeakCheck()
-                                .fullFatJoins(fullFatJoin)
+                                .fullFatJoins(isFullFatJoin)
                                 .noRandomAccess()
                                 .returns("ax\tck\tbx\n");
                     }
@@ -3933,7 +3782,7 @@ public class JoinTest extends AbstractCairoTest {
 
             final String expected = "av\tbv\tcv\n10\t20\t50\nnull\tnull\t60\n";
             final String nullBindExpected = "av\tbv\tcv\nnull\tnull\t50\nnull\tnull\t60\n";
-            for (boolean fullFatJoin : new boolean[]{false, true}) {
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
                 for (String joinType : Arrays.asList("RIGHT JOIN", "FULL JOIN")) {
                     final String intFrom = " FROM a JOIN b ON b.x = a.x AND %s "
                             + joinType + " c ON c.x = a.x ORDER BY c.cv";
@@ -3947,14 +3796,14 @@ public class JoinTest extends AbstractCairoTest {
                     )) {
                         assertQuery("SELECT a.av, b.bv, c.cv" + intFrom.formatted(predicate))
                                 .noLeakCheck()
-                                .fullFatJoins(fullFatJoin)
+                                .fullFatJoins(isFullFatJoin)
                                 .returns(expected);
                     }
 
                     bindVariableService.setInt("v", Numbers.INT_NULL);
                     assertQuery("SELECT a.av, b.bv, c.cv" + intFrom.formatted("a.x = :v::INT"))
                             .noLeakCheck()
-                            .fullFatJoins(fullFatJoin)
+                            .fullFatJoins(isFullFatJoin)
                             .returns(nullBindExpected);
 
                     sqlExecutionContext.setNowAndFixClock(5, ColumnType.TIMESTAMP_MICRO);
@@ -3963,7 +3812,7 @@ public class JoinTest extends AbstractCairoTest {
                     for (String predicate : Arrays.asList("a.ts = now()", "now() = a.ts")) {
                         assertQuery("SELECT a.av, b.bv, c.cv" + timestampFrom.formatted(predicate))
                                 .noLeakCheck()
-                                .fullFatJoins(fullFatJoin)
+                                .fullFatJoins(isFullFatJoin)
                                 .returns(expected);
                     }
                 }
@@ -4207,58 +4056,6 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testJoinInnerOnRegexAfterConstBeforeNullingJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE a (x STRING, av INT)");
-            execute("INSERT INTO a VALUES ('5', 10)");
-            execute("CREATE TABLE b (x STRING, bv INT)");
-            execute("INSERT INTO b VALUES ('5', 20)");
-            execute("CREATE TABLE c (x STRING, cv INT)");
-            execute("INSERT INTO c VALUES ('5', 50), (null, 60)");
-
-            assertQuery("""
-                    SELECT a.av, b.bv, c.cv
-                    FROM a
-                    JOIN b ON b.x = a.x AND a.x = '5' AND a.x ~ '^z$'
-                    RIGHT JOIN c ON c.x = a.x
-                    ORDER BY c.cv
-                    """)
-                    .noLeakCheck()
-                    .returns("av\tbv\tcv\nnull\tnull\t50\nnull\tnull\t60\n");
-        });
-    }
-
-    @Test
-    public void testJoinInnerOnRegexBeforeConstBeforeNullingJoin() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE a (x STRING, av INT)");
-            execute("INSERT INTO a VALUES ('5', 10)");
-            execute("CREATE TABLE b (x STRING, bv INT)");
-            execute("INSERT INTO b VALUES ('5', 20)");
-            execute("CREATE TABLE c (x STRING, cv INT)");
-            execute("INSERT INTO c VALUES ('5', 50), (null, 60)");
-
-            final String expected = "av\tbv\tcv\nnull\tnull\t50\nnull\tnull\t60\n";
-            for (boolean fullFatJoin : new boolean[]{false, true}) {
-                for (String joinType : Arrays.asList("RIGHT JOIN", "FULL JOIN")) {
-                    for (String equality : Arrays.asList("a.x = '5'", "'5' = a.x")) {
-                        assertQuery("""
-                                SELECT a.av, b.bv, c.cv
-                                FROM a
-                                JOIN b ON b.x = a.x AND a.x ~ '^z$' AND %s
-                                %s c ON c.x = a.x
-                                ORDER BY c.cv
-                                """.formatted(equality, joinType))
-                                .noLeakCheck()
-                                .fullFatJoins(fullFatJoin)
-                                .returns(expected);
-                    }
-                }
-            }
-        });
-    }
-
-    @Test
     public void testJoinInnerOnNullAcceptingGateAfterNullingJoin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE a (k INT, x INT)");
@@ -4348,6 +4145,58 @@ public class JoinTest extends AbstractCairoTest {
                                 .fullFatJoins(isFullFatJoin)
                                 .noRandomAccess()
                                 .returns("ak\tck\tpk\tbk\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRegexAfterConstBeforeNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x STRING, av INT)");
+            execute("INSERT INTO a VALUES ('5', 10)");
+            execute("CREATE TABLE b (x STRING, bv INT)");
+            execute("INSERT INTO b VALUES ('5', 20)");
+            execute("CREATE TABLE c (x STRING, cv INT)");
+            execute("INSERT INTO c VALUES ('5', 50), (null, 60)");
+
+            assertQuery("""
+                    SELECT a.av, b.bv, c.cv
+                    FROM a
+                    JOIN b ON b.x = a.x AND a.x = '5' AND a.x ~ '^z$'
+                    RIGHT JOIN c ON c.x = a.x
+                    ORDER BY c.cv
+                    """)
+                    .noLeakCheck()
+                    .returns("av\tbv\tcv\nnull\tnull\t50\nnull\tnull\t60\n");
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRegexBeforeConstBeforeNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x STRING, av INT)");
+            execute("INSERT INTO a VALUES ('5', 10)");
+            execute("CREATE TABLE b (x STRING, bv INT)");
+            execute("INSERT INTO b VALUES ('5', 20)");
+            execute("CREATE TABLE c (x STRING, cv INT)");
+            execute("INSERT INTO c VALUES ('5', 50), (null, 60)");
+
+            final String expected = "av\tbv\tcv\nnull\tnull\t50\nnull\tnull\t60\n";
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : Arrays.asList("RIGHT JOIN", "FULL JOIN")) {
+                    for (String equality : Arrays.asList("a.x = '5'", "'5' = a.x")) {
+                        assertQuery("""
+                                SELECT a.av, b.bv, c.cv
+                                FROM a
+                                JOIN b ON b.x = a.x AND a.x ~ '^z$' AND %s
+                                %s c ON c.x = a.x
+                                ORDER BY c.cv
+                                """.formatted(equality, joinType))
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFatJoin)
+                                .returns(expected);
                     }
                 }
             }
@@ -4904,6 +4753,157 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnClauseDeclaredColumnShorthand() throws Exception {
+        // A declared variable bound to a bare column may be used as a shorthand join column, exactly
+        // like the inline column it expands to. "ON (@c)" with "@c := symbol" behaves like
+        // "ON (symbol)" -> "src.symbol = ref.symbol"; the variable is expanded before the join-column
+        // dispatch instead of leaking a raw "@c" literal as "Invalid column: s.@c".
+        assertMemoryLeak(() -> {
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            final String expected = "symbol\n" +
+                    "A\n" +
+                    "B\n";
+
+            // single-column shorthand with parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // single-column shorthand without parentheses
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on @c order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // multi-column shorthand mixing a declared column var with a plain column
+            assertQuery(
+                    "declare @c := symbol " +
+                            "select s.symbol from src s join ref r on (@c, ts) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+            // baseline: the equivalent inline shorthand must produce the same result
+            assertQuery(
+                    "select s.symbol from src s join ref r on (symbol) order by s.symbol"
+            ).noLeakCheck().returns(expected);
+        });
+    }
+
+    @Test
+    public void testJoinOnClauseRejectsDeclaredSubQuery() throws Exception {
+        // ON-clause sub-queries are unsupported and rejected during expression parsing. A declared
+        // variable is a literal at parse time and only expands to its definition later, in
+        // rewriteKnownStatements, so a variable bound to a sub-query (e.g. "@q := (SELECT ...)" used
+        // as "ON x IN @q") used to slip past the parse-time block and compile to surprising cross-join
+        // semantics -- the very footgun the literal rejection prevents. The declared form must now
+        // reject with "query is not allowed here", just like the literal one, at every nesting depth
+        // and in every ON-clause position: operator forms, single-column shorthand "ON (@q)", and
+        // multi-column shorthand "ON (@q, ts)" alike.
+        assertMemoryLeak(() -> {
+            execute("create table trades (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table src (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("create table ref (symbol symbol, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into src values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+            execute("insert into ref values ('A', '2020-01-01T00:00:00.000000Z'), ('B', '2020-01-02T00:00:00.000000Z')");
+
+            // declared sub-query in the ON clause of a join nested in an IN sub-query
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q)",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // the same shape at the top level (a pre-existing bypass, now also rejected)
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol in @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // a scalar operator with a declared sub-query operand hits the same rewrite path
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select max(symbol) from trades) " +
+                            "select s.symbol from src s join ref r on s.symbol = @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand "ON (@q)" -- declared var expands to a sub-query and is
+            // rejected, instead of leaking a raw "@q" literal as "Invalid column: s.@q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // bare single-column shorthand without parentheses "ON @q"
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on @q",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // multi-column shorthand "ON (@q, ts)" -- the column-list branch rejects the sub-query too
+            assertExceptionNoLeakCheck(
+                    "declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q, ts)",
+                    15,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+            // single-column shorthand nested in an IN sub-query, to prove the reject holds at depth
+            assertExceptionNoLeakCheck(
+                    "select * from trades where symbol in " +
+                            "(declare @q := (select symbol from trades) " +
+                            "select s.symbol from src s join ref r on (@q))",
+                    53,
+                    "query is not allowed here",
+                    sqlExecutionContext
+            );
+
+            // A declared variable bound to a column (not a sub-query) in the ON clause is valid and
+            // must still compile and run -- the reject only fires on sub-query nodes.
+            assertQuery(
+                    "declare @x := s.symbol, @y := r.symbol " +
+                            "select s.symbol from src s join ref r on @x = @y"
+            ).noLeakCheck().noRandomAccess().returns(
+                    "symbol\n" +
+                            "A\n" +
+                            "B\n"
+            );
+
+            // A rejected declared ON-clause sub-query must leave the shared parser state clean: the
+            // SAME pooled compiler compiles the next, valid query without carrying over corrupted state.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                try {
+                    CairoEngine.select(
+                            compiler,
+                            "declare @q := (select symbol from trades) " +
+                                    "select s.symbol from src s join ref r on s.symbol in @q",
+                            sqlExecutionContext
+                    ).close();
+                    Assert.fail("declared ON-clause sub-query must be rejected");
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "query is not allowed here");
+                }
+                assertQuery(
+                        "select s.symbol from src s join ref r on s.symbol = r.symbol"
+                ).withCompiler(compiler).noLeakCheck().noRandomAccess().returns(
+                        "symbol\n" +
+                                "A\n" +
+                                "B\n"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testJoinOnDecimalFailureMixedScale() throws Exception {
         // We don't support implicit casting between different decimals during join resolution
         assertMemoryLeak(() -> {
@@ -5154,6 +5154,34 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinOuterAllTypesFF() throws Exception {
         testFullFat(this::testJoinOuterAllTypes0);
+    }
+
+    @Test
+    public void testJoinOuterBooleanProjectedFilterPreservesRightRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE l (x BOOLEAN)");
+            execute("CREATE TABLE r (x BOOLEAN)");
+            execute("INSERT INTO r VALUES (FALSE), (TRUE)");
+
+            final String expected = "ax\trx\nfalse\tfalse\nfalse\ttrue\n";
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    assertQuery("""
+                            SELECT ax, rx
+                            FROM (
+                                SELECT l.x AS ax, r.x AS rx
+                                FROM l
+                                %s r ON r.x = l.x
+                            )
+                            WHERE ax = (1 = 2)
+                            ORDER BY rx
+                            """.formatted(joinType))
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFatJoin)
+                            .returns(expected);
+                }
+            }
+        });
     }
 
     @Test
