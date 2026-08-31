@@ -4704,7 +4704,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Non-eligible blocks fall through to the O3 path unchanged.
                 long o3ApplyLo;
                 if (!copiedToMemory) {
-                    o3ApplyLo = tryFastAppendInOrderBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr);
+                    o3ApplyLo = tryFastAppendInOrderBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr,
+                            segmentCopyInfo.getMinTimestamp(), segmentCopyInfo.getMaxTimestamp());
                 } else {
                     // SPIKE (phase-3 Task 1): the O3 sort has already gathered the
                     // merge-index-ordered rows into o3MemColumns1 (== o3Columns)
@@ -4715,7 +4716,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // covered publish + defer -- with NO O3CopyJob involvement
                     // (no A1 convergence). The append body is source-agnostic
                     // (reads o3Columns + o3Lo + timestampAddr), so it is shared.
-                    o3ApplyLo = tryFastAppendSortedBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr);
+                    o3ApplyLo = tryFastAppendSortedBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr,
+                            segmentCopyInfo.getMinTimestamp(), segmentCopyInfo.getMaxTimestamp());
                 }
                 // Skip the O3 finish ONLY when the fast path fired and consumed
                 // the ENTIRE block (o3ApplyLo advanced from o3Lo all the way to
@@ -4776,8 +4778,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @return the O3 overflow low row (see {@link #tryFastAppendInOrderBlock}).
      */
-    private long tryFastAppendSortedBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
-        return tryFastAppendInOrderBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr);
+    private long tryFastAppendSortedBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr,
+                                          long blockMin, long blockMax) {
+        return tryFastAppendInOrderBlock(o3Lo, o3LoHi, blockTransactionCount, timestampAddr, blockMin, blockMax);
     }
 
     private boolean applyFromWalLagToLastPartitionPossible(long commitToTimestamp, long lagRowCount, boolean lagOrdered, long committedMaxTimestamp, long lagMinTimestamp, long lagMaxTimestamp) {
@@ -10783,7 +10786,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // in the next release after v7.3.9.
                 // Commit everything.
                 walLagRowCount = 0;
-                processWalCommitFinishApply(walLagRowCount, timestampAddr, o3Lo, o3Hi, pressureControl, copiedToMemory, initialPartitionTimestampHi);
+
+                // Single-txn sibling of the block-apply fast path. The gate that
+                // sent us here (applyFromWalLagToLastPartitionPossible, via
+                // canFastCommitNew) is all-or-nothing: it requires the WHOLE
+                // transaction to fit inside the last partition
+                // (lagMaxTimestamp <= partitionTimestampHi), so ONE row past the
+                // boundary disqualifies every row and routes the entire
+                // transaction through O3 -- including the prefix that is a pure
+                // append. On a covering index that costs a full-partition
+                // rebuildSidecars for rows nothing rewrote.
+                //
+                // tryFastAppendInOrderBlock already splits exactly this straddle
+                // for block-apply; reuse it. Only the not-copied branch is
+                // eligible: copiedToMemory means the sort gathered rows into
+                // o3MemColumns1 and re-based o3Lo to 0, which is the sorted-block
+                // shape (tryFastAppendSortedBlock) rather than this one. Every
+                // other precondition -- pure append, plain insert, native last
+                // partition, no lag, no legacy covering head -- is re-checked
+                // inside the callee, so a non-eligible transaction returns o3Lo
+                // and the O3 path below runs exactly as before.
+                long o3ApplyLo = o3Lo;
+                if (!copiedToMemory) {
+                    o3ApplyLo = tryFastAppendInOrderBlock(o3Lo, o3Hi, 1, timestampAddr, o3TimestampMin, o3TimestampMax);
+                }
+                // Mirrors the block-apply guard, including its zero-row case:
+                // o3ApplyLo == o3Lo means the fast path did not fire, so the
+                // whole transaction must still go through O3 -- and
+                // processWalCommitFinishApply's lag bookkeeping runs
+                // unconditionally, which a skipped empty commit once broke for a
+                // dependent materialized view's refresh range.
+                if (o3ApplyLo == o3Lo || o3ApplyLo < o3Hi) {
+                    processWalCommitFinishApply(walLagRowCount, timestampAddr, o3ApplyLo, o3Hi, pressureControl, copiedToMemory, initialPartitionTimestampHi);
+                }
             } finally {
                 finishO3Append(walLagRowCount);
                 o3Columns = o3MemColumns1;
@@ -13422,7 +13457,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         processPartitionRemoveCandidates();
     }
 
-    private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr) {
+    private long tryFastAppendInOrderBlock(long o3Lo, long o3LoHi, int blockTransactionCount, long timestampAddr,
+                                           long blockMin, long blockMax) {
         // @TestOnly override (default false, JIT-elided in production): force every
         // block through the unchanged O3 path so a differential test can prove the
         // fast path is result-equivalent to O3.
@@ -13430,7 +13466,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return o3Lo;
         }
         final long blockRows = o3LoHi - o3Lo;
-        final long blockMin = segmentCopyInfo.getMinTimestamp();
         // Guards (fall back to the unchanged O3 path on any). Only a PURE APPEND
         // into the last NATIVE partition qualifies:
         //  - no pre-existing lag (block-apply never carries lag, but be defensive);
@@ -13468,9 +13503,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // reads the 16-byte (timestamp, rowId) WAL timestamp-index format.
         final long prefixRows;
         final long prefixMax;
-        if (segmentCopyInfo.getMaxTimestamp() <= partitionTimestampHi) {
+        if (blockMax <= partitionTimestampHi) {
             prefixRows = blockRows;
-            prefixMax = segmentCopyInfo.getMaxTimestamp();
+            prefixMax = blockMax;
         } else {
             long lastPrefixIdx = Vect.boundedBinarySearchIndexT(timestampAddr, partitionTimestampHi, o3Lo, o3LoHi - 1, Vect.BIN_SEARCH_SCAN_DOWN);
             if (lastPrefixIdx < o3Lo) {
@@ -13531,7 +13566,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // them, so re-arm them to the OVERFLOW range [overflowLo, o3LoHi)
             // before the caller routes it through O3.
             txWriter.setLagMinTimestamp(getTimestampIndexValue(timestampAddr, overflowLo));
-            txWriter.setLagMaxTimestamp(segmentCopyInfo.getMaxTimestamp());
+            txWriter.setLagMaxTimestamp(blockMax);
         }
         return overflowLo;
     }
