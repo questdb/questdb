@@ -237,63 +237,87 @@ public class MatViewTimerJob extends SynchronizedJob {
     private boolean processExpiredTimers(long nowMicros) {
         expired.clear();
         boolean ran = false;
-        Timer timer;
-        while ((timer = timerQueue.peek()) != null && timer.getDeadlineMicros() <= nowMicros) {
-            timer = timerQueue.poll();
-            expired.add(timer);
-            final TableToken viewToken = timer.getMatViewToken();
-            final MatViewState state = matViewStateStore.getViewState(viewToken);
-            if (state != null) {
-                if (state.isDropped()) {
-                    expired.remove(expired.size() - 1);
-                    LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken)
-                            .$(", type=").$(timer.getType())
-                            .I$();
-                } else if (!state.hasPendingInvalidationReason() && !state.isInvalid()) {
-                    switch (timer.getType()) {
-                        case Timer.INCREMENTAL_REFRESH_TYPE:
-                            // Check if the view has refreshed since the last timer expiration.
-                            // If not, don't schedule refresh to avoid unbounded growth of the queue.
-                            final long refreshSeq = state.getRefreshSeq();
-                            if (timer.getKnownSeq() != refreshSeq) {
-                                matViewStateStore.enqueueIncrementalRefresh(viewToken);
-                                timer.setKnownSeq(refreshSeq);
-                            }
-                            break;
-                        case Timer.PERIOD_REFRESH_TYPE:
-                            // range hi boundary is inclusive
-                            final MatViewDefinition viewDefinition = state.getViewDefinition();
-                            final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
-                            matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
-                            break;
-                        case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
-                            // Enqueue refresh intervals update only if the base table had new transactions
-                            // since the last caching.
-                            final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
-                            if (timer.getKnownSeq() != refreshIntervalsSeq) {
-                                matViewStateStore.enqueueUpdateRefreshIntervals(viewToken);
-                                timer.setKnownSeq(refreshIntervalsSeq);
-                            }
-                            break;
-                        default:
-                            LOG.error().$("unexpected timer type [view=").$(viewToken)
-                                    .$(", type=").$(timer.getType())
-                                    .I$();
-                            break;
+        try {
+            Timer timer;
+            while ((timer = timerQueue.peek()) != null && timer.getDeadlineMicros() <= nowMicros) {
+                timer = timerQueue.poll();
+                expired.add(timer);
+                final TableToken viewToken = timer.getMatViewToken();
+                final MatViewState state = matViewStateStore.getViewState(viewToken);
+                if (state != null) {
+                    if (state.isDropped()) {
+                        expired.remove(expired.size() - 1);
+                        LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken)
+                                .$(", type=").$(timer.getType())
+                                .I$();
+                    } else if (!state.hasPendingInvalidationReason() && !state.isInvalid()) {
+                        switch (timer.getType()) {
+                            case Timer.INCREMENTAL_REFRESH_TYPE:
+                                // Check if the view has refreshed since the last timer expiration.
+                                // If not, don't schedule refresh to avoid unbounded growth of the queue.
+                                final long refreshSeq = state.getRefreshSeq();
+                                if (timer.getKnownSeq() != refreshSeq) {
+                                    matViewStateStore.enqueueIncrementalRefresh(viewToken);
+                                    timer.setKnownSeq(refreshSeq);
+                                }
+                                break;
+                            case Timer.PERIOD_REFRESH_TYPE:
+                                // range hi boundary is inclusive
+                                final MatViewDefinition viewDefinition = state.getViewDefinition();
+                                final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
+                                matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
+                                break;
+                            case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
+                                // Enqueue refresh intervals update only if the base table had new transactions
+                                // since the last caching.
+                                final long refreshIntervalsSeq = state.getRefreshIntervalsSeq();
+                                if (timer.getKnownSeq() != refreshIntervalsSeq) {
+                                    matViewStateStore.enqueueUpdateRefreshIntervals(viewToken);
+                                    timer.setKnownSeq(refreshIntervalsSeq);
+                                }
+                                break;
+                            default:
+                                LOG.error().$("unexpected timer type [view=").$(viewToken)
+                                        .$(", type=").$(timer.getType())
+                                        .I$();
+                                break;
+                        }
                     }
+                } else {
+                    LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();
                 }
-            } else {
-                LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();
+                ran = true;
             }
-            ran = true;
-        }
-        // Re-schedule expired timers.
-        for (int i = 0, n = expired.size(); i < n; i++) {
-            timer = expired.getQuick(i);
-            timer.nextDeadline();
-            timerQueue.add(timer);
+        } finally {
+            // Re-schedule expired timers. The finally is load-bearing: the loop above has already
+            // polled these timers out of timerQueue, so a throw part way through, e.g. an enqueue
+            // that fails to grow its queue, would otherwise drop every timer it had taken so far.
+            // Nothing re-creates them, so the views they drive would stop refreshing until restart.
+            rescheduleExpiredTimers();
         }
         return ran;
+    }
+
+    /**
+     * Puts every timer the current tick polled out of {@link #timerQueue} back, advanced to its next
+     * deadline. Each timer is re-added under its own try/catch so that one failing to compute a next
+     * deadline costs only that timer rather than every timer left in the batch.
+     */
+    private void rescheduleExpiredTimers() {
+        for (int i = 0, n = expired.size(); i < n; i++) {
+            final Timer timer = expired.getQuick(i);
+            try {
+                timer.nextDeadline();
+                timerQueue.add(timer);
+            } catch (Throwable th) {
+                LOG.error()
+                        .$("could not re-schedule timer for materialized view [view=").$(timer.getMatViewToken())
+                        .$(", type=").$(timer.getType())
+                        .$(", ex=").$(th)
+                        .I$();
+            }
+        }
+        expired.clear();
     }
 
     /**
@@ -349,19 +373,23 @@ public class MatViewTimerJob extends SynchronizedJob {
         retryEntryPool.add(entry);
     }
 
-    private boolean removeTimers(TableToken viewToken) {
+    // Returns nothing on purpose: no caller may branch on whether the view owned timers. An
+    // immediate, non-period view legitimately owns none, and gating the follow-up addTimers() on
+    // this having found something is what stranded such a view with no scheduler after an ALTER.
+    private void removeTimers(TableToken viewToken) {
         filteredDirName = viewToken.getDirName();
+        final boolean isRemoved;
         try {
             // Remove all timers for the given view, if any.
-            if (timerQueue.removeIf(filterByDirName)) {
-                LOG.info().$("unregistered timers for materialized view [view=").$(viewToken).I$();
-                return true;
-            }
+            isRemoved = timerQueue.removeIf(filterByDirName);
         } finally {
             filteredDirName = null;
         }
-        LOG.info().$("timers for materialized view not found [view=").$(viewToken).I$();
-        return false;
+        if (isRemoved) {
+            LOG.info().$("unregistered timers for materialized view [view=").$(viewToken).I$();
+        } else {
+            LOG.info().$("timers for materialized view not found [view=").$(viewToken).I$();
+        }
     }
 
     @Override
@@ -379,9 +407,16 @@ public class MatViewTimerJob extends SynchronizedJob {
                     removeTimers(viewToken);
                     break;
                 case MatViewTimerTask.UPDATE:
-                    if (removeTimers(viewToken)) {
-                        addTimers(viewToken, nowUs);
-                    }
+                    // Re-register unconditionally. A view that currently owns no timers, i.e. an
+                    // immediate, non-period one, still needs them the moment an ALTER turns it into
+                    // a timer, period or manual view. Gating the add on the remove having found
+                    // something strands exactly that view with no scheduler at all, and since timers
+                    // live only in this job's heap nothing but a restart brings them back.
+                    // The opposite direction stays correct too: addTimers() is a no-op for an
+                    // immediate, non-period definition, and the remove always runs first, so no
+                    // duplicate timers are possible.
+                    removeTimers(viewToken);
+                    addTimers(viewToken, nowUs);
                     break;
                 case MatViewTimerTask.RETRY:
                     // A refresh was deferred after a transient "table busy" error. Queue a
