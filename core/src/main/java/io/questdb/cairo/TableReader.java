@@ -30,6 +30,8 @@ import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameState;
+import io.questdb.cairo.sql.PartitionFrameStateFactory;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.MemoryCMRDetachedImpl;
@@ -65,6 +67,9 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class TableReader implements Closeable, SymbolTableSource {
+    private static final byte HAS_ANY_DELTA_FALSE = 0;
+    private static final byte HAS_ANY_DELTA_TRUE = 1;
+    private static final byte HAS_ANY_DELTA_UNKNOWN = -1;
     private static final Log LOG = LogFactory.getLog(TableReader.class);
     private static final int PARTITIONS_SLOT_OFFSET_SIZE = 1;
     private static final int PARTITIONS_SLOT_OFFSET_NAME_TXN = PARTITIONS_SLOT_OFFSET_SIZE + 1;
@@ -103,7 +108,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<ParquetPartitionDecoder> parquetMetaDecoders;
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
+    private byte hasAnyDeltaCache = HAS_ANY_DELTA_UNKNOWN;
     private int partitionCount;
+    private PartitionFrameStateFactory partitionFrameStateFactory;
+    private LongList partitionFrameStates;
     private long rowCount;
     // Per-checkout scan profile -- controls kernel page-cache hints and
     // post-checkout partition retention. Reset to DEFAULT by goPassive() on
@@ -116,6 +124,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private long txTruncateVersion;
     private long txn = TableUtils.INITIAL_TXN;
     private boolean txnAcquired = false;
+    private long txnScoreboardSeqTxn = TxnScoreboard.UNKNOWN_SEQ_TXN;
 
     public TableReader(
             int id,
@@ -325,11 +334,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @return the initialized ParquetPartitionDecoder
      */
     public ParquetPartitionDecoder getAndInitParquetPartitionDecoder(int partitionIndex) {
-        ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
-        if (decoder == null) {
-            decoder = configuration.newParquetPartitionDecoder();
-            parquetMetaDecoders.setQuick(partitionIndex, decoder);
-        }
+        final ParquetPartitionDecoder decoder = getOrCreatePartitionDecoder(partitionIndex);
         long parquetMetaAddr = getParquetMetadataAddr(partitionIndex);
         long parquetMetaSize = getParquetMetadataSize(partitionIndex);
         long parquetAddr = getParquetAddr(partitionIndex);
@@ -341,6 +346,29 @@ public class TableReader implements Closeable, SymbolTableSource {
                     MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         return decoder;
+    }
+
+    /**
+     * Returns the Rust-owned partition-frame state for this partition. The only
+     * Java per-partition state is exactly one opaque Rust handle pointer.
+     */
+    public long getOrOpenPartitionFrameState(int partitionIndex) {
+        final long existing = partitionFrameStates.getQuick(partitionIndex);
+        if (existing != 0) {
+            return existing;
+        }
+        if (!txFile.getPartitionHasDelta(partitionIndex)) {
+            return 0;
+        }
+        if (partitionFrameStateFactory == null) {
+            partitionFrameStateFactory = configuration.newPartitionFrameStateFactory(tableToken);
+            if (partitionFrameStateFactory == null) {
+                return 0;
+            }
+        }
+        final long state = partitionFrameStateFactory.open(this, partitionIndex, getSeqTxn());
+        partitionFrameStates.setQuick(partitionIndex, state);
+        return state;
     }
 
     public MemoryCR getColumn(int absoluteIndex) {
@@ -372,6 +400,31 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
+        if (txFile.getPartitionHasDelta(partitionIndex)) {
+            openPartition(partitionIndex);
+            final long state = getOrOpenPartitionFrameState(partitionIndex);
+            if (state == 0 || partitionFrameStateFactory == null) {
+                throw CairoException.critical(0)
+                        .put("cold delta partition state is unavailable [partitionIndex=")
+                        .put(partitionIndex)
+                        .put(']');
+            }
+            final IndexReader deltaReader = partitionFrameStateFactory.getIndexReader(
+                    this,
+                    state,
+                    partitionIndex,
+                    columnIndex,
+                    direction
+            );
+            if (deltaReader == null) {
+                throw CairoException.critical(0)
+                        .put("cold delta index reader is unavailable [partitionIndex=")
+                        .put(partitionIndex)
+                        .put(", columnIndex=").put(columnIndex)
+                        .put(']');
+            }
+            return deltaReader;
+        }
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
@@ -663,6 +716,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (!isActive()) {
             return;
         }
+        destroyPartitionFrameStates();
         if (partitionOverwriteControl != null) {
             // Mark partitions as unused before releasing txn in scoreboard
             // to avoid false positives in partition overwrite control
@@ -677,6 +731,23 @@ public class TableReader implements Closeable, SymbolTableSource {
         hasActiveColumns = false;
         resetAllColumnsOpenFlag();
         scanProfile = ReaderScanProfile.DEFAULT;
+    }
+
+    /**
+     * Returns whether this reader snapshot contains at least one partition with
+     * visible delta rows. The aggregate is computed once per installed snapshot.
+     */
+    public boolean hasAnyDelta() {
+        if (hasAnyDeltaCache == HAS_ANY_DELTA_UNKNOWN) {
+            hasAnyDeltaCache = HAS_ANY_DELTA_FALSE;
+            for (int i = 0; i < partitionCount; i++) {
+                if (txFile.getPartitionHasDelta(i)) {
+                    hasAnyDeltaCache = HAS_ANY_DELTA_TRUE;
+                    break;
+                }
+            }
+        }
+        return hasAnyDeltaCache == HAS_ANY_DELTA_TRUE;
     }
 
     public boolean hasParquetPartitions() {
@@ -730,11 +801,53 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartition0(partitionIndex);
     }
 
+    /**
+     * Opens one native column required by a decoder extension even when the
+     * query's active-column set did not request it. This is used by the cold
+     * delta merge for the designated timestamp comparator; ordinary page-frame
+     * execution never calls it.
+     */
+    public void openPageFrameColumn(int partitionIndex, int columnIndex) {
+        final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
+        final long partitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
+        if (partitionSize < 0 || getPartitionFormat(partitionIndex) != PartitionFormat.NATIVE) {
+            throw CairoException.critical(0)
+                    .put("cannot open page-frame native column [partitionIndex=").put(partitionIndex)
+                    .put(", columnIndex=").put(columnIndex).put(']');
+        }
+        final int columnBase = getColumnBase(partitionIndex);
+        final int primaryIndex = getPrimaryColumnIndex(columnBase, columnIndex);
+        final MemoryCMR existing = columns.getQuick(primaryIndex);
+        if (existing != null && existing != NullMemoryCMR.INSTANCE && existing.isOpen()) {
+            return;
+        }
+        final long nameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
+        try {
+            pathGenNativePartition(partitionIndex, nameTxn);
+            reloadColumnAt(
+                    partitionIndex,
+                    path,
+                    columns,
+                    columnTops,
+                    indexes,
+                    columnBase,
+                    columnIndex,
+                    partitionSize
+            );
+        } catch (Throwable th) {
+            closePartitionColumn(columnBase, columnIndex);
+            throw th;
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
     public boolean reload() {
         if (acquireTxn()) {
             return false;
         }
         try {
+            destroyPartitionFrameStates();
             reloadSlow(true);
             // partition reload will apply truncate if necessary
             // applyTruncate for non-partitioned tables only
@@ -837,8 +950,10 @@ public class TableReader implements Closeable, SymbolTableSource {
     private boolean acquireTxn() {
         if (!txnAcquired) {
             try {
-                if (txnScoreboard.acquireTxn(id, txn)) {
+                final long seqTxn = txFile.getSeqTxn();
+                if (txnScoreboard.acquireTxn(id, txn, seqTxn)) {
                     txnAcquired = true;
+                    txnScoreboardSeqTxn = seqTxn;
                 } else {
                     return false;
                 }
@@ -905,9 +1020,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         columnTops.removeIndexBlock(colTopStart, columnSlotSize / 2);
 
         Misc.free(parquetMetaDecoders.get(partitionIndex));
+        destroyPartitionFrameState(partitionIndex);
         Misc.free(parquetMetadataPartitions.get(partitionIndex));
         Misc.free(parquetPartitions.get(partitionIndex));
         parquetMetaDecoders.remove(partitionIndex);
+        partitionFrameStates.removeIndexBlock(partitionIndex, 1);
         parquetMetadataPartitions.remove(partitionIndex);
         parquetPartitions.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
@@ -1199,6 +1316,8 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     private void freeParquetPartitions() {
         Misc.freeObjList(parquetMetaDecoders);
+        destroyPartitionFrameStates();
+        partitionFrameStateFactory = Misc.free(partitionFrameStateFactory);
         Misc.freeObjList(parquetMetadataPartitions);
         Misc.freeObjList(parquetPartitions);
     }
@@ -1224,6 +1343,32 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
     }
 
+    private ParquetPartitionDecoder getOrCreatePartitionDecoder(int partitionIndex) {
+        ParquetPartitionDecoder decoder = parquetMetaDecoders.getQuick(partitionIndex);
+        if (decoder == null) {
+            decoder = configuration.newParquetPartitionDecoder();
+            parquetMetaDecoders.setQuick(partitionIndex, decoder);
+        }
+        return decoder;
+    }
+
+    private void destroyPartitionFrameState(int partitionIndex) {
+        final long state = partitionFrameStates.getQuick(partitionIndex);
+        if (state != 0 && partitionFrameStateFactory != null) {
+            partitionFrameStateFactory.destroy(state);
+        }
+        partitionFrameStates.setQuick(partitionIndex, 0);
+    }
+
+    private void destroyPartitionFrameStates() {
+        if (partitionFrameStates == null) {
+            return;
+        }
+        for (int i = 0, n = partitionCount; i < n; i++) {
+            destroyPartitionFrameState(i);
+        }
+    }
+
     private void init() {
         txPartitionVersion = txFile.getPartitionTableVersion();
         txColumnVersion = txFile.getColumnVersion();
@@ -1241,6 +1386,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders = new ObjList<>(partitionCount);
         parquetMetaDecoders.setAll(partitionCount, null);
+        partitionFrameStates = new LongList(partitionCount, 0);
+        partitionFrameStates.setAll(partitionCount, 0);
         columns = new ObjList<>(capacity + 2);
         columns.setPos(capacity + 2);
         columns.setQuick(0, NullMemoryCMR.INSTANCE);
@@ -1249,6 +1396,13 @@ public class TableReader implements Closeable, SymbolTableSource {
         indexes.setPos(capacity + 2);
 
         openPartitionInfo = initOpenPartitionInfo();
+        // Resolve the table-scoped partition registry once for a reader whose
+        // snapshot contains delta. This lets a pre-drop reader lazily open any
+        // of its partitions from the detached table state without another
+        // process-wide table lookup. Pure-base readers retain the zero-JNI path.
+        if (hasAnyDelta()) {
+            partitionFrameStateFactory = configuration.newPartitionFrameStateFactory(tableToken);
+        }
         columnTops = new LongList(capacity / 2);
         columnTops.setPos(capacity / 2);
     }
@@ -1282,6 +1436,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         parquetMetadataPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
         parquetPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders.insert(partitionIndex, 1, null);
+        partitionFrameStates.insert(partitionIndex, 1);
+        partitionFrameStates.setQuick(partitionIndex, 0);
 
         final int topBase = columnBase / 2;
         final int topSlotSize = columnSlotSize / 2;
@@ -1788,6 +1944,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (txnAcquired) {
             long readerCount = txnScoreboard.releaseTxn(id, txn);
             txnAcquired = false;
+            txnScoreboardSeqTxn = TxnScoreboard.UNKNOWN_SEQ_TXN;
             return readerCount == 0;
         }
         return false;
@@ -1811,13 +1968,16 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reloadAtTxn(TableReader srcReader, boolean reshuffle) {
         releaseTxn();
         final long txn = srcReader.getTxn();
-        if (!txnScoreboard.incrementTxn(id, txn)) {
+        final long seqTxn = srcReader.txnScoreboardSeqTxn;
+        if (!txnScoreboard.incrementTxn(id, txn, seqTxn)) {
             throw CairoException.critical(0).put("could not acquire txn for copy, source reader has to be active [table=")
                     .put(tableToken.getTableName()).put(", txn=").put(txn).put(']');
         }
         this.txn = txn;
         txnAcquired = true;
+        txnScoreboardSeqTxn = seqTxn;
         txFile.loadAllFrom(srcReader.txFile);
+        hasAnyDeltaCache = HAS_ANY_DELTA_UNKNOWN;
         columnVersionReader.readFrom(srcReader.columnVersionReader);
         reloadMetadataFrom(srcReader.metadata, reshuffle);
     }
@@ -2026,6 +2186,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         // Start again if _meta with the matching structure version cannot be loaded
                         || !reloadMetadata(txFile.getMetadataVersion(), deadline, reshuffle)
         );
+        hasAnyDeltaCache = HAS_ANY_DELTA_UNKNOWN;
     }
 
     private void reloadSymbolMapCounts() {

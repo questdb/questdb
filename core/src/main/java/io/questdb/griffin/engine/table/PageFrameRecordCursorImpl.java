@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -38,6 +39,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
+import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
@@ -140,6 +142,11 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
                 // master row. The time-throttled variant still checks cancellation/timeout every frame (cheap)
                 // while bounding the connection probe to once per wall-clock window for the whole query.
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                if (frameCount >= Rows.MAX_SAFE_PARTITION_INDEX) {
+                    throw CairoException.nonCritical()
+                            .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
+                            .put("]; reduce the scanned range or raise cairo.sql.page.frame.max.rows");
+                }
                 frameAddressCache.add(frameCount, frame);
                 final long remaining = maxRowsAfterSkip - rowsProducedSinceSkip;
                 final long frameSize = frame.getPartitionHi() - frame.getPartitionLo();
@@ -263,6 +270,13 @@ public class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
         long skipTarget = rowCount.get();
         PageFrame pageFrame;
         while ((pageFrame = frameCursor.next(skipTarget)) != null) {
+            // Same rowId frame-count ceiling as hasNext(): the frame index is packed into the high bits of
+            // every rowId, so a scan that skips past the ceiling would silently overflow it.
+            if (frameCount >= Rows.MAX_SAFE_PARTITION_INDEX) {
+                throw CairoException.nonCritical()
+                        .put("too many page frames for a single query [limit=").put(Rows.MAX_SAFE_PARTITION_INDEX)
+                        .put("]; reduce the scanned range or raise cairo.sql.page.frame.max.rows");
+            }
             frameAddressCache.add(frameCount++, pageFrame);
 
             long frameSize = pageFrame.getPartitionHi() - pageFrame.getPartitionLo();

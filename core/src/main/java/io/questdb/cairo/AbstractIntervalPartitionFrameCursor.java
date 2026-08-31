@@ -27,13 +27,17 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameState;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.std.Vect.BIN_SEARCH_SCAN_UP;
@@ -45,21 +49,22 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected final int timestampIndex;
     private final NativeTimestampFinder nativeTimestampFinder = new NativeTimestampFinder();
     private final ParquetTimestampFinder parquetTimestampFinder;
+    private final @Nullable AbstractTimestampFinder timestampFinder;
     protected LongList intervals;
     protected int intervalsHi;
     protected int intervalsLo;
     protected int partitionHi;
-    // This is where begin binary search on partition. When there are more
-    // than one searches to be performed we can use this variable to avoid
-    // searching partition from top every time
-    protected long partitionLimit;
     protected int partitionLo;
     protected TableReader reader;
     protected long sizeSoFar = 0;
+    private SqlExecutionCircuitBreaker circuitBreaker = SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+    private long currentLogicalRowCount;
+    private long currentPartitionFrameState;
     private int initialIntervalsHi;
     private int initialIntervalsLo;
     private int initialPartitionHi;
     private int initialPartitionLo;
+    private @Nullable MemoryTracker memoryTracker;
 
     public AbstractIntervalPartitionFrameCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         assert timestampIndex > -1;
@@ -67,10 +72,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         this.timestampIndex = timestampIndex;
         this.parquetDecoder = configuration.newParquetPartitionDecoder();
         this.parquetTimestampFinder = new ParquetTimestampFinder(parquetDecoder);
+        this.timestampFinder = configuration.newTimestampFinder();
     }
 
     @Override
     public void close() {
+        Misc.free(timestampFinder);
         Misc.free(parquetTimestampFinder);
         Misc.free(parquetDecoder);
         nativeTimestampFinder.clear();
@@ -117,7 +124,14 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     public AbstractIntervalPartitionFrameCursor of(TableReader reader, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        parquetTimestampFinder.setMemoryTracker(sqlExecutionContext != null ? sqlExecutionContext.getMemoryTracker() : null);
+        memoryTracker = sqlExecutionContext != null ? sqlExecutionContext.getMemoryTracker() : null;
+        circuitBreaker = sqlExecutionContext != null
+                ? sqlExecutionContext.getCircuitBreaker()
+                : SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+        parquetTimestampFinder.setMemoryTracker(memoryTracker);
+        if (timestampFinder != null) {
+            timestampFinder.clear();
+        }
         this.intervals = intervalModel.calculateIntervals(sqlExecutionContext);
         calculateRanges(reader, intervals);
         this.reader = reader;
@@ -146,8 +160,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     @Override
     public void toTop() {
+        if (timestampFinder != null) {
+            timestampFinder.clear();
+        }
         parquetTimestampFinder.clear();
         nativeTimestampFinder.clear();
+        frame.partitionFrameState = 0;
         intervalsLo = initialIntervalsLo;
         intervalsHi = initialIntervalsHi;
         partitionLo = initialPartitionLo;
@@ -157,7 +175,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
 
     private void calculateRanges(TableReader reader, LongList intervals) {
         if (intervals.size() > 0) {
-            if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+            if (reader.hasAnyDelta()) {
+                initialIntervalsLo = 0;
+                initialIntervalsHi = intervals.size() / 2;
+                initialPartitionLo = 0;
+                initialPartitionHi = reader.getPartitionCount();
+            } else if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
                 cullIntervals(reader, intervals);
                 if (initialIntervalsLo < initialIntervalsHi) {
                     cullPartitions(reader, intervals);
@@ -223,16 +246,153 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         this.initialPartitionHi = Math.min(reader.getPartitionCount(), reader.getPartitionIndexByTimestamp(intervalHi) + 1);
     }
 
-    protected TimestampFinder initTimestampFinder(int partitionIndex, long rowCount) {
-        if (reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET) {
-            return parquetTimestampFinder.of(reader, partitionIndex, timestampIndex);
+    private static int findRelevantIntervalsHi(LongList intervals, long calendarHi) {
+        final int intervalCount = Math.toIntExact(intervals.size() / 2);
+        if (calendarHi == Long.MAX_VALUE) {
+            return intervalCount;
         }
-        return nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, rowCount);
+        int lo = 0;
+        int hi = intervalCount;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (intervals.getQuick(2 * mid) < calendarHi) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    private static int findRelevantIntervalsLo(LongList intervals, long calendarLo) {
+        int lo = 0;
+        int hi = Math.toIntExact(intervals.size() / 2);
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            if (intervals.getQuick(2 * mid + 1) < calendarLo) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    protected long getCurrentLogicalRowCount() {
+        return currentLogicalRowCount;
+    }
+
+    protected long getCurrentPartitionFrameState() {
+        return currentPartitionFrameState;
+    }
+
+    protected long getPartitionCalendarHi(int partitionIndex) {
+        if (!PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+            return Long.MAX_VALUE;
+        }
+        final long partitionTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+        return reader.getTxFile().getNextLogicalPartitionTimestamp(partitionTimestamp);
+    }
+
+    protected long getPartitionCalendarLo(int partitionIndex) {
+        if (!PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+            return Long.MIN_VALUE;
+        }
+        return reader.floorToPartitionTimestamp(reader.getPartitionTimestampByIndex(partitionIndex));
+    }
+
+    protected boolean hasAnyDelta() {
+        return reader.hasAnyDelta();
+    }
+
+    protected TimestampFinder initTimestampFinder(int partitionIndex, long baseRowCount) {
+        frame.partitionFrameState = 0;
+        currentLogicalRowCount = baseRowCount;
+        currentPartitionFrameState = 0;
+        final TimestampFinder baseFinder;
+        if (reader.getPartitionFormatFromMetadata(partitionIndex) == PartitionFormat.PARQUET) {
+            baseFinder = parquetTimestampFinder.of(reader, partitionIndex, timestampIndex, baseRowCount);
+        } else {
+            baseFinder = nativeTimestampFinder.of(reader, partitionIndex, timestampIndex, baseRowCount);
+        }
+
+        if (reader.getTxFile().getPartitionHasDelta(partitionIndex)) {
+            reader.openPartition(partitionIndex);
+            final long state = reader.getOrOpenPartitionFrameState(partitionIndex);
+            if (state == 0) {
+                throw CairoException.critical(0)
+                        .put("cold delta partition state is unavailable [partitionIndex=")
+                        .put(partitionIndex).put(']');
+            }
+            currentLogicalRowCount = PartitionFrameState.getLogicalPartitionRowCount(state);
+            if (!PartitionFrameState.hasCustomFrames(state)) {
+                if (currentLogicalRowCount != baseRowCount) {
+                    throw CairoException.critical(0)
+                            .put("cold delta residual-free row count mismatch [partitionIndex=")
+                            .put(partitionIndex)
+                            .put(", baseRows=").put(baseRowCount)
+                            .put(", logicalRows=").put(currentLogicalRowCount)
+                            .put(']');
+                }
+                return baseFinder;
+            }
+            if (timestampFinder == null) {
+                throw CairoException.critical(0)
+                        .put("cold delta timestamp finder is unavailable [partitionIndex=")
+                        .put(partitionIndex).put(']');
+            }
+            currentPartitionFrameState = state;
+            final int relevantIntervalsLo = findRelevantIntervalsLo(intervals, getPartitionCalendarLo(partitionIndex));
+            final int relevantIntervalsHi = findRelevantIntervalsHi(intervals, getPartitionCalendarHi(partitionIndex));
+            if (relevantIntervalsLo >= relevantIntervalsHi) {
+                throw CairoException.critical(0)
+                        .put("cold delta partition has no calendar-relevant intervals [partitionIndex=")
+                        .put(partitionIndex).put(']');
+            }
+            return timestampFinder.of(
+                    baseFinder,
+                    state,
+                    intervals,
+                    relevantIntervalsLo,
+                    relevantIntervalsHi,
+                    memoryTracker,
+                    circuitBreaker
+            );
+        }
+        return baseFinder;
+    }
+
+    protected void populateFrame(int partitionIndex, long rowLo, long rowHi) {
+        frame.partitionFrameState = currentPartitionFrameState;
+        frame.partitionIndex = partitionIndex;
+        frame.rowHi = rowHi;
+        frame.rowLo = rowLo;
+        final byte format = reader.getPartitionFormat(partitionIndex);
+        if (format == PartitionFormat.PARQUET) {
+            frame.format = PartitionFormat.PARQUET;
+            frame.parquetMetaDecoder = reader.getAndInitParquetPartitionDecoder(partitionIndex);
+        } else {
+            assert format == PartitionFormat.NATIVE;
+            frame.format = PartitionFormat.NATIVE;
+            frame.parquetMetaDecoder = null;
+        }
+    }
+
+    protected void validateIntervalBounds(int partitionIndex, long lo, long hi) {
+        if (lo < 0 || lo > hi || hi > currentLogicalRowCount) {
+            throw CairoException.critical(0)
+                    .put("invalid timestamp interval bounds [partitionIndex=").put(partitionIndex)
+                    .put(", lo=").put(lo)
+                    .put(", hi=").put(hi)
+                    .put(", rows=").put(currentLogicalRowCount)
+                    .put(']');
+        }
     }
 
     protected static class IntervalPartitionFrame implements PartitionFrame {
         protected byte format;
         protected ParquetPartitionDecoder parquetMetaDecoder;
+        protected long partitionFrameState;
         protected int partitionIndex;
         protected long rowHi;
         protected long rowLo;
@@ -240,6 +400,11 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         @Override
         public ParquetPartitionDecoder getParquetMetaDecoder() {
             return parquetMetaDecoder;
+        }
+
+        @Override
+        public long getPartitionFrameState() {
+            return partitionFrameState;
         }
 
         @Override

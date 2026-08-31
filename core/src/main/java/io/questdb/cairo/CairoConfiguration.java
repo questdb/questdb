@@ -32,6 +32,8 @@ import io.questdb.Metrics;
 import io.questdb.TelemetryConfiguration;
 import io.questdb.VolumeDefinitions;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.PartitionFrameDecoder;
+import io.questdb.cairo.sql.PartitionFrameStateFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.qwp.codec.DefaultQwpServerInfoProvider;
 import io.questdb.cutlass.qwp.codec.QwpServerInfoProvider;
@@ -1378,6 +1380,26 @@ public interface CairoConfiguration {
 
     default ParquetPartitionDecoder newParquetPartitionDecoder() {
         return new ParquetPartitionDecoder();
+    }
+
+    @Nullable
+    default PartitionFrameDecoder newPartitionFrameDecoder() {
+        return null;
+    }
+
+    @Nullable
+    default PartitionFrameStateFactory newPartitionFrameStateFactory(TableToken tableToken) {
+        return null;
+    }
+
+    @Nullable
+    default PartitionDeltaWriter newPartitionDeltaWriter() {
+        return null;
+    }
+
+    @Nullable
+    default AbstractTimestampFinder newTimestampFinder() {
+        return null;
     }
 
     boolean useWithinLatestByOptimisation();

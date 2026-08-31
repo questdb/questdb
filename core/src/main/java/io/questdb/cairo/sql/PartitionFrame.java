@@ -50,6 +50,13 @@ public interface PartitionFrame {
     }
 
     /**
+     * Opaque Rust logical-frame state; zero for a base-only partition.
+     */
+    default long getPartitionFrameState() {
+        return 0;
+    }
+
+    /**
      * @return format of the frame's partition; set to {@link PartitionFormat#NATIVE} or {@link PartitionFormat#PARQUET}
      */
     byte getPartitionFormat();

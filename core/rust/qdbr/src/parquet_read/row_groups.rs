@@ -52,6 +52,18 @@ pub struct RowGroupBuffers {
     pub(super) column_bufs: AcVec<ColumnChunkBuffers>,
 }
 
+/// Primitive cross-library ABI for a non-owning decoded column. The allocation
+/// is owned by a decoder resource outside qdbr; `RowGroupBuffers` exposes it to
+/// Java but never frees it.
+#[derive(Clone, Copy)]
+#[repr(C)]
+pub struct ExternalColumnView {
+    pub data_ptr: *mut u8,
+    pub data_size: usize,
+    pub aux_ptr: *mut u8,
+    pub aux_size: usize,
+}
+
 impl RowGroupBuffers {
     pub fn new(allocator: QdbAllocator) -> Self {
         Self {
@@ -72,6 +84,30 @@ impl RowGroupBuffers {
 
     pub fn column_buffers(&self) -> &AcVec<ColumnChunkBuffers> {
         &self.column_bufs
+    }
+
+    pub fn install_external_views(
+        &mut self,
+        column_offset: usize,
+        views: &[ExternalColumnView],
+    ) -> ParquetResult<()> {
+        let required = column_offset
+            .checked_add(views.len())
+            .ok_or_else(|| fmt_err!(InvalidLayout, "external column range overflow"))?;
+        self.ensure_n_columns(required)?;
+        for (index, view) in views.iter().enumerate() {
+            if (view.data_ptr.is_null() && view.data_size != 0)
+                || (view.aux_ptr.is_null() && view.aux_size != 0)
+            {
+                return Err(fmt_err!(
+                    InvalidLayout,
+                    "external column has null pointer with non-zero size, column index: {}",
+                    column_offset + index
+                ));
+            }
+            self.column_bufs[column_offset + index].install_external(*view);
+        }
+        Ok(())
     }
 
     /// Deep-copies the first `col_count` decoded column buffers into a fresh,

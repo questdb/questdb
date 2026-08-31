@@ -887,7 +887,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
         // setRecordAtRows must actually row-filter the parquet decode: a declared row
         // reads its real value while an undeclared row of the same frame materializes
         // as NULL (the fill-with-nulls decode). A regression that ignores the
-        // declaration (e.g. hasParquetFrames never set on the address cache) decodes
+        // declaration (e.g. hasDecodedFrames never set on the address cache) decodes
         // the full frame and the undeclared row reads a real value instead.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
         assertMemoryLeak(() -> {
@@ -1123,7 +1123,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testParquetDecodeCacheReleaseResetsAccounting() throws Exception {
-        // After a random-access sweep the cache holds bytes; releaseParquetBuffers() (the path
+        // After a random-access sweep the cache holds bytes; releaseDecodedFrameBuffers() (the path
         // of()/clear()/close() take) must zero both the byte and frame accounting, and neither
         // count may run negative at any point during the sweep.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
@@ -1164,7 +1164,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     Assert.assertTrue(pool.getCachedBytes() > 0);
                     Assert.assertTrue(pool.getCachedFrameCount() > 0);
 
-                    pool.releaseParquetBuffers();
+                    pool.releaseDecodedFrameBuffers();
                     Assert.assertEquals("release must zero the byte accounting", 0, pool.getCachedBytes());
                     Assert.assertEquals("release must zero the frame accounting", 0, pool.getCachedFrameCount());
                 }
@@ -1301,7 +1301,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                         cursor.recordAt(record, f, 0);
                         record.getTimestamp(tsIndex);
                     }
-                    pool.releaseParquetBuffers();
+                    pool.releaseDecodedFrameBuffers();
                     Assert.assertEquals(0, pool.getCachedBytes());
                     Assert.assertEquals(0, pool.getCachedFrameCount());
                 }
