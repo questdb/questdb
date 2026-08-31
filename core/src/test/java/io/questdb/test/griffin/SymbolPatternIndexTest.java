@@ -648,7 +648,8 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
-    // Full cursors enforce the frame cap eagerly; interval cursors enforce it while iterating.
+    // Full cursors enforce the frame cap off the reader's partition count; interval cursors off
+    // their culled frame-count bound. Both reject eagerly, before the estimate pulls a frame.
     @Test
     public void testFrameAndKeyProbeCapsApplyIndependently() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "4");
@@ -676,11 +677,11 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             assertPatternRoute("caps_past_frames", "sym LIKE 'r%'", false);
 
             // One matched key over six IN-RANGE frames of a ten-partition table. An interval cursor
-            // reports size() == -1, so the O(1) pre-check must skip it and only the in-loop frame cap
-            // can reject: the estimate has to pull maxEstimateProbes + 1 == 5 frames and stop there.
-            // The matched rows are 2 of the 240 the interval selects (0.8%), far inside the admitted
-            // 5% share, so the row-share test cannot be what rejects this - the exact frame count is
-            // what proves the frame cap did.
+            // reports size() == -1, so the partition-count pre-check cannot apply; the cursor's own
+            // frame-count bound (six in-range partitions > 4) must reject instead, before the
+            // estimate pulls a single frame. The matched rows are 2 of the 240 the interval selects
+            // (0.8%), far inside the admitted 5% share, so the row-share test cannot be what rejects
+            // this - zero frames walked is what proves the eager bound did.
             execute("CREATE TABLE caps_past_interval_frames (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO caps_past_interval_frames SELECT CASE WHEN x % 100 = 0 THEN 'rare' ELSE 'common' END, " +
                     "x, timestamp_sequence('2024-01-01T00:00:00.000000Z', 2_160_000_000L) FROM long_sequence(400)");
@@ -699,8 +700,8 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
             try {
                 assertPatternRoute("caps_past_interval_frames", "sym LIKE 'r%' AND " + sixPartitionInterval, false);
                 Assert.assertEquals(
-                        "the in-loop frame cap must reject on the frame after the cap, not the row share",
-                        5,
+                        "the frame-count bound must reject before any frame is pulled, not the row share",
+                        0,
                         AdaptiveSymbolPatternRecordCursorFactory.testEstimatorFramesWalked.get()
                 );
             } finally {
@@ -779,6 +780,65 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                 AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
                 AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
                 SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
+    // The eager interval rejection must count (interval x partition) intersections, not the raw
+    // partition span: a sparse union whose days scatter over more partitions than the cap still
+    // walks only its few real frames, which is a shape the index route wins on.
+    @Test
+    public void testSparseIntervalUnionOverWidePartitionSpanUsesIndexRoute() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "4");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT CASE WHEN x % 100 = 0 THEN 'rare' ELSE 'common' END, " +
+                    "x, timestamp_sequence('2024-01-01T00:00:00.000000Z', 2_160_000_000L) FROM long_sequence(400)");
+            Assert.assertEquals(10, countOf("SELECT count() FROM table_partitions('t')"));
+            // Three one-day intervals spanning seven partitions: span > 4 == threshold, segments 3 <= 4.
+            final String sparseUnion = "(ts IN '2024-01-02' OR ts IN '2024-01-05' OR ts IN '2024-01-08')";
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            try {
+                assertPatternRoute("t", "sym LIKE 'r%' AND " + sparseUnion, true);
+                Assert.assertEquals(
+                        "the estimate must walk the union's three frames; a span-based bound would have walked none",
+                        3,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorFramesWalked.get()
+                );
+            } finally {
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
+    // A bound of exactly maxEstimateProbes must not reject: the in-loop cap only fires on the
+    // frame AFTER the cap, and the eager check mirrors its strict inequality.
+    @Test
+    public void testIntervalSpanningExactlyCapFramesStillWalksAndAdmits() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "4");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t SELECT CASE WHEN x % 100 = 0 THEN 'rare' ELSE 'common' END, " +
+                    "x, timestamp_sequence('2024-01-01T00:00:00.000000Z', 2_160_000_000L) FROM long_sequence(400)");
+            Assert.assertEquals(10, countOf("SELECT count() FROM table_partitions('t')"));
+            // Four in-range partitions: bound == threshold == 4, at the cap but not past it.
+            final String fourPartitionInterval = "ts >= '2024-01-02T00:00:00.000000Z' AND ts < '2024-01-06T00:00:00.000000Z'";
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            try {
+                assertPatternRoute("t", "sym LIKE 'r%' AND " + fourPartitionInterval, true);
+                Assert.assertEquals(
+                        "exactly-at-cap frames must walk to the admission test, not reject eagerly",
+                        4,
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorFramesWalked.get()
+                );
+            } finally {
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
             }
         });
     }

@@ -161,7 +161,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * 0.39 ms against the scan's 9.4 ms up to 100 partitions, 10.1 ms against 12.7 ms at 200,
  * then LOST at 50.5 ms against 23.2 ms at 500 and 136.6 ms against 43.7 ms at 1000 - a
  * crossover between 200 and 500 partitions. The default of 100 keeps a margin below it, the
- * same discipline the row-share divisors above use. Raising
+ * same discipline the row-share divisors above use. Both cursor shapes reach that verdict
+ * without walking: a full cursor is bounded by the reader's partition count, an interval cursor
+ * by its culled (interval x partition) intersection count
+ * ({@link PartitionFrameCursor#getFrameCountUpperBound()}), so a time filter spanning more
+ * partitions than the cap selects the scan before opening a single index reader instead of
+ * paying the whole probe on every execution of a cached plan and discarding it. Raising
  * {@code cairo.sql.symbol.pattern.index.threshold} therefore buys more than extra probes: it
  * re-admits the index route on tables with more partitions than that, where the measurements
  * say it is the slower plan, and it raises planning cost with it (about 0.02 ms per frame for
@@ -629,8 +634,25 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         // cap, where the fallback is the answer the cap exists to give.
         // An interval cursor is deliberately excluded: its frames are the partitions IN RANGE, and
         // the total partition count does not bound those usefully -- a one-day filter on a
-        // three-year table walks a single frame, which is the shape the index route wins on.
+        // three-year table walks a single frame, which is the shape the index route wins on. It
+        // gets the equivalent check below, against a bound from its own culled ranges.
         if (isTotalRowsKnown && tableReader.getPartitionCount() > maxEstimateProbes) {
+            return false;
+        }
+        // The frame cap for the interval cursors the check above excludes, in O(intervals x log
+        // partitions). Their frame count is invisible to reader metadata alone, and walking to
+        // find it made a time filter spanning more partitions than the cap pay the whole probe --
+        // up to maxEstimateProbes index-reader opens and key counts -- only to discard it on the
+        // frame after the cap, on every execution of a cached plan. The cursor already culled its
+        // intervals against the partition list at open, so it bounds its frames from that same
+        // metadata: at most one frame per overlapping (interval, partition) pair. The bound never
+        // under-counts, so this rejects exactly the walks the loop below would reject at frame
+        // maxEstimateProbes + 1. Pairs over partitions the walk would find empty over-count, which
+        // can only send a borderline run to the fallback scan -- the same divergence, in the same
+        // direction, the empty-partition corner above accepts. Strict greater-than, mirroring the
+        // loop: a bound of exactly maxEstimateProbes still walks and may admit. The loop's own cap
+        // stays as the backstop for any cursor that answers -1 (unknown).
+        if (!isTotalRowsKnown && frameCursor.getFrameCountUpperBound() > maxEstimateProbes) {
             return false;
         }
         long matchedRows = 0;
