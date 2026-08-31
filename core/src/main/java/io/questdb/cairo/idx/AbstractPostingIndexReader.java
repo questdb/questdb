@@ -1894,14 +1894,23 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return selectFromKeyBlob(encodedOffset, j);
     }
 
+    // Exists so the delta-blob selector is testable against a raw encoded blob, without constructing
+    // a file-backed reader. That only works while the impl below stays static; if the selector ever
+    // needs instance state, this delegate and its test must be reworked consciously, at compile time.
+    @TestOnly
+    public static long selectFromDeltaBlobForTesting(long encodedOffset, long baseAddr, int blockCount, int j) {
+        return selectFromDeltaBlob(encodedOffset, baseAddr, blockCount, j);
+    }
+
     /**
      * Absolute row id of the 0-based {@code j}-th value in a per-key delta-FoR blob at
      * {@code encodedOffset}. Every block except the final block has exactly
      * {@link PostingIndexUtils#BLOCK_CAPACITY} values, so fixed geometry locates the owning block
      * without reading preceding block counts. The method validates the variable-size final block,
-     * then accumulates at most one block's deltas, in O(BLOCK_CAPACITY) time.
+     * then accumulates at most one block's deltas, in O(BLOCK_CAPACITY) time. Static because it
+     * reads only the blob it is handed; the ForTesting delegate above relies on that.
      */
-    private long selectFromDeltaBlob(long encodedOffset, long baseAddr, int blockCount, int j) {
+    private static long selectFromDeltaBlob(long encodedOffset, long baseAddr, int blockCount, int j) {
         if (blockCount <= 0 || blockCount > PostingIndexUtils.MAX_BLOCK_COUNT || j < 0) {
             return Numbers.LONG_NULL;
         }

@@ -454,6 +454,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     }
 
     @TestOnly
+    public IntList getEffectiveKeysForTesting() {
+        return effectiveKeys;
+    }
+
+    @TestOnly
     public static void resetTestCounters() {
         testCoveringInvocations.set(0);
         testEstimatorFramesWalked.set(0);

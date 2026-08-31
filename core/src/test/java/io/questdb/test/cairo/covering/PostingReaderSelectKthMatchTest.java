@@ -42,7 +42,6 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
@@ -711,13 +710,8 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                 final int blockCount = Unsafe.getInt(encoded);
                 assertTrue(blockCount > 2);
 
-                final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) Unsafe.getUnsafe()
-                        .allocateInstance(PostingIndexFwdReader.class);
-                final Method select = AbstractPostingIndexReader.class.getDeclaredMethod(
-                        "selectFromDeltaBlob", long.class, long.class, int.class, int.class);
-                select.setAccessible(true);
                 final long expected = Unsafe.getLong(src + (long) (count - 1) * Long.BYTES);
-                assertEquals(expected, ((Number) select.invoke(reader, 0L, encoded, blockCount, count - 1)).longValue());
+                assertEquals(expected, AbstractPostingIndexReader.selectFromDeltaBlobForTesting(0L, encoded, blockCount, count - 1));
 
                 // Every non-final block has fixed capacity. Poisoning an early count byte exposes an
                 // ordinal selector that linearly accumulates preceding counts; a bounded selector derives
@@ -725,7 +719,7 @@ public class PostingReaderSelectKthMatchTest extends AbstractCairoTest {
                 final long firstBlockCountAddress = encoded + Integer.BYTES;
                 final byte firstBlockCount = Unsafe.getByte(firstBlockCountAddress);
                 Unsafe.putByte(firstBlockCountAddress, (byte) (PostingIndexUtils.BLOCK_CAPACITY - 1));
-                assertEquals(expected, ((Number) select.invoke(reader, 0L, encoded, blockCount, count - 1)).longValue());
+                assertEquals(expected, AbstractPostingIndexReader.selectFromDeltaBlobForTesting(0L, encoded, blockCount, count - 1));
                 Unsafe.putByte(firstBlockCountAddress, firstBlockCount);
             } finally {
                 Unsafe.free(encoded, maxEncodedSize, MemoryTag.NATIVE_DEFAULT);

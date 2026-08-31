@@ -76,7 +76,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.lang.reflect.Field;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -2490,14 +2489,7 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     "select sym, v from t where sym not like 'A%' order by sym, v",
                     sqlExecutionContext
             )) {
-                RecordCursorFactory current = factory;
-                while (current != null && !(current instanceof AdaptiveSymbolPatternRecordCursorFactory)) {
-                    current = current.getBaseFactory();
-                }
-                Assert.assertNotNull("expected an adaptive symbol-pattern factory", current);
-                final Field effectiveKeysField = AdaptiveSymbolPatternRecordCursorFactory.class.getDeclaredField("effectiveKeys");
-                effectiveKeysField.setAccessible(true);
-                final IntList effectiveKeys = (IntList) effectiveKeysField.get(current);
+                final IntList effectiveKeys = getAdaptiveEffectiveKeys(factory);
                 final int initialCapacity = effectiveKeys.capacity();
 
                 io.questdb.test.tools.TestUtils.assertEquals(expected, printFactory(factory));
@@ -3785,15 +3777,13 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         return count;
     }
 
-    private static IntList getAdaptiveEffectiveKeys(RecordCursorFactory factory) throws ReflectiveOperationException {
+    private static IntList getAdaptiveEffectiveKeys(RecordCursorFactory factory) {
         RecordCursorFactory current = factory;
         while (current != null && !(current instanceof AdaptiveSymbolPatternRecordCursorFactory)) {
             current = current.getBaseFactory();
         }
         Assert.assertNotNull("expected an adaptive symbol-pattern factory", current);
-        final Field effectiveKeysField = AdaptiveSymbolPatternRecordCursorFactory.class.getDeclaredField("effectiveKeys");
-        effectiveKeysField.setAccessible(true);
-        return (IntList) effectiveKeysField.get(current);
+        return ((AdaptiveSymbolPatternRecordCursorFactory) current).getEffectiveKeysForTesting();
     }
 
     private void assertOverProbeCapDoesNotRetainEffectiveKeys(String predicate) throws Exception {
