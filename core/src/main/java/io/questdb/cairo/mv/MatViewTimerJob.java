@@ -44,6 +44,7 @@ import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.TimeZoneRules;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Comparator;
 import java.util.PriorityQueue;
@@ -56,6 +57,14 @@ import java.util.function.Predicate;
 public class MatViewTimerJob extends SynchronizedJob {
     private static final int INITIAL_QUEUE_CAPACITY = 16;
     private static final Log LOG = LogFactory.getLog(MatViewTimerJob.class);
+    // Consecutive firings a timer may find its view unrefreshed before the job says so. Firings are
+    // one timer interval apart, and the shortest interval a user can set is a minute, so three is
+    // long enough that a single slow refresh does not trip it.
+    private static final int MISSED_FIRINGS_REPORT_THRESHOLD = 3;
+    // A gap this wide between two ticks means the job did not run: a healthy worker sleeps at most
+    // worker.sleep.timeout (10ms by default) between passes. One minute is also the shortest
+    // interval a timer view can carry, so a gap this wide has already cost a scheduled refresh.
+    private static final long TICK_GAP_STALL_THRESHOLD_NANOS = 60_000_000_000L;
     private static final Comparator<RetryEntry> retryComparator = Comparator.comparingLong(RetryEntry::getDeadlineUs);
     private static final Comparator<Timer> timerComparator = Comparator.comparingLong(Timer::getDeadlineMicros);
     private final MicrosecondClock clock;
@@ -74,6 +83,12 @@ public class MatViewTimerJob extends SynchronizedJob {
     private final MatViewTimerTask timerTask = new MatViewTimerTask();
     private final Queue<MatViewTimerTask> timerTaskQueue;
     private String filteredDirName; // temporary value used by filterByDirName
+    // Monotonic timestamp of the previous tick, Numbers.LONG_NULL until the job runs for the first
+    // time. See reportTickGap().
+    private long lastTickNanos = Numbers.LONG_NULL;
+    private int removedTimerCount; // temporary value used by filterByDirName
+    @TestOnly
+    private long tickGapStallThresholdNanos = TICK_GAP_STALL_THRESHOLD_NANOS;
 
     public MatViewTimerJob(CairoEngine engine) {
         this.configuration = engine.getConfiguration();
@@ -82,6 +97,15 @@ public class MatViewTimerJob extends SynchronizedJob {
         this.dependentViewGraph = engine.getDependentViewGraph();
         this.matViewStateStore = engine.getMatViewStateStore();
         this.filterByDirName = this::filterByDirName;
+    }
+
+    /**
+     * Test seam: the stall report measures real elapsed time, which no test can afford to wait a
+     * minute of. Lowering the threshold makes the report reachable; raising it suppresses it.
+     */
+    @TestOnly
+    public void setTickGapStallThresholdForTesting(long thresholdNanos) {
+        this.tickGapStallThresholdNanos = thresholdNanos;
     }
 
     private RetryEntry acquireRetryEntry(TableToken viewToken, long deadlineUs) {
@@ -98,6 +122,22 @@ public class MatViewTimerJob extends SynchronizedJob {
         return entry;
     }
 
+    /**
+     * Publishes a change in the number of timers this job holds for the view onto its
+     * {@link MatViewState}, where {@code materialized_views()} reads it as {@code timers_registered}.
+     * The state is missing for a view that has already been dropped, in which case there is nothing
+     * left to report to.
+     */
+    private void addRegisteredTimers(TableToken viewToken, int delta) {
+        if (delta == 0) {
+            return;
+        }
+        final MatViewState state = matViewStateStore.getViewState(viewToken);
+        if (state != null) {
+            state.addRegisteredTimers(delta);
+        }
+    }
+
     private void addTimers(TableToken viewToken, long nowUs) {
         final MatViewDefinition viewDefinition = dependentViewGraph.getViewDefinition(viewToken);
         if (viewDefinition == null) {
@@ -105,6 +145,10 @@ public class MatViewTimerJob extends SynchronizedJob {
             return;
         }
 
+        // Counts what this registration actually created, so a throw part way through publishes the
+        // partial set rather than the intended one: materialized_views() then shows a timer view
+        // with one timer instead of two, which is the whole point of the column.
+        int created = 0;
         try {
             final int refreshType = viewDefinition.getRefreshType();
             if (refreshType != MatViewDefinition.REFRESH_TYPE_IMMEDIATE) {
@@ -115,6 +159,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                 // values. To throttle refresh intervals caching, we have this special timer.
                 // The end goal of this caching is unblocking WalPurgeJob to delete old WAL segments.
                 createUpdateRefreshIntervalsTimer(viewDefinition, nowUs);
+                created++;
             }
 
             long timerStartUs = viewDefinition.getTimerStartUs();
@@ -123,6 +168,7 @@ public class MatViewTimerJob extends SynchronizedJob {
             if (viewDefinition.getPeriodLength() > 0 && refreshType != MatViewDefinition.REFRESH_TYPE_MANUAL) {
                 // It's a non-manual period mat view, so first add the period timer.
                 createPeriodTimer(viewDefinition, nowUs);
+                created++;
                 // "Normal" timer start is volatile in case of period mat views.
                 timerStartUs = nowUs;
                 timerTzRules = null;
@@ -131,12 +177,22 @@ public class MatViewTimerJob extends SynchronizedJob {
             if (refreshType == MatViewDefinition.REFRESH_TYPE_TIMER) {
                 // The view has timer refresh, so add a "normal" timer for it.
                 createTimer(viewDefinition, timerStartUs, timerTzRules, nowUs);
+                created++;
+            }
+
+            if (created == 0) {
+                // An immediate, non-period view refreshes off base table commits alone, so it owns no
+                // timers. Say so: zero timers is the expected reading here, and the same reading on
+                // any other refresh type means the view is scheduled by nothing.
+                LOG.info().$("materialized view requires no timers [view=").$(viewToken).I$();
             }
         } catch (Throwable th) {
             LOG.error()
                     .$("could not initialize timer for materialized view [view=").$(viewToken)
                     .$(", ex=").$(th)
                     .I$();
+        } finally {
+            addRegisteredTimers(viewToken, created);
         }
     }
 
@@ -232,7 +288,13 @@ public class MatViewTimerJob extends SynchronizedJob {
     }
 
     private boolean filterByDirName(Timer timer) {
-        return filteredDirName != null && filteredDirName.equals(timer.getMatViewToken().getDirName());
+        if (filteredDirName == null || !filteredDirName.equals(timer.getMatViewToken().getDirName())) {
+            return false;
+        }
+        // removeIf() calls this predicate exactly once per timer and removes every one it accepts,
+        // so counting the matches here counts the removals.
+        removedTimerCount++;
+        return true;
     }
 
     private boolean processExpiredTimers(long nowMicros) {
@@ -248,6 +310,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                 if (state != null) {
                     if (state.isDropped()) {
                         expired.remove(expired.size() - 1);
+                        state.addRegisteredTimers(-1);
                         LOG.info().$("unregistered timer for dropped materialized view [view=").$(viewToken)
                                 .$(", type=").$(timer.getType())
                                 .I$();
@@ -260,6 +323,12 @@ public class MatViewTimerJob extends SynchronizedJob {
                                 if (timer.getKnownSeq() != refreshSeq) {
                                     matViewStateStore.enqueueIncrementalRefresh(viewToken);
                                     timer.setKnownSeq(refreshSeq);
+                                    reportFiring(timer, viewToken);
+                                } else {
+                                    // The refresh the previous firing enqueued has not completed yet, so
+                                    // this firing schedules nothing. Steady state for a view whose refreshes
+                                    // cannot keep up with its timer, or whose refresh job is backed up.
+                                    reportMissedFiring(timer, viewToken, "previous refresh has not completed");
                                 }
                                 break;
                             case Timer.PERIOD_REFRESH_TYPE:
@@ -267,6 +336,7 @@ public class MatViewTimerJob extends SynchronizedJob {
                                 final MatViewDefinition viewDefinition = state.getViewDefinition();
                                 final long periodHi = viewDefinition.getBaseTableTimestampDriver().fromMicros(timer.getPeriodHiUs()) - 1;
                                 matViewStateStore.enqueueRangeRefresh(viewToken, Numbers.LONG_NULL, periodHi);
+                                reportFiring(timer, viewToken);
                                 break;
                             case Timer.UPDATE_REFRESH_INTERVALS_TYPE:
                                 // Enqueue refresh intervals update only if the base table had new transactions
@@ -283,6 +353,8 @@ public class MatViewTimerJob extends SynchronizedJob {
                                         .I$();
                                 break;
                         }
+                    } else {
+                        reportMissedFiring(timer, viewToken, state.isInvalid() ? "view is invalid" : "view is pending invalidation");
                     }
                 } else {
                     LOG.info().$("state for materialized view not found [view=").$(viewToken).I$();
@@ -357,6 +429,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     // this having found something is what stranded such a view with no scheduler after an ALTER.
     private void removeTimers(TableToken viewToken) {
         filteredDirName = viewToken.getDirName();
+        removedTimerCount = 0;
         final boolean isRemoved;
         try {
             // Remove all timers for the given view, if any.
@@ -364,10 +437,74 @@ public class MatViewTimerJob extends SynchronizedJob {
         } finally {
             filteredDirName = null;
         }
+        addRegisteredTimers(viewToken, -removedTimerCount);
         if (isRemoved) {
-            LOG.info().$("unregistered timers for materialized view [view=").$(viewToken).I$();
+            LOG.info().$("unregistered timers for materialized view [view=").$(viewToken)
+                    .$(", count=").$(removedTimerCount)
+                    .I$();
         } else {
             LOG.info().$("timers for materialized view not found [view=").$(viewToken).I$();
+        }
+    }
+
+    /**
+     * Reports a timer firing that did schedule work, closing out a stretch of missed firings if the
+     * view was in one. Edge-triggered, like {@link #reportMissedFiring}: one line when the view
+     * falls behind, one when it comes back.
+     */
+    private void reportFiring(Timer timer, TableToken viewToken) {
+        final int missedFirings = timer.resetMissedFirings();
+        if (missedFirings >= MISSED_FIRINGS_REPORT_THRESHOLD) {
+            LOG.info().$("materialized view timer is scheduling refreshes again [view=").$(viewToken)
+                    .$(", type=").$(timer.getType())
+                    .$(", missedFirings=").$(missedFirings)
+                    .I$();
+        }
+    }
+
+    /**
+     * Reports a timer firing that scheduled nothing. Level-triggered logging would repeat every
+     * interval for as long as the view stays invalid or backed up, and say nothing the first line
+     * did not, so this logs once per stretch: when the count reaches the threshold, and never again
+     * until {@link #reportFiring} resets it.
+     */
+    private void reportMissedFiring(Timer timer, TableToken viewToken, String reason) {
+        if (timer.getType() == Timer.UPDATE_REFRESH_INTERVALS_TYPE) {
+            // This timer only caches WAL txn intervals, and skipping it costs base table WAL
+            // retention rather than freshness. Its skip is also the common case: no new base table
+            // transactions since the last caching.
+            return;
+        }
+        if (timer.incrementMissedFirings() == MISSED_FIRINGS_REPORT_THRESHOLD) {
+            LOG.info().$("materialized view has not refreshed across ").$(MISSED_FIRINGS_REPORT_THRESHOLD)
+                    .$(" timer firings [view=").$(viewToken)
+                    .$(", type=").$(timer.getType())
+                    .$(", reason=").$(reason)
+                    .I$();
+        }
+    }
+
+    /**
+     * Reports how long the job went without a tick. A starved job cannot report itself while it is
+     * starved -- it is not running -- but it can report the gap the moment it resumes, and that is
+     * the one in-process signal that tells a starved job apart from an idle one. The job is assigned
+     * behind {@link MatViewRefreshJob} on every worker of the mat view pool, so an unbounded drain
+     * there keeps it from ticking at all, and every timer and period view goes unscheduled for as
+     * long as it lasts.
+     * <p>
+     * Measured with {@link System#nanoTime()} rather than the configured clock: liveness is a
+     * real-time property, and the configured clock is settable, so tests that jump it forward would
+     * otherwise report stalls that never happened.
+     */
+    private void reportTickGap() {
+        final long nowNanos = System.nanoTime();
+        final long prevTickNanos = lastTickNanos;
+        lastTickNanos = nowNanos;
+        if (prevTickNanos != Numbers.LONG_NULL && nowNanos - prevTickNanos > tickGapStallThresholdNanos) {
+            LOG.error().$("materialized view timer job resumed after a long pause, no timers fired meanwhile [pauseMs=")
+                    .$((nowNanos - prevTickNanos) / 1_000_000)
+                    .$(", timers=").$(timerQueue.size())
+                    .I$();
         }
     }
 
@@ -383,6 +520,13 @@ public class MatViewTimerJob extends SynchronizedJob {
                 timer.nextDeadline();
                 timerQueue.add(timer);
             } catch (Throwable th) {
+                // The timer is gone for good, so take it off the view's registered count: a timer view
+                // reporting one timer instead of two is how materialized_views() surfaces this.
+                // Guarded on its own, since this runs on the way out of a failed re-schedule.
+                try {
+                    addRegisteredTimers(timer.getMatViewToken(), -1);
+                } catch (Throwable ignore) {
+                }
                 // processExpiredTimers() calls this method from a finally, so the logging carries its
                 // own swallow: a throw escaping here would replace the in-flight exception AND abandon
                 // every timer this loop has not put back yet -- the batch loss the finally exists to
@@ -419,6 +563,7 @@ public class MatViewTimerJob extends SynchronizedJob {
     @Override
     protected boolean runSerially() {
         boolean ran = false;
+        reportTickGap();
         final long nowUs = clock.getTicks();
         // check created/dropped event queue
         while (timerTaskQueue.tryDequeue(timerTask)) {
@@ -490,6 +635,9 @@ public class MatViewTimerJob extends SynchronizedJob {
         // Holds refresh sequence number for "normal" timers
         // or caching sequence for refresh intervals update timers.
         private long knownSeq = -1;
+        // Consecutive firings that scheduled nothing, e.g. because the view is invalid or its
+        // previous refresh has not completed. Reset by the first firing that does schedule work.
+        private int missedFirings;
 
         public Timer(
                 byte type,
@@ -545,6 +693,16 @@ public class MatViewTimerJob extends SynchronizedJob {
 
         public byte getType() {
             return type;
+        }
+
+        public int incrementMissedFirings() {
+            return ++missedFirings;
+        }
+
+        public int resetMissedFirings() {
+            final int missedFirings = this.missedFirings;
+            this.missedFirings = 0;
+            return missedFirings;
         }
 
         public void setKnownSeq(long knownSeq) {

@@ -78,6 +78,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -8438,6 +8439,53 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerJobStallLogged() throws Exception {
+        // ServerMain assigns MatViewTimerJob behind MatViewRefreshJob on every worker of the mat
+        // view pool, and a Worker runs its jobs in order, so a refresh drain that never returns
+        // keeps the timer job from ticking at all: every timer and period view goes unscheduled
+        // while immediate views stay current. The job cannot report that while it is starved -- it
+        // is not running -- so it reports the gap the moment it resumes, which is what tells a
+        // starved job apart from an idle one.
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2024-12-12T00:00:00.000000Z");
+            execute(
+                    "create materialized view price_1h refresh every 1h as (" +
+                            "select sym, last(price) as price, ts from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            drainQueues();
+
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            capture.start();
+            try {
+                // The first tick has no earlier one to measure against, so it reports nothing. The
+                // gap is real elapsed time, so the threshold, not the clock, is what the test moves.
+                timerJob.setTickGapStallThresholdForTesting(Long.MAX_VALUE);
+                timerJob.run();
+                capture.drain();
+                capture.assertNotLogged("materialized view timer job resumed after a long pause");
+
+                // A tick that lands past the threshold reports the gap, and how many timers went
+                // unfired through it.
+                timerJob.setTickGapStallThresholdForTesting(0);
+                timerJob.run();
+                capture.drain();
+                capture.assertLoggedRE("materialized view timer job resumed after a long pause, "
+                        + "no timers fired meanwhile \\[pauseMs=\\d+, timers=2]");
+            } finally {
+                timerJob.setTickGapStallThresholdForTesting(Long.MAX_VALUE);
+                capture.stop();
+            }
+        });
+    }
+
+    @Test
     public void testTimerMatViewBigJumpsClockAfterTickBoundary() throws Exception {
         testTimerMatViewBigJumps(
                 null,
@@ -8603,6 +8651,16 @@ public class MatViewTest extends AbstractCairoTest {
                                     gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
                                     jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
                                     """));
+
+            // timers_registered counts what the job's heap actually holds, so the timer the finally
+            // put back is still reported: two, not one.
+            assertQuery("select timers_registered from materialized_views() where view_name = 'price_1h'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            timers_registered
+                            2
+                            """);
 
             // Third tick: the timer the failed tick had already polled must still be there, so the
             // view picks up the new row. A dropped timer leaves it stale forever.
@@ -8807,6 +8865,78 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimerMissedFiringsLogged() throws Exception {
+        // A timer firing while the refresh the previous one enqueued has not completed schedules
+        // nothing, and MatViewTimerJob used to say nothing about it: the view simply stopped moving
+        // while materialized_views() kept reporting view_status='valid'. The report is
+        // edge-triggered, one line when the view falls behind and one when it catches up, so a view
+        // that stays behind for a week does not repeat the same line every interval.
+        //
+        // Keep the refresh intervals update timer out of the way; only the incremental refresh timer
+        // counts missed firings.
+        setProperty(PropertyKey.CAIRO_MAT_VIEW_REFRESH_INTERVALS_UPDATE_PERIOD, "1h");
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+
+            final String start = "2024-12-12T00:00:00.000000Z";
+            currentMicros = parseFloorPartialTimestamp(start);
+            execute(
+                    "create materialized view price_1h refresh every 1m deferred start '" + start + "' as (" +
+                            "select sym, last(price) as price, ts from base_price sample by 1h" +
+                            ") partition by day"
+            );
+            execute("insert into base_price(sym, price, ts) values('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            capture.start();
+            try {
+                // The first firing enqueues a refresh. drainQueues() deliberately does not follow, so
+                // nothing runs that refresh and the view's refresh sequence never advances -- the
+                // same standstill a backed-up refresh queue produces.
+                drainMatViewTimerQueue(timerJob);
+                for (int i = 0; i < 3; i++) {
+                    currentMicros += Micros.MINUTE_MICROS;
+                    drainMatViewTimerQueue(timerJob);
+                }
+                capture.drain();
+                capture.assertOnlyOnce("materialized view has not refreshed across 3 timer firings");
+                capture.assertNotLogged("materialized view timer is scheduling refreshes again");
+
+                // A fourth missed firing must not repeat the line.
+                currentMicros += Micros.MINUTE_MICROS;
+                drainMatViewTimerQueue(timerJob);
+                capture.drain();
+                capture.assertOnlyOnce("materialized view has not refreshed across 3 timer firings");
+
+                // The backlog clears, so the next firing schedules a refresh again and says so.
+                drainQueues();
+                currentMicros += Micros.MINUTE_MICROS;
+                drainMatViewTimerQueue(timerJob);
+                capture.drain();
+                capture.assertOnlyOnce("materialized view timer is scheduling refreshes again");
+            } finally {
+                capture.stop();
+            }
+
+            drainQueues();
+            assertQuery("price_1h")
+                    .timestamp("ts")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:00:00.000000Z
+                            """));
+        });
+    }
+
+    @Test
     public void testTimerPeriodMatView() throws Exception {
         testPeriodRefresh("every 1h deferred", null, true);
     }
@@ -8834,6 +8964,141 @@ public class MatViewTest extends AbstractCairoTest {
     @Test
     public void testTimerPeriodWithTzMatViewIncrementalRefresh() throws Exception {
         testPeriodWithTzRefresh("every 1h deferred", "incremental", true);
+    }
+
+    @Test
+    public void testTimersRegistered() throws Exception {
+        // Timers live only in MatViewTimerJob's in-memory heap, so timers_registered is the only
+        // surface that shows whether anything schedules a view at all. Zero is expected for an
+        // immediate, non-period view, which base table commits drive on their own; zero for any
+        // other refresh type means nothing schedules the view, while view_status keeps reporting
+        // 'valid' and every other column keeps describing the timer settings the view is not using.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            final String viewSql = " as select sym, last(price) as price, ts from base_price sample by 1h";
+            execute("create materialized view price_immediate refresh immediate" + viewSql);
+            execute("create materialized view price_manual refresh manual" + viewSql);
+            execute("create materialized view price_period refresh immediate period (length 1d)" + viewSql);
+            execute("create materialized view price_timer refresh every 1h" + viewSql);
+            execute("create materialized view price_timer_period refresh every 1h deferred period (length 1d)" + viewSql);
+            drainQueues();
+
+            final String timersSql = "select view_name, refresh_type, view_status, timers_registered " +
+                    "from materialized_views() order by view_name";
+
+            // drainQueues() never runs MatViewTimerJob, so it holds nothing yet and every view,
+            // including the four that cannot refresh without a timer, reports zero.
+            assertQuery(timersSql)
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\trefresh_type\tview_status\ttimers_registered
+                            price_immediate\timmediate\tvalid\t0
+                            price_manual\tmanual\tvalid\t0
+                            price_period\timmediate\tvalid\t0
+                            price_timer\ttimer\tvalid\t0
+                            price_timer_period\ttimer\tvalid\t0
+                            """);
+
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // One refresh intervals update timer per non-immediate view, one period timer per
+            // non-manual period view, and one incremental refresh timer per timer view.
+            assertQuery(timersSql)
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\trefresh_type\tview_status\ttimers_registered
+                            price_immediate\timmediate\tvalid\t0
+                            price_manual\tmanual\tvalid\t1
+                            price_period\timmediate\tvalid\t1
+                            price_timer\ttimer\tvalid\t2
+                            price_timer_period\ttimer\tvalid\t3
+                            """);
+
+            // Dropping a view unregisters its timers, and the remaining views keep theirs.
+            execute("drop materialized view price_timer_period");
+            drainQueues();
+            drainMatViewTimerQueue(timerJob);
+
+            assertQuery(timersSql)
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\trefresh_type\tview_status\ttimers_registered
+                            price_immediate\timmediate\tvalid\t0
+                            price_manual\tmanual\tvalid\t1
+                            price_period\timmediate\tvalid\t1
+                            price_timer\ttimer\tvalid\t2
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimersRegisteredAfterAlterRefresh() throws Exception {
+        // ALTER ... SET REFRESH is the only thing that registers timers for a view that had none,
+        // and the only thing that removes them again. timers_registered is what makes either
+        // outcome visible: the stranded view this test's siblings cover reported
+        // refresh_type='timer' and view_status='valid' with nothing scheduling it.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute(
+                    "create materialized view price_1h refresh immediate as " +
+                            "select sym, last(price) as price, ts from base_price sample by 1h"
+            );
+
+            currentMicros = parseFloorPartialTimestamp("2000-01-01T00:00:00.000000Z");
+            final MatViewTimerJob timerJob = new MatViewTimerJob(engine);
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            final String timersSql = "select view_name, refresh_type, view_status, timers_registered " +
+                    "from materialized_views()";
+
+            assertQuery(timersSql)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\trefresh_type\tview_status\ttimers_registered
+                            price_1h\timmediate\tvalid\t0
+                            """);
+
+            execute("alter materialized view price_1h set refresh every 1h;");
+            drainQueues();
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // The refresh intervals update timer and the incremental refresh timer.
+            assertQuery(timersSql)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\trefresh_type\tview_status\ttimers_registered
+                            price_1h\ttimer\tvalid\t2
+                            """);
+
+            execute("alter materialized view price_1h set refresh immediate;");
+            drainQueues();
+            drainMatViewTimerQueue(timerJob);
+            drainQueues();
+
+            // Back to base table commits driving the view, so the job holds nothing for it again.
+            assertQuery(timersSql)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\trefresh_type\tview_status\ttimers_registered
+                            price_1h\timmediate\tvalid\t0
+                            """);
+        });
     }
 
     @Test
