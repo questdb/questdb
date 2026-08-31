@@ -35,6 +35,7 @@ import io.questdb.griffin.engine.groupby.TimestampSampler;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.log.LogRecord;
 import io.questdb.mp.Queue;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.Numbers;
@@ -299,28 +300,6 @@ public class MatViewTimerJob extends SynchronizedJob {
     }
 
     /**
-     * Puts every timer the current tick polled out of {@link #timerQueue} back, advanced to its next
-     * deadline. Each timer is re-added under its own try/catch so that one failing to compute a next
-     * deadline costs only that timer rather than every timer left in the batch.
-     */
-    private void rescheduleExpiredTimers() {
-        for (int i = 0, n = expired.size(); i < n; i++) {
-            final Timer timer = expired.getQuick(i);
-            try {
-                timer.nextDeadline();
-                timerQueue.add(timer);
-            } catch (Throwable th) {
-                LOG.error()
-                        .$("could not re-schedule timer for materialized view [view=").$(timer.getMatViewToken())
-                        .$(", type=").$(timer.getType())
-                        .$(", ex=").$(th)
-                        .I$();
-            }
-        }
-        expired.clear();
-    }
-
-    /**
      * Re-drives materialized views whose incremental refresh was deferred after a transient "table
      * busy" error (see {@link MatViewRefreshJob}). Once the per-view backoff deadline elapses, an
      * incremental refresh is enqueued instead of the view being invalidated. This is the only path
@@ -390,6 +369,51 @@ public class MatViewTimerJob extends SynchronizedJob {
         } else {
             LOG.info().$("timers for materialized view not found [view=").$(viewToken).I$();
         }
+    }
+
+    /**
+     * Puts every timer the current tick polled out of {@link #timerQueue} back, advanced to its next
+     * deadline. Each timer is re-added under its own try/catch so that one failing to compute a next
+     * deadline costs only that timer rather than every timer left in the batch.
+     */
+    private void rescheduleExpiredTimers() {
+        for (int i = 0, n = expired.size(); i < n; i++) {
+            final Timer timer = expired.getQuick(i);
+            try {
+                timer.nextDeadline();
+                timerQueue.add(timer);
+            } catch (Throwable th) {
+                // processExpiredTimers() calls this method from a finally, so the logging carries its
+                // own swallow: a throw escaping here would replace the in-flight exception AND abandon
+                // every timer this loop has not put back yet -- the batch loss the finally exists to
+                // prevent. AsyncLogRecord.$(Throwable) releases the log ring slot and RETHROWS when
+                // formatting `th` fails, which an OutOfMemoryError can do in exactly the OOM case this
+                // catch exists for. In this chain $(Sinkable) (the TableToken) and $(Throwable)
+                // self-release the slot; $(CharSequence) and $(int) do not -- getType() returns byte,
+                // which widens to int -- so the trailing rec.I$() returns it if one of THOSE throws,
+                // and I$() no-ops unless a record is in progress, so it cannot double-release.
+                // PostingIndexWriter.close() documents this pattern at length.
+                // error(), not critical(): critical() routes through Sequence.nextBully(), which spins
+                // until a ring slot frees. ServerMain.setupMatViewJobs assigns this job to the dedicated
+                // mat view pool that also runs MatViewRefreshJob, so under the saturated log an OOM
+                // produces, critical() would park that pool, refreshes included, rather than drop a
+                // line. A lost timer stalls one view's refresh until restart or an ALTER; it corrupts
+                // nothing, and materialized_views() keeps reporting view_status='valid', with only the
+                // last_refresh timestamps standing still.
+                try {
+                    LogRecord rec = LOG.error();
+                    try {
+                        rec.$("could not re-schedule timer for materialized view [view=").$(timer.getMatViewToken())
+                                .$(", type=").$(timer.getType())
+                                .$(", ex=").$(th);
+                    } catch (Throwable ignore) {
+                    }
+                    rec.I$();
+                } catch (Throwable ignore) {
+                }
+            }
+        }
+        expired.clear();
     }
 
     @Override
