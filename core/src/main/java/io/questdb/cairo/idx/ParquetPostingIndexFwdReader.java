@@ -47,6 +47,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
     /** Diagnostic only: questdb.idx.packed.noseq=true withholds the closed-form
      *  arithmetic path, to attribute a scan cost to it rather than assume it. */
     private static final boolean NO_SEQ = Boolean.getBoolean("questdb.idx.packed.noseq");
+    /** questdb.idx.packed.fastrun=false withholds the armed fast path, to measure it. */
+    private static final boolean FAST_RUN = !"false".equals(System.getProperty("questdb.idx.packed.fastrun"));
     private static final int WHOLE_GROUP_KEY_THRESHOLD = 8;
     /**
      * Every pooled cursor this reader has handed out, free or checked out, so
@@ -203,6 +205,26 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
         /** Whether {@link #rg}'s row ids are laid out flat, resolved once per bind. */
         private boolean flatGroup;
         private boolean seqMode;
+        /**
+         * The whole remaining run is a progression that needs no per-row
+         * decision: it is generated, the window already contains it, no cover
+         * ordinal has to be published and the null prefix is spent. Armed once
+         * per batch so the emit path is a counter, a generate and a store --
+         * the shape the native chain's constant-delta path uses.
+         * <p>
+         * Measured: a scan of 2,000 keys over 2,000,000 postings is 97% per-row
+         * cost (2.40ns a row against the native chain's 0.71), with the per-key
+         * bind at 1.2% and the reader open at 1.5%. Shaving one field access at
+         * a time off the old guard measured flat three times; the guard itself
+         * is what has to go.
+         */
+        private boolean fastRun;
+        /** {@link #seqStart} advanced per row: no multiply, no index arithmetic. */
+        private long seqValue;
+        /** {@code nullPos >= nullCount}, which is monotonic, as one field not two. */
+        private boolean prefixDone;
+        /** Whether any cover slot was asked for; when false emittedRow stays -1. */
+        private boolean coversRequested;
         private long seqStart;
         private long seqStride;
         private long rowLo;
@@ -269,13 +291,26 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             // testing the null prefix -- though all three only change at a
             // group boundary. A scan profile put this method at 23%, so what it
             // repeats per row is most of what a scan costs.
-            if (decodedGroup && nullPos >= nullCount && rowInGroup < groupRows) {
+            if (fastRun && rowInGroup < groupRows) {
+                rowInGroup++;
+                next = seqValue;
+                seqValue += seqStride;
+                hasNext = true;
+                return true;
+            }
+            if (decodedGroup && prefixDone && rowInGroup < groupRows) {
                 final long i = rowInGroup++;
-                final long rowId = seqMode
-                        ? seqStart + (coverOrdinalBase + i - packedKeyStart) * seqStride
-                        : Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                final long rowId;
+                if (seqMode) {
+                    rowId = seqValue;
+                    seqValue += seqStride;
+                } else {
+                    rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                }
                 if (windowNarrowed || (rowId >= minValue && rowId <= maxValue)) {
-                    setEmittedRow(coverOrdinalBase + i);
+                    if (coversRequested) {
+                        setEmittedRow(coverOrdinalBase + i);
+                    }
                     next = rowId;
                     hasNext = true;
                     return true;
@@ -293,6 +328,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 // the rows a scan produces, and would trip the covered
                 // re-decode row count check outright.
                 next = nullPos++;
+                prefixDone = nullPos >= nullCount;
                 // No decoded group backs a prefix row, so no covered value can
                 // be served for it. -1 makes isCoveredAvailable false and the
                 // accessors throw, rather than handing back whatever row the
@@ -307,9 +343,13 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 }
                 while (rowInGroup < groupRows) {
                     final long i = rowInGroup++;
-                    final long rowId = seqMode
-                        ? seqStart + (coverOrdinalBase + i - packedKeyStart) * seqStride
-                        : Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                    final long rowId;
+                    if (seqMode) {
+                        rowId = seqValue;
+                        seqValue += seqStride;
+                    } else {
+                        rowId = Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                    }
                     // seekFirstAtLeast/seekFirstAbove cut the range to exactly
                     // the rows inside the window, so when they ran every row
                     // left is emitted and the bounds test below is a tautology.
@@ -318,7 +358,9 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                     if (!windowNarrowed && (rowId < minValue || rowId > maxValue)) {
                         continue;
                     }
-                    setEmittedRow(coverOrdinalBase + i);
+                    if (coversRequested) {
+                        setEmittedRow(coverOrdinalBase + i);
+                    }
                     next = rowId;
                     hasNext = true;
                     return true;
@@ -370,6 +412,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             // packedNext is KEY-RELATIVE; emittedRow must stay a GROUP ordinal
             // so coveredIndex() can turn it back into a key-relative index.
             coverOrdinalBase = packedKeyStart + packedNext;
+            // Before packedNext advances and rowInGroup restarts at 0.
+            seqValue = seqStart + packedNext * seqStride;
             packedRowGroup = rg;
             packedKey = key;
             packedNext += batch;
@@ -378,6 +422,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             packedBatch = Math.min(packedBatch << 1, PACKED_WIDEN_BATCH);
             rowInGroup = 0;
             groupRows = batch;
+            fastRun = FAST_RUN && seqMode && windowNarrowed && prefixDone && !coversRequested;
             return true;
         }
 
@@ -676,6 +721,8 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
 
         void of(int key, long minValue, long maxValue, int[] requiredCoverColumns) {
             this.requiredCoverColumns = requiredCoverColumns;
+            this.coversRequested = requiredCoverColumns != null && requiredCoverColumns.length > 0;
+            this.fastRun = false;
             this.key = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
@@ -699,6 +746,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 this.nullCount = 0;
                 this.nullPos = 0;
             }
+            this.prefixDone = this.nullPos >= this.nullCount;
 
             final long range = rowGroupRangeForKey(key);
             if (range == IndexMetaFileReader.KEY_ABSENT) {
