@@ -1768,12 +1768,12 @@ public class SqlOptimiser implements Mutable {
                             final int targetExecPos = nullingExecPosByModel.getQuick(jc.slaveIndex);
                             if (boundaryExecPos < 0) {
                                 isTransitiveFilterSafe = true;
-                            } else if (targetExecPos < boundaryExecPos
-                                    && provenance != 0
-                                    && nullingExecPosByModel.getQuick(provenance) < boundaryExecPos) {
-                                isTransitiveFilterSafe = true;
+                            } else if (targetExecPos < boundaryExecPos) {
+                                isTransitiveFilterSafe = joinOps.get(token) != JOIN_OP_EQUAL
+                                        || (provenance != 0 && nullingExecPosByModel.getQuick(provenance) < boundaryExecPos)
+                                        || isNullRejectingJoinConstant(joinModels, sourceIndex, name, constNode, sqlExecutionContext);
                             } else {
-                                isTransitiveFilterSafe = (targetExecPos < boundaryExecPos || provenance == 0)
+                                isTransitiveFilterSafe = provenance == 0
                                         && (joinOps.get(token) != JOIN_OP_EQUAL
                                         || isNullRejectingJoinConstant(joinModels, sourceIndex, name, constNode, sqlExecutionContext));
                             }
@@ -5623,7 +5623,7 @@ public class SqlOptimiser implements Mutable {
             nullRecord = NullRecordFactory.getInstance(metadata);
             function = functionParser.parseFunction(equalityNode, metadata, sqlExecutionContext);
             return function != null && !function.getBool(nullRecord);
-        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException ignored) {
+        } catch (Throwable ignored) {
             return false;
         } finally {
             Misc.free(function);
