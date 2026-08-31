@@ -137,7 +137,6 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
      */
     private class BwdCursor extends AbstractCoveringCursor {
         private long groupRows;
-        private boolean hasNext;
         private int key;
         private boolean decodedGroup;
         private long maxValue;
@@ -221,14 +220,16 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             rowIdPtr = 0;
             rowFloor = 0;
             windowNarrowed = false;
-            hasNext = false;
         }
 
         @Override
+        /**
+         * ADVANCES, like the forward reader's and like the native chain's. See
+         * {@link ParquetPostingIndexFwdReader}: the idempotence flag this used
+         * to carry put a store in {@code next()} and a load at the top of here,
+         * serialising the caller's loop on a store-to-load dependency every row.
+         */
         public boolean hasNext() {
-            if (hasNext) {
-                return true;
-            }
             while (rg >= rgLo) {
                 if (!decodedGroup && !decodeCurrentGroup()) {
                     // Out of groups, NOT out of answers: the implicit-null
@@ -248,7 +249,6 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                     }
                     setEmittedRow(coverOrdinalBase + i);
                     next = rowId;
-                    hasNext = true;
                     return true;
                 }
                 if (packedPayload && refillPackedBatch()) {
@@ -268,7 +268,6 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
                 next = --nullPos;
                 // No decoded group backs a prefix row.
                 setEmittedRow(-1);
-                hasNext = true;
                 return true;
             }
             return false;
@@ -329,7 +328,6 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
          */
         @Override
         public long next() {
-            hasNext = false;
             return next - minValue;
         }
 
@@ -567,7 +565,6 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
             this.key = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
-            this.hasNext = false;
             this.next = -1;
             this.decodedGroup = false;
             this.rowIdPtr = 0;

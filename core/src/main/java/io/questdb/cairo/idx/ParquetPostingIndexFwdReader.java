@@ -166,7 +166,6 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
      */
     private class FwdCursor extends AbstractCoveringCursor {
         private long groupRows;
-        private boolean hasNext;
         private int key;
         private boolean decodedGroup;
         /** True while {@link #rowIdPtr} addresses the mapping, not a decode buffer. */
@@ -277,14 +276,24 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             packedNext = 0;
             packedEnd = 0;
             coverOrdinalBase = 0;
-            hasNext = false;
         }
 
+        /**
+         * ADVANCES. Calling this twice without an intervening {@link #next()}
+         * consumes two rows, which is the contract the native chain's cursor
+         * already defines -- its constant-delta path decrements and advances
+         * here too.
+         * <p>
+         * This used to be idempotent, guarded by a {@code hasNext} field that
+         * {@link #next()} cleared. That store and the load at the top of this
+         * method sat on either side of the caller's loop, so the two calls
+         * serialised against each other on a store-to-load dependency every
+         * row: async-profiler put 19% of a 2,000-key scan inside {@code next()},
+         * a method whose only other statement is a subtraction, while the
+         * native cursor's equivalent did not appear in its profile at all.
+         */
         @Override
         public boolean hasNext() {
-            if (hasNext) {
-                return true;
-            }
             // Fast path, and it is the overwhelmingly common one: another row
             // of a group already decoded. The loop below re-establishes the
             // group on every call -- entering the while, testing decodedGroup,
@@ -295,7 +304,6 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 rowInGroup++;
                 next = seqValue;
                 seqValue += seqStride;
-                hasNext = true;
                 return true;
             }
             if (decodedGroup && prefixDone && rowInGroup < groupRows) {
@@ -312,8 +320,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                         setEmittedRow(coverOrdinalBase + i);
                     }
                     next = rowId;
-                    hasNext = true;
-                    return true;
+                        return true;
                 }
                 // Rejected by the window. rowInGroup has moved on, so the loop
                 // below simply resumes from it.
@@ -334,7 +341,6 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                 // accessors throw, rather than handing back whatever row the
                 // last decode left addressed.
                 setEmittedRow(-1);
-                hasNext = true;
                 return true;
             }
             while (rg <= rgHi) {
@@ -362,8 +368,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
                         setEmittedRow(coverOrdinalBase + i);
                     }
                     next = rowId;
-                    hasNext = true;
-                    return true;
+                        return true;
                 }
                 if (packedPayload && refillPackedBatch()) {
                     // More of this key's run left to widen. Not a new group.
@@ -437,7 +442,6 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
          */
         @Override
         public long next() {
-            hasNext = false;
             return next - minValue;
         }
 
@@ -726,7 +730,6 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             this.key = key;
             this.minValue = minValue;
             this.maxValue = maxValue;
-            this.hasNext = false;
             this.next = -1;
             this.decodedGroup = false;
             this.rowIdPtr = 0;
