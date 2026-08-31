@@ -45,6 +45,9 @@ import org.junit.Test;
  * an ordinary checkpoint resume and the cold keyed bootstrap, including sparse fallback.
  */
 public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
+    // account_id's position in the view's base page-frame scan, which is the index both
+    // index checks of a cold keyed repair are asked about.
+    private static final int BASE_KEY_COLUMN_INDEX = 1;
     // How many extra rows of one account a hot hour of openTheDayAboveARoot carries.
     // Enough that the account's postings over the partition the replay starts inside
     // outrun what the whole-range estimate counts of that partition, which is the slice
@@ -106,6 +109,88 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testAnAnchorResumeWhoseReplayCleanupFaultsReleasesItsRepairSession() throws Exception {
+        // The anchor resume runs the same shape as the head-miss executor: a cleanup chain that
+        // frees native memory and closes files, with the repair session released on its last
+        // statement. A throw from any statement ahead of that release used to skip it - and this
+        // executor NEVER parks, so no instance is holding the session and handleRefreshFailure's
+        // discardSuspendedRepair has nothing to find. The session, its descriptor mapping and its
+        // Paths were then lost for the life of the process, whatever the view did afterwards.
+        //
+        // The checkpoint chain is declined, which leaves the resume holding a session and no staged
+        // capture. Without that the capture would leak on this path too - the publication tail that
+        // owns it is exactly what the throw skips - and the oracle could not tell the two apart.
+        //
+        // The throw is injected; there is no reproducible natural producer for it. What the case
+        // pins is the ordering, which holds for any throwable the cleanup raises.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+
+                // The resume's own replay cleanup is the next chain this worker runs.
+                job.setSimulateRepairCleanupFaultForTest(0);
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                Assert.assertFalse(
+                        "the injected cleanup fault never fired, so the resume's cleanup never ran"
+                                + " and the case pinned nothing",
+                        job.isRepairCleanupFaultArmedForTest()
+                );
+                Assert.assertEquals(
+                        "the injected cleanup fault must cost exactly one refresh fault",
+                        1L,
+                        viewInstance().getRefreshFaultCount()
+                );
+                // The fault is recoverable and the recompute behind it is what recovers it.
+                assertViewMatchesRecomputeIgnoringFaults();
+            }
+            // assertMemoryLeak is the oracle for the session itself: one nothing released leaves its
+            // descriptor's Paths and its scratch overlay allocated, which no assertion above sees.
+        });
+    }
+
+    @Test
+    public void testAnAnchorResumeWhoseTailCleanupFaultsReleasesItsRepairSession() throws Exception {
+        // The second of the anchor resume's two cleanup chains: the publication tail frees the
+        // staged capture and then ends the repair, and a throw from the free used to take the
+        // release with it. Same executor, same unrecoverable session, one statement further on.
+        //
+        // Same fixture as the replay-cleanup case, with the fault armed one chain later so it lands
+        // on the tail rather than on the replay cleanup ahead of it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+
+                // Let the resume's replay cleanup through, and fault the tail behind it.
+                job.setSimulateRepairCleanupFaultForTest(1);
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                Assert.assertFalse(
+                        "the injected cleanup fault never fired, so the resume's publication tail"
+                                + " never ran and the case pinned nothing",
+                        job.isRepairCleanupFaultArmedForTest()
+                );
+                Assert.assertEquals(
+                        "the injected cleanup fault must cost exactly one refresh fault",
+                        1L,
+                        viewInstance().getRefreshFaultCount()
+                );
+                assertViewMatchesRecomputeIgnoringFaults();
+            }
+        });
+    }
+
     /**
      * A cold keyed head miss opens the view's own stored-row cursor in the executor's
      * prologue, some three hundred lines above the {@code try} whose {@code finally}
@@ -163,6 +248,72 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAColdKeyedHeadMissWhosePrologueCleanupFaultsReleasesItsRepairSession() throws Exception {
+        // The head-miss executor's third cleanup chain, and the only one that runs when the replay
+        // never started: the prologue's own finally, gated on replayEntered. It closes the stored-row
+        // cursor's pooled reader, drops the keyed merge state and frees the staged capture before it
+        // ends the repair, and a throw from any of those used to take the release with it.
+        //
+        // Nothing else would then free the session. The park that attaches a session to its instance
+        // lives inside the replay this arm proves never started, so handleRefreshFailure's
+        // discardSuspendedRepair finds nothing, and the descriptor mapping and the three Paths the
+        // session holds are lost for the life of the process.
+        //
+        // The prologue fault is the natural one this suite already drives - the row-position rebase
+        // raising over the pinned generation's checkpoint metadata - so the arm is reached for real.
+        // The second fault, on the cleanup chain itself, is injected: no reproducible natural
+        // producer was found for it. What the case pins is the ordering, which holds for any
+        // throwable the three statements ahead of the release raise.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+
+                // The prologue throws, and the chain its unwind runs is the next one this worker
+                // reaches - so the cleanup fault lands on that chain rather than on a replay's.
+                job.setSimulateColdKeyedTimelineFaultForTest(true);
+                job.setSimulateRepairCleanupFaultForTest(0);
+                commit(row(3, 2, 35, "acct-1"), job);
+
+                Assert.assertFalse(
+                        "the injected cleanup fault never fired, so the prologue's unwind never"
+                                + " reached the cleanup and the case pinned nothing",
+                        job.isRepairCleanupFaultArmedForTest()
+                );
+                Assert.assertNull(
+                        "a repair whose prologue faulted must leave nothing parked on the view",
+                        instance.getSuspendedRepair()
+                );
+                Assert.assertEquals(
+                        "the injected faults must cost exactly one refresh fault between them",
+                        1,
+                        instance.getRefreshFaultCount()
+                );
+                Assert.assertEquals(
+                        "the cleanup ahead of the release must still return the stored-row cursor's"
+                                + " pooled reader",
+                        0,
+                        engine.getBusyReaderCount()
+                );
+
+                // Both faults are one-shot, so the retry behind them repairs the view for real.
+                assertViewMatchesRecomputeIgnoringFaults();
+                Assert.assertEquals(
+                        "the retry must leave no reader behind either",
+                        0,
+                        engine.getBusyReaderCount()
+                );
+            }
+            // assertMemoryLeak is the oracle for the session itself: one nothing released leaves its
+            // descriptor's Paths allocated, which no assertion above can see.
+        });
+    }
+
+    @Test
     public void testAColdKeyedSpliceSurvivesARestart() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
@@ -181,6 +332,161 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 Assert.assertTrue(viewInstance().isCheckpointRestoreSucceeded());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    /**
+     * A cold keyed repair replays beside the primary runtime, so the primary keeps stale
+     * accumulators for exactly the keys the correction touched until
+     * {@code transplantKeyedRepairState} hands the corrected ones back. That transplant is
+     * gated on the cold keyed route, and the route is decided only on a turn that starts a
+     * repair - a resumed turn recomputes it as false. So a cold keyed repair that parked
+     * would resume, publish, reset the isolated runtime and leave the primary folding
+     * later rows onto the stale accumulators, with nothing marking the state dirty.
+     * <p>
+     * What refuses it is the yield gate, which names both routes: a repair on the keyed
+     * route or the cold one runs to its end on one turn whatever the replay budget says.
+     * This pins that, budget and consequence together - a one-row replay budget, which
+     * parks any repair that may park at all, and a forward commit on the corrected key
+     * afterwards, whose output is wrong the moment the primary is standing on accumulators
+     * the transplant did not reach.
+     * <p>
+     * This case holds both routes at once, so it pins the gate as a whole rather than
+     * either conjunct on its own: removing one of the two still leaves it green.
+     * {@link #testAColdKeyedHeadMissNeverParksAfterTheBaseIndexIsDropped()} is the case
+     * that separates them - there the repair loses the keyed route and keeps the cold
+     * one, which only the {@code !coldKeyedRoute} conjunct refuses.
+     */
+    @Test
+    public void testAColdKeyedHeadMissNeverParksOnItsReplayBudget() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                final long resumesBefore = instance.getCheckpointRepairResumes();
+
+                commit(row(3, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(
+                        "a cold keyed repair must finish on the turn that started it: a resumed"
+                                + " turn recomputes the route as false and never transplants",
+                        resumesBefore,
+                        instance.getCheckpointRepairResumes()
+                );
+                Assert.assertTrue(
+                        "the repair must have handed its keys back",
+                        job.transplantedKeyCountForTest() > 0
+                );
+                assertViewMatchesRecompute();
+
+                // In order, above everything the view holds, so this is the plain forward
+                // drain folding onto whatever accumulators the repair left the primary
+                // standing on. A key the correction touched carries a wrong cumulative sum
+                // from here on if those are the stale ones.
+                commit(row(3, 10, 0, "acct-1") + ", " + row(3, 10, 30, "acct-2"), job);
+
+                Assert.assertEquals(
+                        "a forward commit repairs nothing, so the state it folds onto is the"
+                                + " state the cold keyed repair left behind",
+                        resumesBefore,
+                        instance.getCheckpointRepairResumes()
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    /**
+     * The same invariant as above, reached through the one state that clears
+     * {@code keyedRoute} while the cold route stands: the replay's own factory declines the
+     * indexed substitution.
+     * <p>
+     * The two index checks a cold repair makes interrogate two separately compiled factories.
+     * The route's own gate asks the PRIMARY plan, and the replay asks the isolated repair
+     * runtime's plan - a second compile of the same SELECT, built lazily on the turn that
+     * needs it. {@code ALTER TABLE ... DROP INDEX} between the two compiles diverges them:
+     * it is not a live view invalidation, and the forward drain reads WAL segments rather
+     * than the base scan, so nothing recompiles the primary and it keeps answering "indexed"
+     * off metadata it captured before the drop. The replay's fresh compile answers "not
+     * indexed", declines the substitution and clears {@code keyedRoute} - and the cold route
+     * stays armed, because clearing one does not clear the other.
+     * <p>
+     * A repair standing there must still finish on the turn that started it. The route is
+     * decided only under {@code resumed == null}, so a resumed turn recomputes it as false
+     * and then skips the arithmetic boundary positions, the inserted-row delta and
+     * {@code transplantKeyedRepairState}, resets the isolated runtime the replay folded into
+     * and leaves the primary drained over the stale accumulators of exactly the keys the
+     * correction touched.
+     * <p>
+     * The pricing declines here too - it opens a real index reader on the pinned base reader
+     * - so the route is forced, which leaves the compile divergence, not the price, as the
+     * thing this drives.
+     */
+    @Test
+    public void testAColdKeyedHeadMissNeverParksAfterTheBaseIndexIsDropped() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+
+                execute("ALTER TABLE tx ALTER COLUMN account_id DROP INDEX");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue(
+                        "the primary plan must still carry the pre-drop compile, or the two"
+                                + " compiles cannot diverge and this test proves nothing",
+                        instance.getCompiledPlan().getPageFrameFactory()
+                                .isIndexedForwardTimestampRangeSupported(BASE_KEY_COLUMN_INDEX)
+                );
+
+                job.setForceOpenSegmentKeyedReplayForTest(true);
+                final long resumesBefore = instance.getCheckpointRepairResumes();
+
+                commit(row(3, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals(
+                        "a cold keyed repair must finish on the turn that started it: a resumed"
+                                + " turn recomputes the route as false and never transplants",
+                        resumesBefore,
+                        instance.getCheckpointRepairResumes()
+                );
+                Assert.assertTrue(
+                        "the cold keyed route must have been taken, or this drives nothing:"
+                                + " the transplant is gated on it",
+                        job.transplantedKeyCountForTest() > 0
+                );
+                Assert.assertEquals(
+                        "the replay must have declined the indexed substitution, which is what"
+                                + " leaves the cold route standing with the keyed one cleared",
+                        0,
+                        job.openSegmentColdKeyedReplayCountForTest()
+                );
+                assertViewMatchesRecompute();
+
+                // In order, above everything the view holds, so this is the plain forward
+                // drain folding onto whatever accumulators the repair left the primary
+                // standing on.
+                commit(row(3, 10, 0, "acct-1") + ", " + row(3, 10, 30, "acct-2"), job);
+
+                Assert.assertEquals(
+                        "a forward commit repairs nothing, so the state it folds onto is the"
+                                + " state the cold keyed repair left behind",
+                        resumesBefore,
+                        instance.getCheckpointRepairResumes()
+                );
                 assertViewMatchesRecompute();
             }
         });

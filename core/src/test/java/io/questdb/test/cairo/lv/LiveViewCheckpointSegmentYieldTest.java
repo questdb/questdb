@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -36,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -97,6 +99,318 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     // The one key the injected set carries into the resumed turn, so the park that follows
     // it has a key to copy back and therefore an add() to fail on.
     private static final int SEEDED_GROUP_KEY = 7;
+
+    @Test
+    public void testACloseWhoseWriterFreeThrowsStillReleasesEverythingBelowIt() throws Exception {
+        // close() is the last chance every resource a parked repair holds ever gets. Each of its
+        // callers has already detached the session by the time the free runs - endRepairSession
+        // clears instance.suspendedRepair first, and discardSuspendedRepair nulls the field before
+        // it frees - so a handle the chain skips is held by nothing in the process and comes back
+        // only on a restart.
+        //
+        // The chain's throw-prone statements sit at its head and everything that releases memory
+        // sits below them: the pinned base snapshot, the descriptor's three Paths and its mapping,
+        // the overlay's window-state copy and the carryover's buffers. Closing the live-view
+        // WalWriter is the head statement, and it is not a no-op on the paths that reach here with
+        // a parked session - handleRefreshFailure, a dropped or invalidated view, a base-schema
+        // recompile, worker shutdown - because a parked repair's writer carries the uncommitted
+        // replacement. WalWriter.close() rolls that back through real file IO and
+        // WalWriterPool.WalWriterTenant.close() deliberately rethrows whatever the rollback raises.
+        //
+        // A disk that fails that rollback is the natural producer and is not reproducible here, so
+        // the case drives the other throw the same pool really raises: AbstractMultiTenantPool
+        // answers a second return of the same writer with "double close". Both leave close() part
+        // way through the same chain, which is what the case pins - the reader, the descriptor and
+        // the rest are released anyway.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE close_chain (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("close_chain");
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    RecordCursorFactory baseFactory = select("SELECT ts, x FROM close_chain");
+                    WindowRecordCursorFactory windowFactory = new WindowRecordCursorFactory(
+                            baseFactory,
+                            GenericRecordMetadata.copyOf(baseFactory.getMetadata()),
+                            new ObjList<>()
+                    )
+            ) {
+                // Deliberately not in the try-with-resources above: the park below hands both to
+                // the session, which owns them from that point on, and closing either here as well
+                // would be a second return of it - the very thing the case makes the writer take.
+                final TableReader baseReader = engine.getReader(token);
+                final WalWriter walWriter = engine.getWalWriter(token);
+                final LiveViewCheckpointRepairSession session =
+                        new LiveViewCheckpointRepairSession(engine.getConfiguration(), job, windowFactory);
+                session.suspend(
+                        baseReader,
+                        walWriter,
+                        null,
+                        1_000,
+                        0,
+                        0,
+                        0,
+                        0,
+                        Numbers.LONG_NULL,
+                        Numbers.LONG_NULL,
+                        new LiveViewCheckpointOutputUniqueness()
+                );
+                Assert.assertTrue("the fixture must have parked the session", session.isSuspended());
+
+                // Returns the writer to the pool behind the session's back, which is what makes the
+                // session's own return of it the second one.
+                walWriter.close();
+
+                boolean hasFired = false;
+                try {
+                    session.close();
+                } catch (CairoException e) {
+                    hasFired = Chars.contains(e.getFlyweightMessage(), "double close");
+                    if (!hasFired) {
+                        throw e;
+                    }
+                }
+                // Without this the case is vacuous. A fixture that stopped producing the throw -
+                // the pool learning to tolerate the second return, say - would leave close() with
+                // nothing to survive and pass on a chain that was never interrupted.
+                Assert.assertTrue(
+                        "the writer free never threw, so the case pinned nothing",
+                        hasFired
+                );
+
+                // The statement immediately below the thrower. A stranded reader pins the base
+                // snapshot, and its pool slot, for the life of the process.
+                Assert.assertNull(
+                        "the pinned base snapshot must go back even though the writer free threw",
+                        session.takeBaseReader()
+                );
+                // And the tail of the chain, past the descriptor discard and the three frees the
+                // leak check measures - the descriptor's Paths and mapping, the overlay's buffer
+                // and the carryover's states.
+                Assert.assertFalse(
+                        "a closed session must not still read as parked",
+                        session.isSuspended()
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testACompletedRepairWhoseCleanupFaultsReleasesItsRepairSession() throws Exception {
+        // The sibling of the failed-park case below, one boolean away from it. The unwind cleanup
+        // runs on EVERY exit of the head-miss replay, not only an unwinding one: a turn that
+        // completed its replay reaches the same statements, and the release that used to sit behind
+        // them was gated on the turn NOT having completed. So a throw from the cleanup of a
+        // COMPLETED turn skipped the release, and skipped the publication tail's own release with
+        // it - the throw leaves the executor before that tail is entered. Nothing else frees the
+        // session: this turn never parked, so the instance is not holding it and
+        // handleRefreshFailure's discardSuspendedRepair finds nothing.
+        //
+        // The correction is repaired with the checkpoint splice declined, which is what leaves the
+        // turn holding a repair session and no staged capture. Without that the capture would leak
+        // too - it belongs to the publication tail the throw skips - and the oracle could not tell
+        // the two apart.
+        //
+        // The throw is injected; there is no reproducible natural producer. What the case pins is
+        // the ordering, which holds for any throwable those statements raise.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(seedThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+
+                execute("insert into tx values " + row(2, 5, "acct-1"));
+                drainWalQueue();
+
+                // The next cleanup chain this worker runs, which is the correction's own.
+                job.setSimulateRepairCleanupFaultForTest(0);
+                runOneRefreshPass(job);
+
+                Assert.assertFalse(
+                        "the injected cleanup fault never fired, so no repair cleanup ran and the"
+                                + " case pinned nothing",
+                        job.isRepairCleanupFaultArmedForTest()
+                );
+                Assert.assertNull(
+                        "a repair that faulted must leave nothing parked on the view",
+                        viewInstance().getSuspendedRepair()
+                );
+                Assert.assertEquals(
+                        "the injected cleanup fault must cost exactly one refresh fault",
+                        1L,
+                        viewInstance().getRefreshFaultCount()
+                );
+
+                // The view still converges: the fault is recoverable and the recompute is what
+                // recovers it. assertViewMatchesRecompute() is not used here - it also asserts zero
+                // faults, and this case injects one on purpose.
+                driveRefreshToQuiescence(job);
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + recompute() + ") order by 2, 1",
+                        "(lv) order by 2, 1",
+                        LOG,
+                        true
+                );
+            }
+            // assertMemoryLeak is the oracle for the session itself: one nothing released leaves its
+            // descriptor's three Paths and its scratch overlay allocated, which shows up as a
+            // native-memory difference no assertion above can see.
+        });
+    }
+
+    @Test
+    public void testACompletedRepairWhosePublicationTailFaultsReleasesItsRepairSession() throws Exception {
+        // One chain further on than the case above. A completed head-miss turn runs two cleanup
+        // chains, not one: the replay's own, and then the publication tail that settles the runtime,
+        // retires the timeline, frees the staged capture and rewinds the keyed runtime. The tail
+        // ended with the session release, so a throw from any statement ahead of it skipped the
+        // release - and by then the replay cleanup above has already run to its end and released
+        // nothing, so the tail is the turn's last chance to end the repair. The turn did not park,
+        // so the instance is not holding the session either and handleRefreshFailure's
+        // discardSuspendedRepair finds nothing to free.
+        //
+        // Same fixture as the case above, with the fault armed one chain later so it lands on the
+        // tail rather than on the replay cleanup ahead of it. The checkpoint splice stays declined
+        // for the same reason: without that the staged capture would leak on both sides of the fix
+        // and the oracle could not tell it from the session.
+        //
+        // The throw is injected; there is no reproducible natural producer. What the case pins is
+        // the ordering, which holds for any throwable those statements raise.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(seedThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+
+                execute("insert into tx values " + row(2, 5, "acct-1"));
+                drainWalQueue();
+
+                // Let the correction's replay cleanup through, and fault the publication tail
+                // behind it.
+                job.setSimulateRepairCleanupFaultForTest(1);
+                runOneRefreshPass(job);
+
+                Assert.assertFalse(
+                        "the injected cleanup fault never fired, so the publication tail never ran"
+                                + " and the case pinned nothing",
+                        job.isRepairCleanupFaultArmedForTest()
+                );
+                Assert.assertNull(
+                        "a repair that faulted must leave nothing parked on the view",
+                        viewInstance().getSuspendedRepair()
+                );
+                Assert.assertEquals(
+                        "the injected cleanup fault must cost exactly one refresh fault",
+                        1L,
+                        viewInstance().getRefreshFaultCount()
+                );
+
+                // The view still converges: the fault is recoverable and the recompute is what
+                // recovers it. assertViewMatchesRecompute() is not used here - it also asserts zero
+                // faults, and this case injects one on purpose.
+                driveRefreshToQuiescence(job);
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + recompute() + ") order by 2, 1",
+                        "(lv) order by 2, 1",
+                        LOG,
+                        true
+                );
+            }
+            // assertMemoryLeak is the oracle for the session itself: one nothing released leaves its
+            // descriptor's three Paths and its scratch overlay allocated, which shows up as a
+            // native-memory difference no assertion above can see.
+        });
+    }
+
+    @Test
+    public void testAFailedParkWhoseCleanupAlsoFaultsReleasesItsRepairSession() throws Exception {
+        // A park that fails hands its turn back to the executor's unwind, and that unwind runs a
+        // list of cleanups - free the staged capture, retire the durable descriptor, drop the
+        // boundary schedule, retire the timeline - before it releases the repair session. Every
+        // one of them touches native memory or files, so any of them can throw; and a throw from
+        // one used to skip the release, because the release sat in the same finally behind them.
+        //
+        // What that costs depends on whether the instance is already holding the session. A turn
+        // that RESUMES a park is holding it, so handleRefreshFailure's discardSuspendedRepair
+        // picks the skipped release up on the way out and nothing is lost. The FIRST turn of a
+        // repair is not: it only attaches its session after a park succeeds, so a first turn whose
+        // park failed leaves a session nothing points at - its descriptor mapping, its three Paths
+        // and the pre-repair window state its overlay holds go with the turn, for the life of the
+        // process. That is the case here, and assertMemoryLeak is its oracle.
+        //
+        // Both faults are injected; neither has a reproducible natural producer. The first stands
+        // in for the OutOfMemoryError a real key-set growth raises inside suspend()'s copy, on the
+        // read side so it can fail the FIRST park - the write side belongs to a session that does
+        // not exist until the park creates it. The second stands in for a throw out of any of the
+        // cleanup statements above the release; what the case pins is the ordering, which holds
+        // for any throwable they raise.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // Head rows, so the runtime's own segment is the fifth day and the three seeded
+                // days are all closed below it.
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+
+                execute("insert into tx values " + row(2, 5, "acct-1"));
+                drainWalQueue();
+
+                final ReadThrowingIntHashSet injectedCopyFailure = failTheFirstUniquenessCopy(job);
+                job.setSimulateRepairUnwindCleanupFaultForTest();
+                runOneRefreshPass(job);
+
+                Assert.assertTrue(
+                        "the injected copy failure never fired, so no park failed and the case pinned nothing",
+                        injectedCopyFailure.hasFired()
+                );
+                // The cleanup fault clears itself as it throws, so an armed hook here means the
+                // unwind never reached the cleanup block - which would leave the case asserting
+                // nothing about the release that follows it.
+                Assert.assertFalse(
+                        "the injected cleanup fault never fired, so the unwind never reached the cleanup"
+                                + " and the case pinned nothing",
+                        job.isRepairUnwindCleanupFaultArmedForTest()
+                );
+                Assert.assertNull(
+                        "a park that failed must leave no repair parked on the view",
+                        viewInstance().getSuspendedRepair()
+                );
+                // The turn unwound through handleRefreshFailure, which counts the fault and
+                // recomputes the view from the applied base. Exactly one: the recompute must not
+                // fault again.
+                Assert.assertEquals(
+                        "the injected park failure must cost exactly one refresh fault",
+                        1L,
+                        viewInstance().getRefreshFaultCount()
+                );
+
+                // The view still converges: the fault is recoverable and the recompute is what
+                // recovers it. assertViewMatchesRecompute() is not used here - it also asserts
+                // zero faults, and this case injects one on purpose.
+                driveRefreshToQuiescence(job);
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + recompute() + ") order by 2, 1",
+                        "(lv) order by 2, 1",
+                        LOG,
+                        true
+                );
+            }
+            // assertMemoryLeak is the oracle for the session itself: one nothing released leaves
+            // its descriptor's three Paths and its scratch overlay allocated, which shows up as a
+            // native-memory difference no assertion above can see.
+        });
+    }
 
     @Test
     public void testAForeignWorkerLeavesAParkedSegmentLoopToItsOwner() throws Exception {
@@ -375,8 +689,10 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         // while the session's own close() discards the descriptor that named it and
         // LiveViewCheckpointRepairState.sweep reaches a staged segment only through a descriptor
         // that names it. This fixture does not reach that: the repair it parks re-versions no
-        // logical boundary, so the capture never opens a data segment. The .tmp assertion below
-        // is a guard against a fixture that does, not a live check here.
+        // logical boundary, so the capture never opens a data segment, and the .tmp assertion
+        // below reads zero on both sides of the fix. The staged half is covered by
+        // testAParkWhoseSuspendFailsUnlinksItsStagedSegment, whose correction sits low enough
+        // in its segment for the replay to freeze a boundary before it parks.
         //
         // The failure is injected into the park that follows the first one, so the turn under
         // test is a genuine resumed turn: the detector the session hands back is disarmed and
@@ -423,8 +739,9 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                         viewInstance().getSuspendedRepair()
                 );
                 // Zero on both sides of the fix in this fixture, for the reason stated above.
-                // It fails only if a future fixture parks a repair that has frozen a boundary,
-                // which is the shape where a stranded capture also strands its segment.
+                // The shape where the reading discriminates - a park whose capture has already
+                // frozen a boundary - is driven by
+                // testAParkWhoseSuspendFailsUnlinksItsStagedSegment.
                 Assert.assertEquals(
                         "no staged segment may outlive the repair that opened it",
                         0,
@@ -445,6 +762,109 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
             // assertMemoryLeak is the oracle for the capture itself: a stranded one leaves its own
             // and its data segment writer's Paths allocated, which shows up as a NATIVE_PATH
             // difference no other assertion here can see.
+        });
+    }
+
+    @Test
+    public void testAParkWhoseSuspendFailsUnlinksItsStagedSegment() throws Exception {
+        // The case the sibling above could not reach: a park that fails while the capture it
+        // is handing over already holds an open data segment on disk.
+        //
+        // A capture opens d.<id>.tmp on the first boundary it freezes, and its close() is the
+        // only thing that unlinks one no splice published. The session's own close() discards
+        // the descriptor that names the segment, and LiveViewCheckpointRepairState.sweep
+        // reaches a staged segment only through a descriptor that still names it - so a
+        // capture the failed park stranded leaves the file with nothing in this process
+        // pointing at it. The next restart still collects it, because
+        // LiveViewCheckpointLifecycle.reconcile's orphan pass removes every .tmp under data/
+        // and meta/ whatever named it, so what a strand costs a running process is the file
+        // plus the capture's own descriptor and mapping until then. The executor's cleanup
+        // for the capture is gated on !yielded, which is exactly what the failed park clears,
+        // and this pins that gate from the file's side.
+        //
+        // Reaching a staged park needs boundaries INSIDE the repaired segment and above the
+        // correction: the sibling's correction lands at the top of its segment, so its repair
+        // re-versions no root and its capture never opens a segment at all. Here the segment's
+        // rows are committed one at a time under a one-row checkpoint cadence, so each seals a
+        // boundary, and the correction lands low enough that six of them sit above it. Under
+        // the one-row replay budget the replay then freezes one boundary per turn, so the park
+        // the failure is injected into is holding a real staged segment.
+        //
+        // The reading is taken on the turn that failed, not at quiescence: the recovery
+        // recompute replans the correction and its own repair stages a segment of its own, and
+        // a later turn's legitimate .tmp would mask - or impersonate - the stranded one.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(row(2, 1, "acct-1"));
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // One commit per row, so the cadence seals a boundary at each of them.
+                for (int hour = 2; hour <= 8; hour++) {
+                    commit(row(2, hour, "acct-1"), job);
+                }
+                // The day above, which closes the day-2 segment so its repair converges below
+                // the runtime frontier and carries a finite high bound.
+                for (int hour = 1; hour <= 2; hour++) {
+                    commit(row(3, hour, "acct-1"), job);
+                }
+                // Head rows, so the runtime's own segment is neither of the two below it.
+                commit(row(5, 1, "acct-1"), job);
+
+                // Low in the day-2 segment, with six sealed boundaries above it.
+                execute("insert into tx values " + row(2, 3, "acct-1"));
+                drainWalQueue();
+                final LiveViewCheckpointRepairSession parked = driveUntilStagedPark(job, "lv");
+                Assert.assertEquals(
+                        "the parked repair must hold the one segment its capture staged",
+                        1,
+                        stagedTmpSegmentCount(viewInstance())
+                );
+
+                final ThrowingIntHashSet injected = failTheNextUniquenessCopy(parked);
+                runOneRefreshPass(job);
+
+                Assert.assertTrue(
+                        "the injected copy failure never fired, so the case pinned nothing",
+                        injected.hasFired()
+                );
+                Assert.assertEquals(
+                        "the injected park failure must cost exactly one refresh fault",
+                        1L,
+                        viewInstance().getRefreshFaultCount()
+                );
+                Assert.assertNull(
+                        "a park that failed must leave no repair parked on the view",
+                        viewInstance().getSuspendedRepair()
+                );
+                // The assertion the case exists for. The turn that failed its park owns the
+                // staged segment on the way out, and nothing else can name it afterwards.
+                Assert.assertEquals(
+                        "a failed park must unlink the segment its capture staged",
+                        0,
+                        stagedTmpSegmentCount(viewInstance())
+                );
+
+                // The view still converges: the fault is recoverable and the recompute is what
+                // recovers it. assertViewMatchesRecompute() is not used here - it also asserts
+                // zero faults, and this case injects one on purpose.
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "the recovery must strand no staged segment either",
+                        0,
+                        stagedTmpSegmentCount(viewInstance())
+                );
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + recompute() + ") order by 2, 1",
+                        "(lv) order by 2, 1",
+                        LOG,
+                        true
+                );
+            }
+            // assertMemoryLeak is the second oracle: a stranded capture leaves its own Paths
+            // and the file descriptor its data segment writer holds on the staged segment.
         });
     }
 
@@ -687,6 +1107,31 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Poisons the worker's OWN uniqueness detector - the source {@code suspend()} copies from -
+     * so the copy fails on the first park of the next repair, before any session has been
+     * attached to the view.
+     * <p>
+     * {@code failTheNextUniquenessCopy} cannot reach that park: it poisons the destination, which
+     * belongs to the session, and no session exists until a park has created one. The source
+     * belongs to the worker and exists before the repair starts, which is what makes a FIRST park
+     * failable at all.
+     *
+     * @return the injected set, which records whether it actually fired
+     */
+    private static ReadThrowingIntHashSet failTheFirstUniquenessCopy(LiveViewRefreshJob job) throws Exception {
+        final Field jobUniquenessField = LiveViewRefreshJob.class.getDeclaredField("outputUniqueness");
+        jobUniquenessField.setAccessible(true);
+        final LiveViewCheckpointOutputUniqueness uniqueness =
+                (LiveViewCheckpointOutputUniqueness) jobUniquenessField.get(job);
+        final ReadThrowingIntHashSet injected = new ReadThrowingIntHashSet();
+        final Field groupKeysField =
+                LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
+        groupKeysField.setAccessible(true);
+        groupKeysField.set(uniqueness, injected);
+        return injected;
+    }
+
+    /**
      * Makes the next park of an already-parked {@code session} fail inside suspend()'s uniqueness
      * copy, once, while leaving the resume that precedes it able to run.
      * <p>
@@ -787,6 +1232,31 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Drives one refresh pass at a time until the named view has a repair parked on it whose
+     * capture has already frozen a boundary - and therefore opened its {@code d.<id>.tmp} data
+     * segment. Fails if no park ever holds one, which would leave every assertion about a
+     * staged segment vacuous.
+     *
+     * @return the parked session, holding a capture with a staged segment
+     */
+    private LiveViewCheckpointRepairSession driveUntilStagedPark(LiveViewRefreshJob job, String viewName) {
+        for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES; pass++) {
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainWalQueue();
+            job.processNotificationsForTest();
+            drainWalQueue();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+            Assert.assertNotNull("live view '" + viewName + "' must be registered", instance);
+            final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+            if (parked != null && parked.getCapturedBoundaries() > 0) {
+                return parked;
+            }
+        }
+        Assert.fail("the repair on '" + viewName + "' never parked holding a staged segment");
+        return null;
+    }
+
+    /**
      * The from-base oracle: the same accumulators partitioned by account and anchor day.
      */
     private String recompute() {
@@ -841,6 +1311,17 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     /**
+     * Advances the clock and runs exactly one refresh pass, so a caller can read the state one
+     * turn left behind rather than the state the turns after it converged on.
+     */
+    private void runOneRefreshPass(LiveViewRefreshJob job) {
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        drainWalQueue();
+        job.processNotificationsForTest();
+        drainWalQueue();
+    }
+
+    /**
      * Two accounts on each of 2026-01-02, 2026-01-03 and 2026-01-04, four rows deep for the
      * first of them. The depth is deliberate: a one-row replay budget only spreads a
      * segment repair across turns if the segment holds more than one row to replay.
@@ -868,9 +1349,9 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
      * {@code LiveViewCheckpointStatePageElisionTest.dataDirBytes()} over the same directory:
      * the caller asks whether this view stranded a staged segment, and a data directory the
      * view never created holds no staged segment to strand. So the reading says only that
-     * nothing is stranded - never that anything was staged. Its one caller says the same of
-     * itself: that assertion is a guard for a fixture that stages a segment rather than a
-     * live check of the one it stands in.
+     * nothing is stranded - never that anything was staged. A caller that needs the other half
+     * asserts a non-zero reading first, which
+     * testAParkWhoseSuspendFailsUnlinksItsStagedSegment does before it fails its park.
      */
     private int stagedTmpSegmentCount(LiveViewInstance instance) {
         int count = 0;
@@ -913,6 +1394,43 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     private static final class InjectedAllocationFailure extends RuntimeException {
         private InjectedAllocationFailure() {
             super("injected allocation failure");
+        }
+    }
+
+    /**
+     * The read side of {@link ThrowingIntHashSet}: it fails the walk {@code copyFrom} makes over
+     * the SOURCE set rather than the add it makes into the destination. Same fault - an
+     * allocation failure inside the copy - reached from the one side a test can poison before the
+     * first park exists.
+     * <p>
+     * {@code size()} reports one key while armed rather than the set's own count, because
+     * {@code IntHashSet.clear()} is final: the detector empties the set once per repair and again
+     * at every timestamp group it closes, so no real seed survives to the park and
+     * {@code copyFrom} would walk nothing. Reporting one entry is what carries the walk into
+     * {@code get()}. Both behaviours are one-shot, so the recovery that follows the fault runs
+     * against an ordinary set.
+     */
+    private static final class ReadThrowingIntHashSet extends IntHashSet {
+        private boolean hasFired;
+        private boolean isArmed = true;
+
+        @Override
+        public int get(int index) {
+            if (isArmed) {
+                isArmed = false;
+                hasFired = true;
+                throw new InjectedAllocationFailure();
+            }
+            return super.get(index);
+        }
+
+        @Override
+        public int size() {
+            return isArmed ? 1 : super.size();
+        }
+
+        private boolean hasFired() {
+            return hasFired;
         }
     }
 

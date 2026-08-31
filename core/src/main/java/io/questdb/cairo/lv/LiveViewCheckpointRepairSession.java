@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -151,6 +152,12 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * The durable descriptor is discarded rather than left behind: the candidate
      * it describes is gone with the session, so an intact record of it would read
      * as a crashed repair to the next startup sweep.
+     * <p>
+     * close() attempts every release whatever the ones ahead of it raised. This is
+     * the last chance any of them gets: the callers that reach here have already detached
+     * the session, so a handle left behind is held by nothing and reclaimed only by a
+     * restart. The first failure still propagates, carrying the later ones as
+     * suppressed exceptions.
      */
     @Override
     public void close() {
@@ -176,21 +183,49 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         }
         functions = null;
         anchorWindow = null;
-        capture = Misc.free(capture);
-        walWriter = Misc.free(walWriter);
-        baseReader = Misc.free(baseReader);
-        descriptor.discard();
-        Misc.free(descriptor);
-        Misc.free(overlay);
+        // Best-effort, in the codebase's own cleanup idiom: every handle below gets its
+        // close attempt whatever the ones ahead of it raised, the first failure carries
+        // the rest as suppressed, and CairoException.rethrowCleanupFailure hands it on at
+        // the end. A plain chain strands everything under the first throw, and the two
+        // statements most able to throw are at its head: closing the live-view WalWriter
+        // rolls the uncommitted replacement back through real file IO and
+        // WalWriterPool.WalWriterTenant.close() deliberately rethrows what that raises,
+        // while AbstractMultiTenantPool answers a second return of either the writer or
+        // the pinned reader with "double close". Everything that releases memory sits
+        // below them - the pinned base snapshot, the descriptor's mapping and its three
+        // Paths, the overlay's window-state copy charged to the view's MemoryTracker, and
+        // the carryover's state buffers - and a strand there is permanent: close() runs
+        // from paths that have already detached the session, so nothing in the process
+        // still holds it and only a restart reclaims what it kept. discard() is in the
+        // chain for the same reason: a descriptor left on disk reads as a crashed repair
+        // to the next startup sweep.
+        Throwable failure = Misc.freeBestEffort(null, capture);
+        capture = null;
+        failure = Misc.freeBestEffort(failure, walWriter);
+        walWriter = null;
+        failure = Misc.freeBestEffort(failure, baseReader);
+        baseReader = null;
+        try {
+            descriptor.discard();
+        } catch (Throwable t) {
+            failure = Misc.foldCleanupFailure(failure, t);
+        }
+        failure = Misc.freeBestEffort(failure, descriptor);
+        failure = Misc.freeBestEffort(failure, overlay);
         // Abandoned rather than settled, so nothing published a generation the parked
         // baselines could name. Dropping them leaves every target on the complete freeze
         // the wipe left it owing, which is the safe direction.
-        Misc.free(sealCarryover);
+        failure = Misc.freeBestEffort(failure, sealCarryover);
         boundaries.clear();
         segmentLoop.clear();
         outputUniqueness.clear();
         isRepairMarkerLive = false;
         isSuspended = false;
+        // close() rethrows rather than swallows, which keeps the contract it already had:
+        // a caller that sees a failure today still sees it, and a genuine IO fault does
+        // not become a silent one. What changes is only what it costs - every release
+        // above has already run by the time it propagates.
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**

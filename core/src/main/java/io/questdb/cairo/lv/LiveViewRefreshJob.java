@@ -537,6 +537,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // cleared; always false in production.
     @TestOnly
     private boolean simulateRepairApplyFailureForTest;
+    // Test-only: how many repair cleanup chains to let through before the next one throws at
+    // the tail of its cleanup - after every borrowed resource is back and immediately before
+    // the session release the chain ends with - so a test can prove the release happens
+    // whatever the statements ahead of it raise. The countdown is what names WHICH chain: a
+    // head-miss turn runs two (its replay cleanup, then its publication tail), and so does
+    // an anchor resume. Count them for the fixture at hand rather than trusting this line:
+    // the skip value names a chain only for as long as the turn's shape is unchanged.
+    // -1 disarms it, and disarming is what production always reads: the fault sets it back
+    // to -1 as it throws.
+    @TestOnly
+    private int simulateRepairCleanupFaultCountdownForTest = -1;
+    // Test-only: when armed, the cleanup an unwinding repair turn runs throws where the
+    // statements ahead of the session release do their work - the staged capture's close,
+    // the descriptor discard, the boundary schedule - so a test can prove the session is
+    // released on that path anyway. One-shot (self-clears on fire); always false in
+    // production.
+    @TestOnly
+    private boolean simulateRepairUnwindCleanupFaultForTest;
     // Test-only: when armed, the refresh finally throws right where a real
     // LiveViewInMemoryBuffer.close() would (a native-memory / tracker-balance assert
     // under -ea), so a test can prove the refresh latch is still released on that path.
@@ -1201,6 +1219,51 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public void setSimulateRepairApplyFailureForTest(boolean simulate) {
         this.simulateRepairApplyFailureForTest = simulate;
+    }
+
+    /**
+     * Test-only: whether the fault {@link #setSimulateRepairCleanupFaultForTest(int)} arms is still
+     * waiting to fire. It disarms itself as it throws, so a test that armed it and finds this false has
+     * proof the cleanup chain it named really ran - and one that finds it true learns its fixture never
+     * reached that chain, rather than passing on a case that pinned nothing. Production never calls this.
+     */
+    @TestOnly
+    public boolean isRepairCleanupFaultArmedForTest() {
+        return simulateRepairCleanupFaultCountdownForTest >= 0;
+    }
+
+    /**
+     * Test-only: arms a one-shot fault so a repair cleanup chain throws at its tail, immediately
+     * before the session release the chain ends with, modelling a throw out of any statement ahead
+     * of that release. {@code skipChains} names which chain: 0 is the next one this worker runs, 1
+     * the one after it. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateRepairCleanupFaultForTest(int skipChains) {
+        this.simulateRepairCleanupFaultCountdownForTest = skipChains;
+    }
+
+    /**
+     * Test-only: whether the one-shot cleanup fault {@link #setSimulateRepairUnwindCleanupFaultForTest()}
+     * arms is still waiting to fire. The fault clears itself as it throws, so a test that armed it and
+     * finds this false has proof the unwind really reached the cleanup - and a test that finds it true
+     * learns its fixture stopped short of the block, rather than passing on a case that pinned nothing.
+     * Production never calls this.
+     */
+    @TestOnly
+    public boolean isRepairUnwindCleanupFaultArmedForTest() {
+        return simulateRepairUnwindCleanupFaultForTest;
+    }
+
+    /**
+     * Test-only: arms a one-shot fault so the cleanup of the next unwinding out-of-order repair
+     * turn throws after it has freed the staged capture and retired the descriptor, modelling a
+     * throw out of any of those statements. Lets a test prove the repair session is released
+     * whatever the cleanup ahead of it does. Production never calls this.
+     */
+    @TestOnly
+    public void setSimulateRepairUnwindCleanupFaultForTest() {
+        this.simulateRepairUnwindCleanupFaultForTest = true;
     }
 
     /**
@@ -7744,36 +7807,59 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         } finally {
-            // Drops the boundary schedule and the runtime this turn handed the freeze
-            // cursor; its counter is already read back into capturedBoundaries. The merge
-            // keeps the counts it ended on, which the tail below still reads.
-            boundaryFreezingCursor.clear();
-            keyedReplay.releaseMergeState();
-            Misc.free(storedRowCursor);
-            if (readerAttached) {
-                executionContext.clearReader();
-                engine.attachReader(reader);
-            }
-            if (!replayCompleted || (timelineCapture != null && capturedBoundaries < session.getBoundaries().size())) {
-                // The replay is unwinding - a failed restore returns from inside the
-                // block above - or it stopped short of a boundary it owed a root version,
-                // so the splice below never publishes. Nothing durable has moved: the
-                // replacement commits on the last statement of the block above. The
-                // candidate is discarded having changed nothing, the generation it pinned
-                // still describes exactly the output on disk, and a later cycle replans
-                // the same correction.
-                //
-                // The timeline is deliberately NOT retired here. Retiring would delete
-                // every historical root and leave that replan with no anchor below the
-                // correction, which is the age-unbounded rebuild the ladder exists to
-                // avoid - and the roots it holds are still the ones the durable output
-                // belongs to, because this repair did not reach its commit.
-                //
-                // The session goes with it: an unwind and the early return both skip the
-                // publication tail, which is what would otherwise end it.
-                timelineCapture = Misc.free(timelineCapture);
-                endRepairSession(instance, session);
-                session = null;
+            // The session goes back last, from a finally of its own, because the statements
+            // ahead of it free native memory and close files - the staged capture holds an
+            // open data segment and a leased freeze scratch - and a throw from any of them
+            // would otherwise strand it. This executor never parks, so a stranded session is
+            // attached to no instance at all and handleRefreshFailure's discardSuspendedRepair
+            // has nothing to find: its descriptor mapping, its Paths and the pre-repair window
+            // state its overlay holds would be lost for the life of the process. One release
+            // site serves both arms below, so neither can free the session twice.
+            boolean isRepairAbandoned = false;
+            boolean isCleanupCompleted = false;
+            try {
+                // Drops the boundary schedule and the runtime this turn handed the freeze
+                // cursor; its counter is already read back into capturedBoundaries. The merge
+                // keeps the counts it ended on, which the tail below still reads.
+                boundaryFreezingCursor.clear();
+                keyedReplay.releaseMergeState();
+                Misc.free(storedRowCursor);
+                if (readerAttached) {
+                    executionContext.clearReader();
+                    engine.attachReader(reader);
+                }
+                if (!replayCompleted || (timelineCapture != null && capturedBoundaries < session.getBoundaries().size())) {
+                    // The replay is unwinding - a failed restore returns from inside the
+                    // block above - or it stopped short of a boundary it owed a root version,
+                    // so the splice below never publishes. Nothing durable has moved: the
+                    // replacement commits on the last statement of the block above. The
+                    // candidate is discarded having changed nothing, the generation it pinned
+                    // still describes exactly the output on disk, and a later cycle replans
+                    // the same correction.
+                    //
+                    // The timeline is deliberately NOT retired here. Retiring would delete
+                    // every historical root and leave that replan with no anchor below the
+                    // correction, which is the age-unbounded rebuild the ladder exists to
+                    // avoid - and the roots it holds are still the ones the durable output
+                    // belongs to, because this repair did not reach its commit.
+                    //
+                    // The session goes with it: an unwind and the early return both skip the
+                    // publication tail, which is what would otherwise end it. The release
+                    // itself sits in the finally below, which is what also covers a throw
+                    // from the free on the next line.
+                    timelineCapture = Misc.free(timelineCapture);
+                    isRepairAbandoned = true;
+                }
+                if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
+                        && simulateRepairCleanupFaultCountdownForTest-- == 0) {
+                    throw new AssertionError("injected repair cleanup fault");
+                }
+                isCleanupCompleted = true;
+            } finally {
+                if (isRepairAbandoned || !isCleanupCompleted) {
+                    endRepairSession(instance, session);
+                    session = null;
+                }
             }
         }
 
@@ -8036,21 +8122,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", accountedPercent=").$(totalNanos > 0 ? 100.0 * accountedNanos / totalNanos : 100.0)
                     .I$();
         } finally {
-            // The candidate is either published - its segments reachable from the new
-            // generation - or gone - so nothing is left for a startup sweep to discard,
-            // and the descriptor's ownership claim retires with the session that carried
-            // it. A resume captures no scratch overlay, so ending the session takes
-            // nothing else apart.
-            Misc.free(timelineCapture);
-            endRepairSession(instance, session);
-            if (keyed) {
-                // The isolated runtime holds this correction's keys at the frontier, which
-                // the transplant has already copied where they belong. Rewinding it here
-                // rather than at the next repair keeps a runtime sitting idle holding no
-                // keys, and keeps the next repair's own reset from being the only thing
-                // that guarantees it.
-                repairRuntime.reset();
-                keyedReplay.clear();
+            // The session goes back from a finally of its own for the same reason as the
+            // unwind above: freeing the capture closes a data segment and returns a leased
+            // freeze scratch, and a throw from it would otherwise skip every statement here.
+            // Nothing else in this process would then end the repair - this executor never
+            // parks, so no instance is holding the session for handleRefreshFailure to find.
+            // The unwind above nulls session on the arm where it already released, so this
+            // call is either the only one or a no-op.
+            try {
+                // The candidate is either published - its segments reachable from the new
+                // generation - or gone - so nothing is left for a startup sweep to discard,
+                // and the descriptor's ownership claim retires with the session that carried
+                // it. A resume captures no scratch overlay, so ending the session takes
+                // nothing else apart.
+                Misc.free(timelineCapture);
+                if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
+                        && simulateRepairCleanupFaultCountdownForTest-- == 0) {
+                    throw new AssertionError("injected repair cleanup fault");
+                }
+            } finally {
+                endRepairSession(instance, session);
+                if (keyed) {
+                    // The isolated runtime holds this correction's keys at the frontier, which
+                    // the transplant has already copied where they belong. Rewinding it here
+                    // rather than at the next repair keeps a runtime sitting idle holding no
+                    // keys, and keeps the next repair's own reset from being the only thing
+                    // that guarantees it.
+                    repairRuntime.reset();
+                    keyedReplay.clear();
+                }
             }
         }
     }
@@ -9012,12 +9112,41 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                                     durableRowsBelowFloor + appendedRows + keyedReplay.getMergedRows());
                                         }
                                     }
-                                    if (!keyedRoute && mayYield && session != null && isRepairReplayBudgetSpent(scannedRows)) {
+                                    if (!keyedRoute && !coldKeyedRoute && mayYield && session != null
+                                            && isRepairReplayBudgetSpent(scannedRows)) {
                                         // Out of budget. This row is folded and, if it qualified,
                                         // emitted, so the next turn re-opens at its timestamp and
                                         // skips the rows of that group it has already seen.
                                         // Nothing is committed or published here, so the durable
                                         // view stays the pre-repair one until the final turn.
+                                        //
+                                        // coldKeyedRoute is named beside keyedRoute rather than
+                                        // left to imply it. A cold repair decides its route once,
+                                        // on the turn that starts it - resumeSuspendedRepair enters
+                                        // under resumed != null, which skips the whole cold
+                                        // prologue - so a resumed turn recomputes the route as
+                                        // false and then reads every decision that hangs off it
+                                        // wrongly: it skips the arithmetic boundary positions and
+                                        // the inserted-row delta, resets the isolated runtime the
+                                        // replay folded into, and never runs
+                                        // transplantKeyedRepairState, which leaves the primary
+                                        // folding later rows onto the stale accumulators of exactly
+                                        // the keys the correction touched, with nothing marking the
+                                        // window state dirty. keyedRoute alone does not refuse
+                                        // that: the stored-row branch above clears keyedRoute when
+                                        // the replay's own factory declines the indexed
+                                        // substitution and leaves coldKeyedRoute standing, which is
+                                        // the one state in which a cold repair reaches this gate.
+                                        // A cold repair therefore finishes on the turn that starts
+                                        // it. That is not free: the degraded arm reaches this gate
+                                        // with finiteHighBound false, so scanHighTs is
+                                        // Long.MAX_VALUE and the turn reads the open segment to its
+                                        // end with the turn duration bound no longer applying. The
+                                        // unlocalized rebuild above already runs unbudgeted for the
+                                        // same reason and leaves the circuit breaker as the only
+                                        // early exit; that breaker is still checked per row, and the
+                                        // alternative here is a silent wrong value on exactly the
+                                        // keys the correction touched.
                                         yielded = true;
                                         resumeFromTs = ts;
                                         resumeSkipRows = groupFoldedRows;
@@ -9272,73 +9401,126 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 replayCompleted = true;
             } finally {
-                // Drops the boundary schedule, the capture and the runtime this turn
-                // handed the freeze cursor. Its freeze counter is already read back
-                // into capturedBoundaries, and a resumed turn re-arms it from there.
-                boundaryFreezingCursor.clear();
-                // The view's own rows the merge read, and the writer it appended them
-                // through. The counts survive - the publication above reads them - and the
-                // caller disarms the key domain once the repair it armed returns.
+                // Everything this turn borrowed goes back below, and the session goes back
+                // last because releasing it is what unblocks refresh for the view. It runs
+                // in a finally of its own so that ordering costs nothing: the statements
+                // above it free native memory and close files - the staged capture at the
+                // head of the list opens a data segment and leases a freeze scratch - and a
+                // throw from any of them would otherwise strand the session with them. A
+                // stranded session is not recovered by the executor: an unwinding FIRST turn
+                // has not attached it to the instance yet, so handleRefreshFailure's
+                // discardSuspendedRepair finds nothing to free and the descriptor mapping,
+                // the scratch overlay and the pre-repair window state it holds are lost for
+                // the life of the process. Mirrors the nested cleanup refreshInstance takes
+                // around its staging buffer for the same reason.
                 //
-                // Attributed to whichever publication the repair reached: a replacement
-                // rewrote every row the merge accounted for and this counts them, while a
-                // sparse upsert wrote none of them and the commit site above counted what it
-                // kept. Rolling the two together would report a copy-forward cost the sparse
-                // route does not pay.
-                if (!keyedReplay.isSparse()) {
-                    keyedReplayMergedRows += keyedReplay.getMergedRows();
-                }
-                keyedReplay.releaseMergeState();
-                Misc.free(storedRowCursor);
-                if (isolated && !yielded && (!coldKeyedRoute || !replayCompleted)) {
-                    // The repair is over - published, empty or unwinding - so the keys its
-                    // replay folded into the isolated runtime describe nothing any more.
-                    // Rewinding here rather than only before the next replay is what keeps an
-                    // idle view from holding a repaired segment's key domain indefinitely; a
-                    // parked repair is the one case that keeps it, because its next turn
-                    // continues in exactly that state.
-                    repairRuntime.reset();
-                }
-                if (readerAttached) {
-                    executionContext.clearReader();
-                    engine.attachReader(reader);
-                }
-                if (!yielded
-                        && timelineCapture != null
-                        && (!replayCompleted || capturedBoundaries < repairBoundaries.size())) {
-                    // The replay is unwinding, or stopped short of a boundary it owed a
-                    // root version, so the splice below never publishes.
+                // Raised on the last statement of the block, so a throw anywhere inside it
+                // leaves this down and the release below reads it.
+                boolean isCleanupCompleted = false;
+                try {
+                    // Drops the boundary schedule, the capture and the runtime this turn
+                    // handed the freeze cursor. Its freeze counter is already read back
+                    // into capturedBoundaries, and a resumed turn re-arms it from there.
+                    boundaryFreezingCursor.clear();
+                    // The view's own rows the merge read, and the writer it appended them
+                    // through. The counts survive - the publication above reads them - and the
+                    // caller disarms the key domain once the repair it armed returns.
                     //
-                    // A parked repair owes those boundaries by design and has handed the
-                    // capture to its session, so it keeps the timeline it is going to
-                    // splice into.
-                    timelineCapture = Misc.free(timelineCapture);
-                    session.discardDescriptor();
-                    repairBoundaries.clear();
-                    if (repairPublication.hasCommittedReplacement()) {
-                        // The durable output has moved under every root and no splice
-                        // corrected them, so the retire this repair displaced on its first
-                        // turn has to happen after all: a timeline nothing corrects must not
-                        // outlive the output it describes.
-                        retireCheckpointTimeline(instance);
+                    // Attributed to whichever publication the repair reached: a replacement
+                    // rewrote every row the merge accounted for and this counts them, while a
+                    // sparse upsert wrote none of them and the commit site above counted what it
+                    // kept. Rolling the two together would report a copy-forward cost the sparse
+                    // route does not pay.
+                    if (!keyedReplay.isSparse()) {
+                        keyedReplayMergedRows += keyedReplay.getMergedRows();
                     }
-                    // Otherwise the candidate is discarded having changed nothing durable -
-                    // a cancelled turn is the ordinary case - and the generation the capture
-                    // pinned still describes exactly the output on disk: it was never
-                    // advanced, the replacement never committed, and the watermarks the
-                    // publication tail moves are untouched, so the change stays unconsumed
-                    // and a later turn replans it. Retiring here instead would delete every
-                    // historical root and leave that replan with no anchor below the
-                    // correction, which is the age-unbounded rebuild the timeline exists to
-                    // avoid.
-                }
-                if (!replayCompleted) {
-                    // The turn is unwinding, so the publication tail below never runs and
-                    // nothing else would end the repair. Release the session here instead,
-                    // which also unblocks refresh for the view: a resumed turn that failed
-                    // must not leave the instance pointing at a candidate whose resources
-                    // the unwind has already taken apart.
-                    endRepairSession(instance, session);
+                    keyedReplay.releaseMergeState();
+                    Misc.free(storedRowCursor);
+                    if (isolated && !yielded && (!coldKeyedRoute || !replayCompleted)) {
+                        // The repair is over - published, empty or unwinding - so the keys its
+                        // replay folded into the isolated runtime describe nothing any more.
+                        // Rewinding here rather than only before the next replay is what keeps an
+                        // idle view from holding a repaired segment's key domain indefinitely; a
+                        // parked repair is the one case that keeps it, because its next turn
+                        // continues in exactly that state.
+                        repairRuntime.reset();
+                    }
+                    if (readerAttached) {
+                        executionContext.clearReader();
+                        engine.attachReader(reader);
+                    }
+                    if (!yielded
+                            && timelineCapture != null
+                            && (!replayCompleted || capturedBoundaries < repairBoundaries.size())) {
+                        // The replay is unwinding, or stopped short of a boundary it owed a
+                        // root version, so the splice below never publishes.
+                        //
+                        // A parked repair owes those boundaries by design and has handed the
+                        // capture to its session, so it keeps the timeline it is going to
+                        // splice into.
+                        timelineCapture = Misc.free(timelineCapture);
+                        session.discardDescriptor();
+                        repairBoundaries.clear();
+                        if (repairPublication.hasCommittedReplacement()) {
+                            // The durable output has moved under every root and no splice
+                            // corrected them, so the retire this repair displaced on its first
+                            // turn has to happen after all: a timeline nothing corrects must not
+                            // outlive the output it describes.
+                            retireCheckpointTimeline(instance);
+                        }
+                        // Otherwise the candidate is discarded having changed nothing durable -
+                        // a cancelled turn is the ordinary case - and the generation the capture
+                        // pinned still describes exactly the output on disk: it was never
+                        // advanced, the replacement never committed, and the watermarks the
+                        // publication tail moves are untouched, so the change stays unconsumed
+                        // and a later turn replans it. Retiring here instead would delete every
+                        // historical root and leave that replan with no anchor below the
+                        // correction, which is the age-unbounded rebuild the timeline exists to
+                        // avoid.
+                        if (simulateRepairUnwindCleanupFaultForTest) { // @TestOnly, always false in production
+                            simulateRepairUnwindCleanupFaultForTest = false;
+                            throw new AssertionError("injected repair unwind cleanup fault");
+                        }
+                    }
+                    if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
+                            && simulateRepairCleanupFaultCountdownForTest-- == 0) {
+                        throw new AssertionError("injected repair cleanup fault");
+                    }
+                    isCleanupCompleted = true;
+                } finally {
+                    if (!replayCompleted || (!yielded && !isCleanupCompleted)) {
+                        // The turn is unwinding, so the publication tail below never runs and
+                        // nothing else would end the repair. Release the session here instead,
+                        // which also unblocks refresh for the view: a resumed turn that failed
+                        // must not leave the instance pointing at a candidate whose resources
+                        // the unwind has already taken apart.
+                        //
+                        // A COMPLETED replay reaches this release too. The block above runs with
+                        // replayCompleted true whenever the turn stopped short of a boundary it
+                        // owed a root version, and a throw from it leaves the outer finally
+                        // before the publication tail below is entered - so the tail's own
+                        // endRepairSession never runs either, and this is the last place the
+                        // session can go back. It is also the only one: exactly one release site
+                        // covers both arms, so neither can free the session twice.
+                        //
+                        // The !yielded conjunct bounds the SECOND disjunct only, and that is
+                        // deliberate rather than an oversight to tidy up. A turn that parked has
+                        // handed the pinned reader, the live-view writer and the staged capture
+                        // to its session, and its caller closes the reader on the way out of a
+                        // turn that threw; freeing the session there would return the reader to
+                        // the pool twice, which is the double close suspend() orders its
+                        // handovers to avoid. A turn that did not park handed over none of the
+                        // three, so it owns nothing this release could take from anyone else.
+                        //
+                        // The first disjunct carries no such bound and is unchanged from before
+                        // this guard existed: !replayCompleted reaches here with yielded true if
+                        // a statement between suspend() and replayCompleted = true throws. No
+                        // producer for such a throw is known - pageCursor.close() is the only
+                        // fallible statement in that window - so the arm is left as it was
+                        // rather than narrowed on speculation. Narrowing it would need the
+                        // ownership handoff reworked, not another conjunct here.
+                        endRepairSession(instance, session);
+                    }
                 }
             }
 
@@ -9594,39 +9776,64 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
             } finally {
-                if (!repairPublication.isRuntimeSettled()) {
-                    // The block above unwound before the exchange. Settle anyway: the
-                    // disposition was fixed before the replacement committed, and a runtime
-                    // left half in the replay's state and half in the pre-repair state is
-                    // worse than either. A settle that fails here has already marked the
-                    // window state for rebuild, so let the original failure propagate.
-                    try {
-                        // LONG_NULL: this arm is reached only when the block above unwound, so
-                        // nothing published a generation the carried baselines could name.
-                        settleRepairRuntime(instance, session, windowFactory, anchorWindow, Numbers.LONG_NULL);
-                    } catch (Throwable t) {
-                        LOG.critical().$("could not settle live view repair runtime [view=")
-                                .$(viewName)
-                                .$(", error=").$(t).I$();
+                // The session goes back from a finally of its own, so the statements above it
+                // cannot take it with them. They retire a timeline, free the staged capture and
+                // rewind the keyed runtime - files and native memory - so any of them can throw,
+                // and this tail is the last release a COMPLETED turn has: the replay cleanup above
+                // ran to its end and therefore released nothing, the outermost finally below is
+                // gated on the replay never having started, and a turn that did not park is not
+                // attached to the instance, so handleRefreshFailure's discardSuspendedRepair finds
+                // nothing to free either. A throw from the list used to strand the session, its
+                // descriptor mapping and its Paths for the life of the process.
+                //
+                // Unguarded on purpose, and it must stay that way. The release is already
+                // unconditional here, so nesting it changes nothing on the healthy path and cannot
+                // free a session in any state the healthy path does not free it in - which is what
+                // separates this site from the replay cleanup above, whose release is conditional
+                // and had to be bounded by !yielded to keep it off a parked session. A park returns
+                // before this point, so !yielded holds here by construction, and none of the
+                // statements in the try hands the session a borrowed handle. There is nothing here
+                // another owner could close a second time.
+                try {
+                    if (!repairPublication.isRuntimeSettled()) {
+                        // The block above unwound before the exchange. Settle anyway: the
+                        // disposition was fixed before the replacement committed, and a runtime
+                        // left half in the replay's state and half in the pre-repair state is
+                        // worse than either. A settle that fails here has already marked the
+                        // window state for rebuild, so let the original failure propagate.
+                        try {
+                            // LONG_NULL: this arm is reached only when the block above unwound, so
+                            // nothing published a generation the carried baselines could name.
+                            settleRepairRuntime(instance, session, windowFactory, anchorWindow, Numbers.LONG_NULL);
+                        } catch (Throwable t) {
+                            LOG.critical().$("could not settle live view repair runtime [view=")
+                                    .$(viewName)
+                                    .$(", error=").$(t).I$();
+                        }
                     }
-                }
-                if (timelineCapture != null && timelineSplice == null) {
-                    // Either the splice could not publish, or it was never allowed to try
-                    // because the replacement has not applied. The output the timeline's
-                    // roots describe has moved either way, so it must not survive them.
-                    retireCheckpointTimeline(instance);
-                }
-                Misc.free(timelineCapture);
-                // The candidate is either published - its segments reachable from the new
-                // generation - or gone. Either way nothing is left for a startup sweep to
-                // discard, so the descriptor's ownership claim retires with it, together
-                // with the session that carried the repair across its turns.
-                if (coldKeyedRoute) {
-                    repairRuntime.reset();
-                    keyedReplay.clear();
-                }
+                    if (timelineCapture != null && timelineSplice == null) {
+                        // Either the splice could not publish, or it was never allowed to try
+                        // because the replacement has not applied. The output the timeline's
+                        // roots describe has moved either way, so it must not survive them.
+                        retireCheckpointTimeline(instance);
+                    }
+                    Misc.free(timelineCapture);
+                    // The candidate is either published - its segments reachable from the new
+                    // generation - or gone. Either way nothing is left for a startup sweep to
+                    // discard, so the descriptor's ownership claim retires with it, together
+                    // with the session that carried the repair across its turns.
+                    if (coldKeyedRoute) {
+                        repairRuntime.reset();
+                        keyedReplay.clear();
+                    }
 
-                endRepairSession(instance, session);
+                    if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
+                            && simulateRepairCleanupFaultCountdownForTest-- == 0) {
+                        throw new AssertionError("injected repair cleanup fault");
+                    }
+                } finally {
+                    endRepairSession(instance, session);
+                }
             }
             // The boundary rebuild is the residual O(view age) fallback (late row below
             // every logical boundary, or a deep / unresumable apply-ahead range). Counted
@@ -9673,10 +9880,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // find. The merge's hold on the cursor goes with the cursor - a bind left
                 // pointing at a freed cursor would turn the leak into a use-after-free - and
                 // the session goes out the same way the replay's own unwind ends it.
-                Misc.free(storedRowCursor);
-                keyedReplay.clear();
-                Misc.free(timelineCapture);
-                endRepairSession(instance, session);
+                //
+                // The session goes back from a finally of its own for the reason the publication
+                // tail's does: the three statements ahead of it close a pooled reader and free
+                // native memory, so any of them can throw, and a throw used to take the release
+                // with it. This arm is reached only while the prologue is unwinding, so nothing
+                // behind it would have run either - and on a FIRST turn the session is attached to
+                // nothing (the park that attaches it lives inside the replay this arm proves never
+                // started), so handleRefreshFailure's discardSuspendedRepair has nothing to find
+                // and the session is lost for the life of the process.
+                //
+                // The release stays unconditional, exactly as it was, so it frees a session in no
+                // state it did not already free one in: !replayEntered means the park never ran, so
+                // this turn handed the session nothing, and none of the three statements above hands
+                // it anything either. What a RESUMED turn's session does still hold - the live-view
+                // writer, whose handover to the turn sits inside the replay that never started - it
+                // is the sole owner of; its pinned reader went to resumeSuspendedRepair before the
+                // call, and that method's own finally closes it. Nothing here is closed twice.
+                try {
+                    Misc.free(storedRowCursor);
+                    keyedReplay.clear();
+                    Misc.free(timelineCapture);
+                    if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
+                            && simulateRepairCleanupFaultCountdownForTest-- == 0) {
+                        throw new AssertionError("injected repair cleanup fault");
+                    }
+                } finally {
+                    endRepairSession(instance, session);
+                }
             }
         }
     }
