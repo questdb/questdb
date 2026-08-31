@@ -3771,13 +3771,72 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * {@code preparePartitionForParquetConversion} for a COMPOSITE day: force-squash and clear stale
+     * parquet for EVERY cell, not for the one cellKey-0 record a timestamp resolves to.
+     * <p>
+     * Both steps are per cell for the same reason: a day is N partition records, each with its own
+     * split fragments and its own {@code <day>/<cell>.<txn>/data.parquet}. Resolving by timestamp
+     * squashed one cell and deleted one cell-less path, which is why this entry point refused
+     * composite tables outright until now -- it would have told the policy job "this day is ready"
+     * having prepared a fraction of it.
+     * <p>
+     * The day's cellKeys are collected FIRST and each is re-resolved to a fresh index inside the loop:
+     * {@code squashPartitionForce} rewrites the attached-partition array, so an index captured before
+     * it can name a different record afterwards. That re-resolution is the difference between this and
+     * a loop that looks equivalent.
+     * <p>
+     * Returns -1 when every cell is already parquet (or has parquet generated), matching the plain
+     * contract of "nothing to do".
+     */
+    private long prepareCompositeDayForParquetConversion(long partitionTimestamp) {
+        final IntList cellKeys = new IntList();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                cellKeys.add(txWriter.getPartitionCellKey(i));
+            }
+        }
+        if (cellKeys.size() == 0) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical()
+                    .put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
+        }
+
+        int prepared = 0;
+        for (int c = 0, cn = cellKeys.size(); c < cn; c++) {
+            final int cellKey = cellKeys.getQuick(c);
+            int idx = findCompositePartitionIndex(partitionTimestamp, cellKey);
+            if (idx < 0) {
+                continue;
+            }
+            if (txWriter.isPartitionParquetGenerated(idx) || txWriter.isPartitionParquet(idx)) {
+                continue;
+            }
+            squashPartitionForce(idx);
+
+            // re-resolve: the squash above rewrites the attached-partition array
+            idx = findCompositePartitionIndex(partitionTimestamp, cellKey);
+            if (idx < 0) {
+                continue;
+            }
+            final long cellNameTxn = txWriter.getPartitionNameTxn(idx);
+            final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+            cellSegmentSink.clear();
+            renderCellSegment(cellSegmentSink, cellKey);
+            setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy,
+                    partitionTimestamp, cellNameTxn, cellSegmentSink);
+            ff.removeQuiet(path.$());
+            path.trimTo(pathSize);
+            prepared++;
+        }
+
+        return prepared > 0 ? partitionTimestamp : -1L;
+    }
+
     public long preparePartitionForParquetConversion(long partitionTimestamp) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
-
-        // BEFORE the commit below: committing is itself a mutation, and this step goes on to
-        // force-squash a cellKey-0-resolved index. See refuseCompositeStoragePolicy.
-        refuseCompositeStoragePolicy("prepare");
 
         if (inTransaction()) {
             assert !tableToken.isWal();
@@ -3798,6 +3857,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
             return -1L;
+        }
+
+        if (isRoutedComposite()) {
+            return prepareCompositeDayForParquetConversion(partitionTimestamp);
         }
 
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);

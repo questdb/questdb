@@ -89,25 +89,34 @@ public class CompositeStoragePolicyTest extends AbstractCompositeTwinTest {
             createTwins();
             seedTwoDaysTwoCells();
 
-            final String inventoryBefore;
             final long day1Ts;
             try (TableWriter w = getWriter("c")) {
-                inventoryBefore = inventory(w);
                 day1Ts = w.getTxWriter().getPartitionTimestampByIndex(0);
 
+                // PREPARE IS NO LONGER REFUSED -- it became per-cell (see
+                // TableWriter#prepareCompositeDayForParquetConversion and
+                // CompositeStoragePolicyPerCellTest#testPrepareForParquetConversionHandlesEveryCell).
+                // It is exercised here rather than dropped, because the property this test exists for
+                // still applies to it: a step that runs must leave the day CONSISTENT. It squashes and
+                // clears stale parquet per cell, so the inventory may legitimately change; what must
+                // not change is the row content, asserted against the plain twin below.
+                Assert.assertEquals("prepare must accept a composite day now that it is per-cell",
+                        day1Ts, w.preparePartitionForParquetConversion(day1Ts));
+
+                // The steps that ARE still refused, each before mutating anything. The inventory is
+                // captured AFTER prepare so a refusal that mutates is still caught.
+                final String inventoryAfterPrepare = inventory(w);
                 try {
-                    w.preparePartitionForParquetConversion(day1Ts);
-                    Assert.fail("the storage-policy squash step must be refused on a composite table:"
-                            + " it resolves the partition by timestamp alone (cellKey 0) and"
-                            + " force-squashes whatever that lookup lands on");
+                    w.markPartitionParquetReady(day1Ts);
+                    Assert.fail("the by-timestamp mark step must be refused on a composite table:"
+                            + " a timestamp does not identify one of the day's N cell records");
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "composite partitioning does not yet support STORAGE POLICY");
-                    TestUtils.assertContains(e.getFlyweightMessage(), "STORAGE POLICY");
                 }
 
                 Assert.assertEquals(
                         "a refused storage-policy step must leave the partition inventory untouched",
-                        inventoryBefore, inventory(w));
+                        inventoryAfterPrepare, inventory(w));
             }
 
             // The refusal must not have cost any rows either.

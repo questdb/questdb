@@ -56,6 +56,52 @@ import org.junit.Test;
 public class CompositeStoragePolicyPerCellTest extends AbstractCompositeTwinTest {
 
     /**
+     * {@code preparePartitionForParquetConversion} must handle EVERY cell of the day.
+     * <p>
+     * It is the first step the enterprise policy job takes, and it does two mutating things per
+     * partition: force-squash, and delete any stale parquet left by an earlier conversion. Resolved by
+     * timestamp alone -- as it was -- both land on cellKey 0, leaving every sibling's stale parquet in
+     * place for the encoder to trip over later.
+     * <p>
+     * NON-VACUITY: a stale parquet file is planted in BOTH cells and both must be gone afterwards. A
+     * cellKey-0 implementation removes one and passes every assertion that only counts.
+     */
+    @Test
+    public void testPrepareForParquetConversionHandlesEveryCell() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // day 2 keeps day 1 out of the active slot -- prepare skips the active partition
+            insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0',3.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableWriter w = getWriter("c")) {
+                final TxWriter tx = w.getTxWriter();
+                final long day1 = tx.getPartitionTimestampByIndex(0);
+                final IntList cells = cellsOfDay(w, day1);
+                Assert.assertEquals("the day must have two cells or the per-cell claim is untestable",
+                        2, cells.size());
+
+                // plant a STALE parquet in every cell -- prepare must clear them all
+                for (int i = 0; i < cells.size(); i++) {
+                    plantCellParquet(w, "c", day1, cells.getQuick(i));
+                }
+
+                Assert.assertEquals("prepare must accept a composite day and return its timestamp",
+                        day1, w.preparePartitionForParquetConversion(day1));
+
+                for (int i = 0; i < cells.size(); i++) {
+                    Assert.assertFalse(
+                            "stale parquet must be gone from cell " + cells.getQuick(i),
+                            cellParquetExists(w, "c", day1, cells.getQuick(i)));
+                }
+            }
+        });
+    }
+
+    /**
      * The cell segment must render in HIVE form ON DEMAND, whatever the table's own {@code LAYOUT}.
      * <p>
      * The enterprise cold-storage bucket key is self-describing storage that other tools read, so it
@@ -243,6 +289,24 @@ public class CompositeStoragePolicyPerCellTest extends AbstractCompositeTwinTest
      * needs both: it hard-links the data file, then the sidecar, and reports SWITCH_NO_PARQUET if the
      * sidecar is missing.
      */
+    private boolean cellParquetExists(TableWriter w, String table, long dayTs, int cellKey) {
+        final TxWriter tx = w.getTxWriter();
+        long nameTxn = -1;
+        for (int i = 0, n = tx.getPartitionCount(); i < n; i++) {
+            if (tx.getPartitionTimestampByIndex(i) == dayTs && tx.getPartitionCellKey(i) == cellKey) {
+                nameTxn = tx.getPartitionNameTxn(i);
+                break;
+            }
+        }
+        final StringSink segment = new StringSink();
+        w.renderCellSegment(segment, cellKey);
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(engine.verifyTableName(table));
+            TableUtils.setPathForParquetPartition(p, tx.getTimestampType(), PartitionBy.DAY, dayTs, nameTxn, segment);
+            return configuration.getFilesFacade().exists(p.$());
+        }
+    }
+
     private void plantCellParquet(TableWriter w, String table, long dayTs, int cellKey) {
         final TxWriter tx = w.getTxWriter();
         long nameTxn = 0;
