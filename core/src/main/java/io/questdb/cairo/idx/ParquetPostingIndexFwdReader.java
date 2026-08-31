@@ -356,6 +356,7 @@ public class ParquetPostingIndexFwdReader extends AbstractParquetPostingIndexRea
             if (packedNext >= packedEnd) {
                 return false;
             }
+            refillCount.incrementAndGet();
             final int batch = (int) Math.min(packedEnd - packedNext, packedBatch);
             if (!seqMode) {
                 // packedKeyStart + packedNext is the GROUP ordinal the bind

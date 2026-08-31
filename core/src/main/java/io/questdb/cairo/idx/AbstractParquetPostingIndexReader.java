@@ -176,6 +176,14 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      * has already emitted: compared against the rows a scan actually produces,
      * a ratio above one is wasted work per fetch.
      */
+    /**
+     * Times a packed run re-entered the outer loop to take another batch.
+     * <p>
+     * A COUNT, so unlike throughput it is unaffected by machine load. Divided
+     * by the rows a scan emits it gives refills per row, which is what the
+     * batch-size policy actually controls.
+     */
+    protected final AtomicLong refillCount = new AtomicLong();
     protected final AtomicLong widenedRowIdCount = new AtomicLong();
     protected final AtomicLong decodedRowCount = new AtomicLong();
     protected final AtomicLong decodedRowGroupCount = new AtomicLong();
@@ -235,6 +243,12 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
      */
     public long getDecodedRowCount() {
         return decodedRowCount.get();
+    }
+
+    /** @see #refillCount */
+    @TestOnly
+    public long getRefillCount() {
+        return refillCount.get();
     }
 
     /** @see #widenedRowIdCount */
@@ -1761,6 +1775,7 @@ public abstract class AbstractParquetPostingIndexReader implements PostingIndexR
         this.decodedRowGroupCount.set(0);
         this.decodedRowCount.set(0);
         this.widenedRowIdCount.set(0);
+        this.refillCount.set(0);
         this.imFileSize = imFileSize;
         final int plen = path.size();
         try {

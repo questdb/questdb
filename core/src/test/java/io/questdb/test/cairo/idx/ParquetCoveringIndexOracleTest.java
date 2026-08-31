@@ -1152,6 +1152,79 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * Refills per row emitted, at four postings-per-key regimes.
+     * <p>
+     * A COUNT, so it says the same thing on a loaded machine as on an idle one
+     * -- which matters because the throughput measurements that motivated it
+     * could not be trusted.
+     * <p>
+     * The batch starts at 64 and doubles, so a key long enough to need several
+     * refills but too short for the doubling to reach the cap pays the most
+     * fast-path exits per row -- 0.012 a row at 250 postings a key against
+     * 0.0016 at 3,750. That shape is real, and it is NOT what makes the
+     * 1,000-postings-a-key scan slow: serving the whole run in one batch under
+     * seqMode, where nothing is widened and the batch therefore bounds nothing,
+     * cut refills 3-6x and moved throughput by less than the control's own
+     * drift. Refills are cheap; they account for at most about 5% of that
+     * scan's gap against the native chain.
+     * <p>
+     * Kept because the count is the only load-independent handle on this policy,
+     * and because the next person to notice the doubling batch will reach for
+     * the same idea.
+     */
+    @Test
+    public void testRefillsPerRowAcrossPostingsPerKey() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+            node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
+            final StringBuilder out = new StringBuilder(
+                    "\n  postings/key   rows     refills   refills/row\n");
+            for (int keys : new int[]{16, 240, 10_000, 60_000}) {
+                final String name = "refill_" + keys;
+                execute("CREATE TABLE " + name + " (ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG)"
+                        + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + name + " SELECT"
+                        + " dateadd('u', x::INT, '" + INDEXED_PARTITION + "T00:00:00Z'::TIMESTAMP),"
+                        + " 's' || (x % " + keys + "), x::DOUBLE, x * 3"
+                        + " FROM long_sequence(" + ROW_COUNT + ")");
+                drainWalQueue();
+                execute("ALTER TABLE " + name + " CONVERT PARTITION TO PARQUET LIST '" + INDEXED_PARTITION + "'");
+                drainWalQueue();
+                execute("ALTER TABLE " + name + " ALTER COLUMN sym ADD INDEX TYPE POSTING");
+                drainWalQueue();
+                engine.releaseInactive();
+                try (TableReader r = engine.getReader(engine.verifyTableName(name))) {
+                    final int col = r.getMetadata().getColumnIndex("sym");
+                    final AbstractParquetPostingIndexReader idx =
+                            (AbstractParquetPostingIndexReader) r.getIndexReader(0, col, IndexReader.DIR_FORWARD);
+                    long emitted = 0;
+                    for (int k = 0, n = idx.getKeyCount(); k < n; k++) {
+                        try (RowCursor c = idx.getCursor(k, 0, Long.MAX_VALUE)) {
+                            while (c.hasNext()) {
+                                c.next();
+                                emitted++;
+                            }
+                        }
+                    }
+                    final long refills = idx.getRefillCount();
+                    out.append(String.format("  %-14d %-8d %-9d %.5f%n",
+                            ROW_COUNT / keys, emitted, refills, refills / (double) emitted));
+                    Assert.assertEquals("the scan must emit every row", ROW_COUNT, emitted);
+                    // One refill per key at minimum -- a run is taken in at
+                    // least one batch -- and never more than one per row.
+                    Assert.assertTrue(
+                            "refills outside [keys, rows] means the batch policy is not what it claims"
+                                    + " [refills=" + refills + ", keys=" + keys + ", rows=" + emitted + ']',
+                            refills >= keys && refills <= emitted);
+                }
+                execute("DROP TABLE " + name);
+                drainWalQueue();
+            }
+            System.out.println(out);
+        });
+    }
+
     private void drain(
             IndexReader reader, int key, long min, long max, int[] covers,
             LongList rowIds, LongList coveredValues
