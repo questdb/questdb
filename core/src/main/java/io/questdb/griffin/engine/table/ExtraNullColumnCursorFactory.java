@@ -474,12 +474,15 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
      * table surface keep working.
      */
     private static class ExtraNullColumnPageFrameCursor implements PageFrameCursor {
+        private final int columnCount;
+        private final ColumnMapping columnMapping = new ColumnMapping();
         private final int columnSplit;
         private final ExtraNullColumnPageFrame pageFrame;
         private PageFrameCursor baseCursor;
 
         private ExtraNullColumnPageFrameCursor(int columnSplit, int columnCount) {
             this.pageFrame = new ExtraNullColumnPageFrame(columnSplit, columnCount);
+            this.columnCount = columnCount;
             this.columnSplit = columnSplit;
         }
 
@@ -495,7 +498,7 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
         @Override
         public ColumnMapping getColumnMapping() {
-            return baseCursor.getColumnMapping();
+            return columnMapping;
         }
 
         @Override
@@ -556,6 +559,20 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
 
         private ExtraNullColumnPageFrameCursor wrap(PageFrameCursor baseCursor) {
             this.baseCursor = baseCursor;
+            // The mapping must stay parallel with this cursor's metadata: every consumer
+            // (PageFrameAddressCache, PageFrameMemoryPool.resolveParquetColumn,
+            // SelectedPageFrameCursor.wrap) indexes it by query column. The base only
+            // maps its own columnSplit columns, so the synthetic null columns above the
+            // split need entries of their own. They belong to no reader, writer or
+            // parquet column, so all three indexes are -1: columnIdToParquetIdx keys are
+            // never negative, which leaves the column undecoded and its page address 0
+            // -- NULL, matching what the record and page frame report for them.
+            columnMapping.copyFrom(baseCursor.getColumnMapping());
+            assert columnMapping.getColumnCount() == columnSplit
+                    : "base column mapping must cover exactly the split columns";
+            for (int i = columnMapping.getColumnCount(); i < columnCount; i++) {
+                columnMapping.addColumn(-1, -1, -1);
+            }
             return this;
         }
     }
