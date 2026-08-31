@@ -3701,6 +3701,193 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerOnConstAfterNullingJoinDoesNotPruneEarlierPeer() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT)");
+            execute("INSERT INTO a VALUES (1, 4)");
+            execute("CREATE TABLE b (x INT)");
+            execute("INSERT INTO b VALUES (NULL)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1), (2)");
+            execute("CREATE TABLE d (x INT)");
+            execute("INSERT INTO d VALUES (4)");
+
+            final String expectedNull = "k\tax\tdx\tbx\n2\tnull\tnull\tnull\n";
+            final String expectedValue = "k\tax\tdx\tbx\n1\t4\t4\t4\n";
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    for (String predicate : new String[]{
+                            "a.x = :v",
+                            ":v::INT = a.x",
+                            "a.x = (:v + 0)",
+                            "(:v + 0) = a.x"
+                    }) {
+                        final String sql = """
+                                SELECT c.k, a.x AS ax, d.x AS dx, b.x AS bx
+                                FROM a
+                                JOIN d ON d.x = a.x
+                                %s c ON c.k = a.k
+                                JOIN b ON b.x = a.x AND %s
+                                ORDER BY c.k
+                                """.formatted(joinType, predicate);
+                        bindVariableService.clear();
+                        bindVariableService.setInt("v", Numbers.INT_NULL);
+                        assertQuery(sql)
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFatJoin)
+                                .returns(expectedNull);
+
+                        execute("INSERT INTO b VALUES (4)");
+                        bindVariableService.setInt("v", 4);
+                        assertQuery(sql)
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFatJoin)
+                                .returns(expectedValue);
+                        execute("TRUNCATE TABLE b");
+                        execute("INSERT INTO b VALUES (NULL)");
+                    }
+                }
+            }
+
+            execute("INSERT INTO b VALUES (4)");
+            for (String predicate : new String[]{
+                    "a.x = 4",
+                    "4 = a.x",
+                    "a.x = (2 + 2)",
+                    "(2 + 2) = a.x"
+            }) {
+                assertQuery("""
+                        SELECT c.k, a.x AS ax, d.x AS dx, b.x AS bx
+                        FROM a
+                        JOIN d ON d.x = a.x
+                        RIGHT JOIN c ON c.k = a.k
+                        JOIN b ON b.x = a.x AND %s
+                        ORDER BY c.k
+                        """.formatted(predicate))
+                        .noLeakCheck()
+                        .withPlanContaining(
+                                "                        Hash\n"
+                                        + "                            Async JIT Filter workers: 1\n"
+                                        + "                              filter: x=4\n"
+                                        + "                                PageFrame\n"
+                                        + "                                    Row forward scan\n"
+                                        + "                                    Frame forward scan on: d"
+                        )
+                        .returns(expectedValue);
+            }
+
+            execute("CREATE TABLE ab (k INT, x BOOLEAN)");
+            execute("INSERT INTO ab VALUES (1, TRUE)");
+            execute("CREATE TABLE bb (x BOOLEAN)");
+            execute("INSERT INTO bb VALUES (FALSE)");
+            execute("CREATE TABLE db (x BOOLEAN)");
+            execute("INSERT INTO db VALUES (TRUE)");
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    assertQuery("""
+                            SELECT c.k, ab.x AS ax, db.x AS dx, bb.x AS bx
+                            FROM ab
+                            JOIN db ON db.x = ab.x
+                            %s c ON c.k = ab.k
+                            JOIN bb ON bb.x = ab.x AND ab.x = FALSE
+                            ORDER BY c.k
+                            """.formatted(joinType))
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFatJoin)
+                            .returns("k\tax\tdx\tbx\n2\tfalse\tfalse\tfalse\n");
+                }
+            }
+
+            execute("CREATE TABLE aby (k INT, x BYTE)");
+            execute("INSERT INTO aby VALUES (1, 1::BYTE)");
+            execute("CREATE TABLE bby (x BYTE)");
+            execute("INSERT INTO bby VALUES (0::BYTE)");
+            execute("CREATE TABLE dby (x BYTE)");
+            execute("INSERT INTO dby VALUES (1::BYTE)");
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    assertQuery("""
+                            SELECT c.k, aby.x AS ax, dby.x AS dx, bby.x AS bx
+                            FROM aby
+                            JOIN dby ON dby.x = aby.x
+                            %s c ON c.k = aby.k
+                            JOIN bby ON bby.x = aby.x AND aby.x = 0::BYTE
+                            ORDER BY c.k
+                            """.formatted(joinType))
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFatJoin)
+                            .returns("k\tax\tdx\tbx\n2\t0\t0\t0\n");
+                }
+            }
+
+            execute("CREATE TABLE ai (k INT, x IPv4)");
+            execute("INSERT INTO ai VALUES (1, '1.1.1.1')");
+            execute("CREATE TABLE bi (x IPv4)");
+            execute("INSERT INTO bi VALUES (NULL)");
+            execute("CREATE TABLE di (x IPv4)");
+            execute("INSERT INTO di VALUES ('1.1.1.1')");
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    assertQuery("""
+                            SELECT c.k, ai.x AS ax, di.x AS dx, bi.x AS bx
+                            FROM ai
+                            JOIN di ON di.x = ai.x
+                            %s c ON c.k = ai.k
+                            JOIN bi ON bi.x = ai.x AND ai.x = '0.0.0.0'
+                            ORDER BY c.k
+                            """.formatted(joinType))
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFatJoin)
+                            .returns("k\tax\tdx\tbx\n2\t\t\t\n");
+                }
+            }
+
+            execute("INSERT INTO bi VALUES ('1.1.1.1')");
+            assertQuery("""
+                    SELECT c.k, ai.x AS ax, di.x AS dx, bi.x AS bx
+                    FROM ai
+                    JOIN di ON di.x = ai.x
+                    RIGHT JOIN c ON c.k = ai.k
+                    JOIN bi ON bi.x = ai.x AND ai.x = '1.1.1.1'
+                    ORDER BY c.k
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("filter: x='1.1.1.1'", "Frame forward scan on: di")
+                    .returns("k\tax\tdx\tbx\n1\t1.1.1.1\t1.1.1.1\t1.1.1.1\n");
+
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT c.k, ai.x AS ax, di.x AS dx, bi.x AS bx
+                        FROM ai
+                        JOIN di ON di.x = ai.x
+                        RIGHT JOIN c ON c.k = ai.k
+                        JOIN bi ON bi.x = ai.x
+                    ) WHERE ax = '0.0.0.0'
+                    ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .returns("k\tax\tdx\tbx\n2\t\t\t\n");
+
+            execute("CREATE TABLE au (k INT, x UUID)");
+            execute("INSERT INTO au VALUES (1, '00000000-0000-0000-0000-000000000001')");
+            execute("CREATE TABLE bu (x UUID)");
+            execute("INSERT INTO bu VALUES ('00000000-0000-0000-0000-000000000001')");
+            execute("CREATE TABLE du (x UUID)");
+            execute("INSERT INTO du VALUES ('00000000-0000-0000-0000-000000000001')");
+            assertQuery("""
+                    SELECT c.k, au.x AS ax, du.x AS dx, bu.x AS bx
+                    FROM au
+                    JOIN du ON du.x = au.x
+                    RIGHT JOIN c ON c.k = au.k
+                    JOIN bu ON bu.x = au.x AND au.x = '00000000-0000-0000-0000-000000000001'
+                    ORDER BY c.k
+                    """)
+                    .noLeakCheck()
+                    .returns("k\tax\tdx\tbx\n1\t00000000-0000-0000-0000-000000000001\t00000000-0000-0000-0000-000000000001\t00000000-0000-0000-0000-000000000001\n");
+        });
+    }
+
+    @Test
     public void testJoinInnerOnConstBeforeLaterNullingJoinUsesIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pa AS (SELECT 'foo'::SYMBOL AS x, 1::INT AS y FROM long_sequence(1))");

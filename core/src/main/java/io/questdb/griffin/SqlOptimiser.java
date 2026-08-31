@@ -28,8 +28,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
@@ -57,6 +60,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
+import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
@@ -159,6 +163,7 @@ public class SqlOptimiser implements Mutable {
     private static final int NOT_OP_NOT = 1;
     private static final int NOT_OP_NOT_EQ = 9;
     private static final int NOT_OP_OR = 3;
+    private static final String NULL_REJECTING_PROBE_COLUMN = "__qdb_null_probe";
     // these are bit flags
     private static final int SAMPLE_BY_REWRITE_NO_WRAP = 0;
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
@@ -565,31 +570,6 @@ public class SqlOptimiser implements Mutable {
         }
         for (int i = 0, n = node.args.size(); i < n; i++) {
             if (hasLiteralRef(node.args.getQuick(i), name, dot)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean hasMasterNullingJoinAfter(IQueryModel model, int tableIndex) {
-        final ObjList<IQueryModel> joinModels = model.getJoinModels();
-        final int n = joinModels.size();
-        final IntList ordered = model.getOrderedJoinModels();
-        if (ordered.size() == n) {
-            boolean isTableSeen = false;
-            for (int i = 0; i < n; i++) {
-                final int modelIndex = ordered.getQuick(i);
-                if (isTableSeen && isMasterNullingJoinType(joinModels.getQuick(modelIndex).getJoinType())) {
-                    return true;
-                }
-                if (modelIndex == tableIndex) {
-                    isTableSeen = true;
-                }
-            }
-            return false;
-        }
-        for (int i = tableIndex + 1; i < n; i++) {
-            if (isMasterNullingJoinType(joinModels.getQuick(i).getJoinType())) {
                 return true;
             }
         }
@@ -1750,7 +1730,7 @@ public class SqlOptimiser implements Mutable {
      * this filter is not explicitly mentioned, but it might help pre-filtering record sources
      * before hashing.
      */
-    private void addTransitiveFilters(IQueryModel model) {
+    private void addTransitiveFilters(IQueryModel model, SqlExecutionContext sqlExecutionContext) {
         ObjList<IQueryModel> joinModels = model.getJoinModels();
         for (int i = 0, n = joinModels.size(); i < n; i++) {
             IQueryModel joinModel = joinModels.getQuick(i);
@@ -1777,36 +1757,36 @@ public class SqlOptimiser implements Mutable {
                     tmpStringSink.put(sourceIndex).put(':').put(name);
                     final int provenance = constNameToIndex.get(tmpStringSink);
                     if (provenance != CharSequenceIntHashMap.NO_ENTRY_VALUE) {
-                        final boolean isTargetBeforeNullingJoin;
-                        if (provenance == 0) {
-                            // A model-output predicate may prune the preserved side because it removes
-                            // rows that a nulling join would otherwise preserve. This includes a predicate
-                            // pushed from an enclosing model after the nested model's joins were optimized.
-                            isTargetBeforeNullingJoin = true;
-                        } else if (isNullingExecOrderValid) {
-                            // An inner ON predicate only proves the constant until the first join that
-                            // NULL-extends its source. Keep safe earlier sibling pruning, but do not
-                            // push into that nulling join or a join that executes after it.
+                        final ExpressionNode constNode = constNameToNode.get(tmpStringSink);
+                        final CharSequence token = constNameToToken.get(tmpStringSink);
+                        final boolean isTransitiveFilterSafe;
+                        if (isNullingExecOrderValid) {
                             final int boundaryModelIndex = nullingAnchorByExecPos.getQuick(nullingExecPosByModel.getQuick(sourceIndex));
                             final int boundaryExecPos = boundaryModelIndex > -1
                                     ? nullingExecPosByModel.getQuick(boundaryModelIndex)
                                     : -1;
-                            isTargetBeforeNullingJoin = boundaryExecPos < 0
-                                    || nullingExecPosByModel.getQuick(jc.slaveIndex) < boundaryExecPos;
+                            final int targetExecPos = nullingExecPosByModel.getQuick(jc.slaveIndex);
+                            if (boundaryExecPos < 0) {
+                                isTransitiveFilterSafe = true;
+                            } else if (targetExecPos < boundaryExecPos) {
+                                isTransitiveFilterSafe = joinOps.get(token) != JOIN_OP_EQUAL
+                                        || (provenance != 0 && nullingExecPosByModel.getQuick(provenance) < boundaryExecPos)
+                                        || isNullRejectingJoinConstant(joinModels, sourceIndex, name, constNode, sqlExecutionContext);
+                            } else {
+                                isTransitiveFilterSafe = provenance == 0;
+                            }
                         } else {
-                            // A partial order cannot locate the target relative to the barrier. Preserve
-                            // correctness conservatively; successful reordered join plans use the branch above.
-                            isTargetBeforeNullingJoin = masterNullingJoinIndex(sourceIndex) < 0
+                            isTransitiveFilterSafe = masterNullingJoinIndex(sourceIndex) < 0
                                     && !hasNonEquiNullingJoin;
                         }
-                        if (!isTargetBeforeNullingJoin) {
+                        if (!isTransitiveFilterSafe) {
                             continue;
                         }
                         OperatorExpression op = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence())
-                                .getOperatorDefinition(constNameToToken.get(tmpStringSink));
+                                .getOperatorDefinition(token);
                         ExpressionNode node = expressionNodePool.next().of(OPERATION, op.operator.token, op.precedence, 0);
                         node.lhs = jc.aNodes.getQuick(k);
-                        node.rhs = constNameToNode.get(tmpStringSink);
+                        node.rhs = constNode;
                         node.paramCount = 2;
                         addWhereNode(model, jc.slaveIndex, node);
                     }
@@ -1952,7 +1932,7 @@ public class SqlOptimiser implements Mutable {
                                 cs,
                                 jc.slaveIndex,
                                 node.lhs,
-                                innerPredicate,
+                                innerPredicate ? joinIndex : -1,
                                 node.token
                         );
                     } else {
@@ -1968,7 +1948,7 @@ public class SqlOptimiser implements Mutable {
                                     cs,
                                     bColIndex,
                                     node.lhs,
-                                    false,
+                                    -1,
                                     node.token
                             );
                         }
@@ -2083,7 +2063,7 @@ public class SqlOptimiser implements Mutable {
                                 cs,
                                 lhi,
                                 node.rhs,
-                                innerPredicate,
+                                innerPredicate ? joinIndex : -1,
                                 node.token
                         );
                     } else {
@@ -2098,7 +2078,7 @@ public class SqlOptimiser implements Mutable {
                                     cs,
                                     lhi,
                                     node.rhs,
-                                    false,
+                                    -1,
                                     node.token
                             );
                         }
@@ -2126,7 +2106,7 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode node,
             boolean innerPredicate,
             boolean isTransitiveFilterFact,
-            boolean isModelOn
+            int modelOnJoinIndex
     ) throws SqlException {
         traverseNamesAndIndices(parent, node);
         node.innerPredicate = innerPredicate;
@@ -2143,7 +2123,7 @@ public class SqlOptimiser implements Mutable {
                         name,
                         literalCollectorAIndexes.get(0),
                         node.rhs,
-                        isModelOn,
+                        modelOnJoinIndex,
                         node.token
                 );
             }
@@ -3459,17 +3439,21 @@ public class SqlOptimiser implements Mutable {
      * Re-derives transitive equality filters after a {@code column = constant} predicate has been
      * pushed down into a nested join sub-query (for example, a view that encapsulates the joins).
      * <p>
-     * {@link #addTransitiveFilters(IQueryModel)} normally runs during {@link #optimiseJoins}, but at
+     * {@link #addTransitiveFilters(IQueryModel, SqlExecutionContext)} normally runs during {@link #optimiseJoins}, but at
      * that point the predicate still sits on the outer model and the nested join's WHERE clause is
      * empty, so the slave-side filter is never derived. When the same predicate is written directly
      * on the join model (no enclosing view), the derivation happens and the slave scan becomes a
      * keyed lookup; this method restores that behavior for the pushed-down case.
      * <p>
      * Only a constant pinned to the parent side of an equi-join propagates to the slave (mirroring
-     * {@link #addTransitiveFilters}). If a later join NULL-extends that parent, only a statically
-     * non-NULL literal may propagate because a runtime constant can evaluate to NULL.
+     * {@link #addTransitiveFilters(IQueryModel, SqlExecutionContext)}). Its boundary safety is
+     * checked when the derived filter reaches its target.
      */
-    private void deriveTransitiveFiltersFromPushedPredicate(IQueryModel nested, ExpressionNode node) throws SqlException {
+    private void deriveTransitiveFiltersFromPushedPredicate(
+            IQueryModel nested,
+            ExpressionNode node,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
         // transitivity of equals applies only to a single "column = constant" equality, and only a
         // join sub-query has equi-join keys to propagate the constant across
         if (nested.getJoinModels().size() < 2 || joinOps.get(node.token) != JOIN_OP_EQUAL) {
@@ -3510,25 +3494,20 @@ public class SqlOptimiser implements Mutable {
         if (joinBarriers.contains(nested.getJoinModels().getQuick(index).getJoinType())) {
             return;
         }
-        if (constNode.type != CONSTANT && hasMasterNullingJoinAfter(nested, index)) {
-            return;
-        }
-
         // the enclosing model's join pass may have left const-map entries behind; reset the maps
         // so addTransitiveFilters sees exactly this pushed predicate. No clean-up clear is needed
         // afterwards: every reader resets the maps before use (this method here, optimiseJoins at
         // the top of its join-processing block).
         clearConstNameMaps();
-        // The predicate applies to the nested model's output even when it originated in an outer ON
-        // clause. The derive guard above has already rejected runtime NULL across a nested nulling join.
         registerTransitiveFilterFact(
                 name,
                 index,
                 constNode,
-                false,
+                -1,
                 node.token
         );
-        addTransitiveFilters(nested);
+        precomputeNullingJoinAnchors(nested);
+        addTransitiveFilters(nested, sqlExecutionContext);
     }
 
     /**
@@ -5517,6 +5496,25 @@ public class SqlOptimiser implements Mutable {
         return true;
     }
 
+    private boolean isFoldableConstantExpression(ExpressionNode node, SqlExecutionContext sqlExecutionContext) {
+        if (!isEffectivelyConstantExpression(node)) {
+            return false;
+        }
+        Function function = null;
+        try {
+            function = functionParser.parseFunction(
+                    ExpressionNode.deepClone(expressionNodePool, node),
+                    EmptyRecordMetadata.INSTANCE,
+                    sqlExecutionContext
+            );
+            return function != null && function.isConstant();
+        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException ignored) {
+            return false;
+        } finally {
+            Misc.free(function);
+        }
+    }
+
     private boolean isIntegerConstant(@Nullable ExpressionNode n) {
         if (n == null || n.type != CONSTANT) {
             return false;
@@ -5577,6 +5575,58 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private boolean isNullRejectingJoinConstant(
+            ObjList<IQueryModel> joinModels,
+            int modelIndex,
+            CharSequence columnName,
+            ExpressionNode constNode,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        // Runtime constants may become NULL in another cached-plan execution, so require compile-time folding.
+        if (!isFoldableConstantExpression(constNode, sqlExecutionContext)) {
+            return false;
+        }
+        final QueryColumn column = joinModels.getQuick(modelIndex).getAliasToColumnMap().get(columnName);
+        if (column == null || column.getColumnType() < 0) {
+            return false;
+        }
+
+        // Evaluate the pushed equality on an outer join's NULL record to preserve type-specific NULL semantics.
+        final GenericRecordMetadata metadata = new GenericRecordMetadata();
+        metadata.add(new TableColumnMetadata(
+                NULL_REJECTING_PROBE_COLUMN,
+                column.getColumnType(),
+                IndexType.NONE,
+                0,
+                false,
+                null
+        ));
+
+        final ExpressionNode columnNode = expressionNodePool.next().of(
+                LITERAL,
+                NULL_REJECTING_PROBE_COLUMN,
+                0,
+                constNode.position
+        );
+        final ExpressionNode equalityNode = expressionNodePool.next().of(OPERATION, "=", 0, constNode.position);
+        equalityNode.lhs = columnNode;
+        equalityNode.rhs = ExpressionNode.deepClone(expressionNodePool, constNode);
+        equalityNode.paramCount = 2;
+
+        Function function = null;
+        Record nullRecord = null;
+        try {
+            nullRecord = NullRecordFactory.getInstance(metadata);
+            function = functionParser.parseFunction(equalityNode, metadata, sqlExecutionContext);
+            return function != null && !function.getBool(nullRecord);
+        } catch (Throwable ignored) {
+            return false;
+        } finally {
+            Misc.free(function);
+            Misc.freeIfCloseable(nullRecord);
+        }
     }
 
     private boolean isResolvableColumn(
@@ -6190,7 +6240,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void moveWhereInsideSubQueries(IQueryModel model) throws SqlException {
+    private void moveWhereInsideSubQueries(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!model.isOptimisable()) {
             return;
         }
@@ -6338,7 +6388,7 @@ public class SqlOptimiser implements Mutable {
                             // the predicate just landed on a nested join sub-query whose join
                             // optimisation already ran, so re-derive transitive constant filters to
                             // let the constant reach the slave scans (e.g. a view wrapping LEFT JOINs)
-                            deriveTransitiveFiltersFromPushedPredicate(nested, node);
+                            deriveTransitiveFiltersFromPushedPredicate(nested, node, sqlExecutionContext);
                             // we do not have to deal with "union" models here
                             // because "where" clause is made to apply to the result of the union
                         } catch (NonLiteralException ignore) {
@@ -6369,20 +6419,20 @@ public class SqlOptimiser implements Mutable {
 
         IQueryModel nested = model.getNestedModel();
         if (nested != null) {
-            moveWhereInsideSubQueries(nested);
+            moveWhereInsideSubQueries(nested, sqlExecutionContext);
         }
 
         ObjList<IQueryModel> joinModels = model.getJoinModels();
         for (int i = 1, m = joinModels.size(); i < m; i++) {
             nested = joinModels.getQuick(i);
             if (nested != model) {
-                moveWhereInsideSubQueries(nested);
+                moveWhereInsideSubQueries(nested, sqlExecutionContext);
             }
         }
 
         nested = model.getUnionModel();
         if (nested != null) {
-            moveWhereInsideSubQueries(nested);
+            moveWhereInsideSubQueries(nested, sqlExecutionContext);
         }
     }
 
@@ -6729,7 +6779,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void optimiseJoins(IQueryModel model) throws SqlException {
+    private void optimiseJoins(IQueryModel model, SqlExecutionContext sqlExecutionContext) throws SqlException {
         if (!model.isOptimisable()) {
             return;
         }
@@ -6780,7 +6830,7 @@ public class SqlOptimiser implements Mutable {
             reorderTables(model);
             assignFilters(model);
             alignJoinClauses(model);
-            addTransitiveFilters(model);
+            addTransitiveFilters(model, sqlExecutionContext);
             mergeConstIntoPostJoinWhereClause(model);
         }
 
@@ -6788,13 +6838,13 @@ public class SqlOptimiser implements Mutable {
             IQueryModel m = model.getJoinModels().getQuick(i).getNestedModel();
             if (m != null) {
                 clearConstNameMaps();
-                optimiseJoins(m);
+                optimiseJoins(m, sqlExecutionContext);
             }
 
             m = model.getJoinModels().getQuick(i).getUnionModel();
             if (m != null) {
                 clearConstNameMaps();
-                optimiseJoins(m);
+                optimiseJoins(m, sqlExecutionContext);
             }
         }
     }
@@ -7283,7 +7333,7 @@ public class SqlOptimiser implements Mutable {
                         break;
                     case JOIN_OP_REGEX:
                         final boolean isJoinBarrier = joinBarriers.contains(joinModel.getJoinType());
-                        analyseRegex(parent, n, innerPredicate, joinIndex < 0 || !isJoinBarrier, joinIndex >= 0);
+                        analyseRegex(parent, n, innerPredicate, joinIndex < 0 || !isJoinBarrier, joinIndex);
                         if (isMovableInnerPredicate) {
                             addModelOnPredicateFromCollectedIndexes(n, joinIndex);
                         }
@@ -7942,16 +7992,17 @@ public class SqlOptimiser implements Mutable {
             CharSequence name,
             int modelIndex,
             ExpressionNode constNode,
-            boolean isModelOn,
+            int modelOnJoinIndex,
             CharSequence token
     ) {
         tmpStringSink.clear();
         tmpStringSink.put(modelIndex).put(':').put(name);
         final int currentProvenance = constNameToIndex.get(tmpStringSink);
-        if (currentProvenance == 0 && isModelOn) {
+        if (currentProvenance == 0 && modelOnJoinIndex >= 0) {
             return;
         }
-        final boolean isNew = constNameToIndex.put(tmpStringSink, isModelOn ? 1 : 0);
+        // The map stores zero for model-output predicates and the positive join index for INNER ON predicates.
+        final boolean isNew = constNameToIndex.put(tmpStringSink, modelOnJoinIndex >= 0 ? modelOnJoinIndex : 0);
         final CharSequence key = isNew ? constNameToIndex.keys().getLast() : tmpStringSink;
         constNameToNode.put(key, constNode);
         constNameToToken.put(key, token);
@@ -13456,7 +13507,7 @@ public class SqlOptimiser implements Mutable {
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
-            optimiseJoins(rewrittenModel);
+            optimiseJoins(rewrittenModel, sqlExecutionContext);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);
@@ -13468,7 +13519,7 @@ public class SqlOptimiser implements Mutable {
             rewrittenModel = rewriteOrderBy(rewrittenModel);
             optimiseOrderBy(rewrittenModel, OrderByMnemonic.ORDER_BY_UNKNOWN);
             createOrderHash(rewrittenModel);
-            moveWhereInsideSubQueries(rewrittenModel);
+            moveWhereInsideSubQueries(rewrittenModel, sqlExecutionContext);
             eraseColumnPrefixInWhereClauses(rewrittenModel);
             moveTimestampToChooseModel(rewrittenModel);
             propagateTopDownColumns(rewrittenModel, rewrittenModel.allowsColumnsChange());
