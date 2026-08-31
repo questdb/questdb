@@ -7659,19 +7659,43 @@ public class PostingIndexWriter implements IndexWriter {
                     int key = activeKeyIds[idx];
                     int pendingCount = Unsafe.getInt(pendingCountsAddr + (long) key * Integer.BYTES);
                     int spillCount = getSpillCount(key);
+                    if (pendingCount + spillCount == 0) {
+                        continue;
+                    }
+                    final long spillAddr = spillCount > 0
+                            ? Unsafe.getLong(spillKeyAddrsAddr + (long) key * Long.BYTES)
+                            : 0;
+                    final long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
 
-                    if (spillCount > 0) {
-                        long spillAddr = Unsafe.getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-                        for (int i = 0; i < spillCount; i++) {
-                            long rowId = Unsafe.getLong(spillAddr + (long) i * Long.BYTES);
-                            writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType);
-                        }
+                    // Resolve the covered column's base address ONCE per key rather
+                    // than once per value. This key's row ids ascend -- spill holds
+                    // the earlier ones and add() rejects a descending value -- so the
+                    // highest is the last pending entry, or the last spilled entry
+                    // when nothing is pending. Probing it performs any grow-remap the
+                    // whole run could need, after which every lower offset resolves
+                    // against the same mapping. baseLimit keeps the mapped length so
+                    // a row id that breaks the ascending assumption falls back to the
+                    // checked call instead of reading past it; 0 means addr-based
+                    // (caller-owned, no length tracked), matching what the per-value
+                    // path already assumes.
+                    final long keyMaxRowId = pendingCount > 0
+                            ? Unsafe.getLong(keyValuesAddr + (long) (pendingCount - 1) * Long.BYTES)
+                            : Unsafe.getLong(spillAddr + (long) (spillCount - 1) * Long.BYTES);
+                    long base = 0;
+                    long baseLimit = 0;
+                    if (keyMaxRowId >= colTop
+                            && getCoveredDataReadAddr(c, (keyMaxRowId - colTop) << shift, valueSize) != 0) {
+                        base = coveredColReadAddrs[c];
+                        baseLimit = coveredColReadSizes[c];
                     }
 
-                    long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
+                    for (int i = 0; i < spillCount; i++) {
+                        writeSidecarValueHoisted(mem, c, colTop, Unsafe.getLong(spillAddr + (long) i * Long.BYTES),
+                                shift, valueSize, colType, base, baseLimit);
+                    }
                     for (int i = 0; i < pendingCount; i++) {
-                        long rowId = Unsafe.getLong(keyValuesAddr + (long) i * Long.BYTES);
-                        writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType);
+                        writeSidecarValueHoisted(mem, c, colTop, Unsafe.getLong(keyValuesAddr + (long) i * Long.BYTES),
+                                shift, valueSize, colType, base, baseLimit);
                     }
                 }
             }
@@ -7735,6 +7759,48 @@ public class PostingIndexWriter implements IndexWriter {
             if (exceptionWorkspaceAddr != 0) {
                 Unsafe.free(exceptionWorkspaceAddr, maxKeyCount, MemoryTag.NATIVE_INDEX_READER);
             }
+        }
+    }
+
+    /**
+     * {@link #writeSidecarValueSafe} with the covered-column base address already
+     * resolved by the caller for the whole key run. Falls back to the checked
+     * per-value resolution when the caller could not resolve a base, or when the
+     * offset would leave a known mapped length -- so it can never address a byte
+     * the per-value path would not have.
+     *
+     * @param base      resolved covered-column base address, 0 when unresolved
+     * @param baseLimit mapped length behind {@code base}, 0 when caller-owned
+     */
+    private void writeSidecarValueHoisted(
+            MemoryMARW mem,
+            int covIdx,
+            long colTop,
+            long rowId,
+            int shift,
+            int valueSize,
+            int colType,
+            long base,
+            long baseLimit
+    ) {
+        if (rowId < colTop) {
+            writeNullSentinel(mem, valueSize, colType);
+            return;
+        }
+        final long srcOffset = (rowId - colTop) << shift;
+        long addr;
+        if (base != 0 && (baseLimit == 0 || srcOffset + valueSize <= baseLimit)) {
+            addr = base + srcOffset;
+        } else if (coveredColumnNames.size() > 0 || coveredColumnAddrs.size() > 0) {
+            addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
+        } else {
+            putFixedValue(mem, srcOffset, valueSize);
+            return;
+        }
+        if (addr == 0) {
+            writeNullSentinel(mem, valueSize, colType);
+        } else {
+            putFixedValue(mem, addr, valueSize);
         }
     }
 
