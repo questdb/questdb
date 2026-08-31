@@ -1587,11 +1587,19 @@ public class PostingIndexWriter implements IndexWriter {
         if (COVERING_COUNTERS_ENABLED) {
             COVERING_FULL_RESEAL_COUNT.incrementAndGet();
         }
+        // This is the dominant term of an O3 reseal on a covering index: it
+        // regathers the covered columns for the WHOLE partition, and
+        // TableWriter reaches it on both the rebuild and the canSkipRebuild
+        // path. Capture coverCount before the rebuild -- a reconfigure can
+        // reset it -- so the record reports what was actually rebuilt.
+        final long rebuildStartMicros = configuration.getMicrosecondClock().getTicks();
+        final int coverCountAtEntry = coverCount;
         closeSidecarMems();
         long gen0DirOffset = resolveHeadGenDirOffset(0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
-        if (gen0KeyCount >= 0 && genCount == 1 && partitionPath.size() > 0) {
+        final boolean byCopy = gen0KeyCount >= 0 && genCount == 1 && partitionPath.size() > 0;
+        if (byCopy) {
             // peekNextSealTxn(), not sealTxn+1: after a recovery drop the writer's
             // sealTxn lags genCounter, and reusing a dropped sealTxn would race
             // the still-pending .pv purge.
@@ -1606,6 +1614,29 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             seal();
         }
+
+        // coverEndOffsetsCache is the authoritative per-cover valid extent --
+        // captureCoverEndOffsets refreshes it from each open handle on every
+        // chain publish, so it survives the closeSidecarMems above and is the
+        // one place the rebuilt sidecar size can be read after the fact. A
+        // never-written slot keeps its cached 0 and simply contributes nothing.
+        long sidecarBytes = 0;
+        for (int c = 0, n = coverEndOffsetsCache.size(); c < n; c++) {
+            sidecarBytes += coverEndOffsetsCache.getQuick(c);
+        }
+        // The seal path also emits its own record; this one adds the caller
+        // context (a sidecar rebuild, not a bare seal) plus the byte total,
+        // which is what turns the elapsed time into a throughput figure.
+        LOG.info().$("posting index sidecars rebuilt [indexName=").$(indexName)
+                .$(", sealTxn=").$(sealTxn)
+                .$(", path=").$(byCopy ? "copy" : "seal")
+                .$(", covers=").$(coverCountAtEntry)
+                .$(", keys=").$(keyCount)
+                .$(", gens=").$(genCount)
+                .$(", maxRowId=").$(maxValue)
+                .$(", sidecarBytes=").$(sidecarBytes)
+                .$(", timeMicros=").$(configuration.getMicrosecondClock().getTicks() - rebuildStartMicros)
+                .I$();
     }
 
     /**
