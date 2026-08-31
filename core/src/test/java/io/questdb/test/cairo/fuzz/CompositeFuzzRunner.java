@@ -748,14 +748,20 @@ public class CompositeFuzzRunner {
     }
 
     /**
-     * Enables generated {@code DROP PARTITION} operations, which are OFF by default because they
-     * reproduce a known open bug (see this class's DROP PARTITION javadoc for the evidence and the
-     * four eliminated leads).
+     * Overrides the per-transaction probability of a generated {@code DROP PARTITION}.
      * <p>
-     * Exists so reproducing it is one call rather than editing a hardcoded probability and rebuilding
-     * -- the reproduction recipe was previously prose, and prose recipes rot.
+     * <b>Corrected 2026-08-31.</b> This comment used to say the operation is "OFF by default because
+     * it reproduces a known open bug". It is not off: {@link #dropPartitionProbability} defaults to
+     * 0.05 and has since the four causes were fixed on 2026-08-26 (see this class's DROP PARTITION
+     * javadoc). The stale text outlived the fix by three sessions and was still being quoted into a
+     * pull-request description, which is the cost of describing state in prose next to the field that
+     * actually holds it.
+     * <p>
+     * Two live uses: turn it UP when hunting, and turn it DOWN (to 0.0) to isolate whether a failure
+     * involves dropping at all.
      *
-     * @param probability per-transaction probability; 0.05 is what the recorded measurements used
+     * @param probability per-transaction probability; 0.05 is both the default and what the recorded
+     *                    measurements used
      */
     public CompositeFuzzRunner withDropPartitionProbability(double probability) {
         this.dropPartitionProbability = probability;
@@ -1306,7 +1312,9 @@ public class CompositeFuzzRunner {
  * {@link #withDropPartitionProbability}(0.05) to keep hunting; expect the unstable test to keep
  * finding things until it stops.
  * <p>
- * <b>The one it found is OPEN and now deterministically reproducible:</b>
+ * <b>The one it found is FIXED</b> (the three causes below, plus the drop path's active-tail reopen).
+ * Its reproduction is kept because it is the only deterministic one this generation produced, and a
+ * repro that no longer fails is the cheapest regression check there is:
  * <pre>
  *   CompositeFuzzRunner.of(engine, TestUtils.generateRandom(null, 345549849791363L, 1787735726165L))
  *           .withDropPartitionProbability(0.05)

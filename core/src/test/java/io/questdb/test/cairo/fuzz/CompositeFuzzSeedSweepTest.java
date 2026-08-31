@@ -26,6 +26,7 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
@@ -56,6 +57,39 @@ public class CompositeFuzzSeedSweepTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             CompositeFuzzRunner runner = CompositeFuzzRunner.of(engine, new Rnd(1481L, 1683L));
             runner.createTables("pinned");
+            runner.applyGeneratedTransactions(600, 30);
+            runner.assertTwinEqual();
+        });
+    }
+
+    /**
+     * The seed that found the four-cause {@code DROP PARTITION} defect, pinned as a test rather than
+     * left in {@link CompositeFuzzRunner}'s javadoc as a recipe.
+     * <p>
+     * It was the only deterministic reproduction that generation of the bug produced, and until now it
+     * lived in prose — in the same class whose own comment warns that "prose recipes rot". They did:
+     * two neighbouring javadocs still described the bug as open three sessions after it was fixed.
+     * <p>
+     * <b>{@link TestUtils#generateRandom}, never {@code new Rnd}.</b> generateRandom primes the stream
+     * with two {@code nextBoolean()} calls, so a bare {@code new Rnd} with the same two longs replays a
+     * DIFFERENT stream and this test would be silently vacuous — measured at the time: the bare form
+     * PASSED against the unfixed product while the generateRandom form reproduced the divergence
+     * byte-for-byte.
+     * <p>
+     * The drop probability is passed explicitly even though 0.05 is already the default, so that
+     * changing the default cannot quietly retire this test's coverage.
+     * <p>
+     * Discriminating, verified by mutation on 2026-08-31: reverting the drop path's active-tail-reopen
+     * skip (one of the four causes, commit 3f3a7bb0ba) makes this test FAIL, and restoring it makes it
+     * pass. It is a lock, not a smoke test.
+     */
+    @Test
+    public void testSeedThatFoundTheDropPartitionDefect() throws Exception {
+        assertMemoryLeak(() -> {
+            CompositeFuzzRunner runner = CompositeFuzzRunner
+                    .of(engine, TestUtils.generateRandom(null, 345549849791363L, 1787735726165L))
+                    .withDropPartitionProbability(0.05);
+            runner.createTables("pinnedDrop");
             runner.applyGeneratedTransactions(600, 30);
             runner.assertTwinEqual();
         });
