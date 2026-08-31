@@ -119,6 +119,19 @@ public class PostingIndexBenchmarkSuite {
      * existing {@code questdb.idx.packed.align} flag has exactly this shape,
      * so any A/B taken with it and a forked run measured nothing.
      */
+    /**
+     * Extra JVM args for the FORKED jvm, from
+     * {@code -Dquestdb.suite.bench.jvmargs}, space separated.
+     * <p>
+     * Exists for diagnostics the fork has to make itself -- {@code
+     * -XX:+PrintInlining} is the reason it was added, since whether a cursor's
+     * next() inlines is a compilation decision the launcher cannot observe.
+     */
+    private static String[] forwardedJvmArgs() {
+        final String args = System.getProperty("questdb.suite.bench.jvmargs");
+        return args == null || args.isEmpty() ? new String[0] : args.split("\\s+");
+    }
+
     private static String[] forwardedIdxFlags() {
         final java.util.ArrayList<String> args = new java.util.ArrayList<>();
         for (String name : System.getProperties().stringPropertyNames()) {
@@ -242,6 +255,7 @@ public class PostingIndexBenchmarkSuite {
                 builder.forks(Integer.getInteger("questdb.suite.bench.forks", 1))
                         .jvmArgsAppend(JVM_EXPORTS)
                         .jvmArgsAppend(forwardedIdxFlags())
+                        .jvmArgsAppend(forwardedJvmArgs())
                         .warmupIterations(1)
                         .measurementIterations(2);
             } else {
@@ -260,6 +274,7 @@ public class PostingIndexBenchmarkSuite {
                 builder.forks(1)
                         .jvmArgsAppend(JVM_EXPORTS)
                         .jvmArgsAppend(forwardedIdxFlags())
+                        .jvmArgsAppend(forwardedJvmArgs())
                         // Three warmup iterations, not one. One second of
                         // warmup does not settle JIT on these cells, and the
                         // instability shows up as CONFIDENT wrong verdicts
@@ -1209,6 +1224,44 @@ public class PostingIndexBenchmarkSuite {
     }
 
     /**
+     * What a full scan of this arm actually did, per row it emitted.
+     * <p>
+     * The scenarios are built through the index WRITER, not SQL, so whether a
+     * key's run comes out arithmetic -- and therefore whether the cursor
+     * generates row ids or unpacks them -- is a property of the fixture that
+     * cannot be read off the ladder definition. Assuming it cost a day: the
+     * closed form was measured ON at 25,000 postings a key and its effect was
+     * indistinguishable from zero at 1,000, which is what a fixture whose runs
+     * are NOT arithmetic would look like.
+     */
+    private static void reportScanWork(IndexState s, long expected) {
+        if (!s.isParquet) {
+            return;
+        }
+        try (Path path = new Path().of(s.dir)) {
+            final IndexReader reader = openReader(s, path);
+            try {
+                final AbstractParquetPostingIndexReader idx = (AbstractParquetPostingIndexReader) reader;
+                for (int key = 0; key < s.keyCount; key++) {
+                    try (RowCursor c = reader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        while (c.hasNext()) {
+                            c.next();
+                        }
+                    }
+                }
+                System.out.printf(
+                        "SCANWORK %s/%s rows=%d widened/row=%.4f refills/row=%.5f flatGroups=%d/%d%n",
+                        s.format, s.scenario, expected,
+                        idx.getWidenedRowIdCount() / (double) expected,
+                        idx.getRefillCount() / (double) expected,
+                        idx.flatRowIdGroupCount(), idx.getIndexRowGroupCount());
+            } finally {
+                Misc.free(reader);
+            }
+        }
+    }
+
+    /**
      * Opens the covered-gather arm {@code s} was built for: the native covering
      * reader for {@code baseline}/{@code covering}, the parquet-form one for
      * {@code covering_parquet}.
@@ -2111,6 +2164,7 @@ public class PostingIndexBenchmarkSuite {
                 }
             }
             verifyArmPostingCount(this, totalRows);
+            reportScanWork(this, totalRows);
         }
 
         /**
