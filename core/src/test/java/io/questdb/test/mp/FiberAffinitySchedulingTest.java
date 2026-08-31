@@ -494,24 +494,30 @@ public class FiberAffinitySchedulingTest {
     }
 
     @Test
-    public void testSingleSameRuntimePublicationDoesNotWakeParkedPeer() throws Exception {
+    public void testSingleSameRuntimePublicationDoesNotClaimReadyPeer() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(fiberConfiguration("fiber-same-runtime-no-wake", 2));
             final FiberRuntime runtime = pool.getFiberRuntime();
+            final CountDownLatch peerBlocked = new CountDownLatch(1);
             final CountDownLatch publicationCommitted = new CountDownLatch(1);
+            final CountDownLatch releasePeer = new CountDownLatch(1);
             final CountDownLatch releasePublisher = new CountDownLatch(1);
             final CountDownLatch taskRan = new CountDownLatch(1);
             final AtomicBoolean isLaunched = new AtomicBoolean();
-            final AtomicInteger mountedWorkerId = new AtomicInteger(FiberRuntime.NO_WORKER);
+            final AtomicBoolean isPeerBlocked = new AtomicBoolean();
+            final AtomicBoolean isSyntheticReadyRegistered = new AtomicBoolean();
             final AtomicReference<Throwable> jobError = new AtomicReference<>();
             pool.assign(0, workerContext -> {
                 if (isLaunched.compareAndSet(false, true)) {
                     try {
-                        awaitWorkerReady(pool, 1);
+                        Assert.assertTrue(peerBlocked.await(AWAIT_SECONDS, TimeUnit.SECONDS));
+                        // Keep Worker 1 out of the final pre-park steal scan while exposing a
+                        // claimable ready bit. An accidental wake must consume this bit.
+                        Assert.assertTrue(pool.registerReadyWorkerForTesting(1));
+                        isSyntheticReadyRegistered.set(true);
                         Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
                             @Override
                             protected boolean runStep() {
-                                mountedWorkerId.set(Worker.current().getWorkerId());
                                 taskRan.countDown();
                                 return true;
                             }
@@ -527,22 +533,42 @@ public class FiberAffinitySchedulingTest {
                 }
                 return false;
             });
+            pool.assign(1, workerContext -> {
+                if (isPeerBlocked.compareAndSet(false, true)) {
+                    peerBlocked.countDown();
+                    try {
+                        Assert.assertTrue(releasePeer.await(AWAIT_SECONDS, TimeUnit.SECONDS));
+                    } catch (Throwable th) {
+                        jobError.compareAndSet(null, th);
+                    }
+                }
+                return false;
+            });
             pool.start();
             try {
                 Assert.assertTrue(publicationCommitted.await(AWAIT_SECONDS, TimeUnit.SECONDS));
                 rethrow(jobError);
-                Assert.assertEquals(1, runtime.getQueuedCount());
+                Assert.assertEquals(1, runtime.getLocalPublicationCount());
+                Assert.assertEquals(1, runtime.getLocalQueueDepthForTesting(0));
                 Assert.assertEquals(0, runtime.getWakeClaimCount());
-                Assert.assertTrue("same-runtime publication woke the parked peer",
+                Assert.assertTrue("same-runtime publication claimed the ready peer",
                         pool.isWorkerReadyForTesting(1));
                 Assert.assertEquals(1, taskRan.getCount());
 
-                releasePublisher.countDown();
+                pool.unregisterReadyWorkerForTesting(1);
+                isSyntheticReadyRegistered.set(false);
+                Assert.assertEquals(0, pool.getReadyWorkerCountForTesting());
+                Assert.assertFalse(pool.isWorkerReadyForTesting(1));
+                releasePeer.countDown();
                 Assert.assertTrue(taskRan.await(AWAIT_SECONDS, TimeUnit.SECONDS));
-                Assert.assertEquals(0, mountedWorkerId.get());
+                rethrow(jobError);
                 awaitOutstanding(runtime, 0);
             } finally {
+                if (isSyntheticReadyRegistered.getAndSet(false)) {
+                    pool.unregisterReadyWorkerForTesting(1);
+                }
                 releasePublisher.countDown();
+                releasePeer.countDown();
                 pool.halt();
             }
         });
