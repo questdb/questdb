@@ -1473,7 +1473,7 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private boolean addOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {
+    private void addOrderingConstraint(IQueryModel parent, int parentIndex, int childIndex) {
         assert parentIndex < childIndex;
         final IQueryModel childModel = parent.getJoinModels().getQuick(childIndex);
         JoinContext childContext = childModel.getJoinContext();
@@ -1481,9 +1481,8 @@ public class SqlOptimiser implements Mutable {
             childModel.setContext(childContext = contextPool.next());
             childContext.slaveIndex = childIndex;
         }
-        final boolean isNew = childContext.parents.add(parentIndex);
+        childContext.parents.add(parentIndex);
         linkDependencies(parent, parentIndex, childIndex);
-        return isNew;
     }
 
     private void addOuterJoinExpression(IQueryModel parent, IQueryModel model, int joinIndex, ExpressionNode node) {
