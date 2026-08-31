@@ -46,6 +46,51 @@ import org.junit.Test;
 public class CompositeTtlAndForceDropTest extends AbstractCompositeTwinTest {
 
     /**
+     * FORCE DROP of the FIRST day must recompute the table minimum across the surviving day's cells.
+     * <p>
+     * {@code forceRemovePartitions} is the third site of the cellKey-order defect found on 2026-08-31
+     * (the others being {@code dropPartitionByExactTimestamp} and {@code removePartitionCell}). Its
+     * recompute reads a SINGLE partition record, and on a composite table records are ordered
+     * (timestamp ASC, cellKey ASC) while a cell's timestamps are unrelated to its cellKey -- that is
+     * assigned in the order dimension VALUES first arrived. Here day 2's lowest cellKey (E0) holds
+     * 20:00 while a higher one (E1) holds 08:00.
+     * <p>
+     * A minimum that lands too HIGH is silent: {@code cullIntervals} discards every interval below it,
+     * so timestamp-FILTERED reads lose rows while counts and unfiltered scans stay correct. The twin
+     * comparison with an explicit WHERE is what catches it; the unfiltered one does not.
+     * <p>
+     * The plain arm of that recompute is deliberately left as upstream wrote it, so on this shape the
+     * plain twin is the oracle for the composite side alone.
+     * <p>
+     * <b>THREE cells, and that is load-bearing.</b> With two, the upstream single-record read lands on
+     * index 1 -- which with only two survivors IS the sibling holding the minimum, so the defect hides.
+     * Verified by mutation: the two-cell form of this test passes against the unfixed writer, the
+     * three-cell form fails. Day 2's cellKeys ascend 0,1,2 while its minima DESCEND 20:00, 18:00,
+     * 08:00, so neither record 0 nor record 1 is the answer.
+     */
+    @Test(timeout = 60_000)
+    public void testForceDropFirstDayRecomputesMinAcrossSiblingCells() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            insertIntoBoth("('2023-01-01T10:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T11:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-01T12:00:00.000000Z','E2',3.0)");
+            drainWalQueue();
+            insertIntoBoth("('2023-01-02T20:00:00.000000Z','E0',4.0),"
+                    + "('2023-01-02T18:00:00.000000Z','E1',5.0),"
+                    + "('2023-01-02T08:00:00.000000Z','E2',6.0)");
+            drainWalQueue();
+
+            execute("ALTER TABLE c FORCE DROP PARTITION LIST '2023-01-01'");
+            execute("ALTER TABLE p FORCE DROP PARTITION LIST '2023-01-01'");
+            drainWalQueue();
+
+            assertTwinEqual(" WHERE ts >= '2023-01-02T08:00:00.000000Z' AND ts < '2023-01-02T09:00:00.000000Z'");
+            assertTwinEqual("");
+        });
+    }
+
+    /**
      * FORCE DROP of a whole day must match the plain twin.
      */
     @Test(timeout = 60_000)

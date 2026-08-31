@@ -280,6 +280,47 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
     }
 
     /**
+     * The recompute must take the MINIMUM ACROSS THE SURVIVING DAY'S CELLS, not partition record 0's.
+     * <p>
+     * {@link #testDroppingBoundaryCellsRecomputesMinAndMax} cannot catch this and neither can any other
+     * test in this class: {@link #seedThreeMultiCellDays} gives every day E0 at 01:00, E1 at 05:00, E2
+     * at 09:00, so cellKey order and time order AGREE and record 0 really does hold the day's minimum.
+     * This test breaks that coincidence -- the surviving day's LOWEST cellKey holds its LATEST rows.
+     * <p>
+     * FOUND BY THE CLOCK-SEEDED FUZZ (2026-08-31, seed 786324839327532/1788176501154), not by review.
+     * There the composite {@code _txn} claimed a minimum of 14:50:15 for a table whose earliest row was
+     * at 12:29:25, and {@code AbstractIntervalPartitionFrameCursor#cullIntervals} then discarded every
+     * interval lying wholly below the false minimum: {@code WHERE ts = '13:56:16.290573'} returned NO
+     * rows while the plain twin returned two, and an hour-by-hour sweep showed hours 12 and 13 empty and
+     * every later hour exact. Row counts, {@code min(ts)} and full scans were all CORRECT throughout --
+     * only timestamp-FILTERED reads lost rows, which is why this survived ~110 composite test classes.
+     */
+    @Test(timeout = 60_000)
+    public void testDropRecomputesMinAcrossSiblingCellsNotRecordZero() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // E0 first, so it takes cellKey 0; on day 2 it holds the LATEST rows, and E1 -- a higher
+            // cellKey, therefore a LATER partition record -- holds the day's earliest.
+            insertIntoBoth("('2023-01-01T10:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-02T20:00:00.000000Z','E0',2.0),"
+                    + "('2023-01-02T08:00:00.000000Z','E1',3.0)");
+            drainWalQueue();
+
+            // dropping day 1 removes partition record 0, which is what triggers the recompute
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-01'");
+            execute("ALTER TABLE p DROP PARTITION LIST '2023-01-01'");
+            drainWalQueue();
+
+            // record 0 is now day 2 / E0 (20:00); the table minimum is day 2 / E1 (08:00)
+            assertBounds("2023-01-02T08:00:00.000000Z", "2023-01-02T20:00:00.000000Z");
+
+            // the read a too-high minimum silently breaks: an interval wholly below it
+            assertTwinEqual(" WHERE ts >= '2023-01-02T08:00:00.000000Z' AND ts < '2023-01-02T09:00:00.000000Z'");
+            assertTwinEqual("");
+        });
+    }
+
+    /**
      * Dropping every cell one at a time drops the day -- the second half of the spec's rule.
      */
     @Test(timeout = 60_000)

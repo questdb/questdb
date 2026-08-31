@@ -2926,7 +2926,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (removedCount > 0) {
             if (txWriter.getPartitionCount() > 0) {
                 if (firstPartitionDropped) {
-                    minTimestamp = readMinTimestamp();
+                    // Composite: fold the surviving day's CELLS. Records are (timestamp ASC, cellKey
+                    // ASC) and a cell's minimum is unrelated to its cellKey, so no single record is the
+                    // table minimum -- the third site in this class of defect, after
+                    // dropPartitionByExactTimestamp and removePartitionCell.
+                    //
+                    // The plain arm is left EXACTLY as master wrote it, deliberately. Its index-1 read
+                    // happens AFTER the removal, so it appears to skip the actual survivor at index 0;
+                    // that is upstream behaviour on a path this branch must keep byte-identical, and it
+                    // is recorded here rather than "fixed" in passing.
+                    minTimestamp = isRoutedComposite() ? readMinTimestampAcrossLeadingCells() : readMinTimestamp();
                     txWriter.setMinTimestamp(minTimestamp);
                 }
 
@@ -4147,19 +4156,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // parser constructs it -- so it is demonstrated through the public writer entry point the
             // opcode will call once wired. See CompositeDropCellMinTimestampTest.
             newMinTimestamp = Long.MAX_VALUE;
-        } else if (removingFirst) {
-            // readMinTimestamp reads partition index 1, which is exactly the survivor when index 0 goes.
-            // It is cell-aware as of sub-project 1D.
-            //
-            // Correct here, unlike in dropPartitionByExactTimestamp, and the difference is worth
-            // keeping: this guard keys on removingFirst -- an INDEX comparison -- so index 1 really is
-            // the survivor. That method compared DAYS, which on a multi-cell day fires even when
-            // index 0 survives. Only the empty-table half of the defect was shared.
-            newMinTimestamp = readMinTimestamp();
         }
 
         txWriter.beginPartitionSizeUpdate();
         txWriter.removeAttachedPartitions(timestamp, cellKey);
+        // Recomputed AFTER the removal, and across the surviving day's CELLS.
+        //
+        // This used to read partition index 1 before the removal, reasoning that "index 1 is exactly
+        // the survivor when index 0 goes". Index 1 IS the survivor; what does not follow is that the
+        // survivor holds the table minimum. Records are ordered (timestamp ASC, cellKey ASC), so the
+        // survivor is the lowest surviving cellKey of the earliest day, and cellKey order carries no
+        // information about a cell's timestamps -- it is the order dimension VALUES were first
+        // ingested. A sibling cell of the same day can hold earlier rows.
+        //
+        // The consequence of taking the minimum too HIGH is silent: cullIntervals discards every
+        // interval below _txn's minimum, so timestamp-filtered reads lose rows while counts and
+        // unfiltered scans stay right. Same defect, same session, as the one this method's own comment
+        // used to contrast itself favourably against in dropPartitionByExactTimestamp -- both were
+        // wrong, for the same reason, and only that method's was reachable from SQL.
+        if (partitionCountBefore > 1 && (removingFirst || timestamp == txWriter.getPartitionTimestampByIndex(0))) {
+            newMinTimestamp = readMinTimestampAcrossLeadingCells();
+        }
         txWriter.setMinTimestamp(newMinTimestamp);
         txWriter.finishPartitionSizeUpdate(newMinTimestamp, newMaxTimestamp);
         txWriter.bumpTruncateVersion();
@@ -9944,9 +9961,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // trips the `minTimestamp >= partition[0]` assert in commitWalInsertTransactions and
             // suspends the table. With assertions off (production) it silently persists that state.
             //
-            // The surviving index 0 IS the table minimum by definition, so this needs no assumption
-            // about which entry went away. Byte-identical for a plain table: there the removed entry is
-            // at index 0 exactly when it holds the minimum, and the new index 0 is the old index 1.
+            // CORRECTED 2026-08-31. The line above used to read "the surviving index 0 IS the table
+            // minimum by definition". That is true only for one partition record per day. Records are
+            // ordered (timestamp ASC, cellKey ASC), so on a composite table index 0 is the lowest
+            // cellKey of the earliest surviving DAY -- and a cell's minimum has nothing to do with its
+            // cellKey, which is assigned in the order dimension VALUES were first ingested. Record 0's
+            // minimum can therefore be LATER than a sibling's, and reading it hands _txn a minimum that
+            // is too HIGH.
+            //
+            // That direction is the dangerous one and it is silent: AbstractIntervalPartitionFrameCursor
+            // #cullIntervals discards every interval lying wholly below _txn's minimum, so filtered
+            // reads lose rows while counts, min(ts) and unfiltered scans stay correct (composite routes
+            // min(ts) through the merge scan, not the _txn shortcut).
+            //
+            // FOUND BY THE CLOCK-SEEDED FUZZ, seed 786324839327532/1788176501154: _txn claimed
+            // 2023-01-01T14:50:15 for a table whose earliest row was 12:29:25, and an hour-by-hour sweep
+            // showed hours 12 and 13 returning NOTHING against a plain twin's 6 and 12.
+            // Locked by CompositeDropPartitionWholeDayTest#
+            // testDropRecomputesMinAcrossSiblingCellsNotRecordZero.
             long nextMinTimestamp = minTimestamp;
 
             // NOTE: this method should not commit to _txn file
@@ -9962,8 +9994,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // above left the table still suspending at the same assert.
                 // MAX_VALUE is the identity for that min, so the next commit's minimum takes effect.
                 nextMinTimestamp = Long.MAX_VALUE;
-            } else if (removedIndex == 0) {
-                nextMinTimestamp = readMinTimestampAtIndex(0);
+            } else if (removedIndex == 0 || (isRoutedComposite() && timestamp == txWriter.getPartitionTimestampByIndex(0))) {
+                // The second disjunct covers a SIBLING removal: dropping a cell that was not record 0
+                // but shared the earliest day can still take the row that held the minimum. That
+                // direction leaves the minimum too LOW, which over-scans rather than dropping rows, but
+                // it still leaves _txn disagreeing with the data. Unreachable for a plain table, whose
+                // one-record-per-day layout means no surviving record can share the removed timestamp,
+                // so the plain path stays byte-identical.
+                nextMinTimestamp = readMinTimestampAcrossLeadingCells();
             }
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
@@ -17384,6 +17422,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private long readMinTimestamp() {
         return readMinTimestampAtIndex(1);
+    }
+
+    /**
+     * The table minimum after a removal: the smallest per-cell minimum among the partition records that
+     * share record 0's timestamp.
+     * <p>
+     * Records are ordered (timestamp ASC, cellKey ASC), so those records are a PREFIX and the loop stops
+     * at the first different timestamp. A plain table has exactly one record per timestamp, so this reads
+     * index 0 and returns -- the same single call the composite-blind version made, which is what keeps
+     * the plain path byte-identical.
+     */
+    private long readMinTimestampAcrossLeadingCells() {
+        final long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
+        long min = readMinTimestampAtIndex(0);
+        for (int i = 1, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) != firstPartitionTimestamp) {
+                break;
+            }
+            final long candidate = readMinTimestampAtIndex(i);
+            if (candidate < min) {
+                min = candidate;
+            }
+        }
+        return min;
     }
 
     private long readMinTimestampAtIndex(int partitionIndex) {

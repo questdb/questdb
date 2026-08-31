@@ -82,6 +82,64 @@ public class CompositeDropCellMinTimestampTest extends AbstractCairoTest {
     }
 
     /**
+     * The recompute must fold the surviving day's CELLS, not read the single survivor at index 0.
+     * <p>
+     * {@link #testDroppingFirstCellOfSeveralRecomputesMin} above cannot see this: it only asserts the
+     * table stays live. And this class's own doc used to claim {@code removePartitionCell}'s recompute
+     * guard was "correct, unlike its sibling" because it keys on an INDEX rather than a DAY. The guard
+     * is correct; what was wrong is the assumption underneath both -- that the surviving record holds
+     * the table minimum. Records are ordered (timestamp ASC, cellKey ASC), and a cell's timestamps have
+     * nothing to do with its cellKey, which is assigned in the order dimension VALUES first arrived.
+     * <p>
+     * Here A takes cellKey 0 and holds 10:00, B takes cellKey 1 and holds 20:00, C takes cellKey 2 and
+     * holds 12:00. Dropping A leaves B as the first record -- and B's minimum is eight hours LATER than
+     * C's. A too-high minimum is silent: it makes {@code cullIntervals} discard every interval below
+     * it, so timestamp-filtered reads lose rows while counts stay right.
+     * <p>
+     * <b>TWO COMMITS, and that is load-bearing.</b> The first version of this test seeded all three
+     * rows in ONE insert and passed against the unfixed writer -- a commit's rows are applied in
+     * TIMESTAMP order, so first-seen order (which is what assigns cellKeys) matched time order and
+     * record 0 held the minimum after all. Splitting the commits is what breaks the coincidence;
+     * verified by mutation, the single-commit form does not.
+     */
+    @Test
+    public void testDroppingFirstCellFoldsSiblingMinimaNotJustTheSurvivor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE f (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch WAL");
+            // commit 1 fixes the cellKeys: A = 0, B = 1
+            execute("INSERT INTO f VALUES ('2023-01-01T10:00:00.000000Z','A',1.0),"
+                    + "('2023-01-01T20:00:00.000000Z','B',2.0)");
+            drainWalQueue();
+            // commit 2 gives C cellKey 2, with rows EARLIER than B's
+            execute("INSERT INTO f VALUES ('2023-01-01T12:00:00.000000Z','C',3.0)");
+            drainWalQueue();
+
+            try (TableWriter w = getWriter("f")) {
+                Assert.assertTrue(w.removePartitionCell(
+                        parseFloorPartialTimestamp("2023-01-01T00:00:00.000000Z"), 0));
+            }
+            drainWalQueue();
+
+            engine.releaseInactive();
+            try (io.questdb.cairo.TableReader reader = getReader("f")) {
+                Assert.assertEquals(
+                        "_txn minTimestamp must fold the surviving cells, not read record 0 alone",
+                        io.questdb.cairo.ColumnType.getTimestampDriver(io.questdb.cairo.ColumnType.TIMESTAMP)
+                                .parseFloorLiteral("2023-01-01T12:00:00.000000Z"),
+                        reader.getMinTimestamp());
+            }
+
+            // the read a too-high minimum breaks silently: an interval wholly below it
+            final StringSink sink = new StringSink();
+            TestUtils.printSql(engine, sqlExecutionContext,
+                    "SELECT count() FROM f WHERE ts >= '2023-01-01T12:00:00.000000Z' "
+                            + "AND ts < '2023-01-01T13:00:00.000000Z'", sink);
+            TestUtils.assertEquals("count\n1\n", sink);
+        });
+    }
+
+    /**
      * THE LOCK. Drop the only cell so the table becomes EMPTY, then write again. A stale minimum
      * survives the subsequent commit and leaves {@code _txn} describing a partition that no longer
      * exists, which suspends the table on the
