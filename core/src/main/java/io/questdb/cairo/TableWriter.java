@@ -2963,6 +2963,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     } finally {
                         path.trimTo(pathSize);
                     }
+                    if (isRoutedComposite()) {
+                        // fold the surviving day's cells -- see readMaxTimestampAcrossTrailingCells
+                        maxTimestamp = readMaxTimestampAcrossTrailingCells(partitionIndex);
+                    }
                 }
 
                 txWriter.finishPartitionSizeUpdate(minTimestamp, maxTimestamp);
@@ -4140,6 +4144,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 newMaxTimestamp = attachMaxTimestamp;
             } finally {
                 path.trimTo(pathSize);
+            }
+            if (isRoutedComposite()) {
+                // fold the surviving day's cells -- see readMaxTimestampAcrossTrailingCells
+                newMaxTimestamp = readMaxTimestampAcrossTrailingCells(prevIndex);
             }
         }
         if (partitionCountBefore == 1) {
@@ -9841,6 +9849,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
                 prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
+                long tailMaxTimestamp;
                 try {
                     // SP1B (N1): resolve the PREVIOUS partition's own directory. For a composite table
                     // that partition is a CELL -- its data lives at <day>/<cell>.<txn>, never at
@@ -9858,10 +9867,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
                     }
                     readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, newTransientRowCount);
-                    nextMaxTimestamp = attachMaxTimestamp;
+                    tailMaxTimestamp = attachMaxTimestamp;
                 } finally {
                     path.trimTo(pathSize);
                 }
+                if (isRoutedComposite()) {
+                    // The record above is the new TAIL, and its size is what the tail bookkeeping needs
+                    // -- but its maximum is only its own cell's. Fold the day. See
+                    // readMaxTimestampAcrossTrailingCells for the measurement; this is the max-side
+                    // twin of the minimum defect fixed in the same commit.
+                    tailMaxTimestamp = readMaxTimestampAcrossTrailingCells(prevIndex);
+                }
+                nextMaxTimestamp = tailMaxTimestamp;
             }
 
             // NOTE: this method should not commit to _txn file
@@ -17433,6 +17450,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * index 0 and returns -- the same single call the composite-blind version made, which is what keeps
      * the plain path byte-identical.
      */
+    /**
+     * The table maximum after a removal: the largest per-cell maximum among the partition records that
+     * share {@code lastIndex}'s timestamp.
+     * <p>
+     * The mirror of {@link #readMinTimestampAcrossLeadingCells()}, and it exists for the same measured
+     * reason. Records are ordered (timestamp ASC, cellKey ASC), so the records of the last surviving
+     * DAY are a suffix and the loop walks backwards until the timestamp changes. Reading only
+     * {@code lastIndex} takes the HIGHEST-cellKey cell of that day, whose maximum has nothing to do
+     * with the day's -- cellKeys are assigned in the order dimension VALUES first arrived.
+     * <p>
+     * A maximum that lands too LOW is silent in exactly the way a too-high minimum is: {@code
+     * cullIntervals} trims the interval list against the reader's maximum as well, so filtered reads
+     * lose the rows above it while counts and unfiltered scans stay right. MEASURED before the fix,
+     * with a day whose latest row sat in cellKey 0: {@code _txn} said 23:00 for a table whose last row
+     * was at 23:30, and the twin comparison for {@code ts >= 23:15} failed with "Actual cursor does not
+     * have record at 0".
+     * <p>
+     * Callers keep their own single-record read for the plain path, so nothing about a plain table's
+     * bookkeeping changes; this only overrides the maximum, and only for a routed composite table.
+     */
+    private long readMaxTimestampAcrossTrailingCells(int lastIndex) {
+        final long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastIndex);
+        long max = Long.MIN_VALUE;
+        for (int i = lastIndex; i >= 0; i--) {
+            if (txWriter.getPartitionTimestampByIndex(i) != lastPartitionTimestamp) {
+                break;
+            }
+            final boolean isParquet = txWriter.isPartitionParquet(i);
+            final long parquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(i) : -1L;
+            try {
+                final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+                cellSegmentSink.clear();
+                renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(i));
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy,
+                        lastPartitionTimestamp, txWriter.getPartitionNameTxn(i), cellSegmentSink);
+                readPartitionMinMaxTimestamps(lastPartitionTimestamp, path,
+                        metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize,
+                        txWriter.getPartitionSize(i));
+                if (attachMaxTimestamp > max) {
+                    max = attachMaxTimestamp;
+                }
+            } finally {
+                path.trimTo(pathSize);
+            }
+        }
+        return max;
+    }
+
     private long readMinTimestampAcrossLeadingCells() {
         final long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
         long min = readMinTimestampAtIndex(0);

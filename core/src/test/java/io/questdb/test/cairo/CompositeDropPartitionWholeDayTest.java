@@ -321,6 +321,47 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
     }
 
     /**
+     * The MAX-side twin of {@link #testDropRecomputesMinAcrossSiblingCellsNotRecordZero}, and it was
+     * found by asking whether the minimum defect had a mirror rather than by another fuzz run.
+     * <p>
+     * Dropping the ACTIVE tail day recomputes the table maximum from the new tail RECORD -- the
+     * HIGHEST cellKey of the surviving day. Its maximum is its own cell's, and a cell's timestamps are
+     * unrelated to its cellKey. Here a second commit pushes the day's LATEST row (23:30) into cellKey
+     * 0, so the highest-cellKey record stops at 23:00.
+     * <p>
+     * Too-low a maximum is silent in the same way too-high a minimum is: {@code cullIntervals} trims
+     * the interval list against the reader's maximum too, so a filtered read above the false maximum
+     * comes back empty. MEASURED before the fix: {@code _txn} max 23:00 for a table whose last row was
+     * 23:30, and the {@code ts >= 23:15} twin comparison failed with "Actual cursor does not have
+     * record at 0".
+     */
+    @Test(timeout = 60_000)
+    public void testDropActiveTailRecomputesMaxAcrossSiblingCells() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // commit 1 fixes cellKeys in ts order: E0 = 0 (21:00), E1 = 1 (22:00), E2 = 2 (23:00)
+            insertIntoBoth("('2023-01-01T21:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T22:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-01T23:00:00.000000Z','E2',3.0)");
+            drainWalQueue();
+            // commit 2 puts the day's LATEST row in cellKey 0, i.e. NOT the day's last record
+            insertIntoBoth("('2023-01-01T23:30:00.000000Z','E0',4.0)");
+            drainWalQueue();
+            // a later day, so dropping it makes day 1 the tail again and runs the recompute
+            insertIntoBoth("('2023-01-02T05:00:00.000000Z','E0',5.0)");
+            drainWalQueue();
+
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-02'");
+            execute("ALTER TABLE p DROP PARTITION LIST '2023-01-02'");
+            drainWalQueue();
+
+            assertBounds("2023-01-01T21:00:00.000000Z", "2023-01-01T23:30:00.000000Z");
+            assertTwinEqual(" WHERE ts >= '2023-01-01T23:15:00.000000Z' AND ts < '2023-01-02T00:00:00.000000Z'");
+            assertTwinEqual("");
+        });
+    }
+
+    /**
      * Dropping every cell one at a time drops the day -- the second half of the spec's rule.
      */
     @Test(timeout = 60_000)
