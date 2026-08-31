@@ -362,6 +362,52 @@ public class CompositeDropPartitionWholeDayTest extends AbstractCompositeTwinTes
     }
 
     /**
+     * A DROP that moves an added column's "added at" record back must give cellKey 0 ITS OWN row
+     * count, not the tail cell's.
+     * <p>
+     * {@code replaceInitialPartitionRecords} writes the compensating column top through the
+     * cellKey-0-only upsert, using {@code transientRowCount}. The sibling backfill beside it then
+     * SKIPS cellKey 0 as "already covered by the call above" -- but what covered it was the LAST
+     * cell's row count, which the comment two lines earlier says out loud. Where cellKey 0 holds more
+     * rows than the tail cell, its top lands too LOW, the reader concludes those rows carry the
+     * column, and opens a {@code <col>.d.<txn>} that was never written.
+     * <p>
+     * FOUND BY THE CLOCK-SEEDED FUZZ (2026-08-31, seed 789274230459853/1788179450546), 1 error in 8
+     * post-fix invocations. Measured there: every day-1 cell's top matched its row count EXCEPT
+     * cellKey 0, which had top 1 against 4 rows, and a full scan threw
+     * "could not open, file does not exist: .../2023-01-01/16.3/new_col_1.d.6". Loud, not silent.
+     */
+    @Test(timeout = 60_000)
+    public void testDropMovingAddedColumnGivesCellZeroItsOwnRowCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createTwins();
+            // cellKey 0 (E0) holds THREE rows; the tail cell (E1) holds one, and it is E1's count that
+            // replaceInitialPartitionRecords would hand to cellKey 0.
+            insertIntoBoth("('2023-01-01T10:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T10:01:00.000000Z','E0',2.0),"
+                    + "('2023-01-01T10:02:00.000000Z','E0',3.0),"
+                    + "('2023-01-01T11:00:00.000000Z','E1',4.0)");
+            drainWalQueue();
+            // a later day, so the column is "added at" day 2 rather than day 1
+            insertIntoBoth("('2023-01-02T05:00:00.000000Z','E0',5.0)");
+            drainWalQueue();
+
+            execute("ALTER TABLE c ADD COLUMN nc TIMESTAMP");
+            execute("ALTER TABLE p ADD COLUMN nc TIMESTAMP");
+            drainWalQueue();
+
+            // dropping day 2 moves the "added at" record back onto day 1
+            execute("ALTER TABLE c DROP PARTITION LIST '2023-01-02'");
+            execute("ALTER TABLE p DROP PARTITION LIST '2023-01-02'");
+            drainWalQueue();
+
+            // the composite table must still be READABLE, and agree with its twin
+            assertTwinEqual("", " ORDER BY ts, exch, px, nc");
+            assertTwinEqual(" WHERE exch = 'E0'", " ORDER BY ts, exch, px, nc");
+        });
+    }
+
+    /**
      * Dropping every cell one at a time drops the day -- the second half of the spec's rule.
      */
     @Test(timeout = 60_000)

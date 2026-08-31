@@ -9900,8 +9900,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // OWN row count, so all of that cell's pre-existing rows read as lacking the column.
             // transientRowCount, which the call below uses, is only the last cell's.
             movedDefaultColumns.clear();
+            // cellKey 0 is NOT covered by transientRowCount, and the sibling loop below skips it on the
+            // strength of that call. transientRowCount is the TAIL cell's count (the comment above says
+            // so), so wherever cellKey 0 holds more rows than the tail cell its compensating top lands
+            // too LOW and the reader opens a <col>.d.<txn> that was never written. Hand the call
+            // cellKey 0's OWN row count instead. Records are ordered (timestamp ASC, cellKey ASC), so
+            // cellKey 0, if the day still has one, is the first record of the run.
+            // FOUND BY THE FUZZ, seed 789274230459853/1788179450546; locked by
+            // CompositeDropPartitionWholeDayTest#testDropMovingAddedColumnGivesCellZeroItsOwnRowCount.
+            long compensatingRowCount = txWriter.getTransientRowCount();
+            if (isRoutedComposite()) {
+                final long lastTsForCompensation = txWriter.getLastPartitionTimestamp();
+                final int firstRecordOfLastDay = txWriter.findAttachedPartitionIndexByLoTimestamp(lastTsForCompensation);
+                if (firstRecordOfLastDay > -1 && txWriter.getPartitionCellKey(firstRecordOfLastDay) == 0) {
+                    compensatingRowCount = txWriter.getPartitionSize(firstRecordOfLastDay);
+                }
+            }
             columnVersionWriter.replaceInitialPartitionRecords(
-                    txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount(), movedDefaultColumns);
+                    txWriter.getLastPartitionTimestamp(), compensatingRowCount, movedDefaultColumns);
             if (movedDefaultColumns.size() > 0 && isRoutedComposite()) {
                 final long lastTs = txWriter.getLastPartitionTimestamp();
                 int idx = txWriter.findAttachedPartitionIndexByLoTimestamp(lastTs);
