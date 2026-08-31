@@ -7330,21 +7330,88 @@ public class PostingIndexWriter implements IndexWriter {
                 // Assemble this key's raw values into sidecarBuf.
                 long keyOff = keyOffsets[j];
                 long rawOffset = 0;
-                for (int i = 0; i < count; i++) {
-                    long rowId = Unsafe.getLong(
-                            mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                    if (rowId < colTop) {
-                        writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
-                    } else {
-                        long srcOffset = (rowId - colTop) << shift;
-                        long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
-                        if (addr != 0) {
-                            Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
-                        } else {
+
+                // Resolve the covered column's base address ONCE for this key
+                // instead of once per value. getCoveredDataReadAddr is only
+                // offset-dependent through its grow-remap check, and row ids
+                // within a key ascend (add() rejects a descending value and the
+                // gen merge preserves that), so probing the last row id first
+                // performs any remap the whole run could need; every lower
+                // offset then resolves to base + offset against the same
+                // mapping. A zero base (unmappable column) drops to the
+                // unchanged per-value path below.
+                long base = 0;
+                long baseLimit = 0;
+                long lastRowId = Unsafe.getLong(mergedValuesAddr + (keyOff + count - 1) * Long.BYTES);
+                if (lastRowId >= colTop && getCoveredDataReadAddr(c, (lastRowId - colTop) << shift, valueSize) != 0) {
+                    base = coveredColReadAddrs[c];
+                    // 0 means addr-based (caller-owned mapping): no length is
+                    // tracked, exactly as the per-value path assumes. Otherwise
+                    // keep the mapped length so a row id that breaks the
+                    // ascending assumption cannot read past the mapping -- it
+                    // falls back to the checked call rather than trusting base.
+                    baseLimit = coveredColReadSizes[c];
+                }
+
+                if (base != 0) {
+                    for (int i = 0; i < count; i++) {
+                        long rowId = Unsafe.getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                        if (rowId < colTop) {
                             writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                        } else {
+                            long srcOffset = (rowId - colTop) << shift;
+                            long addr;
+                            if (baseLimit == 0 || srcOffset + valueSize <= baseLimit) {
+                                addr = base + srcOffset;
+                            } else {
+                                addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
+                            }
+                            if (addr != 0) {
+                                // Typed move for the power-of-two widths that
+                                // cover every fixed-size column type. An 8-byte
+                                // Unsafe.copyMemory is a general memcpy call;
+                                // TIMESTAMP / LONG / DOUBLE covers make this the
+                                // single hottest instruction of a reseal.
+                                switch (valueSize) {
+                                    case Long.BYTES:
+                                        Unsafe.putLong(sidecarBuf + rawOffset, Unsafe.getLong(addr));
+                                        break;
+                                    case Integer.BYTES:
+                                        Unsafe.putInt(sidecarBuf + rawOffset, Unsafe.getInt(addr));
+                                        break;
+                                    case Short.BYTES:
+                                        Unsafe.putShort(sidecarBuf + rawOffset, Unsafe.getShort(addr));
+                                        break;
+                                    case Byte.BYTES:
+                                        Unsafe.putByte(sidecarBuf + rawOffset, Unsafe.getByte(addr));
+                                        break;
+                                    default:
+                                        Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                                        break;
+                                }
+                            } else {
+                                writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                            }
                         }
+                        rawOffset += valueSize;
                     }
-                    rawOffset += valueSize;
+                } else {
+                    for (int i = 0; i < count; i++) {
+                        long rowId = Unsafe.getLong(
+                                mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                        if (rowId < colTop) {
+                            writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                        } else {
+                            long srcOffset = (rowId - colTop) << shift;
+                            long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
+                            if (addr != 0) {
+                                Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                            } else {
+                                writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                            }
+                        }
+                        rawOffset += valueSize;
+                    }
                 }
 
                 // Compress and write
