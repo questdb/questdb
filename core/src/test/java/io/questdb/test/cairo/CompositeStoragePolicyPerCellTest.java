@@ -25,6 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -33,6 +34,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -52,6 +54,45 @@ import org.junit.Test;
  * bookkeeping.
  */
 public class CompositeStoragePolicyPerCellTest extends AbstractCompositeTwinTest {
+
+    /**
+     * The cell segment must render in HIVE form ON DEMAND, whatever the table's own {@code LAYOUT}.
+     * <p>
+     * The enterprise cold-storage bucket key is self-describing storage that other tools read, so it
+     * carries {@code exch=BTC} even for a table stored locally as {@code LAYOUT PLAIN} (which renders
+     * {@code BTC}). The 2-arg renderer follows the table, so the tiering path needs a form that takes
+     * the mode explicitly.
+     * <p>
+     * NON-VACUITY: the table is created {@code LAYOUT PLAIN} precisely so the two renderings DIFFER.
+     * On a HIVE table both forms agree and the test could not fail.
+     */
+    @Test
+    public void testCellSegmentRendersHiveOnDemandRegardlessOfLayout() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch LAYOUT PLAIN WAL");
+            execute("INSERT INTO p VALUES ('2023-01-01T01:00:00.000000Z','BTC',1.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableWriter w = getWriter("p")) {
+                final int cellKey = w.getTxWriter().getPartitionCellKey(0);
+
+                final StringSink asStored = new StringSink();
+                w.renderCellSegment(asStored, cellKey);
+                TestUtils.assertEquals("BTC", asStored);
+
+                final StringSink asBucketKey = new StringSink();
+                w.renderCellSegment(asBucketKey, cellKey, PartitionSpec.MODE_HIVE);
+                TestUtils.assertEquals("exch=BTC", asBucketKey);
+
+                // and the explicit-mode form must still be able to render the table's own shape
+                final StringSink asPlain = new StringSink();
+                w.renderCellSegment(asPlain, cellKey, PartitionSpec.MODE_PLAIN);
+                TestUtils.assertEquals("BTC", asPlain);
+            }
+        });
+    }
 
     /**
      * Both cells of a day switch to parquet independently.

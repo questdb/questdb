@@ -4657,6 +4657,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
 
     public void renderCellSegment(CharSink<?> sink, int cellKey) {
+        renderCellSegment(sink, cellKey, metadata.getPartitionSpec().getNamingMode());
+    }
+
+    /**
+     * As {@link #renderCellSegment(CharSink, int)}, but rendering in an EXPLICIT naming mode rather
+     * than the table's own {@code LAYOUT}.
+     * <p>
+     * Exists for storage that is not this table's own directory tree. The enterprise cold-storage
+     * bucket key is read by other tools and by a restore that has no access to this table's registry,
+     * so it always renders the Hive form ({@code exch=BTC}) even for a table stored locally as
+     * {@code LAYOUT PLAIN} ({@code BTC}) -- the same "values, not ordinals, across a boundary" rule
+     * that makes a foreign detached artifact unattachable.
+     * <p>
+     * The 2-arg form delegates here with the table's own mode, so on-disk path building is unchanged.
+     */
+    public void renderCellSegment(CharSink<?> sink, int cellKey, byte namingMode) {
         PartitionSpec spec = metadata.getPartitionSpec();
         int dimCount = spec.getDimensionCount();
         if (dimCount <= 0) {
@@ -4666,7 +4682,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         int[] tuple = new int[dimCount];
         getCompositeDictionaries().cellRegistry().getTupleFromWriter(cellKey, tuple);
-        byte namingMode = spec.getNamingMode();
         for (int i = 0; i < dimCount; i++) {
             if (i > 0) {
                 sink.put('/');
