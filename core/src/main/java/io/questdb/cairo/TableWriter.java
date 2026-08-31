@@ -13955,6 +13955,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         boolean processed = false;
+        // Reseal cost attribution: this method can dominate an O3 commit on a
+        // covering index -- rebuildSidecars() below runs for the whole partition
+        // on both the rebuild and the canSkipRebuild path -- yet neither it nor
+        // sealPostingIndexesForO3Partitions emitted anything at any level, so the
+        // work was invisible between the surrounding "o3 partition update" and
+        // "switched partition" records. Counters are locals; the clock is read
+        // twice per partition, against work measured in seconds.
+        int columnsSealed = 0;
+        int coversSealed = 0;
+        final long sealStartMicros = configuration.getMicrosecondClock().getTicks();
         long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
         int plen = path.size();
         // For new partitions created during O3, the partition directory may
@@ -13989,12 +13999,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     continue;
                 }
                 processed = true;
+                columnsSealed++;
 
                 IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
                 boolean hasCovering = coveringCols != null && coveringCols.size() > 0;
 
                 if (hasCovering) {
                     int coverCount = coveringCols.size();
+                    coversSealed += coverCount;
 
                     try {
                         mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, plen, coverCount);
@@ -14129,6 +14141,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             path.trimTo(pathSize);
         }
+        if (processed) {
+            // canSkipRebuild is the fact that separates a chain rebuild from the
+            // cheap rollback, and covers > 0 says whether the unconditional
+            // sidecar rebuild ran -- together they explain the elapsed time.
+            LOG.info().$("posting index reseal partition [table=").$(tableToken)
+                    .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", partitionSize=").$(partitionSize)
+                    .$(", canSkipRebuild=").$(canSkipRebuild)
+                    .$(", columns=").$(columnsSealed)
+                    .$(", covers=").$(coversSealed)
+                    .$(", timeMicros=").$(configuration.getMicrosecondClock().getTicks() - sealStartMicros)
+                    .I$();
+        }
         return processed;
     }
 
@@ -14146,6 +14171,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!hasPostingIndex()) {
             return;
         }
+
+        // Sweep summary counters. The per-partition records above are the detail;
+        // this one line is what an operator reads first, because it is the only
+        // place the whole reseal cost of an O3 commit appears as a single figure.
+        final long sweepStartMicros = configuration.getMicrosecondClock().getTicks();
+        int partitionsSealed = 0;
+        int rebuiltPartitions = 0;
+        int skippedRebuildPartitions = 0;
 
         long blockIndex = -1;
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
@@ -14172,15 +14205,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition)) {
                 anyPartitionProcessed = true;
+                partitionsSealed++;
+                if (canSkipRebuildForPartition) {
+                    skippedRebuildPartitions++;
+                } else {
+                    rebuiltPartitions++;
+                }
             }
             if (dataPartitionTimestamp != -1L && dataPartitionTimestamp != partitionTimestamp
                     && sealPostingIndexForPartition(dataPartitionTimestamp, false)) {
                 anyPartitionProcessed = true;
+                partitionsSealed++;
+                // The split-parent arm always passes canSkipRebuild=false.
+                rebuiltPartitions++;
             }
         }
 
         if (anyPartitionProcessed) {
             restorePostingIndexersToLastPartition();
+            // No row total here on purpose: the split-parent arm has no size in
+            // the update sink, so summing would either duplicate a lookup or
+            // report a figure that silently excludes it. Sizes are exact on the
+            // per-partition records; this line owns the aggregate timing.
+            LOG.info().$("posting index o3 reseal [table=").$(tableToken)
+                    .$(", partitions=").$(partitionsSealed)
+                    .$(", rebuilt=").$(rebuiltPartitions)
+                    .$(", skippedRebuild=").$(skippedRebuildPartitions)
+                    .$(", timeMicros=").$(configuration.getMicrosecondClock().getTicks() - sweepStartMicros)
+                    .I$();
         }
     }
 

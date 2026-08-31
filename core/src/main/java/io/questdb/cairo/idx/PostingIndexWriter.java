@@ -1729,6 +1729,15 @@ public class PostingIndexWriter implements IndexWriter {
             return;
         }
 
+        // Past every early return, so a real seal is now going to be attempted.
+        // Both reads are once-per-seal against an operation measured in seconds
+        // for a large partition -- the clock cost is not observable here. genCount
+        // is captured before the collapse so the summary can report gens in->out,
+        // the figure that drives cairo.posting.seal.gen.threshold tuning and which
+        // is otherwise only visible at DEBUG (see compactIfOverBudget).
+        final long sealStartMicros = configuration.getMicrosecondClock().getTicks();
+        final int genCountAtEntry = genCount;
+
         // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
         // writer's sealTxn lags genCounter, and reusing a dropped
         // sealTxn would race the still-pending .pv purge.
@@ -1966,6 +1975,28 @@ public class PostingIndexWriter implements IndexWriter {
         // power-loss reader see chain entries that reference unflushed data.
         if (partitionPath.size() > 0 && keyMem.isOpen()) {
             keyMem.sync(false);
+        }
+
+        // Success-path summary. Every other INFO record in this class reports a
+        // deviation (an RSS-pressure fallback, an untrusted snapshot, a recovery),
+        // which leaves the normal path silent and gives an operator no baseline to
+        // compare a slow seal against. A seal can dominate an O3 commit -- it
+        // rewrites the covering sidecars for the whole partition -- so the one
+        // line that says which path ran, how much it collapsed and how long it
+        // took is what makes that cost attributable without a DEBUG restart.
+        // Every field is already-maintained writer state; nothing new is tracked.
+        if (isSealed) {
+            LOG.info().$("posting index sealed [indexName=").$(indexName)
+                    .$(", sealTxn=").$(sealTxn)
+                    .$(", path=").$(isLastSealIncremental ? "incremental" : "full")
+                    .$(", streaming=").$(isLastSealStreaming)
+                    .$(", snapshotDeferred=").$(isLastSealSnapshotDeferred)
+                    .$(", gens=").$(genCountAtEntry).$("->").$(genCount)
+                    .$(", keys=").$(keyCount)
+                    .$(", covers=").$(coverCount)
+                    .$(", valueBytes=").$(valueMemSize)
+                    .$(", timeMicros=").$(configuration.getMicrosecondClock().getTicks() - sealStartMicros)
+                    .I$();
         }
     }
 
