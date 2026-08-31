@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TableWriter;
@@ -35,6 +36,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
@@ -2435,6 +2437,43 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullJoinOnRegexPreservesBothUnmatchedSides() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x STRING)");
+            execute("INSERT INTO a VALUES ('a')");
+            execute("CREATE TABLE b (x STRING)");
+            execute("INSERT INTO b VALUES ('a')");
+            execute("CREATE TABLE c (x STRING)");
+            execute("INSERT INTO c VALUES ('z')");
+
+            final String fullJoinSql = """
+                    SELECT a.x AS ax, b.x AS bx, c.x AS cx
+                    FROM a
+                    JOIN b ON b.x = a.x
+                    FULL JOIN c ON c.x = a.x AND a.x ~ '^z$'
+                    ORDER BY c.x, a.x
+                    """;
+            final String fullJoinExpected = """
+                    ax\tbx\tcx
+                    a\ta\t
+                    \t\tz
+                    """;
+            final String rightJoinSql = fullJoinSql.replace("FULL JOIN", "RIGHT JOIN");
+            final String rightJoinExpected = "ax\tbx\tcx\n\t\tz\n";
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                assertQuery(fullJoinSql)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFatJoin)
+                        .returns(fullJoinExpected);
+                assertQuery(rightJoinSql)
+                        .noLeakCheck()
+                        .fullFatJoins(isFullFatJoin)
+                        .returns(rightJoinExpected);
+            }
+        });
+    }
+
+    @Test
     public void testHashJoinLightdNoLeaks() throws Exception {
         testJoinForCursorLeaks("with crj as (select * from xx latest by x) select xx.x from xx join crj on xx.x = crj.x ", false);
     }
@@ -3027,6 +3066,80 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinContextIsolationInUnionWithFactTokens() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s1a (k INT, x STRING)");
+            execute("INSERT INTO s1a VALUES (1, 'seed')");
+            execute("CREATE TABLE s1b (k INT, y STRING)");
+            execute("INSERT INTO s1b VALUES (1, 'one')");
+            execute("CREATE TABLE r2a (x STRING)");
+            execute("INSERT INTO r2a VALUES ('foo')");
+            execute("CREATE TABLE r2b (x STRING)");
+            execute("INSERT INTO r2b VALUES ('foo')");
+            execute("CREATE TABLE r2c (x STRING)");
+            execute("INSERT INTO r2c VALUES ('foo'), ('z')");
+
+            assertQuery("""
+                    SELECT count(*) AS total, count(ax) AS non_null_ax
+                    FROM (
+                        SELECT a.x AS ax, b.y AS bx, NULL::STRING AS cx
+                        FROM s1a a
+                        JOIN s1b b ON b.k = a.k
+                        WHERE a.x = 'seed'
+                        UNION ALL
+                        SELECT a.x AS ax, b.x AS bx, c.x AS cx
+                        FROM r2a a
+                        JOIN r2b b ON b.x = a.x AND a.x ~ '^foo$'
+                        RIGHT JOIN r2c c ON c.x = a.x
+                    )
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("total\tnon_null_ax\n3\t2\n");
+        });
+    }
+
+    @Test
+    public void testJoinContextIsolationInUnionWithModelOnOrigins() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE u1a (k INT, v INT)");
+            execute("INSERT INTO u1a VALUES (1, 1)");
+            execute("CREATE TABLE u1b (k INT)");
+            execute("INSERT INTO u1b VALUES (1)");
+            execute("CREATE TABLE u1c (k INT)");
+            execute("INSERT INTO u1c VALUES (1)");
+            execute("CREATE TABLE u1d (k INT)");
+            execute("INSERT INTO u1d VALUES (1)");
+            execute("CREATE TABLE u2a (k INT)");
+            execute("INSERT INTO u2a VALUES (1)");
+            execute("CREATE TABLE u2b (k INT)");
+            execute("INSERT INTO u2b VALUES (1)");
+            execute("CREATE TABLE u2c (k INT)");
+            execute("INSERT INTO u2c VALUES (1)");
+
+            assertQuery("""
+                    SELECT count(*) AS row_count FROM (
+                        SELECT a.k
+                        FROM u1a a
+                        JOIN u1b b ON b.k = a.k
+                        JOIN u1c c ON c.k = a.k
+                        JOIN u1d g ON g.k = a.k AND a.v > 0
+                        UNION ALL
+                        SELECT d.k
+                        FROM u2a d
+                        RIGHT JOIN u2b e ON e.k >= d.k
+                        JOIN u2c f ON f.k = d.k
+                    )
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("row_count\n2\n");
+        });
+    }
+
+    @Test
     public void testJoinInner() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -3474,6 +3587,625 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinInnerOnComputedRegexDoesNotPublishColumnFact() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT, x STRING, y STRING)");
+            execute("INSERT INTO a VALUES (1, 'foo', 'bar'), (2, 'FOO', 'zzz'), (3, null, 'foo')");
+            execute("CREATE TABLE b (id INT, x STRING, y STRING)");
+            execute("INSERT INTO b VALUES (1, 'foo', 'bar'), (2, 'FOO', 'zzz'), (3, null, 'foo')");
+
+            final String concatOnSql = """
+                    SELECT a.id
+                    FROM a
+                    JOIN b ON b.id = a.id AND b.y = a.y AND (a.x || a.y) ~ '^foobar$'
+                    ORDER BY a.id
+                    """;
+            final String concatWhereSql = """
+                    SELECT a.id
+                    FROM a
+                    JOIN b ON b.id = a.id AND b.y = a.y
+                    WHERE (a.x || a.y) ~ '^foobar$'
+                    ORDER BY a.id
+                    """;
+            final String coalesceSql = """
+                    SELECT a.id
+                    FROM a
+                    JOIN b ON b.id = a.id AND b.x = a.x AND coalesce(a.x, 'foo') ~ '^foo$'
+                    ORDER BY a.id
+                    """;
+            final String lowerSql = """
+                    SELECT a.id
+                    FROM a
+                    JOIN b ON b.id = a.id AND b.x = a.x AND lower(a.x) ~ '^foo$'
+                    ORDER BY a.id
+                    """;
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                assertQuery(concatOnSql)
+                        .noLeakCheck()
+                        .expectSize(isFullFatJoin)
+                        .fullFatJoins(isFullFatJoin)
+                        .sizeMayVary(!isFullFatJoin)
+                        .returns("id\n1\n");
+                assertQuery(concatWhereSql)
+                        .noLeakCheck()
+                        .expectSize(isFullFatJoin)
+                        .fullFatJoins(isFullFatJoin)
+                        .sizeMayVary(!isFullFatJoin)
+                        .returns("id\n1\n");
+                assertQuery(coalesceSql)
+                        .noLeakCheck()
+                        .expectSize(isFullFatJoin)
+                        .fullFatJoins(isFullFatJoin)
+                        .sizeMayVary(!isFullFatJoin)
+                        .returns("id\n1\n3\n");
+                assertQuery(lowerSql)
+                        .noLeakCheck()
+                        .expectSize(isFullFatJoin)
+                        .fullFatJoins(isFullFatJoin)
+                        .sizeMayVary(!isFullFatJoin)
+                        .returns("id\n1\n2\n");
+            }
+
+            final String directRegexSql = """
+                    SELECT a.id
+                    FROM a
+                    JOIN b ON b.id = a.id AND b.x = a.x AND a.x ~ '^foo$'
+                    ORDER BY a.id
+                    """;
+            assertQuery(directRegexSql)
+                    .noLeakCheck()
+                    .sizeMayVary()
+                    .withPlanContaining(
+                            "                Async Filter workers: 1\n"
+                                    + "                  filter: x ~ ^foo$\n"
+                                    + "                    PageFrame\n"
+                                    + "                        Row forward scan\n"
+                                    + "                        Frame forward scan on: b"
+                    )
+                    .returns("id\n1\n");
+            assertQuery(directRegexSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .fullFatJoins()
+                    .returns("id\n1\n");
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstAfterNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT)");
+            execute("INSERT INTO a VALUES (1, 5)");
+            execute("CREATE TABLE b (x INT)");
+            execute("INSERT INTO b VALUES (null)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (2)");
+
+            for (boolean fullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    for (String predicate : new String[]{"a.x = 5", "5 = a.x"}) {
+                        assertQuery("""
+                                SELECT a.x AS ax, c.k AS ck, b.x AS bx
+                                FROM a
+                                %s c ON c.k = a.k
+                                JOIN b ON b.x = a.x AND %s
+                                """.formatted(joinType, predicate))
+                                .noLeakCheck()
+                                .fullFatJoins(fullFatJoin)
+                                .noRandomAccess()
+                                .returns("ax\tck\tbx\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstBeforeLaterNullingJoinUsesIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa AS (SELECT 'foo'::SYMBOL AS x, 1::INT AS y FROM long_sequence(1))");
+            execute("""
+                    CREATE TABLE pb AS (
+                        SELECT (CASE WHEN x = 1 THEN 'foo' ELSE 'bar' END)::SYMBOL AS x
+                        FROM long_sequence(4)
+                    ), INDEX(x)
+                    """);
+            execute("CREATE TABLE pc AS (SELECT 1::INT AS y FROM long_sequence(1))");
+
+            for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                assertQuery("""
+                        SELECT count(*) AS row_count
+                        FROM pa
+                        JOIN pb ON pb.x = pa.x AND pa.x = 'foo'
+                        %s pc ON pc.y = pa.y
+                        """.formatted(joinType))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining(
+                                "Hash Join Light",
+                                "condition: pb.x=pa.x",
+                                "DeferredSingleSymbolFilterPageFrame",
+                                "Index forward scan on: x",
+                                "Frame forward scan on: pb"
+                        )
+                        .returns("row_count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstBeforeNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x INT, ts TIMESTAMP, av INT)");
+            execute("INSERT INTO a VALUES (5, 5, 10)");
+            execute("CREATE TABLE b (x INT, bv INT)");
+            execute("INSERT INTO b VALUES (5, 20)");
+            execute("CREATE TABLE c (x INT, ts TIMESTAMP, cv INT)");
+            execute("INSERT INTO c VALUES (5, 5, 50), (6, 6, 60)");
+
+            final String expected = "av\tbv\tcv\n10\t20\t50\nnull\tnull\t60\n";
+            final String nullBindExpected = "av\tbv\tcv\nnull\tnull\t50\nnull\tnull\t60\n";
+            for (boolean fullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : Arrays.asList("RIGHT JOIN", "FULL JOIN")) {
+                    final String intFrom = " FROM a JOIN b ON b.x = a.x AND %s "
+                            + joinType + " c ON c.x = a.x ORDER BY c.cv";
+                    bindVariableService.clear();
+                    bindVariableService.setInt("v", 5);
+                    for (String predicate : Arrays.asList(
+                            "a.x = :v::INT",
+                            ":v::INT = a.x",
+                            "a.x = (:v + 0)",
+                            "(:v + 0) = a.x"
+                    )) {
+                        assertQuery("SELECT a.av, b.bv, c.cv" + intFrom.formatted(predicate))
+                                .noLeakCheck()
+                                .fullFatJoins(fullFatJoin)
+                                .returns(expected);
+                    }
+
+                    bindVariableService.setInt("v", Numbers.INT_NULL);
+                    assertQuery("SELECT a.av, b.bv, c.cv" + intFrom.formatted("a.x = :v::INT"))
+                            .noLeakCheck()
+                            .fullFatJoins(fullFatJoin)
+                            .returns(nullBindExpected);
+
+                    sqlExecutionContext.setNowAndFixClock(5, ColumnType.TIMESTAMP_MICRO);
+                    final String timestampFrom = " FROM a JOIN b ON b.x = a.x AND %s "
+                            + joinType + " c ON c.ts = a.ts ORDER BY c.cv";
+                    for (String predicate : Arrays.asList("a.ts = now()", "now() = a.ts")) {
+                        assertQuery("SELECT a.av, b.bv, c.cv" + timestampFrom.formatted(predicate))
+                                .noLeakCheck()
+                                .fullFatJoins(fullFatJoin)
+                                .returns(expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstBeforeReorderedNonEquiNullingJoinUsesIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE anchor (z INT, y INT)");
+            execute("INSERT INTO anchor VALUES (1, 10)");
+            execute("CREATE TABLE preserved (y INT)");
+            execute("INSERT INTO preserved VALUES (5)");
+            execute("CREATE TABLE pa_ne AS (SELECT 'foo'::SYMBOL AS x, 1::INT AS z FROM long_sequence(1))");
+            execute("""
+                    CREATE TABLE pb_ne AS (
+                        SELECT (CASE WHEN x = 1 THEN 'foo' ELSE 'bar' END)::SYMBOL AS x
+                        FROM long_sequence(4)
+                    ), INDEX(x)
+                    """);
+
+            for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                assertQuery("""
+                        SELECT count(*) AS row_count
+                        FROM anchor a
+                        %s preserved n ON a.y > n.y
+                        JOIN pa_ne ON pa_ne.z = a.z
+                        JOIN pb_ne ON pb_ne.x = pa_ne.x AND 'foo' = pa_ne.x
+                        """.formatted(joinType))
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining(
+                                joinType.equals("RIGHT JOIN") ? "Nested Loop Right Join" : "Nested Loop Full Join",
+                                "condition: pb_ne.x=pa_ne.x",
+                                "DeferredSingleSymbolFilterPageFrame",
+                                "Index forward scan on: x",
+                                "Frame forward scan on: pb_ne"
+                        )
+                        .returns("row_count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstBetweenStackedNullingJoins() throws Exception {
+        // qd runs between two joins that NULL-extend qa. The nearest qc boundary must block the
+        // MODEL_ON constant from pruning qd; using only the outermost qe boundary loses qd's NULL row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qa (k INT, x INT)");
+            execute("INSERT INTO qa VALUES (1, 5)");
+            execute("CREATE TABLE qb (k INT)");
+            execute("INSERT INTO qb VALUES (1)");
+            execute("CREATE TABLE qc (k INT)");
+            execute("INSERT INTO qc VALUES (1), (2)");
+            execute("CREATE TABLE qd (x INT, ck INT, v INT)");
+            execute("INSERT INTO qd VALUES (5, 1, 10), (NULL, 2, 20)");
+            execute("CREATE TABLE qe (k INT)");
+            execute("INSERT INTO qe VALUES (1), (2)");
+
+            final String expected = """
+                    ck\tdv\tek
+                    1\t10\t1
+                    2\t20\t2
+                    """;
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String firstNullingJoin : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    for (String secondNullingJoin : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                        assertQuery("""
+                                SELECT qc.k AS ck, qd.v AS dv, qe.k AS ek
+                                FROM qa
+                                JOIN qb ON qb.k = qa.k AND qa.x = 5
+                                %s qc ON qc.k = qa.k
+                                JOIN qd ON qd.x = qa.x AND qd.ck = qc.k
+                                %s qe ON qe.k = qc.k
+                                ORDER BY qe.k
+                                """.formatted(firstNullingJoin, secondNullingJoin))
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFatJoin)
+                                .returns(expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstDoesNotReplaceWhereConstBeforeNullingJoinUsesIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a AS (SELECT 'foo'::SYMBOL AS x FROM long_sequence(1))");
+            execute("CREATE TABLE b AS (SELECT 'foo'::SYMBOL AS x FROM long_sequence(1))");
+            execute("""
+                    CREATE TABLE c AS (
+                        SELECT (CASE WHEN x = 1 THEN 'foo' ELSE 'bar' END)::SYMBOL AS x
+                        FROM long_sequence(4)
+                    ), INDEX(x)
+                    """);
+
+            for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                final String sql = """
+                        SELECT count(*) AS row_count
+                        FROM a
+                        JOIN b ON b.x = a.x AND a.x = 'foo'
+                        %s c ON c.x = a.x
+                        WHERE a.x = 'foo'
+                        """.formatted(joinType);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining(
+                                "DeferredSingleSymbolFilterPageFrame",
+                                "Index forward scan on: x",
+                                "Frame forward scan on: c"
+                        )
+                        .returns("row_count\n1\n");
+                // QueryAssertion intentionally disallows plan assertions with a custom compiler,
+                // so exercise the full-fat path with the complete data assertion battery.
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fullFatJoins()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("row_count\n1\n");
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnConstFromOlderModelUsesIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fa (k INT, x SYMBOL INDEX)");
+            execute("INSERT INTO fa VALUES (1, 'foo')");
+            execute("CREATE TABLE fb (k INT)");
+            execute("INSERT INTO fb VALUES (1)");
+            execute("CREATE TABLE fc (k INT, x SYMBOL)");
+            execute("INSERT INTO fc VALUES (1, 'bar')");
+            execute("CREATE TABLE fd (k INT)");
+            execute("INSERT INTO fd VALUES (1)");
+            execute("CREATE TABLE ft (x SYMBOL INDEX)");
+            execute("INSERT INTO ft VALUES ('foo'), ('zzz')");
+
+            final String sql = """
+                    SELECT count(*) AS row_count
+                    FROM fa
+                    JOIN fb ON fb.k = fa.k AND fa.x = 'foo'
+                    CROSS JOIN fc
+                    JOIN fd ON fd.k = fc.k AND fc.x = 'bar'
+                    JOIN ft ON ft.x = fa.x
+                    """;
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining(
+                            "            DeferredSingleSymbolFilterPageFrame\n"
+                                    + "                Index forward scan on: x\n"
+                                    + "                  filter: x=1\n"
+                                    + "                Frame forward scan on: ft"
+                    )
+                    .returns("row_count\n1\n");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fullFatJoins()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("row_count\n1\n");
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnDerivedTablePredicateAfterNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (dummy INT)");
+            execute("INSERT INTO o VALUES (1)");
+            execute("CREATE TABLE b (k INT, y INT)");
+            execute("INSERT INTO b VALUES (1, -1)");
+            execute("CREATE TABLE n (k INT)");
+            execute("INSERT INTO n VALUES (1)");
+
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT", "FULL"}) {
+                    assertQuery("""
+                            SELECT o.dummy, v.y, v.nk
+                            FROM o
+                            JOIN (
+                                SELECT b.y, n.k AS nk
+                                FROM b
+                                %s JOIN n ON n.k = b.k
+                            ) v ON v.y > 0
+                            """.formatted(joinType))
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFatJoin)
+                            .noRandomAccess()
+                            .returns("dummy\ty\tnk\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnLiteralPushedIntoViewUsesIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE outer_t (ok SYMBOL)");
+            execute("INSERT INTO outer_t VALUES ('x')");
+            execute("CREATE TABLE ta (akey SYMBOL INDEX, av INT)");
+            execute("INSERT INTO ta VALUES ('x', 10)");
+            execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv INT)");
+            execute("INSERT INTO tb VALUES ('x', 20), ('y', 21)");
+            execute("CREATE TABLE tc (ckey SYMBOL INDEX, cv INT)");
+            execute("INSERT INTO tc VALUES ('x', 30), ('y', 31)");
+            execute("CREATE TABLE tn (nkey SYMBOL INDEX, nv INT)");
+            execute("INSERT INTO tn VALUES ('x', 40), ('z', 41)");
+            execute("""
+                    CREATE VIEW v AS (
+                        SELECT b.bkey AS k, a.av, b.bv, c.cv, n.nv
+                        FROM ta a
+                        JOIN tb b ON b.bkey = a.akey
+                        RIGHT JOIN tn n ON n.nkey = b.bkey
+                        JOIN tc c ON c.ckey = b.bkey
+                    )
+                    """);
+
+            assertQuery("""
+                    SELECT count(*) AS row_count
+                    FROM outer_t o
+                    JOIN v ON v.k = o.ok AND v.k = 'x'
+                    """)
+                    .expectSize()
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining(
+                            "condition: c.ckey=b.bkey",
+                            "DeferredSingleSymbolFilterPageFrame",
+                            "Index forward scan on: ckey",
+                            "Frame forward scan on: tc"
+                    )
+                    .returns("row_count\n1\n");
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRegexAfterConstBeforeNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x STRING, av INT)");
+            execute("INSERT INTO a VALUES ('5', 10)");
+            execute("CREATE TABLE b (x STRING, bv INT)");
+            execute("INSERT INTO b VALUES ('5', 20)");
+            execute("CREATE TABLE c (x STRING, cv INT)");
+            execute("INSERT INTO c VALUES ('5', 50), (null, 60)");
+
+            assertQuery("""
+                    SELECT a.av, b.bv, c.cv
+                    FROM a
+                    JOIN b ON b.x = a.x AND a.x = '5' AND a.x ~ '^z$'
+                    RIGHT JOIN c ON c.x = a.x
+                    ORDER BY c.cv
+                    """)
+                    .noLeakCheck()
+                    .returns("av\tbv\tcv\nnull\tnull\t50\nnull\tnull\t60\n");
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnRegexBeforeConstBeforeNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (x STRING, av INT)");
+            execute("INSERT INTO a VALUES ('5', 10)");
+            execute("CREATE TABLE b (x STRING, bv INT)");
+            execute("INSERT INTO b VALUES ('5', 20)");
+            execute("CREATE TABLE c (x STRING, cv INT)");
+            execute("INSERT INTO c VALUES ('5', 50), (null, 60)");
+
+            final String expected = "av\tbv\tcv\nnull\tnull\t50\nnull\tnull\t60\n";
+            for (boolean fullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : Arrays.asList("RIGHT JOIN", "FULL JOIN")) {
+                    for (String equality : Arrays.asList("a.x = '5'", "'5' = a.x")) {
+                        assertQuery("""
+                                SELECT a.av, b.bv, c.cv
+                                FROM a
+                                JOIN b ON b.x = a.x AND a.x ~ '^z$' AND %s
+                                %s c ON c.x = a.x
+                                ORDER BY c.cv
+                                """.formatted(equality, joinType))
+                                .noLeakCheck()
+                                .fullFatJoins(fullFatJoin)
+                                .returns(expected);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnNullAcceptingGateAfterNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT)");
+            execute("INSERT INTO a VALUES (1, 5)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1)");
+            execute("CREATE TABLE b (k INT)");
+            execute("INSERT INTO b VALUES (1)");
+
+            bindVariableService.clear();
+            bindVariableService.setInt("v", Numbers.INT_NULL);
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String nullingJoin : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    for (String predicate : new String[]{"a.x IS NULL", "a.x = :v::INT"}) {
+                        assertQuery("""
+                                SELECT a.x AS ax, c.k AS ck, b.k AS bk
+                                FROM a
+                                %s c ON c.k = a.k
+                                JOIN b ON b.k = c.k AND %s
+                                """.formatted(nullingJoin, predicate))
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFatJoin)
+                                .noRandomAccess()
+                                .returns("ax\tck\tbk\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnNullAcceptingGateAfterReorderedNonEquiNullingJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, x INT)");
+            execute("INSERT INTO a VALUES (1, 10)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1)");
+            execute("CREATE TABLE b (k INT)");
+            execute("INSERT INTO b VALUES (1)");
+
+            bindVariableService.clear();
+            bindVariableService.setInt("v", Numbers.INT_NULL);
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String nullingJoin : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    for (String predicate : new String[]{"a.x IS NULL", "a.x = :v::INT"}) {
+                        assertQuery("""
+                                SELECT a.k AS ak, c.k AS ck, b.k AS bk
+                                FROM a
+                                %s c ON c.k >= a.k
+                                JOIN b ON b.k = a.k AND %s
+                                """.formatted(nullingJoin, predicate))
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFatJoin)
+                                .noRandomAccess()
+                                .returns("ak\tck\tbk\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnNullAcceptingGateAfterReorderedNonEquiNullingJoinWithSourceAfterBoundary() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT)");
+            execute("INSERT INTO a VALUES (1)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (1)");
+            execute("CREATE TABLE p (k INT, x INT)");
+            execute("INSERT INTO p VALUES (1, 10)");
+            execute("CREATE TABLE b (k INT)");
+            execute("INSERT INTO b VALUES (1)");
+
+            bindVariableService.clear();
+            bindVariableService.setInt("v", Numbers.INT_NULL);
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String nullingJoin : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    for (String predicate : new String[]{"p.x IS NULL", "p.x = :v::INT"}) {
+                        assertQuery("""
+                                SELECT a.k AS ak, c.k AS ck, p.k AS pk, b.k AS bk
+                                FROM a
+                                %s c ON c.k >= a.k
+                                CROSS JOIN p
+                                JOIN b ON b.k = p.k AND %s
+                                """.formatted(nullingJoin, predicate))
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFatJoin)
+                                .noRandomAccess()
+                                .returns("ak\tck\tpk\tbk\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testJoinInnerOnSingleModelPredicateAfterEarlierJoinBarrier() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE z (k INT)");
+            execute("INSERT INTO z VALUES (1)");
+            execute("CREATE TABLE a (k INT, x INT, y INT)");
+            execute("INSERT INTO a VALUES (1, 5, 4)");
+            execute("CREATE TABLE c (k INT)");
+            execute("INSERT INTO c VALUES (2)");
+            execute("CREATE TABLE b (x INT)");
+            execute("INSERT INTO b VALUES (NULL)");
+
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String nullingJoin : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    for (String predicate : new String[]{
+                            "a.x > 0",
+                            "a.x = 5",
+                            "5 = a.x",
+                            "(a.x > 0 OR a.y > 0)",
+                            "a.x > a.y"
+                    }) {
+                        assertQuery("""
+                                SELECT z.k AS zk, a.x AS ax, c.k AS ck, b.x AS bx
+                                FROM z
+                                LEFT JOIN a ON a.k = z.k
+                                %s c ON c.k = z.k
+                                JOIN b ON b.x = a.x AND %s
+                                """.formatted(nullingJoin, predicate))
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFatJoin)
+                                .noRandomAccess()
+                                .returns("zk\tax\tck\tbx\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testJoinInnerOnSymbol() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -3588,6 +4320,26 @@ public class JoinTest extends AbstractCairoTest {
     @Test
     public void testJoinInnerOnSymbolFF() throws Exception {
         testFullFat(this::testJoinInnerOnSymbol0);
+    }
+
+    @Test
+    public void testJoinInnerOnUnaryComplementFailsWithSqlException() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (id INT)");
+            execute("INSERT INTO a VALUES (-2)");
+            execute("CREATE TABLE b (id INT)");
+            execute("INSERT INTO b VALUES (1)");
+
+            assertFailure(
+                    "SELECT a.id FROM a JOIN b ON ~a.id",
+                    "boolean expression expected",
+                    29
+            );
+            assertQuery("SELECT a.id FROM a JOIN b ON (~a.id) > 0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("id\n-2\n");
+        });
     }
 
     @Test
