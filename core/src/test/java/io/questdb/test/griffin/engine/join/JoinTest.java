@@ -3669,6 +3669,28 @@ public class JoinTest extends AbstractCairoTest {
                 }
             }
 
+            execute("CREATE TABLE ach (k INT, x CHAR)");
+            execute("INSERT INTO ach VALUES (1, 'A')");
+            execute("CREATE TABLE bch (x CHAR)");
+            execute("INSERT INTO bch VALUES (''::CHAR)");
+            execute("CREATE TABLE dch (x CHAR)");
+            execute("INSERT INTO dch VALUES ('A')");
+            for (boolean isFullFatJoin : new boolean[]{false, true}) {
+                for (String joinType : new String[]{"RIGHT JOIN", "FULL JOIN"}) {
+                    assertQuery("""
+                            SELECT c.k, a.x AS ax, d.x AS dx, b.x AS bx
+                            FROM ach a
+                            JOIN dch d ON d.x = a.x
+                            %s c ON c.k = a.k
+                            JOIN bch b ON b.x = a.x AND a.x = ''::CHAR
+                            ORDER BY c.k
+                            """.formatted(joinType))
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFatJoin)
+                            .returns("k\tax\tdx\tbx\n2\t\t\t\n");
+                }
+            }
+
             execute("CREATE TABLE ai (k INT, x IPv4)");
             execute("INSERT INTO ai VALUES (1, '1.1.1.1')");
             execute("CREATE TABLE bi (x IPv4)");

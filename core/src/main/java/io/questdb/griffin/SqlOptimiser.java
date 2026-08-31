@@ -2142,6 +2142,8 @@ public class SqlOptimiser implements Mutable {
         tablesSoFar.clear();
         postFilterRemoved.clear();
         postFilterTableRefs.clear();
+        final IntList modelOnJoinIndexes = tempCrossIndexes;
+        modelOnJoinIndexes.clear();
         // refresh the per-level anchors now that reorderTables has populated the execution order
         precomputeNullingJoinAnchors(parent);
 
@@ -2150,9 +2152,11 @@ public class SqlOptimiser implements Mutable {
         // collect table indexes from each part of global filter
         int pc = filterNodes.size();
         for (int i = 0; i < pc; i++) {
+            final ExpressionNode filterNode = filterNodes.getQuick(i);
             IntHashSet indexes = intHashSetPool.next();
             literalCollector.resetCounts();
-            traversalAlgo.traverse(filterNodes.getQuick(i), literalCollector.to(indexes));
+            traversalAlgo.traverse(filterNode, literalCollector.to(indexes));
+            modelOnJoinIndexes.add(modelOnJoinIndexAfterNullingBoundary(filterNode));
             postFilterTableRefs.add(indexes);
         }
 
@@ -2171,7 +2175,7 @@ public class SqlOptimiser implements Mutable {
 
                 IntHashSet refs = postFilterTableRefs.getQuick(k);
                 int rs = refs.size();
-                final int modelOnJoinIndex = modelOnJoinIndexAfterNullingBoundary(node);
+                final int modelOnJoinIndex = modelOnJoinIndexes.getQuick(k);
                 if (modelOnJoinIndex >= 0) {
                     // Pushing this predicate to its source would change an intervening nulling join's
                     // match set. Keep the original gate at its logical INNER origin instead.
@@ -5105,6 +5109,24 @@ public class SqlOptimiser implements Mutable {
         return column;
     }
 
+    private int getQueryColumnType(IQueryModel model, QueryColumn column) {
+        while (column != null && column.getColumnType() < 0) {
+            final ExpressionNode ast = column.getAst();
+            model = model.getNestedModel();
+            if (ast == null || ast.type != LITERAL || model == null) {
+                return -1;
+            }
+            column = findOutputColumn(model, ast.token);
+            if (column == null) {
+                final CharSequence alias = model.getColumnNameToAliasMap().get(ast.token);
+                if (alias != null) {
+                    column = model.getAliasToColumnMap().get(alias);
+                }
+            }
+        }
+        return column != null ? column.getColumnType() : -1;
+    }
+
     /**
      * Gets the timestamp column name for pushdown validation.
      * Returns the timestamp alias or designated timestamp token.
@@ -5590,8 +5612,13 @@ public class SqlOptimiser implements Mutable {
         if (!isFoldableConstantExpression(constNode, sqlExecutionContext)) {
             return false;
         }
-        final QueryColumn column = joinModels.getQuick(modelIndex).getAliasToColumnMap().get(columnName);
-        if (column == null || column.getColumnType() < 0) {
+        final IQueryModel model = joinModels.getQuick(modelIndex);
+        final int dot = Chars.indexOfLastUnquoted(columnName, '.');
+        final QueryColumn column = dot > -1
+                ? model.getAliasToColumnMap().get(columnName, dot + 1, columnName.length())
+                : model.getAliasToColumnMap().get(columnName);
+        final int columnType = getQueryColumnType(model, column);
+        if (columnType < 0) {
             return false;
         }
 
@@ -5599,7 +5626,7 @@ public class SqlOptimiser implements Mutable {
         final GenericRecordMetadata metadata = new GenericRecordMetadata();
         metadata.add(new TableColumnMetadata(
                 NULL_REJECTING_PROBE_COLUMN,
-                column.getColumnType(),
+                columnType,
                 IndexType.NONE,
                 0,
                 false,
@@ -5623,7 +5650,7 @@ public class SqlOptimiser implements Mutable {
             nullRecord = NullRecordFactory.getInstance(metadata);
             function = functionParser.parseFunction(equalityNode, metadata, sqlExecutionContext);
             return function != null && !function.getBool(nullRecord);
-        } catch (Throwable ignored) {
+        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException ignored) {
             return false;
         } finally {
             Misc.free(function);
