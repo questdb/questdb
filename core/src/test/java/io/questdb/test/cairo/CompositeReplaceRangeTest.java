@@ -43,42 +43,28 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
  * live-view and materialized-view refresh drive it through
  * {@code WalWriter#commitWithParams} -- which is why it is exercised here at that level.
  * <p>
- * <b>PINS AN UNIMPLEMENTED FEATURE.</b> {@code processO3BlockComposite} throws "composite
- * partitioning does not yet support the REPLACE commit mode", so any live view or mat view whose base
- * is composite suspends the table on refresh. Each test below asserts that refusal AND that the table
- * is left readable, so the pin fails the day the refusal is lifted -- at which point the assertions
- * become the twin comparisons already written out beside them.
+ * <b>IMPLEMENTED 2026-08-27 (80344978d1).</b> This class used to open "PINS AN UNIMPLEMENTED
+ * FEATURE" and describe, at length, what implementing REPLACE would need. It was implemented, the
+ * tests below became twin comparisons, and the header was left behind -- along with a
+ * {@code assertCompositeRefusedAndStillReadable} helper nothing called any more. Both are removed
+ * here (2026-08-31); the implementation notes live in the commit that did the work.
  * <p>
- * The oracle when it IS implemented must be the plain twin: both tables get identical rows and
- * identical replace ranges, so whatever the plain table's replace semantics are, the composite one
- * must match. That matters more than a hand-written expectation, because replace-range has edge cases
- * (empty range, range covering a whole partition, range spanning partitions) whose correct answers are
- * already encoded in the plain implementation.
+ * What the composite side has to do beyond the plain one, kept because it is the reason these tests
+ * exist: within each visited partition, EVERY EXISTING CELL must be dispatched, not only the cells
+ * the incoming rows name. A cell with no replacement rows still has to lose its rows in [lo, hi), or
+ * the composite table keeps rows its plain twin dropped.
  * <p>
- * <b>What implementing it needs, mapped 2026-08-27 so the next attempt does not start cold.</b>
- * <ul>
- *   <li>ALREADY PLUMBED: the cell-aware {@code o3CommitPartitionAsync} overload carries
- *       {@code o3TimestampLo}/{@code o3TimestampHi} and {@code cellKey}, so the replace bounds already
- *       reach {@code O3PartitionJob} per cell. No queue or task change is needed.</li>
- *   <li>MISSING, and it is all in the dispatch loop. {@code processO3BlockComposite} is driven purely
- *       by incoming rows ({@code while (srcOoo < srcOooMax)}). The plain loop instead runs
- *       {@code while (srcOoo < srcOooMax || (isCommitReplaceMode() && partitionTimestamp <=
- *       o3TimestampMax))} and advances with {@code txWriter.getNextExistingPartitionTimestamp}, so it
- *       still visits partitions the commit has no rows for -- which is how the DELETE half of a
- *       replace happens.</li>
- *   <li>THE COMPOSITE-SPECIFIC PART: for each partition in range, every EXISTING CELL must be
- *       dispatched, not just the cells named by the incoming rows. A cell with no replacement rows
- *       still has to have its rows in [lo, hi) deleted, or the composite table keeps rows the plain
- *       twin dropped. There is no "visit all cells of this partition" step in the dispatch today.</li>
- *   <li>ALSO NEEDED: the {@code srcOooLo > srcOooHi && (srcDataMax == 0 || append)} skip, and
- *       {@code replaceMaxTimestamp} tracking, both per cell rather than per partition.</li>
- * </ul>
- * <b>Why it was not attempted in the session that mapped it:</b> a half-correct version deletes rows
- * from the wrong cells -- silent data loss, the exact defect class this branch has been fixing -- and
- * the loop's own comments note that a stranded {@code o3PartitionUpdRemaining} ticket produces "an
- * untimed, unkillable spin -- a HANG, not a crash". It is a few hundred lines in the writer's most
- * defect-prone loop and wants its own session with the full verification set (twin, broad O3
- * regression, negative control, -da arm).
+ * <b>OPEN, unproven, found 2026-08-31 while auditing the min/max-recompute defect family.</b>
+ * {@code o3ConsumePartitionUpdateSink} ASSIGNS rather than folds when {@code isFirstPartitionReplaced}:
+ * {@code txWriter.minTimestamp = timestampMin}. On a composite table the update block is per CELL, so
+ * {@code timestampMin} is one cell's minimum and the LAST block consumed wins. Instrumented on two
+ * shapes -- min-holder at the higher cellKey, then at the lower -- and both ended CORRECT, because in
+ * both the block carrying the day's minimum happened to be consumed last; the trace shows the value
+ * transiently wrong in between ({@code timestampMin=11:30, existingMin=08:00} followed by
+ * {@code timestampMin=08:00, existingMin=11:30}). So the outcome depends on consumption order rather
+ * than on construction. No failing shape was found, so nothing was changed: this branch does not fix
+ * without a red test. The fix, if a shape is found, is the one used for the drop paths -- recompute
+ * across the day's cells rather than trusting a single block.
  */
 public class CompositeReplaceRangeTest extends AbstractCompositeTwinTest {
 
@@ -136,24 +122,6 @@ public class CompositeReplaceRangeTest extends AbstractCompositeTwinTest {
             assertTwinEqual("");
             assertTwinEqual(" WHERE exch = 'E0'");
         });
-    }
-
-    /**
-     * The composite table must REFUSE the replace commit -- and the refusal must leave it readable,
-     * with its pre-replace rows intact. A refusal that corrupted or emptied the table would be worse
-     * than the missing feature, and only asserting the error message would not notice.
-     */
-    private void assertCompositeRefusedAndStillReadable() throws SqlException {
-        printSql("SELECT count() FROM c");
-        Assert.assertEquals(
-                "the composite table must still hold its five seeded rows after the refused replace",
-                "count\n5\n", sink.toString());
-        // Deliberately NOT asserting that the plain twin's COUNT differs. It often does not: a range
-        // holding one row, replaced by one row, leaves the count unchanged -- which is what made the
-        // first version of this assertion fail on testReplaceRangeWithinOneDay. The count is a weak
-        // signal for the plain side; the composite side's "unchanged because refused" is the invariant
-        // worth pinning, and assertTwinEqual is what will carry the real comparison once the feature
-        // lands.
     }
 
     /**
