@@ -44,6 +44,170 @@ import org.junit.Test;
 public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
 
     @Test
+    public void testConstantPatternAsyncRebuildsAfterSameCountTruncate() throws Exception {
+        // Truncate + reinsert replaces the symbol dictionary with one of the SAME size, so a retained
+        // key set invalidated by symbol count alone would keep answering with the previous
+        // dictionary's keys. Only the symbol table generation can tell the two dictionaries apart.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('alto'), ('beta'), ('bravo')");
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ '^al'")) {
+                MatchSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    assertMatch(factory, "sym\nalpha\nalto\n");
+
+                    execute("TRUNCATE TABLE x");
+                    execute("INSERT INTO x VALUES ('amber'), ('delta'), ('alder'), ('foxtrot')");
+                    assertMatch(factory, "sym\nalder\n");
+                    Assert.assertEquals(
+                            "replacing a same-size dictionary behind an async symbol-table view must rebuild the retained keys",
+                            2,
+                            MatchSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    assertMatch(factory, "sym\nalder\n");
+                    Assert.assertEquals(2, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantPatternLimitZeroRetainedFactoryScansOnce() throws Exception {
+        // LIMIT 0 opens the base cursor before consulting the limit, and the filter is initialized
+        // eagerly on every open because PreparedSymbolPatternFilter.isThreadSafe() rests on that. The
+        // retained-dictionary shortcut is what keeps a repeat zero-row execution from paying the full
+        // O(symbolCount) regex pass all over again.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('beta')");
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ '^al' LIMIT 0")) {
+                MatchSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    assertMatch(factory, "sym\n");
+                    Assert.assertEquals(1, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    assertMatch(factory, "sym\n");
+                    Assert.assertEquals(
+                            "a repeat zero-row open of an unchanged dictionary must not rescan it",
+                            1,
+                            MatchSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+                } finally {
+                    MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantPatternRebuildsAfterSameCountTruncate() throws Exception {
+        // Serial control for testConstantPatternAsyncRebuildsAfterSameCountTruncate: with the parallel
+        // filter off the owner function is the only key set holder.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('alto'), ('beta'), ('bravo')");
+
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ '^al'")) {
+                MatchSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    assertMatch(factory, "sym\nalpha\nalto\n");
+
+                    execute("TRUNCATE TABLE x");
+                    execute("INSERT INTO x VALUES ('amber'), ('delta'), ('alder'), ('foxtrot')");
+                    assertMatch(factory, "sym\nalder\n");
+                    Assert.assertEquals(
+                            "replacing a same-size dictionary must rebuild the retained keys",
+                            2,
+                            MatchSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    assertMatch(factory, "sym\nalder\n");
+                    Assert.assertEquals(2, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testConstantPatternRetainedFactoryScansOnlyWhenStateChanges() throws Exception {
+        // The memo half of testConstantPatternUnchangedSeesNewSymbols: the rows alone cannot tell a
+        // retained key set from a re-derived one, so count the scans. Repeat opens of an unchanged
+        // dictionary must reuse the keys; any dictionary change must rebuild them.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('beta')");
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ '^al'")) {
+                MatchSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    assertMatch(factory, "sym\nalpha\n");
+                    Assert.assertEquals(1, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    assertMatch(factory, "sym\nalpha\n");
+                    Assert.assertEquals(
+                            "an unchanged dictionary must reuse the matched keys",
+                            1,
+                            MatchSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    execute("INSERT INTO x VALUES ('alto'), ('bravo')");
+                    assertMatch(factory, "sym\nalpha\nalto\n");
+                    Assert.assertEquals(2, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    assertMatch(factory, "sym\nalpha\nalto\n");
+                    Assert.assertEquals(2, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConstantPatternUnchangedSeesNewSymbols() throws Exception {
+        // The pattern is a compile-time constant, so nothing about the function changes between opens
+        // of a retained factory. The symbol dictionary grew in between, so the key set must still be
+        // rebuilt on the later open: a retention shortcut that failed to notice the append would
+        // silently drop every row carrying a new symbol.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('beta')");
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ '^al'")) {
+                assertMatch(factory, "sym\nalpha\n");
+
+                execute("INSERT INTO x VALUES ('alto'), ('bravo')");
+                assertMatch(factory, "sym\nalpha\nalto\n");
+            }
+
+            // serial control: same growth visibility without worker clones and key donation
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ '^al'")) {
+                assertMatch(factory, "sym\nalpha\nalto\n");
+
+                execute("INSERT INTO x VALUES ('alder')");
+                assertMatch(factory, "sym\nalpha\nalto\nalder\n");
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
     public void testConstantPatternWorkerClonesReuseDonatedKeys() throws Exception {
         assertWorkerClonesReuseDonatedKeys(false);
     }
@@ -99,6 +263,193 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRuntimeConstantPatternAsyncRebuildsAfterSameCountTruncate() throws Exception {
+        // Same-count truncate lock for the runtime-constant pattern: the bind value never changes, so
+        // pattern comparison cannot trigger the rebuild - dictionary identity/generation must.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('alto'), ('beta'), ('bravo')");
+
+            bindVariableService.setStr(0, "^al");
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ $1")) {
+                MatchSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    assertMatch(factory, "sym\nalpha\nalto\n");
+
+                    execute("TRUNCATE TABLE x");
+                    execute("INSERT INTO x VALUES ('amber'), ('delta'), ('alder'), ('foxtrot')");
+                    assertMatch(factory, "sym\nalder\n");
+                    Assert.assertEquals(
+                            "replacing a same-size dictionary behind an async symbol-table view must rebuild the retained keys",
+                            2,
+                            MatchSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    assertMatch(factory, "sym\nalder\n");
+                    Assert.assertEquals(2, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantPatternRebindRebuildsSymbolKeys() throws Exception {
+        // A compiled statement outlives the values bound to it. The per-worker clones of the regex
+        // predicate inherit the owner's matched symbol keys instead of re-deriving them, so a clone
+        // that kept the PREVIOUS pattern's keys would answer the next execution with the previous
+        // pattern's rows - silently, and only on the frames that worker happened to take. Re-bind $1
+        // across opens of the same factory and cross-check every answer against the constant-pattern
+        // oracle, which compiles to a different function class and shares no state with this one.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('alpine'), ('beta'), ('bravo'), ('gamma')");
+
+            final String alRows = "sym\nalpha\nalpine\n";
+            final String bRows = "sym\nbeta\nbravo\n";
+            final String noRows = "sym\n";
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ $1")) {
+                bindVariableService.setStr(0, "^al");
+                assertMatch(factory, alRows);
+                bindVariableService.setStr(0, "^b");
+                assertMatch(factory, bRows);
+                // back to the first pattern: a clone caching the second key set answers bRows here
+                bindVariableService.setStr(0, "^al");
+                assertMatch(factory, alRows);
+                // a pattern matching nothing must clear the key set, not fall back to the inherited one
+                bindVariableService.setStr(0, "^z");
+                assertMatch(factory, noRows);
+                // a null pattern clears the matcher outright
+                bindVariableService.setStr(0, null);
+                assertMatch(factory, noRows);
+                // and a later rebind must rebuild from the null state
+                bindVariableService.setStr(0, "^b");
+                assertMatch(factory, bRows);
+            }
+
+            // oracle: the same predicates as constants, compiled to the const-pattern sibling
+            assertQuery("SELECT sym FROM x WHERE sym ~ '^al'").noLeakCheck().returns(alRows);
+            assertQuery("SELECT sym FROM x WHERE sym ~ '^b'").noLeakCheck().returns(bRows);
+            assertQuery("SELECT sym FROM x WHERE sym ~ '^z'").noLeakCheck().returns(noRows);
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantPatternRebuildsAfterSameCountTruncate() throws Exception {
+        // Serial control for testRuntimeConstantPatternAsyncRebuildsAfterSameCountTruncate.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('alto'), ('beta'), ('bravo')");
+
+            bindVariableService.setStr(0, "^al");
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ $1")) {
+                MatchSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    assertMatch(factory, "sym\nalpha\nalto\n");
+
+                    execute("TRUNCATE TABLE x");
+                    execute("INSERT INTO x VALUES ('amber'), ('delta'), ('alder'), ('foxtrot')");
+                    assertMatch(factory, "sym\nalder\n");
+                    Assert.assertEquals(
+                            "replacing a same-size dictionary must rebuild the retained keys",
+                            2,
+                            MatchSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    assertMatch(factory, "sym\nalder\n");
+                    Assert.assertEquals(2, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantPatternRetainedFactoryScansOnlyWhenStateChanges() throws Exception {
+        // Full mirror of testBindVariableRetainedFactoryScansOnlyWhenStateChanges for the regex
+        // operator: only a rebind or a dictionary change may cost a scan; a null pattern costs none.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('beta')");
+
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ $1")) {
+                MatchSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                try {
+                    bindVariableService.setStr(0, "^al");
+                    assertMatch(factory, "sym\nalpha\n");
+                    Assert.assertEquals(1, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    assertMatch(factory, "sym\nalpha\n");
+                    Assert.assertEquals(
+                            "an unchanged bind and dictionary must reuse the matched keys",
+                            1,
+                            MatchSymbolFunctionFactory.testSymbolKeyScans.get()
+                    );
+
+                    bindVariableService.setStr(0, "^b");
+                    assertMatch(factory, "sym\nbeta\n");
+                    Assert.assertEquals(2, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    execute("INSERT INTO x VALUES ('alto'), ('bravo')");
+                    assertMatch(factory, "sym\nbeta\nbravo\n");
+                    Assert.assertEquals(3, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    assertMatch(factory, "sym\nbeta\nbravo\n");
+                    Assert.assertEquals(3, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    bindVariableService.setStr(0, null);
+                    assertMatch(factory, "sym\n");
+                    Assert.assertEquals(3, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                    bindVariableService.setStr(0, "^al");
+                    assertMatch(factory, "sym\nalpha\nalto\n");
+                    Assert.assertEquals(4, MatchSymbolFunctionFactory.testSymbolKeyScans.get());
+                } finally {
+                    MatchSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRuntimeConstantPatternUnchangedSeesNewSymbols() throws Exception {
+        // The bind value is identical across the opens, so the pattern cannot force a key set rebuild.
+        // The symbol dictionary grew in between, so the key set must still be rebuilt.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('beta')");
+
+            bindVariableService.setStr(0, "^al");
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ $1")) {
+                assertMatch(factory, "sym\nalpha\n");
+
+                execute("INSERT INTO x VALUES ('alto'), ('bravo')");
+                assertMatch(factory, "sym\nalpha\nalto\n");
+            }
+
+            // serial control
+            sqlExecutionContext.setParallelFilterEnabled(false);
+            try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ~ $1")) {
+                assertMatch(factory, "sym\nalpha\nalto\n");
+
+                execute("INSERT INTO x VALUES ('alder')");
+                assertMatch(factory, "sym\nalpha\nalto\nalder\n");
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
     public void testRuntimeConstantPatternWorkerClonesReuseDonatedKeys() throws Exception {
         assertWorkerClonesReuseDonatedKeys(true);
     }
@@ -127,6 +478,12 @@ public class MatchSymbolFunctionFactoryTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private void assertMatch(RecordCursorFactory factory, CharSequence expected) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            assertCursor(expected, cursor, factory.getMetadata(), true);
+        }
     }
 
     private Function newMatchFunction(CountingStaticSymbolTable symbolTable, boolean isRuntimeConstant) throws SqlException {

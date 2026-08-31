@@ -35,12 +35,25 @@ import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 
 public class MatchSymbolFunctionFactory implements FunctionFactory {
+
+    // Counts the full O(symbolCount) dictionary regex scans extractSymbolKeys() performs, exactly
+    // like AbstractLikeSymbolFunctionFactory's counter does for the LIKE/ILIKE siblings. Retained,
+    // donated and re-derived key sets all produce the same rows - only a counter can tell them
+    // apart. A plain static boolean guards it: the JIT folds the always-false production branch
+    // away, and the tests that flip it drive their queries on the calling thread.
+    @TestOnly
+    public static boolean isSymbolKeyScanCounterEnabled = false;
+    @TestOnly
+    public static final AtomicLong testSymbolKeyScans = new AtomicLong();
 
     public static boolean symbolMatches(Function arg, Record rec, IntList symbolKeys) {
         final int key = arg.getInt(rec);
@@ -95,6 +108,9 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         assert symbolTable != null;
         symbolKeys.clear();
         if (matcher != null) {
+            if (isSymbolKeyScanCounterEnabled) {
+                testSymbolKeyScans.incrementAndGet();
+            }
             for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
                 if (matcher.reset(symbolTable.valueOf(i)).find()) {
                     symbolKeys.add(i);
@@ -108,6 +124,9 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
+        private int lastSymbolCount = -1;
+        private StaticSymbolTable lastSymbolTable;
+        private long lastSymbolTableGeneration = StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION;
         private boolean stateInherited;
 
         public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher) {
@@ -148,7 +167,22 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             if (stateInherited) {
                 stateInherited = false;
             } else {
-                extractSymbolKeys(symbolFun, symbolKeys, matcher);
+                final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
+                assert symbolTable != null;
+                final int symbolCount = symbolTable.getSymbolCount();
+                final long symbolTableGeneration = symbolTable.getSymbolTableGeneration();
+                // The pattern is a compile-time constant, so the matched key set can only change with
+                // the dictionary. Mirrors BindLikeStaticSymbolTableFunction: rescan unless the
+                // dictionary can prove it is the one the retained keys were derived from.
+                if (symbolTableGeneration == StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION
+                        || symbolTable != lastSymbolTable
+                        || symbolCount != lastSymbolCount
+                        || symbolTableGeneration != lastSymbolTableGeneration) {
+                    extractSymbolKeys(symbolFun, symbolKeys, matcher);
+                    lastSymbolCount = symbolCount;
+                    lastSymbolTable = symbolTable;
+                    lastSymbolTableGeneration = symbolTableGeneration;
+                }
             }
             // Eager: retires getBool()'s lazy-init branch on the query thread before any worker can
             // reach it. See the comment there.
@@ -183,6 +217,9 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private final SymbolFunction symbolFun;
         private final IntList symbolKeys = new IntList();
         private boolean initialized;
+        private int lastSymbolCount = -1;
+        private StaticSymbolTable lastSymbolTable;
+        private long lastSymbolTableGeneration = StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION;
         private Matcher matcher;
         private boolean stateInherited;
 
@@ -220,11 +257,37 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
             pattern.init(symbolTableSource, executionContext);
-            matcher = RegexUtils.createMatcher(pattern, patternPosition);
+            // RegexUtils.createMatcher() compiles the bind value verbatim, so the compiled pattern's
+            // own source doubles as the last-value memo: recompile only when the text changed, and a
+            // changed text forces the key set rebuild below no matter what the dictionary says.
+            final CharSequence regex = pattern.getStrA(null);
+            final boolean patternChanged;
+            if (regex == null) {
+                patternChanged = matcher != null;
+                matcher = null;
+            } else if (matcher == null || !Chars.equals(matcher.pattern().pattern(), regex)) {
+                matcher = RegexUtils.createMatcher(pattern, patternPosition);
+                patternChanged = true;
+            } else {
+                patternChanged = false;
+            }
             if (stateInherited) {
                 stateInherited = false;
             } else {
-                extractSymbolKeys(symbolFun, symbolKeys, matcher);
+                final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
+                assert symbolTable != null;
+                final int symbolCount = symbolTable.getSymbolCount();
+                final long symbolTableGeneration = symbolTable.getSymbolTableGeneration();
+                if (patternChanged
+                        || symbolTableGeneration == StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION
+                        || symbolTable != lastSymbolTable
+                        || symbolCount != lastSymbolCount
+                        || symbolTableGeneration != lastSymbolTableGeneration) {
+                    extractSymbolKeys(symbolFun, symbolKeys, matcher);
+                    lastSymbolCount = symbolCount;
+                    lastSymbolTable = symbolTable;
+                    lastSymbolTableGeneration = symbolTableGeneration;
+                }
             }
             // Eager: retires getBool()'s lazy-init branch on the query thread before any worker can
             // reach it. See the comment there.
