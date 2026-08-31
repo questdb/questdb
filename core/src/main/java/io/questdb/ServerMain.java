@@ -90,7 +90,7 @@ public class ServerMain implements Closeable {
     private final CairoEngine engine;
     private final FreeOnExit freeOnExit = new FreeOnExit();
     private final AtomicBoolean isCloseComplete = new AtomicBoolean();
-    private final ReentrantLock lifecycleLock = new ReentrantLock();
+    private final ReentrantLock closeLock = new ReentrantLock();
     private final AtomicBoolean running = new AtomicBoolean();
     private boolean isClosing;
     private WorkerPoolManager workerPoolManager;
@@ -219,7 +219,7 @@ public class ServerMain implements Closeable {
     @Override
     public void close() {
         requestClose();
-        lifecycleLock.lock();
+        closeLock.lock();
         try {
             if (isClosing) {
                 return;
@@ -229,7 +229,73 @@ public class ServerMain implements Closeable {
                 throw new IllegalStateException("QuestDB shutdown did not complete");
             }
         } finally {
-            lifecycleLock.unlock();
+            closeLock.unlock();
+        }
+    }
+
+    /**
+     * Attempts shutdown using one absolute {@link System#nanoTime()} deadline. A timeout retains
+     * the live object graph so a later call can retry safely.
+     */
+    public boolean closeBy(long deadlineNanos) {
+        // Signal cancellation before taking the lock: start() boots under closeLock, so a
+        // blocked start must observe the stop request and unwind before the lock frees.
+        requestClose();
+        boolean isInterrupted = false;
+        boolean isLocked = closeLock.tryLock();
+        while (!isLocked) {
+            final long remainingNanos = deadlineNanos - System.nanoTime();
+            if (remainingNanos <= 0) {
+                if (isInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
+                return false;
+            }
+            try {
+                isLocked = closeLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+            } catch (InterruptedException e) {
+                isInterrupted = true;
+            }
+        }
+        try {
+            if (isCloseComplete.get()) {
+                return true;
+            }
+            closed.set(true);
+            if (!joinThread(hydrateMetadataThread, deadlineNanos)
+                    || !joinThread(compileViewsThread, deadlineNanos)
+                    || !engine.signalClose(deadlineNanos)) {
+                return false;
+            }
+            final LifecycleOrchestrator lifecycle = orchestrator;
+            if (lifecycle != null) {
+                lifecycle.closeBy(deadlineNanos);
+                if (!lifecycle.isCloseComplete()) {
+                    return false;
+                }
+            }
+            if (workerPoolManager != null && !workerPoolManager.haltBy(deadlineNanos)) {
+                return false;
+            }
+            if (!engine.isCloseReady(deadlineNanos)) {
+                return false;
+            }
+            freeOnExit.close();
+            final Thread hook = shutdownHookThread;
+            if (hook != null && hook != Thread.currentThread()) {
+                shutdownHookThread = null;
+                try {
+                    Runtime.getRuntime().removeShutdownHook(hook);
+                } catch (IllegalStateException ignore) {
+                }
+            }
+            isCloseComplete.set(true);
+            return true;
+        } finally {
+            closeLock.unlock();
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -440,11 +506,11 @@ public class ServerMain implements Closeable {
     }
 
     public void start(boolean addShutdownHook) {
-        lifecycleLock.lock();
+        closeLock.lock();
         try {
             startLocked(addShutdownHook);
         } finally {
-            lifecycleLock.unlock();
+            closeLock.unlock();
         }
     }
 
@@ -466,8 +532,13 @@ public class ServerMain implements Closeable {
                 // mirrors the halt-then-free order of close(); WorkerPool.halt() is CAS-guarded, so
                 // the normal-shutdown second call is a no-op.
                 lifecycleOrchestrator.setPreStopHook(() -> {
-                    if (workerPoolManager != null && !workerPoolManager.haltAndReportCompletion()) {
-                        throw new IllegalStateException("worker pools did not halt before lifecycle teardown");
+                    if (workerPoolManager != null) {
+                        workerPoolManager.halt();
+                    }
+                });
+                lifecycleOrchestrator.setPreStopHookWithDeadline(deadlineNanos -> {
+                    if (workerPoolManager != null && !workerPoolManager.haltBy(deadlineNanos)) {
+                        throw new Component.ShutdownIncompleteException();
                     }
                 });
                 if (addShutdownHook) {
@@ -524,12 +595,12 @@ public class ServerMain implements Closeable {
             boolean isServerClosed = false;
             try {
                 Throwable closeFailure = null;
+                final long deadlineNanos = System.nanoTime() + getShutdownTimeoutNanos();
                 try {
-                    close();
+                    isServerClosed = closeBy(deadlineNanos);
                 } catch (Throwable th) {
                     closeFailure = th;
                 }
-                isServerClosed = isCloseComplete();
                 if (closeFailure != null) {
                     try {
                         bootstrap.getLog().error().$("could not close QuestDB cleanly [error=").$(closeFailure).I$();
@@ -540,7 +611,7 @@ public class ServerMain implements Closeable {
                 }
                 if (isServerClosed) {
                     try {
-                        LogFactory.closeInstance();
+                        LogFactory.closeInstanceWithin(Math.max(1, deadlineNanos - System.nanoTime()));
                     } catch (Throwable th) {
                         printStackTraceSafely(th);
                     }
@@ -826,8 +897,37 @@ public class ServerMain implements Closeable {
         }
     }
 
+    private boolean joinThread(Thread thread, long deadlineNanos) {
+        if (thread == null) {
+            return true;
+        }
+        boolean isInterrupted = false;
+        try {
+            while (thread.isAlive()) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    return false;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedJoin(thread, remainingNanos);
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            return true;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
     protected <T extends Closeable> T freeOnExit(T closeable) {
         return freeOnExit.register(closeable);
+    }
+
+    protected long getShutdownTimeoutNanos() {
+        return WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS;
     }
 
     /**
@@ -1479,6 +1579,18 @@ public class ServerMain implements Closeable {
             server = null;
             Misc.free(minHttpServer);
         }
+
+        @Override
+        public void stop(long deadlineNanos) {
+            if (pool != null) {
+                if (!pool.haltBy(deadlineNanos)) {
+                    throw new Component.ShutdownIncompleteException();
+                }
+                pool = null;
+            }
+            Misc.free(server);
+            server = null;
+        }
     }
 
     /**
@@ -1962,9 +2074,15 @@ public class ServerMain implements Closeable {
             // to ensure the pool is quiesced before engine resources are freed. WorkerPool.halt()
             // is CAS-guarded, so whichever call arrives second is a no-op.
             if (ServerMain.this.workerPoolManager != null) {
-                if (!ServerMain.this.workerPoolManager.haltAndReportCompletion()) {
-                    throw new IllegalStateException("worker pools did not halt");
-                }
+                ServerMain.this.workerPoolManager.halt();
+            }
+        }
+
+        @Override
+        public void stop(long deadlineNanos) {
+            if (ServerMain.this.workerPoolManager != null
+                    && !ServerMain.this.workerPoolManager.haltBy(deadlineNanos)) {
+                throw new Component.ShutdownIncompleteException();
             }
         }
     }

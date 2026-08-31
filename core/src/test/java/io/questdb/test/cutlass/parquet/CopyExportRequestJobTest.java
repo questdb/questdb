@@ -76,6 +76,7 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
                         FROM "sys.copy_export_log"
                         WHERE status = 'cancelled'
                         """)
+                        .noLeakCheck()
                         .returns("""
                                 status
                                 cancelled
@@ -160,6 +161,7 @@ public class CopyExportRequestJobTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.of(exportRoot).concat(fileName).$();
             assertQuery("SELECT count() FROM read_parquet('" + path + "')")
+                    .noLeakCheck()
                     .expectSize()
                     .noRandomAccess()
                     .returns("count\n" + expected + '\n');

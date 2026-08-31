@@ -60,6 +60,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
     private static final int INTS_PER_SLOT = 64 / Integer.BYTES;
     private static final Log LOG = LogFactory.getLog(PerWorkerLocks.class);
     private static final int SLOT_WAIT_ABORTED = -2;
+    private static final int SLOT_WAIT_TIMER_REFUSED = -3;
     private final AtomicIntegerArray locks;
     // Used to randomize acquire attempts for work stealing threads. Accessed in a racy way, intentionally.
     private final Rnd rnd;
@@ -207,8 +208,13 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 countDownTestAcquireLatch();
                 return fiberSlot;
             }
+            if (fiberSlot == SLOT_WAIT_TIMER_REFUSED) {
+                throw CairoException.nonCritical().put("query aborted, server is closing").setInterruption(true);
+            }
             if (fiberSlot == SLOT_WAIT_ABORTED) {
-                throw CairoException.nonCritical().put("reducer slot wait could not suspend the mounted fiber");
+                throw CairoException.nonCritical()
+                        .put("reducer slot wait could not suspend the mounted fiber")
+                        .setInterruption(true);
             }
             if (statefulCircuitBreaker != null) {
                 statefulCircuitBreaker.statefulThrowExceptionIfTripped();
@@ -282,7 +288,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 }
                 if (timerShards != null
                         && !coordinator.armTimer(token, timerShards, timerClock, timerIntervalMillis)) {
-                    return SLOT_WAIT_ABORTED;
+                    return SLOT_WAIT_TIMER_REFUSED;
                 }
 
                 final int slot = tryAcquireSlot(slotStart);

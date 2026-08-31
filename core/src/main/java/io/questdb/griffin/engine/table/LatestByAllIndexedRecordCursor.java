@@ -419,7 +419,11 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             // done(seq) releases the slot
             subSeq.done(seq);
             if (dispatcher != null) {
-                dispatcher.signalProgress(stolenProgress);
+                try {
+                    dispatcher.signalQueueProgress();
+                } finally {
+                    dispatcher.signalOwnerProgress(stolenProgress);
+                }
             }
         }
     }
@@ -439,7 +443,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 sharedCircuitBreaker.cancel();
             }
             if (isOwnerParkable) {
-                if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
+                if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
                     Os.pause();
                 }
             } else {

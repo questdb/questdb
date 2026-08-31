@@ -58,6 +58,24 @@ import java.util.concurrent.locks.ReentrantLock;
 public class FiberRuntimeTest {
 
     @Test
+    public void testAwaitCapacityReportsAlreadyCancelledSignal() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
+            final long generation = cancellationSignal.getGeneration();
+            cancellationSignal.cancel();
+            final FiberRuntime runtime = new FiberRuntime(2);
+            final CancelledCapacityTask task = new CancelledCapacityTask(runtime, cancellationSignal, generation);
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(task.isDone());
+                // capacity is available, but the pre-cancelled signal must win the early return
+                Assert.assertEquals(FiberWaitCoordinator.REASON_CANCEL, task.reason);
+            }
+        });
+    }
+
+    @Test
     public void testCancellationGenerationRemainsBoundAcrossResume() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberCancellationSignal cancellationSignal = new FiberCancellationSignal();
@@ -188,24 +206,6 @@ public class FiberRuntimeTest {
 
             close(runtime);
         });
-    }
-
-    @Test
-    public void testCleanupFailureIsSuppressedByRuntimeGuard() {
-        final AssertionError bodyFailure = new AssertionError("body failure");
-        final IllegalStateException cleanupFailure = new IllegalStateException("cleanup failure");
-
-        try {
-            try (RuntimeGuard ignored = new RuntimeGuard(() -> {
-                throw cleanupFailure;
-            })) {
-                throw bodyFailure;
-            }
-        } catch (AssertionError th) {
-            Assert.assertSame(bodyFailure, th);
-            Assert.assertEquals(1, th.getSuppressed().length);
-            Assert.assertSame(cleanupFailure, th.getSuppressed()[0]);
-        }
     }
 
     @Test
@@ -1511,6 +1511,25 @@ public class FiberRuntimeTest {
         }
     }
 
+    private static class CancelledCapacityTask extends FiberTask {
+        private final FiberCancellationSignal cancellationSignal;
+        private final long generation;
+        private final FiberRuntime runtime;
+        private int reason;
+
+        private CancelledCapacityTask(FiberRuntime runtime, FiberCancellationSignal cancellationSignal, long generation) {
+            this.runtime = runtime;
+            this.cancellationSignal = cancellationSignal;
+            this.generation = generation;
+        }
+
+        @Override
+        protected boolean runStep() {
+            reason = runtime.awaitCapacity(cancellationSignal, generation);
+            return true;
+        }
+    }
+
     private static class CapacitySignalTask extends FiberTask {
         private final FiberRuntime runtime;
         private int reason;
@@ -1884,22 +1903,18 @@ public class FiberRuntimeTest {
     }
 
     private static final class RuntimeGuard implements AutoCloseable {
-        private final Runnable closeAction;
+        private final FiberRuntime runtime;
         private boolean isArmed = true;
 
         private RuntimeGuard(FiberRuntime runtime) {
-            this(() -> FiberRuntimeTest.close(runtime));
-        }
-
-        private RuntimeGuard(Runnable closeAction) {
-            this.closeAction = closeAction;
+            this.runtime = runtime;
         }
 
         @Override
         public void close() {
             if (isArmed) {
                 isArmed = false;
-                closeAction.run();
+                FiberRuntimeTest.close(runtime);
             }
         }
 

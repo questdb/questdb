@@ -549,6 +549,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         fiber_host_ilp value=43i 2000000000
                         """));
                 assertQuery("SELECT value, ts FROM fiber_host_ilp")
+                        .noLeakCheck()
                         .expectSize()
                         .timestamp("ts")
                         .returns("""
@@ -1094,6 +1095,7 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                         """), tables);
                 for (int i = 0; i < tables.length; i++) {
                     assertQuery("SELECT value, ts FROM " + tables[i])
+                            .noLeakCheck()
                             .expectSize()
                             .timestamp("ts")
                             .returns("""

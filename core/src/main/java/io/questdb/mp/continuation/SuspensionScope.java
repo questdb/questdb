@@ -52,11 +52,21 @@ public final class SuspensionScope {
     public static void enterCancellationSignal(
             @Nullable FiberCancellationSignal cancellationSignal
     ) {
+        enterCancellationSignal(
+                cancellationSignal,
+                cancellationSignal != null
+                        ? cancellationSignal.getGeneration()
+                        : CancellationBinding.NO_GENERATION
+        );
+    }
+
+    public static void enterCancellationSignal(
+            @Nullable FiberCancellationSignal cancellationSignal,
+            long cancellationSignalGeneration
+    ) {
         final CarrierScope scope = SCOPE.get();
         scope.cancellationSignal = cancellationSignal;
-        scope.cancellationSignalGeneration = cancellationSignal != null
-                ? cancellationSignal.getGeneration()
-                : CancellationBinding.NO_GENERATION;
+        scope.cancellationSignalGeneration = cancellationSignalGeneration;
     }
 
     public static void enterCancellationSource(@Nullable CancellationBinding.Source cancellationSource) {

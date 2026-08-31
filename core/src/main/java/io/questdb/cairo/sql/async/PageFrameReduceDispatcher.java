@@ -53,7 +53,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class PageFrameReduceDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
-    private static final int DEFAULT_BATCH_LIMIT = 64;
+    static final int DEFAULT_BATCH_LIMIT = 64;
     private static final Log LOG = LogFactory.getLog(PageFrameReduceDispatcher.class);
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
     private static final long PUBLICATION_PERMIT_MASK = Long.MAX_VALUE;
@@ -69,7 +69,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     private final AtomicLong publicationAdmission = new AtomicLong(PUBLICATION_OPEN);
     private final AtomicInteger quiesceState = new AtomicInteger(QUIESCE_OPEN);
     private final FiberRuntime runtime;
-    private final PageFrameFiberTaskPool taskPool;
+    private final FiberTaskPool<PageFrameFiberTask> taskPool;
     private final MillisecondClock timerClock;
     private final long timerIntervalMillis;
     private final TimerShards timerShards;
@@ -83,11 +83,10 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         this.batchRowBudget = configuredBatchRowBudget;
         this.messageBus = messageBus;
         this.runtime = runtime;
-        this.taskPool = new PageFrameFiberTaskPool(
-                engine,
+        this.taskPool = new FiberTaskPool<>(
                 runtime.getMaxLiveFiberCount(),
                 runtime.getMaxRetainedFiberCount(),
-                this
+                pool -> new PageFrameFiberTask(engine, pool, this)
         );
         this.timerClock = engine.getConfiguration().getMillisecondClock();
         this.timerIntervalMillis = Math.max(
@@ -127,6 +126,23 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 if (cleanupFailure != th) {
                     th.addSuppressed(cleanupFailure);
                 }
+            }
+            throw th;
+        }
+    }
+
+    @TestOnly
+    public TaskLeaseForTesting acquireTaskLeaseForTesting() {
+        if (!taskPool.tryLease()) {
+            throw new IllegalStateException("page frame fiber task lease unavailable");
+        }
+        try {
+            return new TaskLeaseForTesting(taskPool);
+        } catch (Throwable th) {
+            try {
+                taskPool.releaseLease();
+            } catch (Throwable cleanupFailure) {
+                suppressCleanupFailure(th, cleanupFailure);
             }
             throw th;
         }
@@ -236,6 +252,11 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         if (!isDrained) {
             throw new IllegalStateException("page frame reduce dispatcher has active publications");
         }
+    }
+
+    @TestOnly
+    public void closeTaskPoolForTesting() {
+        taskPool.close();
     }
 
     public boolean consumeOrdered(
@@ -377,13 +398,13 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         return batchRowBudget;
     }
 
-    public long getProgressVersion() {
-        return progressVersion.get();
-    }
-
     @TestOnly
     public int getCreatedTaskCount() {
         return taskPool.getCreatedCount();
+    }
+
+    public long getProgressVersion() {
+        return progressVersion.get();
     }
 
     @TestOnly
@@ -433,6 +454,18 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
     }
 
     @TestOnly
+    public void releaseTaskLeaseForTesting() {
+        taskPool.releaseLease();
+    }
+
+    @TestOnly
+    public void runWithTaskPoolLockedForTesting(Runnable action) {
+        synchronized (taskPool) {
+            action.run();
+        }
+    }
+
+    @TestOnly
     public void setBatchRowBudgetForTesting(long batchRowBudget) {
         this.batchRowBudget = batchRowBudget > 0 ? batchRowBudget : configuredBatchRowBudget;
     }
@@ -462,6 +495,30 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             if (publicationAdmission.compareAndSet(current, current + 1)) {
                 return true;
             }
+        }
+    }
+
+    @TestOnly
+    public boolean tryLeaseTaskForTesting() {
+        return taskPool.tryLease();
+    }
+
+    @TestOnly
+    public static final class TaskLeaseForTesting {
+        private final AtomicBoolean isReleased = new AtomicBoolean();
+        private final PageFrameFiberTask task;
+        private final FiberTaskPool<PageFrameFiberTask> taskPool;
+
+        private TaskLeaseForTesting(FiberTaskPool<PageFrameFiberTask> taskPool) {
+            this.taskPool = taskPool;
+            this.task = taskPool.acquireLeased();
+        }
+
+        public void release() {
+            if (!isReleased.compareAndSet(false, true)) {
+                throw new IllegalStateException("page frame fiber task lease already released");
+            }
+            taskPool.release(task);
         }
     }
 
@@ -515,7 +572,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                 return FiberWaitCoordinator.REASON_SHUTDOWN;
             }
             if (progressVersion.get() != observedVersion) {
-                return FiberWaitCoordinator.REASON_PROGRESS;
+                return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
         } finally {
@@ -577,7 +634,7 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
             }
             if (frameSequence.getProgressVersion() != observedSequenceVersion
                     || progressVersion.get() != observedGlobalVersion) {
-                return FiberWaitCoordinator.REASON_PROGRESS;
+                return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_PROGRESS);
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_PROGRESS);
         } finally {

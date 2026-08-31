@@ -51,7 +51,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private RingQueue<PageFrameReduceTask> orderedQueue;
     private PageFrameReduceTask orderedReduceTask;
     private MCSequence orderedSubSeq;
-    private final PageFrameFiberTaskPool pool;
+    private final FiberTaskPool<PageFrameFiberTask> pool;
     private final PageFrameMemoryRecord record;
     private final TimerShards timerShards;
     private int unorderedFrameIndex = -1;
@@ -62,7 +62,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
 
     PageFrameFiberTask(
             CairoEngine engine,
-            PageFrameFiberTaskPool pool,
+            FiberTaskPool<PageFrameFiberTask> pool,
             PageFrameReduceDispatcher dispatcher
     ) {
         this.circuitBreaker = new SqlExecutionCircuitBreakerWrapper(
@@ -392,11 +392,14 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     private void recycle() {
         clearBinding();
         circuitBreaker.clear();
-        record.of(null);
         try {
-            tryReopen();
+            record.of(null);
         } finally {
-            pool.release(this);
+            try {
+                tryReopen();
+            } finally {
+                pool.release(this);
+            }
         }
     }
 }

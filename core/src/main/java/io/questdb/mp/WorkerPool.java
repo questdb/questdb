@@ -688,12 +688,18 @@ public class WorkerPool implements Closeable {
                     // the halting thread drains so closure does not depend on a live worker
                     final long drainStartNanos = System.nanoTime();
                     long nextStallLogNanos = drainStartNanos + DEFAULT_HALT_TIMEOUT_NANOS;
+                    boolean hasDrainedOnHaltingThread = false;
                     while (!runtime.awaitClosed(System.nanoTime() + 1_000_000L)) {
-                        runtime.drain(runtime.getMountBudget());
+                        hasDrainedOnHaltingThread |= runtime.drain(runtime.getMountBudget()) > 0;
                         if (System.nanoTime() - nextStallLogNanos >= 0) {
                             logHaltStall("drain the fiber runtime", drainStartNanos);
                             nextStallLogNanos += DEFAULT_HALT_TIMEOUT_NANOS;
                         }
+                    }
+                    if (hasDrainedOnHaltingThread) {
+                        // fiber bodies ran on this thread, which has no worker cleaner registered
+                        Misc.free(Path.THREAD_LOCAL_CLEANER);
+                        Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                     }
                 }
             }

@@ -292,7 +292,7 @@ public final class FiberRuntime {
             if (state == FiberRuntimeState.OPEN
                     && outstandingTaskCount.get() < configuration.maxLiveFiberCount
                     && fiberPool.hasAvailableFiber()) {
-                return FiberWaitCoordinator.REASON_CAPACITY;
+                return coordinator.preferPendingCancel(token, FiberWaitCoordinator.REASON_CAPACITY);
             }
             return fiber.suspendWait(token, FiberWaitCoordinator.REASON_NONE);
         } catch (RuntimeException | Error th) {

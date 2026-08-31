@@ -473,17 +473,17 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
                         if (cursor > -1) {
                             GroupByMergeShardTask task = queue.get(cursor);
                             // run() releases the slot
-                            final AsyncQueryProgressState stolenProgress = task.getShardingContext().getProgressState();
-                            GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
                             if (dispatcher != null) {
-                                dispatcher.signalProgress(stolenProgress);
+                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this, dispatcher);
+                            } else {
+                                GroupByMergeShardJob.run(-1, task, subSeq, cursor, this);
                             }
                             reclaimed++;
                         } else {
                             Os.pause();
                         }
                     } else if (isOwnerParkable) {
-                        if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
+                        if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
                             Os.pause();
                         }
                     } else {

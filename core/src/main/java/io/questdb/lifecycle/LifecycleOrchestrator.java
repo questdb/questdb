@@ -27,6 +27,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongConsumer;
 
 /**
  * Owns the component DAG: validates acyclicity, runs parallel start in
@@ -101,6 +102,8 @@ public class LifecycleOrchestrator implements QuietCloseable {
     // the loop frees them.
     @Nullable
     private volatile Runnable preStopHook;
+    @Nullable
+    private volatile LongConsumer preStopHookWithDeadline;
     private final AtomicBoolean ran = new AtomicBoolean();
     private final ObjList<Component> registry = new ObjList<>();
     private final CharSequenceObjHashMap<Component> registryByName = new CharSequenceObjHashMap<>();
@@ -295,6 +298,76 @@ public class LifecycleOrchestrator implements QuietCloseable {
     }
 
     /**
+     * Stops the component graph using one absolute {@link System#nanoTime()} deadline. A timed-out
+     * attempt retains the live graph so a later call can resume the same shutdown safely.
+     */
+    public void closeBy(long deadlineNanos) {
+        final Thread currentThread = Thread.currentThread();
+        if (!acquireCloseOwnership(true, deadlineNanos)) {
+            return;
+        }
+        boolean isInterrupted = Thread.interrupted();
+        boolean isComplete = false;
+        try {
+            closed.set(true);
+            requestComponentStops();
+            executor.shutdown();
+            if (!awaitInFlightWork(deadlineNanos)) {
+                return;
+            }
+
+            final Runnable cancelHook = preJoinCancelHook;
+            if (cancelHook != null) {
+                cancelHook.run();
+            }
+
+            final Thread boot = bootThread;
+            if (boot != null && boot != currentThread && !joinThread(boot, deadlineNanos)) {
+                return;
+            }
+
+            if (reverseTopoOrder != null) {
+                final LongConsumer hook = preStopHookWithDeadline;
+                if (hook != null) {
+                    try {
+                        hook.accept(deadlineNanos);
+                    } catch (Component.ShutdownIncompleteException ignored) {
+                        return;
+                    }
+                }
+                for (int i = 0, n = reverseTopoOrder.size(); i < n; i++) {
+                    final Component component = reverseTopoOrder.getQuick(i);
+                    final State current = stateOf(component.name());
+                    if (current == State.READY || current == State.DEGRADED || current == State.STARTING
+                            || current == State.SWITCHING || current == State.STOPPING) {
+                        if (current != State.STOPPING) {
+                            publishInternal(component.name(), State.STOPPING, null);
+                        }
+                        try {
+                            component.stop(deadlineNanos);
+                        } catch (Component.ShutdownIncompleteException ignored) {
+                            return;
+                        }
+                        publishInternal(component.name(), State.STOPPED, null);
+                    }
+                }
+            }
+            isComplete = true;
+        } finally {
+            releaseCloseOwnership(isComplete);
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    public boolean isCloseComplete() {
+        synchronized (closeLock) {
+            return isStopComplete;
+        }
+    }
+
+    /**
      * Production seam: returns the per-component LifecycleContext that the orchestrator dispatches
      * to {@link Component#start(LifecycleContext)}. Enterprise overlays override this to wrap the
      * base context with role-aware accessors. The silent no-op inside publishInternal for unknown
@@ -412,6 +485,13 @@ public class LifecycleOrchestrator implements QuietCloseable {
         this.preStopHook = hook;
     }
 
+    /**
+     * Installs the bounded counterpart to {@link #setPreStopHook(Runnable)}.
+     */
+    public void setPreStopHookWithDeadline(@Nullable LongConsumer hook) {
+        this.preStopHookWithDeadline = hook;
+    }
+
     public LifecycleSnapshot snapshot() {
         long capturedAt = MicrosecondClockImpl.INSTANCE.getTicks();
         ObjList<LifecycleSnapshot.ComponentSnapshot> snaps = new ObjList<>();
@@ -468,6 +548,30 @@ public class LifecycleOrchestrator implements QuietCloseable {
             Thread.currentThread().interrupt();
         }
         return true;
+    }
+
+    protected boolean awaitInFlightWork(long deadlineNanos) {
+        boolean isInterrupted = false;
+        try {
+            while (!executor.isTerminated()) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    return false;
+                }
+                try {
+                    if (executor.awaitTermination(remainingNanos, TimeUnit.NANOSECONDS)) {
+                        return true;
+                    }
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            return true;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 
     protected void cascadeFailedThroughHardDeps(String failedName) {
@@ -645,6 +749,74 @@ public class LifecycleOrchestrator implements QuietCloseable {
                 throw new LifecycleStartupException(
                         "component name must match [a-z0-9-]+ for JSON-safe serialization (LifecycleProcessor); got: " + name);
             }
+        }
+    }
+
+    private boolean joinThread(Thread thread, long deadlineNanos) {
+        boolean isInterrupted = false;
+        try {
+            while (thread.isAlive()) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    return false;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedJoin(thread, remainingNanos);
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            return true;
+        } finally {
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
+        }
+    }
+
+    private boolean acquireCloseOwnership(boolean isBounded, long deadlineNanos) {
+        final Thread currentThread = Thread.currentThread();
+        boolean isInterrupted = Thread.interrupted();
+        try {
+            synchronized (closeLock) {
+                while (closeOwner != null && !isStopComplete) {
+                    if (closeOwner == currentThread) {
+                        return false;
+                    }
+                    try {
+                        if (isBounded) {
+                            final long remainingNanos = deadlineNanos - System.nanoTime();
+                            if (remainingNanos <= 0) {
+                                return false;
+                            }
+                            TimeUnit.NANOSECONDS.timedWait(closeLock, remainingNanos);
+                        } else {
+                            closeLock.wait();
+                        }
+                    } catch (InterruptedException e) {
+                        isInterrupted = true;
+                    }
+                }
+                if (isStopComplete) {
+                    return false;
+                }
+                closeOwner = currentThread;
+                return true;
+            }
+        } finally {
+            if (isInterrupted) {
+                currentThread.interrupt();
+            }
+        }
+    }
+
+    private void releaseCloseOwnership(boolean isComplete) {
+        synchronized (closeLock) {
+            if (isComplete) {
+                isStopComplete = true;
+            }
+            closeOwner = null;
+            closeLock.notifyAll();
         }
     }
 

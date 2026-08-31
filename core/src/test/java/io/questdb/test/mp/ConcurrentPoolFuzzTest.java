@@ -56,6 +56,29 @@ public class ConcurrentPoolFuzzTest {
     }
 
     @Test
+    public void testTryPushRejectsAtMaxSize() {
+        final ConcurrentPool<Integer> pool = new ConcurrentPool<>();
+        final int maxSize = 4;
+        for (int i = 0; i < maxSize; i++) {
+            Assert.assertTrue(pool.tryPush(i, maxSize));
+        }
+        Assert.assertFalse(pool.tryPush(maxSize, maxSize));
+        Assert.assertEquals(maxSize, pool.count());
+
+        Assert.assertEquals(Integer.valueOf(0), pool.pop());
+        Assert.assertTrue(pool.tryPush(maxSize, maxSize));
+        Assert.assertFalse(pool.tryPush(maxSize + 1, maxSize));
+        Assert.assertEquals(maxSize, pool.count());
+
+        for (int i = 1; i < maxSize; i++) {
+            Assert.assertEquals(Integer.valueOf(i), pool.pop());
+        }
+        Assert.assertEquals(Integer.valueOf(maxSize), pool.pop());
+        Assert.assertNull(pool.pop());
+        Assert.assertEquals(0, pool.count());
+    }
+
+    @Test
     public void testTryPushRollsBackCountAfterEnqueueFailure() {
         final AtomicBoolean failSegmentAllocation = new AtomicBoolean();
         final OutOfMemoryError expected = new OutOfMemoryError("test");

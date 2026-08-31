@@ -115,6 +115,51 @@ public class TimerShardsTest {
     }
 
     @Test
+    public void testHaltDoesNotRepeatExpiredJoinBudget() throws Exception {
+        final CountDownLatch expireStarted = new CountDownLatch(1);
+        final CountDownLatch haltReturned = new CountDownLatch(1);
+        final CountDownLatch releaseExpire = new CountDownLatch(1);
+        final AtomicReference<Thread> timerThread = new AtomicReference<>();
+        final TimerShards shards = new TimerShards(1, "test-halt-after-timeout", LOG);
+        final Thread haltThread = new Thread(() -> {
+            shards.halt();
+            haltReturned.countDown();
+        }, "test-halt-after-timeout-caller");
+
+        try {
+            shards.start();
+            shards.register(new TestEntry(System.currentTimeMillis(), () -> {
+                timerThread.set(Thread.currentThread());
+                expireStarted.countDown();
+                TestUtils.await(releaseExpire);
+            }, null));
+            Assert.assertTrue("timer entry did not start", expireStarted.await(5, TimeUnit.SECONDS));
+
+            // Exhaust this shard's join budget once in shutdown(). halt() must
+            // not apply a fresh budget to the same still-blocked thread.
+            Assert.assertFalse(
+                    "shutdown did not exhaust the expired shard join budget",
+                    shards.shutdown(System.nanoTime() - 1)
+            );
+            haltThread.start();
+            Assert.assertTrue(
+                    "halt repeated the expired shard join budget",
+                    haltReturned.await(500, TimeUnit.MILLISECONDS)
+            );
+        } finally {
+            releaseExpire.countDown();
+            haltThread.join(TimeUnit.SECONDS.toMillis(5));
+            final Thread timer = timerThread.get();
+            if (timer != null) {
+                timer.join(TimeUnit.SECONDS.toMillis(5));
+            }
+            shards.halt();
+        }
+        Assert.assertFalse("halt thread did not stop", haltThread.isAlive());
+        Assert.assertFalse("shard thread did not stop", timerThread.get().isAlive());
+    }
+
+    @Test
     public void testInterruptDoesNotSpinAndShardKeepsRunning() throws Exception {
         final String threadName = "test-interrupted-timer-0";
         TimerShards shards = new TimerShards(1, "test-interrupted-timer", LOG);

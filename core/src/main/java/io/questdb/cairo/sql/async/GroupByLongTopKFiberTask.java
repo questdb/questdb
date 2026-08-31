@@ -31,6 +31,8 @@ import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.MCSequence;
+import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.mp.continuation.TimerShards;
 import io.questdb.tasks.GroupByLongTopKTask;
@@ -40,6 +42,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class GroupByLongTopKFiberTask extends AbstractQueryParallelFiberTask {
     private static final Log LOG = LogFactory.getLog(GroupByLongTopKFiberTask.class);
     private AsyncGroupByAtom atom;
+    private RingQueue<GroupByLongTopKTask> batchQueue;
     private AtomicBooleanCircuitBreaker circuitBreaker;
     private long cursor = -1;
     private CountDownLatchSPI doneLatch;
@@ -54,13 +57,13 @@ final class GroupByLongTopKFiberTask extends AbstractQueryParallelFiberTask {
 
     GroupByLongTopKFiberTask(
             QueryParallelFiberDispatcher dispatcher,
-            QueryParallelFiberTaskPool<?> pool,
+            FiberTaskPool<?> pool,
             TimerShards timerShards
     ) {
         super(dispatcher, pool, timerShards);
     }
 
-    void of(int workerId, GroupByLongTopKTask task, Sequence subSeq, long cursor) {
+    void of(int workerId, GroupByLongTopKTask task, RingQueue<GroupByLongTopKTask> queue, MCSequence subSeq, long cursor) {
         this.workerId = workerId;
         this.circuitBreaker = task.getCircuitBreaker();
         this.startedCounter = task.getStartedCounter();
@@ -72,6 +75,8 @@ final class GroupByLongTopKFiberTask extends AbstractQueryParallelFiberTask {
         this.limit = task.getLimit();
         this.subSeq = subSeq;
         this.cursor = cursor;
+        this.batchQueue = queue;
+        bindBatch(workerId, subSeq);
         bindCancellation(circuitBreaker);
         bindProgress(atom.getShardingContext().getProgressState());
         task.clear();
@@ -88,6 +93,11 @@ final class GroupByLongTopKFiberTask extends AbstractQueryParallelFiberTask {
         if (circuitBreaker != null) {
             circuitBreaker.cancel();
         }
+    }
+
+    @Override
+    protected void clearBatchBinding() {
+        batchQueue = null;
     }
 
     @Override
@@ -134,6 +144,11 @@ final class GroupByLongTopKFiberTask extends AbstractQueryParallelFiberTask {
     }
 
     @Override
+    protected void rebind(int workerId, MCSequence subSeq, long cursor) {
+        of(workerId, batchQueue.get(cursor), batchQueue, subSeq, cursor);
+    }
+
+    @Override
     protected boolean runTask() {
         started = true;
         try {
@@ -162,7 +177,7 @@ final class GroupByLongTopKFiberTask extends AbstractQueryParallelFiberTask {
             cursor = -1;
             subSeq = null;
             claimedSubSeq.done(claimedCursor);
-            signalProgress();
+            signalQueueProgress();
         }
     }
 }

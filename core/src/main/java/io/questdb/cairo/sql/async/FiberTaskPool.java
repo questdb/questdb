@@ -24,7 +24,6 @@
 
 package io.questdb.cairo.sql.async;
 
-import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.mp.ConcurrentPool;
 import io.questdb.mp.continuation.FiberTask;
@@ -35,35 +34,29 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
-final class PageFrameFiberTaskPool implements QuietCloseable {
+final class FiberTaskPool<T extends FiberTask & QuietCloseable> implements QuietCloseable {
     private static final long LEASE_COUNT_MASK = Long.MAX_VALUE;
     private static final long LEASE_OPEN = Long.MIN_VALUE;
-    private volatile int capacity;
     private final AtomicInteger createdCount = new AtomicInteger();
-    private final PageFrameReduceDispatcher dispatcher;
-    private final CairoEngine engine;
-    private final ConcurrentPool<PageFrameFiberTask> freeTasks = new ConcurrentPool<>();
+    private final Factory<T> factory;
+    private final ConcurrentPool<T> freeTasks = new ConcurrentPool<>();
     // The high bit seals admission; the low bits count leases. One CAS therefore cannot cross close.
     private final AtomicLong leaseState = new AtomicLong(LEASE_OPEN);
+    private volatile Runnable beforeNewTaskForTesting;
+    private volatile int capacity;
     private volatile int maxRetainedCount;
 
-    PageFrameFiberTaskPool(
-            CairoEngine engine,
-            int capacity,
-            int maxRetainedCount,
-            PageFrameReduceDispatcher dispatcher
-    ) {
+    FiberTaskPool(int capacity, int maxRetainedCount, Factory<T> factory) {
         if (capacity < 1) {
-            throw new IllegalArgumentException("page frame fiber task capacity must be positive");
+            throw new IllegalArgumentException("fiber task capacity must be positive");
         }
         if (maxRetainedCount < 1 || maxRetainedCount > capacity) {
             throw new IllegalArgumentException(
-                    "page frame fiber task retention must be positive and not exceed capacity"
+                    "fiber task retention must be positive and not exceed capacity"
             );
         }
         this.capacity = capacity;
-        this.dispatcher = dispatcher;
-        this.engine = engine;
+        this.factory = factory;
         this.maxRetainedCount = maxRetainedCount;
     }
 
@@ -83,7 +76,7 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         Throwable failure = leasedCount == 0
                 ? null
                 : new IllegalStateException(
-                "page frame fiber task pool closed with leased tasks [leased="
+                "fiber task pool closed with leased tasks [leased="
                 + leasedCount
                 + ", created=" + createdCount.get()
                 + ", free=" + freeTasks.count()
@@ -93,14 +86,35 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    PageFrameFiberTask acquireLeased() {
-        final PageFrameFiberTask pooledTask = freeTasks.pop();
+    private Throwable freeRetainedTasks(int maxCount, Throwable failure) {
+        while (freeTasks.count() > maxCount) {
+            final T task = freeTasks.pop();
+            if (task == null) {
+                break;
+            }
+            createdCount.decrementAndGet();
+            failure = Misc.freeBestEffort(failure, task);
+        }
+        return failure;
+    }
+
+    private boolean isOpen() {
+        return (leaseState.get() & LEASE_OPEN) != 0;
+    }
+
+    T acquireLeased() {
+        final T pooledTask = freeTasks.pop();
         if (pooledTask != null) {
             return pooledTask;
         }
-        PageFrameFiberTask task = null;
+        T task = null;
         try {
-            task = new PageFrameFiberTask(engine, this, dispatcher);
+            final Runnable hook = beforeNewTaskForTesting;
+            if (hook != null) {
+                beforeNewTaskForTesting = null;
+                hook.run();
+            }
+            task = factory.newTask(this);
             createdCount.incrementAndGet();
             return task;
         } catch (Throwable th) {
@@ -127,7 +141,7 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         return (leaseState.get() & LEASE_COUNT_MASK) == 0;
     }
 
-    void release(PageFrameFiberTask task) {
+    void release(T task) {
         Throwable failure = null;
         boolean isRetained = false;
         try {
@@ -159,11 +173,35 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         while (true) {
             final long current = leaseState.get();
             if ((current & LEASE_COUNT_MASK) == 0) {
-                throw new IllegalStateException("page frame fiber task lease underflow");
+                throw new IllegalStateException("fiber task lease underflow");
             }
             if (leaseState.compareAndSet(current, current - 1)) {
                 return;
             }
+        }
+    }
+
+    // a pooled task holds its pool as FiberTaskPool<?>; the factory is the only task producer
+    @SuppressWarnings("unchecked")
+    void releaseSelf(FiberTask task) {
+        release((T) task);
+    }
+
+    @TestOnly
+    void setBeforeNewTaskForTesting(Runnable hook) {
+        beforeNewTaskForTesting = hook;
+    }
+
+    @TestOnly
+    void setFreeTaskScheduleStateForTesting(int expectedState, int targetState) {
+        final T task = freeTasks.pop();
+        if (task == null) {
+            throw new IllegalStateException("fiber task pool has no free task");
+        }
+        try {
+            task.setScheduleStateForTesting(expectedState, targetState);
+        } finally {
+            freeTasks.push(task);
         }
     }
 
@@ -179,19 +217,6 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         }
     }
 
-    @TestOnly
-    void setFreeTaskScheduleStateForTesting(int expectedState, int targetState) {
-        final PageFrameFiberTask task = freeTasks.pop();
-        if (task == null) {
-            throw new IllegalStateException("page frame fiber task pool has no free task");
-        }
-        try {
-            task.setScheduleStateForTesting(expectedState, targetState);
-        } finally {
-            freeTasks.push(task);
-        }
-    }
-
     void updateLimits(int capacity, int maxRetainedCount) {
         if (!isOpen()) {
             return;
@@ -202,19 +227,7 @@ final class PageFrameFiberTaskPool implements QuietCloseable {
         CairoException.rethrowCleanupFailure(failure);
     }
 
-    private Throwable freeRetainedTasks(int maxCount, Throwable failure) {
-        while (freeTasks.count() > maxCount) {
-            final PageFrameFiberTask task = freeTasks.pop();
-            if (task == null) {
-                break;
-            }
-            createdCount.decrementAndGet();
-            failure = Misc.freeBestEffort(failure, task);
-        }
-        return failure;
-    }
-
-    private boolean isOpen() {
-        return (leaseState.get() & LEASE_OPEN) != 0;
+    interface Factory<T extends FiberTask & QuietCloseable> {
+        T newTask(FiberTaskPool<T> pool);
     }
 }

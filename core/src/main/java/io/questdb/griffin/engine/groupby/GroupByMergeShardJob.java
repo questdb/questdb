@@ -25,7 +25,9 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.log.Log;
@@ -33,6 +35,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Misc;
 import io.questdb.tasks.GroupByMergeShardTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -72,6 +75,47 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, ctx, shardIndex, owner);
     }
 
+    public static void run(
+            int carrierId,
+            GroupByMergeShardTask task,
+            Sequence subSeq,
+            long cursor,
+            GroupByShardingContext stealingCtx,
+            @NotNull QueryParallelFiberDispatcher dispatcher
+    ) {
+        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final AtomicInteger startedCounter = task.getStartedCounter();
+        final CountDownLatchSPI doneLatch = task.getDoneLatch();
+        final GroupByShardingContext ctx = task.getShardingContext();
+        final int shardIndex = task.getShardIndex();
+        final AsyncQueryProgressState ownerProgress = ctx.getProgressState();
+        final boolean isOwner = stealingCtx != null && stealingCtx == ctx;
+
+        task.clear();
+        Throwable failure = null;
+        try {
+            subSeq.done(cursor);
+        } catch (Throwable th) {
+            failure = th;
+        }
+        try {
+            dispatcher.signalQueueProgress();
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        try {
+            runDetached(carrierId, circuitBreaker, startedCounter, doneLatch, ctx, shardIndex, isOwner);
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        try {
+            dispatcher.signalOwnerProgress(ownerProgress);
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        CairoException.rethrowCleanupFailure(failure);
+    }
+
     public static void runDetached(
             int carrierId,
             AtomicBooleanCircuitBreaker circuitBreaker,
@@ -85,19 +129,33 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
         try {
             final int slotId = ctx.maybeAcquire(carrierId, owner, circuitBreaker);
             try {
-                if (circuitBreaker.checkIfTripped()) {
-                    return;
+                if (!circuitBreaker.checkIfTripped()) {
+                    ctx.mergeShard(slotId, shardIndex);
                 }
-                ctx.mergeShard(slotId, shardIndex);
             } finally {
                 ctx.release(slotId);
             }
         } catch (Throwable th) {
-            LOG.error().$("merge shard failed [error=").$(th).I$();
-            circuitBreaker.cancel();
-        } finally {
-            doneLatch.countDown();
+            Throwable failure = null;
+            try {
+                LOG.error().$("merge shard failed [error=").$(th).I$();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            try {
+                circuitBreaker.cancel();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            try {
+                doneLatch.countDown();
+            } catch (Throwable cleanupFailure) {
+                failure = Misc.foldCleanupFailure(failure, cleanupFailure);
+            }
+            CairoException.rethrowCleanupFailure(failure);
+            return;
         }
+        doneLatch.countDown();
     }
 
     @Override

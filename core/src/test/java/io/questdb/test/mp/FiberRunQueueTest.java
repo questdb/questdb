@@ -223,6 +223,16 @@ public class FiberRunQueueTest {
         }
     }
 
+    @Test
+    public void testStartupCapacityIsClampedBelowLargeLiveLimits() {
+        final FiberRuntime runtime = new FiberRuntime(1, 1 << 30);
+        try {
+            Assert.assertEquals(1 << 20, runtime.getRunQueueCapacity());
+        } finally {
+            close(runtime);
+        }
+    }
+
     private static void close(FiberRuntime runtime) {
         runtime.beginQuiesce();
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);

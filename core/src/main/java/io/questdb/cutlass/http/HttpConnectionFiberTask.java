@@ -412,6 +412,7 @@ public final class HttpConnectionFiberTask extends FiberTask implements Reschedu
     protected void onError(Throwable th) {
         abortPreparedReschedule();
         LOG.critical().$("internal error [ex=").$(th).$(']').$();
+        context.getMetrics().healthMetrics().incrementUnhandledErrors();
         disconnectReason = IODispatcher.DISCONNECT_REASON_SERVER_ERROR;
         isDisconnectPending = true;
     }

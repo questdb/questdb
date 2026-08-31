@@ -2955,6 +2955,15 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Completes deadline-aware work that must finish after worker pools stop and before
+     * {@link #close()} releases engine-owned resources. Subclasses retain ownership and return
+     * false when the work cannot complete before the absolute {@link System#nanoTime()} deadline.
+     */
+    public boolean isCloseReady(long deadlineNanos) {
+        return deadlineNanos - System.nanoTime() > 0;
+    }
+
     public boolean isClosing() {
         return closing;
     }
@@ -3583,6 +3592,11 @@ public class CairoEngine implements Closeable, WriterSource {
         // for at least getQueryContinuationWakeIntervalMillis() and potentially forever.
         // Order matters: timerShards.shutdown() MUST run before any worker pool halts.
         timerShards.shutdown();
+    }
+
+    public boolean signalClose(long deadlineNanos) {
+        closing = true;
+        return timerShards.shutdown(deadlineNanos);
     }
 
     public void snapshotCreate(SqlExecutionCircuitBreaker circuitBreaker) throws SqlException {

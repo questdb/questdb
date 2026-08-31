@@ -94,9 +94,51 @@ public class WorkerPoolManagerTest {
     }
 
     @Test
+    public void testBoundedHaltApiCompatibility() throws Throwable {
+        final MethodHandles.Lookup lookup = MethodHandles.publicLookup();
+        final MethodHandle managerHalt = lookup.findVirtual(
+                WorkerPoolManager.class,
+                "halt",
+                MethodType.methodType(void.class, long.class)
+        );
+        final MethodHandle poolHaltBy = lookup.findVirtual(
+                WorkerPool.class,
+                "haltBy",
+                MethodType.methodType(boolean.class, long.class)
+        );
+
+        final AtomicBoolean poolResourceClosed = new AtomicBoolean();
+        final WorkerPool pool = new WorkerPool(() -> 0);
+        pool.freeOnExit(closeFlagJob(poolResourceClosed));
+        try {
+            Assert.assertTrue((boolean) poolHaltBy.invokeExact(
+                    pool,
+                    System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            ));
+        } finally {
+            pool.halt();
+        }
+        Assert.assertTrue(poolResourceClosed.get());
+
+        final AtomicBoolean managerResourceClosed = new AtomicBoolean();
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(0);
+        workerPoolManager.getSharedPoolNetwork().freeOnExit(closeFlagJob(managerResourceClosed));
+        try {
+            managerHalt.invokeExact(
+                    workerPoolManager,
+                    System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            );
+        } finally {
+            workerPoolManager.halt();
+        }
+        Assert.assertTrue(managerResourceClosed.get());
+    }
+
+    @Test
     public void testBoundedHaltRetainsResourcesWhenWorkerWedged() {
         final AtomicBoolean release = new AtomicBoolean(false);
         final AtomicInteger closeOrder = new AtomicInteger();
+        final AtomicBoolean resourceClosed = new AtomicBoolean(false);
         final SOCountDownLatch jobEntered = new SOCountDownLatch(1);
         final WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
             @Override
@@ -115,13 +157,21 @@ public class WorkerPoolManagerTest {
                 return true;
             }
         });
-        pool.assign(workerContext -> {
-            jobEntered.countDown();
-            // Spin until released so the worker never reaches halted.countDown() within the bound.
-            while (!release.get()) {
-                Os.pause();
+        pool.assign(new Job() {
+            @Override
+            public void closeInstance() {
+                resourceClosed.set(true);
             }
-            return false;
+
+            @Override
+            public boolean run(Job.WorkerContext workerContext) {
+                jobEntered.countDown();
+                // Spin until released so the worker never reaches halted.countDown() within the bound.
+                while (!release.get()) {
+                    Os.pause();
+                }
+                return false;
+            }
         });
         pool.freeOnExit(new OrderedCloseJob(closeOrder, 0));
         try {
@@ -130,10 +180,10 @@ public class WorkerPoolManagerTest {
 
             final long budgetNanos = TimeUnit.MILLISECONDS.toNanos(200L);
             final long start = System.nanoTime();
-            Assert.assertFalse(pool.haltWithin(budgetNanos));
+            Assert.assertFalse(pool.haltBy(start + budgetNanos));
             final long elapsed = System.nanoTime() - start;
 
-            // halt() retained the live pool and returned close to the budget rather than blocking
+            // halt retained the live pool and returned close to the budget rather than blocking
             // forever. Allow generous slack for CI scheduling jitter.
             Assert.assertTrue(
                     "bounded halt returned too fast, budget not honoured [elapsedMs=" + (elapsed / 1_000_000) + "]",
@@ -144,11 +194,13 @@ public class WorkerPoolManagerTest {
                     elapsed < TimeUnit.SECONDS.toNanos(10L)
             );
             Assert.assertEquals(0, closeOrder.get());
+            Assert.assertFalse(resourceClosed.get());
         } finally {
             release.set(true);
-            Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(30)));
+            Assert.assertTrue(pool.haltBy(System.nanoTime() + TimeUnit.SECONDS.toNanos(30)));
         }
         Assert.assertEquals(1, closeOrder.get());
+        Assert.assertTrue(resourceClosed.get());
     }
 
     @Test
@@ -323,6 +375,42 @@ public class WorkerPoolManagerTest {
         writerPool.freeOnExit(new OrderedCloseJob(closeOrder, 1));
         Assert.assertTrue(workerPoolManager.haltAndReportCompletion());
         Assert.assertEquals(2, closeOrder.get());
+    }
+
+    @Test
+    public void testManagerBoundedHaltTimesOutAndStaysRetryable() {
+        final AtomicBoolean release = new AtomicBoolean(false);
+        final SOCountDownLatch jobEntered = new SOCountDownLatch(1);
+        final AtomicInteger closeOrder = new AtomicInteger();
+        final WorkerPoolManager workerPoolManager = createWorkerPoolManager(1, pool -> {
+            pool.assign(workerContext -> {
+                jobEntered.countDown();
+                while (!release.get()) {
+                    Os.pause();
+                }
+                return false;
+            });
+            pool.freeOnExit(new OrderedCloseJob(closeOrder, 0));
+        });
+        try {
+            workerPoolManager.start(null);
+            Assert.assertTrue("worker job never started", jobEntered.await(TimeUnit.SECONDS.toNanos(30L)));
+
+            final long budgetNanos = TimeUnit.MILLISECONDS.toNanos(200L);
+            final long start = System.nanoTime();
+            Assert.assertFalse(workerPoolManager.haltWithin(budgetNanos));
+            final long elapsed = System.nanoTime() - start;
+            Assert.assertTrue(
+                    "bounded manager halt did not respect its budget [elapsedMs=" + (elapsed / 1_000_000) + "]",
+                    elapsed < TimeUnit.SECONDS.toNanos(10L)
+            );
+            Assert.assertNull(workerPoolManager.getHaltFailure());
+            Assert.assertEquals(0, closeOrder.get());
+        } finally {
+            release.set(true);
+            Assert.assertTrue(workerPoolManager.haltWithin(TimeUnit.SECONDS.toNanos(30L)));
+        }
+        Assert.assertEquals(1, closeOrder.get());
     }
 
     @Test
@@ -605,6 +693,10 @@ public class WorkerPoolManagerTest {
         };
     }
 
+    private static Job closeFlagJob(AtomicBoolean closed) {
+        return new CloseFlagJob(closed);
+    }
+
     private static Job fastCountDownJob(SOCountDownLatch endLatch) {
         return workerContext -> {
             endLatch.countDown();
@@ -686,6 +778,24 @@ public class WorkerPoolManagerTest {
                 return workerPoolMode;
             }
         };
+    }
+
+    private static final class CloseFlagJob implements Job, Closeable {
+        private final AtomicBoolean closed;
+
+        private CloseFlagJob(AtomicBoolean closed) {
+            this.closed = closed;
+        }
+
+        @Override
+        public void close() {
+            closed.set(true);
+        }
+
+        @Override
+        public boolean run(Job.WorkerContext workerContext) {
+            return false;
+        }
     }
 
     private static final class NativeMemoryJob implements Job {

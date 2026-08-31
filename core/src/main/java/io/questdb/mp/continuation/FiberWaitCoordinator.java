@@ -310,6 +310,19 @@ public final class FiberWaitCoordinator {
         return this.token == token && state == STATE_FIRED;
     }
 
+    /**
+     * Resolves an early return taken between arming and {@link Fiber#suspendWait}. A cancellation
+     * that fires while the wait is still building is only recorded as a pending reason; the
+     * subsequent {@code teardownWait} discards it, so a site that skips the suspension must ask
+     * for it here or the cancellation is lost until the next wait.
+     */
+    public synchronized int preferPendingCancel(long token, int reason) {
+        if (this.token == token && state == STATE_BUILDING && pendingReason == REASON_CANCEL) {
+            return REASON_CANCEL;
+        }
+        return reason;
+    }
+
     public void quarantine() {
         final long token;
         synchronized (this) {
