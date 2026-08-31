@@ -12,6 +12,7 @@ pub mod convert;
 pub mod error;
 pub mod footer;
 pub mod header;
+pub mod index_meta;
 pub mod infer;
 pub mod qdb_meta;
 pub mod reader;
@@ -29,6 +30,7 @@ pub use convert::{
 pub use error::{ParquetMetaError, ParquetMetaErrorKind, ParquetMetaResult};
 pub use footer::{Footer, FooterBuilder};
 pub use header::{ColumnDescriptorRaw, FileHeader, FileHeaderBuilder};
+pub use index_meta::{IndexMetaReader, IndexMetaWriter};
 pub use infer::infer_column_type;
 pub use qdb_meta::{
     extract_qdb_meta, ParquetFieldId, QdbMeta, QdbMetaCol, QdbMetaColFormat, QdbMetaSchema,

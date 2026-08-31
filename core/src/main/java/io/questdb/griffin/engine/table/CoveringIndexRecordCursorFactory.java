@@ -34,9 +34,9 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
 import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.PostingIndexReader;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.CoveredColumnDecoder;
 import io.questdb.cairo.sql.DataSource;
@@ -1350,8 +1350,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             // traverse). The cheap O(genCount) path only engages on a fresh forward
             // single-key cursor; once a (key, partition) has fallen back to the
             // parked traverse it stays there (prepRowCursor == null on resume).
-            if (cheapEligible && prepRowCursor != null) {
-                final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) framePostingReader;
+            if (cheapEligible && prepRowCursor != null && framePostingReader instanceof PostingIndexReader reader) {
                 final PageFrame cheap;
                 try {
                     cheap = fillFrameForKeyCheap(reader, rawSymbolKey, partitionIndex, rowLo, rowHi, rowCap);
@@ -1382,10 +1381,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * single-key path. Produces metadata IDENTICAL to {@link #fillFrameByTraverse}
          * -- same count, same absolute first/last posting span, and the same per-key
          * genLookup cache side effect -- using only the posting-reader metadata
-         * primitives ({@link AbstractPostingIndexReader#getEntryMaxValue},
-         * {@link AbstractPostingIndexReader#countMatchesClamped},
-         * {@link AbstractPostingIndexReader#selectKthMatch},
-         * {@link AbstractPostingIndexReader#populateCacheForKey}), with NO O(rows) walk.
+         * primitives ({@link PostingIndexReader#getEntryMaxValue},
+         * {@link PostingIndexReader#countMatchesClamped},
+         * {@link PostingIndexReader#selectKthMatch},
+         * {@link PostingIndexReader#populateCacheForKey}), with NO O(rows) walk.
          * <p>
          * Returns {@link #SENTINEL_FALLBACK} when the layout is genuinely MIXED
          * ({@code countMatchesClamped} sentinel) or a chunk's boundary posting cannot be
@@ -1396,7 +1395,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * just-completed {@code openOrContinueCoveringCursor}.
          */
         private @Nullable PageFrame fillFrameForKeyCheap(
-                AbstractPostingIndexReader reader,
+                PostingIndexReader reader,
                 int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap
         ) {
             final int key = TableUtils.toIndexKey(rawSymbolKey);
@@ -2612,7 +2611,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * a metadata-only answer that decodes NO covered columns and never walks the postings
          * ({@code CountRecordCursorFactory} uses {@code baseCursor.size()} when it returns >= 0).
          * <p>
-         * Uses {@link AbstractPostingIndexReader#countMatchesClamped} (the EXACT per-gen
+         * Uses {@link PostingIndexReader#countMatchesClamped} (the EXACT per-gen
          * first/last-posting coverage check), NOT {@code reader.getCursor(...).size()} which
          * false-bails on a freshly-resealed partition (where the encoding's slack max upper bound
          * straddles the clamp while the true max is within it) and then forces an O(rows) traverse.
@@ -2637,7 +2636,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     // The covering index is a POSTING index, but a partition that predates the
                     // index (e.g. the column was added later) yields a non-posting null reader; only
                     // a real posting reader has the O(genCount) metadata count.
-                    if (reader instanceof AbstractPostingIndexReader posting) {
+                    if (reader instanceof PostingIndexReader posting) {
                         // Bounds mirror the page-frame cheap-chunk path: the gen walk clamps the
                         // inclusive upper bound to min(rowHi - 1, entryMaxValue); the implicit-null
                         // prefix (key 0) is clamped by columnTop only, so it takes the UNCLAMPED

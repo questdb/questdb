@@ -33,6 +33,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -222,6 +223,18 @@ public final class PostingIndexUtils {
     public static final int PAGE_OFFSET_SEQUENCE_START = 0;
     public static final int PAGE_OFFSET_VALUE_MEM_SIZE = 8;
     public static final int PAGE_SIZE = 4096;
+    // The CONFIGURED writer form, byte-valued, from
+    // cairo.posting.index.parquet.partition.format. NOT interchangeable with
+    // PostingSealPurgeTask.ARTIFACT_FORM_*, which describes the same
+    // native-vs-parquet distinction with a different int encoding (UNKNOWN 0,
+    // NATIVE 1, PARQUET 2) and is PERSISTED in the purge log. The two overlap
+    // numerically -- ARTIFACT_FORM_NATIVE == PARQUET_INDEX_FORMAT_PARQUET == 1 --
+    // and `int x = someByte` compiles silently, so a mix-up would route a
+    // native purge task down PostingSealPurgeOperator's parquet branch, whose
+    // whole safety argument is that a native task never reaches it. Convert
+    // explicitly if these ever have to meet.
+    public static final byte PARQUET_INDEX_FORMAT_NATIVE = 0;
+    public static final byte PARQUET_INDEX_FORMAT_PARQUET = 1;
     public static final int PC_HEADER_SIZE = MAX_GEN_COUNT * Long.BYTES;
     public static final byte SIGNATURE = (byte) 0xfb;
     public static final double SPARSE_SBBF_DEFAULT_FPP = 0.01;
@@ -233,6 +246,117 @@ public final class PostingIndexUtils {
     public static final int STRIDE_MODE_PREFIX_SIZE = 4; // mode(1B) + bitWidth/reserved(1B) + padding(2B)
     public static final int STRIDE_FLAT_BASE_OFFSET = STRIDE_MODE_PREFIX_SIZE; // baseValue(8B) follows mode prefix
     public static final int STRIDE_FLAT_PREFIX_COUNTS_OFFSET = STRIDE_MODE_PREFIX_SIZE + Long.BYTES; // = 12
+    /**
+     * Header size of a parquet packed-payload blob: the flat stride's mode
+     * prefix and base, with no prefix-count array after them. Numerically the
+     * same as {@link #STRIDE_FLAT_PREFIX_COUNTS_OFFSET}, which is where a native
+     * stride's array would begin and where the packed values begin instead.
+     * See {@link #encodePackedPayloadBlob}.
+     */
+    public static final int PACKED_PAYLOAD_HEADER_SIZE = STRIDE_FLAT_PREFIX_COUNTS_OFFSET;
+
+    public static final int COVER_BLOB_HEADER_SIZE = 4;
+
+    /**
+     * Covered-value blob holding one compressed block PER KEY, rather than one
+     * per row group.
+     * <p>
+     * Block granularity is what the codecs' compression rests on: ALP picks one
+     * exponent and factor per block, frame-of-reference one minimum, and a block
+     * spanning a whole row group is far less homogeneous than a block spanning
+     * one key. Measured on a 350,100-posting fixture, per-row-group blocks cost
+     * 2.40 B/posting for a DOUBLE where the native chain's per-key blocks cost
+     * 1.98, and 2.10 against 1.67 for a LONG -- 21 to 26% purely from block size.
+     * <p>
+     * The cost is a header per key per column: 19 bytes for ALP, 29 for
+     * linear prediction. On the same fixture's 344 keys that is ~20 KB against
+     * ~290 KB saved.
+     * <p>
+     * Layout: {@code mode(1B) | pad(3B) | keySpan(4B) | offset[keySpan](4B each)
+     * | blocks}. Key {@code k}'s block starts at {@code blob + offset[k -
+     * firstKey]}, and a value is addressed within it by its KEY-RELATIVE index,
+     * not the group ordinal. Offset 0 means the key holds no row -- a real block
+     * can never start there, the header occupies it.
+     */
+    public static final byte COVER_MODE_PER_KEY = 1;
+    public static final int COVER_PER_KEY_SPAN_OFFSET = 4;
+    public static final int COVER_PER_KEY_TABLE_OFFSET = 8;
+
+    /**
+     * Row-id blob holding one LINEAR-PREDICTION block per key, the same codec
+     * and container the covered columns use.
+     * <p>
+     * Row ids within a key are strictly increasing by construction -- the seal
+     * writes them key-major, ascending -- so linear prediction fits them
+     * exactly: on clustered data a key's postings are consecutive, the residuals
+     * are zero, and the block collapses to its header. Frame of reference cannot
+     * do that; it exploits the RANGE of a run and is blind to its spacing, which
+     * is why the per-group and per-key FoR forms both cost 1.59 B/posting where
+     * the native chain's delta encoding costs 0.42.
+     * <p>
+     * Same layout as {@link #COVER_MODE_PER_KEY}, and deliberately so: a row id
+     * is just another monotonically increasing LONG column, and giving it its
+     * own container would be a second thing to get wrong.
+     */
+    public static final byte PACKED_MODE_PER_KEY_BLOCKS = 3;
+
+    /**
+     * Per-key blocks whose sizes are all EQUAL, so a key's block address is
+     * computed rather than looked up.
+     * <p>
+     * The offset table costs a random load per key from a table that is 4 bytes
+     * an entry -- 131 KB for a 32,768-key group -- so at high cardinality it
+     * misses cache on essentially every key. That load, not decoding, is what a
+     * profile of the 1,000,000-key range read found: 96 of 97 samples were
+     * resolving the block, and the arm reading row ids straight from the mapping
+     * spent its time in the window search instead.
+     * <p>
+     * Uniformity is common exactly where it hurts. A key with two postings
+     * encodes as an arithmetic block -- linear prediction fits any two points
+     * exactly -- and every such block is the same size, so a partition with
+     * uniformly narrow keys needs no table at all.
+     * <p>
+     * Layout: {@code mode(1B) | pad(3B) | keySpan(4B) | blockSize(4B) | pad(4B)
+     * | blocks}. Key {@code k}'s block is at
+     * {@code blob + PACKED_UNIFORM_DATA_OFFSET + (k - firstKey) * blockSize}.
+     * Absent keys still occupy a slot, which is what keeps the arithmetic
+     * valid; the {@code _im} directory is what says they hold no row, so their
+     * bytes are never read.
+     */
+    public static final byte PACKED_MODE_PER_KEY_UNIFORM = 4;
+    public static final int PACKED_UNIFORM_BLOCK_SIZE_OFFSET = 8;
+    public static final int PACKED_UNIFORM_DATA_OFFSET = 16;
+
+    /** Total size of a uniform-block blob. */
+    public static int packedUniformBlobSize(int keySpan, int blockSize) {
+        return PACKED_UNIFORM_DATA_OFFSET + keySpan * blockSize;
+    }
+
+    /** Address of {@code key}'s block in a uniform-block blob. No table lookup. */
+    public static long packedUniformBlock(long blobAddr, int firstKey, int key) {
+        final int blockSize = Unsafe.getUnsafe().getInt(blobAddr + PACKED_UNIFORM_BLOCK_SIZE_OFFSET);
+        return blobAddr + PACKED_UNIFORM_DATA_OFFSET + (long) (key - firstKey) * blockSize;
+    }
+
+
+    /** Header size of a per-key covered blob spanning {@code keySpan} directory entries. */
+    public static int coverPerKeyHeaderSize(int keySpan) {
+        return COVER_PER_KEY_TABLE_OFFSET + keySpan * Integer.BYTES;
+    }
+
+    /** Address of {@code key}'s compressed block, or 0 when it holds no row. */
+    public static long coverPerKeyBlock(long blobAddr, int firstKey, int key) {
+        final int off = Unsafe.getUnsafe().getInt(
+                blobAddr + COVER_PER_KEY_TABLE_OFFSET + (long) (key - firstKey) * Integer.BYTES);
+        return off == 0 ? 0 : blobAddr + off;
+    }
+
+    /** Size of a raw covered-value blob holding {@code valueCount} values of {@code width} bytes. */
+    public static int coverBlobSize(int valueCount, int width) {
+        return COVER_BLOB_HEADER_SIZE + valueCount * width;
+    }
+
+
     // v2 chain layout — append-only chain of immutable seal entries.
     // The two header pages (A/B) at offsets 0 and 4096 are seqlock-protected
     // and contain only the chain head pointer and counters. Each entry lives
@@ -1542,6 +1666,70 @@ public final class PostingIndexUtils {
         // a single-key value count.
         return STRIDE_MODE_PREFIX_SIZE + keysInStride * Integer.BYTES + (keysInStride + 1) * Long.BYTES;
     }
+
+    /**
+     * Size of a packed-payload blob holding {@code valueCount} row ids at
+     * {@code bitWidth} bits each.
+     */
+    public static int packedPayloadBlobSize(int valueCount, int bitWidth) {
+        return PACKED_PAYLOAD_HEADER_SIZE + BitpackUtils.packedDataSize(valueCount, bitWidth);
+    }
+
+    /**
+     * Writes the parquet covering index's packed payload blob: one row group's
+     * row ids, frame-of-reference packed, as the single BINARY value that group
+     * holds under {@code PAYLOAD_KIND 1}.
+     * <p>
+     * Byte for byte: {@link #STRIDE_MODE_FLAT} at 0, bitWidth at 1, two padding
+     * bytes, then {@code baseValue} at {@link #STRIDE_FLAT_BASE_OFFSET}, then the
+     * packed values at {@link #PACKED_PAYLOAD_HEADER_SIZE}.
+     * <p>
+     * <b>Deliberately not the native chain's flat stride, which this header is
+     * otherwise byte-identical to.</b> A native stride follows its base with a
+     * cumulative per-key prefix-count array, because a native reader has nowhere
+     * else to learn where a key's run starts. The parquet form does: the
+     * {@code _im} key directory already stores exactly that offset, so a copy
+     * inside the blob would be pure duplication -- and worse than free. A native
+     * stride spans at most {@link #DENSE_STRIDE} keys, so its array is bounded
+     * at 257 entries; a row group's key directory spans {@code firstKey} to the
+     * largest key it holds, which the sparse key space leaves unbounded. Carrying
+     * the array here would import a bound that does not hold.
+     * <p>
+     * What the header does carry is what a reader cannot get from the
+     * {@code _im}: the mode, the bit width, and the base. Keeping them in the
+     * blob means a corrupt or mismatched {@code _im} cannot silently make the
+     * payload decode as different row ids.
+     * <p>
+     * {@code rowIdsAddr} must hold the group's row ids ALREADY GROUPED BY KEY and
+     * ascending within each key -- the order the seal's key-major sort produces.
+     * Nothing here re-sorts, and a caller that passes them unsorted gets a blob
+     * that decodes without error and returns row ids in the wrong order.
+     *
+     * @param destAddr   destination, at least {@link #packedPayloadBlobSize} bytes, ZERO-FILLED
+     * @param rowIdsAddr source row ids, {@code valueCount} longs, key-major
+     * @param baseValue  value subtracted from every row id before packing, that is the
+     *                   group's minimum row id
+     * @param bitWidth   bits per packed value, from {@link BitpackUtils#bitsNeeded}
+     */
+    public static void encodePackedPayloadBlob(
+            long destAddr,
+            long rowIdsAddr,
+            int valueCount,
+            long baseValue,
+            int bitWidth
+    ) {
+        Unsafe.getUnsafe().putByte(destAddr, STRIDE_MODE_FLAT);
+        Unsafe.getUnsafe().putByte(destAddr + 1, (byte) bitWidth);
+        Unsafe.getUnsafe().putLong(destAddr + STRIDE_FLAT_BASE_OFFSET, baseValue);
+        BitpackUtils.packAllValues(
+                rowIdsAddr,
+                valueCount,
+                bitWidth,
+                baseValue,
+                destAddr + PACKED_PAYLOAD_HEADER_SIZE
+        );
+    }
+
 
     /**
      * Size of a flat-mode stride block header: mode prefix + baseValue(8B) + prefixCounts.

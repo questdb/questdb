@@ -25,10 +25,12 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.idx.AbstractParquetPostingIndexReader;
 import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -72,6 +74,12 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
+    // Stride of one cached covering-index entry in the per-partition LongList
+    // built by cacheParquetIndexForms: column id (the writer index), index txn,
+    // _im file size.
+    private static final int PIDX_FORM_ENTRY_SIZE = 3;
+    private static final int PIDX_FORM_IM_FILE_SIZE_OFF = 2;
+    private static final int PIDX_FORM_INDEX_TXN_OFF = 1;
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
@@ -97,13 +105,46 @@ public class TableReader implements Closeable, SymbolTableSource {
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
     private boolean hasActiveColumns;
+    // Memo for hasPostingIndexedColumn, keyed on the metadata version it was
+    // computed from. -1 means "not computed".
+    private boolean hasPostingIndexedColumn;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
     private LongList openPartitionInfo;
+    // The on-disk form of every covering index a partition's _pm publishes,
+    // resolved once at partition-open time from this reader's OWN _pm mapping
+    // and read by getPartitionIndexForm / getPartitionIndexTxn /
+    // getPartitionIndexImFileSize. One LongList per partition, holding
+    // PIDX_FORM_ENTRY_SIZE-long entries; null (or empty) means "this partition
+    // publishes no covering index", which is every column native.
+    //
+    // Deliberately indexed by partition and keyed WITHIN a partition by column
+    // id (the writer index), not laid out densely over the (partition, column)
+    // grid that `columns`, `indexes` and `columnTops` use:
+    //
+    //   - It is a projection of the _pm mapping, so it is maintained at exactly
+    //     the sites that create, replace and drop that mapping -- and this list
+    //     shifts with `parquetMetadataPartitions`, its only two shift sites
+    //     being insertPartition and closeDeletedPartition. A dense (partition,
+    //     column) list would additionally have to be rebuilt by
+    //     createNewColumnList and reshuffled by reshuffleColumns, neither of
+    //     which touches the _pm at all.
+    //   - Column ids survive a column reshuffle; column indexes do not. An
+    //     ALTER TABLE DROP COLUMN shifts every later column index down without
+    //     changing any partition's name txn, so closeRewrittenPartitionFiles
+    //     leaves the partitions open and a dense per-column-index cache would
+    //     silently re-point at its neighbour's entry. The _pm records a column
+    //     id for exactly this reason, and so does this.
+    private ObjList<LongList> parquetIndexForms;
     private ObjList<ParquetPartitionDecoder> parquetMetaDecoders;
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
+    // Memo for hasParquetPartitions(long), keyed on the partition table version
+    // it was computed from. -1 means "not computed".
+    private long parquetPartitionsPartitionTableVersion = -1;
+    private boolean parquetPartitionsPresent;
     private int partitionCount;
+    private long postingIndexedColumnMetadataVersion = -1;
     private long rowCount;
     // Per-checkout scan profile -- controls kernel page-cache hints and
     // post-checkout partition retention. Reset to DEFAULT by goPassive() on
@@ -371,36 +412,104 @@ public class TableReader implements Closeable, SymbolTableSource {
         return txFile.getDataVersion();
     }
 
+    /**
+     * The index reader for {@code columnIndex} in {@code partitionIndex},
+     * dispatched on the partition's ON-DISK index form.
+     * <p>
+     * <b>The decision is the published token, not the configured format.</b>
+     * {@code cairo.posting.index.parquet.partition.format} says what the NEXT
+     * seal will write; it says nothing about what this partition already
+     * carries, and the two disagree in both directions. Flip the property to
+     * {@code parquet} over a natively sealed partition and a format-keyed
+     * dispatch sends a read the native chain would have served correctly to a
+     * reader with no artifacts to open; flip it back to {@code native} over a
+     * parquet-sealed one and a format-keyed dispatch serves it from a chain the
+     * seal left with no visible generation, which a native reader reads as "no
+     * keys, no rows" -- a silent empty result rather than an error. So this
+     * dispatches on {@link #getPartitionIndexForm}, and never on the property.
+     * <p>
+     * Decided from <b>this reader's own {@code _pm} mapping</b>, the one
+     * {@link #openParquetMetadata} took at partition-open time and sized from
+     * the header this snapshot saw. That is what makes the answer this
+     * snapshot's answer. A fresh open would not: a token publish restates the
+     * same {@code data.parquet} size, so its footer shadows the prior one, and
+     * {@code resolveFooter} -- which walks back from the mapped tail and returns
+     * the newest match -- would hand a pinned reader the writer's latest
+     * {@code index_txn} rather than the one its own snapshot names. Both footers
+     * stay in the file; only a mapping taken before the header patch can still
+     * select the older, and this reader may hold exactly such a mapping.
+     * <p>
+     * A cached reader is invalidated on a moved {@code index_txn} as well as on
+     * a moved {@code columnNameTxn} / {@code partitionTxn}: a token-only publish
+     * moves neither of the latter two, which is precisely why the publish has to
+     * bump the partition table version to be noticed at all. A cached reader
+     * whose CLASS no longer matches the form is dropped and rebuilt, since a
+     * reseal can move a partition from one form to the other without touching
+     * anything else about it.
+     */
     public IndexReader getIndexReader(int partitionIndex, int columnIndex, int direction) {
+        resolvePartitionIndexForm(partitionIndex, columnIndex);
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
         final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
+        final boolean parquetForm = getPartitionIndexForm(partitionIndex, columnIndex) == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
+        final long indexTxn = getPartitionIndexTxn(partitionIndex, columnIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
         if (indexReader != null) {
             // Single choke point for refreshing the scoreboard pin on cached
             // readers. TableReader.txn advances through several paths
             // (goActive / reload / ...); setting it here covers all of them.
             indexReader.setPinnedTableTxn(txn);
+            final boolean parquetReader = indexReader instanceof AbstractParquetPostingIndexReader;
+            if (parquetForm != parquetReader) {
+                // A reseal moved the partition between forms. The two readers
+                // are different classes, so this cannot be rebound: drop it and
+                // build the right one.
+                Misc.free(indexes.getAndSetQuick(direction == IndexReader.DIR_BACKWARD ? index : index + 1, null));
+                return createIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
+            }
             if (
                     !indexReader.isOpen()
                             || indexReader.getColumnTxn() != columnNameTxn
                             || indexReader.getPartitionTxn() != partitionTxn
+                            || (parquetReader && ((AbstractParquetPostingIndexReader) indexReader).getIndexTxn() != indexTxn)
             ) {
                 int plen = path.size();
                 try {
-                    indexReader.of(
-                            configuration,
-                            pathGenNativePartition(partitionIndex, partitionTxn),
-                            metadata.getColumnName(columnIndex),
-                            columnNameTxn,
-                            partitionTxn,
-                            getColumnTop(columnBase, columnIndex),
-                            metadata,
-                            columnVersionReader,
-                            partitionTimestamp
-                    );
+                    if (parquetReader) {
+                        // The nine-argument of() carries no index txn and so
+                        // cannot name the artifact pair; ofParquet does.
+                        ((AbstractParquetPostingIndexReader) indexReader).ofParquet(
+                                configuration,
+                                pathGenNativePartition(partitionIndex, partitionTxn),
+                                metadata.getColumnName(columnIndex),
+                                columnNameTxn,
+                                partitionTxn,
+                                getColumnTop(columnBase, columnIndex),
+                                metadata,
+                                columnVersionReader,
+                                partitionTimestamp,
+                                indexTxn,
+                                getPartitionIndexImFileSize(partitionIndex, columnIndex)
+                        );
+                        // ofParquet rebinds from scratch, so the pin set above
+                        // has to be restated.
+                        indexReader.setPinnedTableTxn(txn);
+                    } else {
+                        indexReader.of(
+                                configuration,
+                                pathGenNativePartition(partitionIndex, partitionTxn),
+                                metadata.getColumnName(columnIndex),
+                                columnNameTxn,
+                                partitionTxn,
+                                getColumnTop(columnBase, columnIndex),
+                                metadata,
+                                columnVersionReader,
+                                partitionTimestamp
+                        );
+                    }
                 } finally {
                     path.trimTo(plen);
                 }
@@ -496,6 +605,78 @@ public class TableReader implements Closeable, SymbolTableSource {
     @TestOnly
     public int getPartitionIndex(int columnBase) {
         return columnBase >>> columnCountShl;
+    }
+
+    /**
+     * The on-disk form of {@code columnIndex}'s covering index in
+     * {@code partitionIndex}, as this reader's snapshot publishes it:
+     * {@link PostingIndexUtils#PARQUET_INDEX_FORMAT_PARQUET} when the
+     * partition's {@code _pm} names a covering-index artifact pair for the
+     * column, {@link PostingIndexUtils#PARQUET_INDEX_FORMAT_NATIVE} otherwise --
+     * which covers a native partition, a parquet partition whose {@code _pm}
+     * publishes nothing for the column, and a column that is not indexed at all.
+     * <p>
+     * Resolved once at partition-open time by {@link #cacheParquetIndexForms}.
+     * Answering NATIVE for a partition that is not open is correct rather than
+     * merely convenient: nothing is published for a partition this reader has
+     * not mapped, and the callers that must distinguish "no covering index" from
+     * "not looked yet" open the partition first --
+     * {@link #checkPostingIndexIsReadable} does exactly that.
+     * <p>
+     * <b>The answer is the published token, never the configured format.</b>
+     * {@code cairo.posting.index.parquet.partition.format} says what the NEXT
+     * seal will write; it says nothing about what this partition already
+     * carries, and the two disagree in both directions. Flip the property to
+     * {@code parquet} over a natively sealed partition and a format-keyed
+     * decision refuses -- or misdispatches -- a read that the native chain would
+     * have served correctly. Flip it back to {@code native} over a
+     * parquet-sealed one and a format-keyed decision waves through a native read
+     * of a chain the seal left with no visible generation, which answers "no
+     * keys, no rows": a silent empty result rather than an error. Dispatch on
+     * this method, not on the property.
+     * <p>
+     * <b>The answer is exactly as pinned as the mapping, and no more.</b> Two
+     * bounds a dispatch must not assume away. Both are older than this cache and
+     * neither is changed by it, but both survive it:
+     * <ul>
+     *     <li>A partition opened LAZILY, after a token publish, maps the current
+     *     {@code _pm}. A token-only publish restates the same
+     *     {@code data.parquet} size, so {@code resolveFooter} matches the newest
+     *     footer and such a reader gets the writer's latest {@code index_txn}
+     *     even though its {@code _txn} is older. Only a mapping taken BEFORE the
+     *     header patch still selects the older footer.</li>
+     *     <li>{@link #closeExcessPartitions()} -- max-open-partition eviction,
+     *     and {@link #goPassive()} -- can close and re-open a partition inside
+     *     ONE txn, which re-resolves the mapping and this cache with it. A
+     *     reader holding one txn is not thereby holding one answer.</li>
+     * </ul>
+     */
+    public byte getPartitionIndexForm(int partitionIndex, int columnIndex) {
+        return indexFormEntryOffset(partitionIndex, columnIndex) < 0
+                ? PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE
+                : PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
+    }
+
+    /**
+     * The size of the {@code _im} sidecar the published covering-index token
+     * names for {@code columnIndex} in {@code partitionIndex}, or 0 when
+     * {@link #getPartitionIndexForm} is native.
+     */
+    public long getPartitionIndexImFileSize(int partitionIndex, int columnIndex) {
+        final int offset = indexFormEntryOffset(partitionIndex, columnIndex);
+        return offset < 0 ? 0 : parquetIndexForms.getQuick(partitionIndex).getQuick(offset + PIDX_FORM_IM_FILE_SIZE_OFF);
+    }
+
+    /**
+     * The {@code index_txn} the published covering-index token names for
+     * {@code columnIndex} in {@code partitionIndex}, or -1 when
+     * {@link #getPartitionIndexForm} is native. It names the artifact pair this
+     * snapshot is entitled to read, which is not necessarily the writer's
+     * latest -- see {@link #checkPostingIndexIsReadable}.
+     */
+    public long getPartitionIndexTxn(int partitionIndex, int columnIndex) {
+        final int offset = indexFormEntryOffset(partitionIndex, columnIndex);
+        return offset < 0 ? -1 : parquetIndexForms.getQuick(partitionIndex).getQuick(offset + PIDX_FORM_INDEX_TXN_OFF);
     }
 
     public int getPartitionIndexByTimestamp(long timestamp) {
@@ -688,6 +869,27 @@ public class TableReader implements Closeable, SymbolTableSource {
         return false;
     }
 
+    /**
+     * Drops the cached on-disk index forms of {@code partitionIndex}. Must be
+     * called wherever this reader's {@code _pm} mapping for the partition is
+     * dropped or replaced -- the cache is a projection of that mapping's
+     * resolved footer and means nothing without it. Repopulated by
+     * {@link #cacheParquetIndexForms} the next time the partition is opened.
+     * <p>
+     * Private on purpose: the cache is a projection of a mapping this class
+     * owns, and every site that drops or replaces that mapping is in this file.
+     * An external lever to drop it is only ever a way to desynchronise the two.
+     */
+    private void invalidateIndexFormCache(int partitionIndex) {
+        final LongList forms = parquetIndexForms.getQuick(partitionIndex);
+        if (forms != null) {
+            // Kept rather than nulled: the same partition slot is reopened over
+            // and over, and openParquetMetadata reuses its MemoryCMR for the
+            // same reason.
+            forms.clear();
+        }
+    }
+
     public boolean isActive() {
         return txnAcquired;
     }
@@ -703,6 +905,18 @@ public class TableReader implements Closeable, SymbolTableSource {
     @TestOnly
     public boolean isParquetMetaReaderOpen() {
         return parquetMetaReader.isOpen();
+    }
+
+    /**
+     * The scratch {@link ParquetMetaFileReader} this reader resolves {@code _pm}
+     * footers through. Exposed so a test can read its counters -- notably
+     * {@link ParquetMetaFileReader#getFooterResolveCount()}, which is how "the
+     * index form is resolved once per partition open" is asserted as a syscall
+     * count rather than as a duration.
+     */
+    @TestOnly
+    public ParquetMetaFileReader getParquetMetaReaderForTest() {
+        return parquetMetaReader;
     }
 
     @Override
@@ -864,13 +1078,228 @@ public class TableReader implements Closeable, SymbolTableSource {
         return false;
     }
 
+    /**
+     * Records every covering-index entry the partition's resolved {@code _pm}
+     * footer publishes, so the dispatch that needs them does not re-resolve the
+     * footer per {@code getIndexReader} call -- which is per page frame, per
+     * column and per KEY.
+     * <p>
+     * Called from {@link #openParquetMetadata} with the reader already resolved
+     * on THIS snapshot's footer, and nowhere else. That is the whole invariant:
+     * the cache is taken from the same mapping, at the same instant, as the
+     * mapping itself, so it cannot describe a footer this reader does not hold.
+     * <p>
+     * Entries whose {@code index_txn} is negative are not cached. No writer
+     * produces one -- {@code DROP INDEX} removes the entry rather than marking
+     * it -- but the refusal this replaced read a negative txn as "native", and
+     * dropping such an entry here keeps that reading rather than turning a
+     * hypothetical malformed footer into a refusal.
+     */
+    private void cacheParquetIndexForms(int partitionIndex) {
+        // Clear before anything else, including the n == 0 exit.
+        //
+        // This is defence in depth, NOT a fix for a reachable bug: the sole call
+        // site is openParquetMetadata, which calls invalidateIndexFormCache
+        // unconditionally a few lines above with nothing in between, so every
+        // route arrives here already clear. Removing this clear alone breaks no
+        // test, and testATornPartitionOpenDoesNotStrandTheCachedIndexForm fails
+        // only when BOTH this and that invalidate are gone -- they are mutually
+        // redundant for everything that reaches this method.
+        //
+        // It is kept because the redundancy is the caller's property, not this
+        // method's. A second call site, or a reordering that moves the
+        // invalidate, would otherwise reintroduce a stale answer silently: this
+        // method appends and indexFormEntryOffset returns the FIRST match, so a
+        // survivor would outrank the entry just resolved and hand out a
+        // superseded index_txn. The n == 0 exit is the worse shape -- a
+        // partition that stops publishing would keep its stale answer whole
+        // rather than merely have it shadowed.
+        //
+        // The two are not redundant everywhere: the invalidate also covers a
+        // throw out of ofWithSizeFromHeader, where this method never runs.
+        final LongList existing = parquetIndexForms.getQuick(partitionIndex);
+        if (existing != null) {
+            existing.clear();
+        }
+        final int n = parquetMetaReader.getCoveringIndexCount();
+        if (n == 0) {
+            // The DEFAULT format seals natively and publishes nothing, so this
+            // is the common exit: no allocation, no list, and every later
+            // getPartitionIndexForm on this partition is a null check.
+            return;
+        }
+        LongList forms = existing;
+        if (forms == null) {
+            forms = new LongList(n * PIDX_FORM_ENTRY_SIZE);
+            parquetIndexForms.setQuick(partitionIndex, forms);
+        }
+        for (int i = 0; i < n; i++) {
+            final long indexTxn = parquetMetaReader.getCoveringIndexTxn(i);
+            if (indexTxn < 0) {
+                continue;
+            }
+            forms.add(parquetMetaReader.getCoveringIndexColumnId(i));
+            forms.add(indexTxn);
+            forms.add(parquetMetaReader.getCoveringIndexImFileSize(i));
+        }
+    }
+
+    /**
+     * Makes {@link #getPartitionIndexForm} answer about what is on disk rather
+     * than about what this reader has looked at, so the dispatch in
+     * {@link #getIndexReader} can key on it.
+     * <p>
+     * The cache is resolved at partition-open time, so an unopened partition
+     * answers NATIVE -- correct for a partition that has none, indistinguishable
+     * from "not looked yet" for one that has. Opening the partition here is what
+     * removes the ambiguity, and every caller needs it open anyway. The
+     * partition is opened rather than a fresh {@code _pm} mapped, because the
+     * mapping the dispatch must read is this snapshot's own.
+     * <p>
+     * Fails closed. On a partition the {@code _txn} says is parquet, an
+     * unreadable {@code _pm} or a footer that does not resolve for the committed
+     * {@code data.parquet} size is corruption, and dispatching through it lands
+     * on a native read of a chain the parquet seal left with no visible
+     * generation, i.e. "no keys, no rows" -- a silent empty result rather than
+     * an error. So both throw. Only an unopenable (row-less) partition returns
+     * without deciding: it has no index files to read either way.
+     * <p>
+     * A remotely-served partition cannot be turned into an error by those
+     * throws, checked rather than assumed. {@code openPartition0}'s parquet
+     * branch already requires the LOCAL {@code _pm} to exist before it opens
+     * anything, and {@code openParquetMetadata} already throws "failed to
+     * resolve footer" for a footer that does not resolve -- both before this
+     * probe can run and for remote and local partitions alike. What remote
+     * changes is only the {@code data.parquet}: a missing one is tolerated by
+     * stubbing {@code parquetPartitions} with {@code NullMemoryCMR}, and this
+     * probe does not touch it. So any partition that reaches here with a mapped
+     * {@code _pm} has already had its footer resolved, and one whose {@code _pm}
+     * is missing or corrupt failed to open earlier with the same verdict.
+     * <p>
+     * Reachable only for a POSTING-indexed column of a parquet partition, so a
+     * native partition costs two comparisons. A parquet one used to cost a full
+     * {@code _pm} CRC32 plus three JNI crossings on EVERY call --
+     * {@code resolveFooter} re-verifies the checksum because {@code of()} resets
+     * {@code checksumVerified}, then the covering-section read and the
+     * {@code clear()} each cross again -- and {@code getIndexReader} is called
+     * per page frame, per column, and per KEY by the covering factory. Measured
+     * at 9.8 us per call on an 8-partition table whose {@code _pm} files were
+     * 7,000 B, i.e. the cost of the CRC over the whole {@code _pm} prefix, on a
+     * shape the DEFAULT {@code native} format serves today (native sidecars
+     * hard-linked into a parquet partition directory).
+     * <p>
+     * So it decides nothing itself. {@link #cacheParquetIndexForms} resolves the
+     * covering section once, inside {@link #openParquetMetadata}, off the
+     * mapping it has just taken, and this reads the answer back through
+     * {@link #getPartitionIndexForm}. That is a list lookup and a short scan
+     * over the partition's covering entries -- of which the DEFAULT format
+     * publishes none, so the list is empty and the scan does not run.
+     * <p>
+     * Resolving at open time is not merely cheaper, it is what makes the answer
+     * this snapshot's: the mapping and the answer are taken at the same instant,
+     * so there is no window in which one moves without the other. Every question
+     * about the answer's staleness reduces to a question about the mapping's,
+     * and a stale mapping is exactly what a pinned reader is entitled to.
+     * <p>
+     * This replaces the per-partition memo of the "no covering index at all"
+     * answer that used to live in two words of {@code openPartitionInfo}, keyed
+     * on the {@code _pm} mapping size and the committed {@code data.parquet}
+     * size. The cache supersedes it outright rather than complementing it: it
+     * answers the same question for the same partitions, for every column rather
+     * than only for the empty section, and it needs no key at all because it is
+     * rebuilt from the mapping whenever the mapping is.
+     */
+    private void resolvePartitionIndexForm(int partitionIndex, int columnIndex) {
+        if (!IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
+            return;
+        }
+        if (getPartitionFormatFromMetadata(partitionIndex) != PartitionFormat.PARQUET) {
+            return;
+        }
+        long addr = getParquetMetadataAddr(partitionIndex);
+        if (addr == 0) {
+            // Not mapped on this reader yet. Open the partition rather than map
+            // a fresh copy: the mapping this probe must read is the snapshot's
+            // own, and every caller needs the partition open anyway.
+            if (openPartition(partitionIndex) < 0) {
+                return;
+            }
+            addr = getParquetMetadataAddr(partitionIndex);
+        }
+        // Fail-closed, unchanged: a partition the _txn says is parquet and that
+        // opened must have a mapped _pm, because openPartition0's parquet branch
+        // maps it before it marks the partition open. The footer-does-not-
+        // resolve arm of the same guard now throws out of openParquetMetadata,
+        // where the resolve happens, and so also precedes this.
+        if (addr == 0 || getParquetMetadataSize(partitionIndex) == 0) {
+            throw CairoException.critical(0)
+                    .put("could not read the parquet metadata of a partition carrying a posting index [table=")
+                    .put(tableToken.getTableName())
+                    .put(", column=").put(metadata.getColumnName(columnIndex))
+                    .put(", partitionTimestamp=").ts(timestampType, txFile.getPartitionTimestampByIndex(partitionIndex))
+                    .put(']');
+        }
+    }
+
     private void checkSchedulePurgeO3Partitions() {
         // In scoreboard V2, it is cheap to check that the txn released is not the max txn,
         // do it as a first step before more expensive checks.
         if (txnScoreboard.isOutdated(txn)) {
             long partitionTableVersion = txFile.getPartitionTableVersion();
+            // Taken before the reload, against this reader's own snapshot, so it
+            // can be compared with the fresh one below. It cannot be deferred:
+            // unsafeLoadAll overwrites the list it walks.
+            //
+            // So it is gated instead. This is an O(partitionCount) walk and
+            // txnScoreboard.isOutdated(txn) is the COMMON case under continuous
+            // ingest, not a rare one -- an earlier comment here claimed the
+            // opposite -- so on a table with thousands of parquet partitions and
+            // high reader churn it would be a real new per-release cost. The
+            // suppression exists for the covering-index token publish, which is
+            // the only per-commit bump that moves no partition directory, and
+            // only a POSTING-indexed column can produce one. Every other table
+            // keeps the behaviour it had before the suppression existed, at zero
+            // added cost.
+            //
+            // A POSTING-indexed column is necessary but NOT sufficient: a token
+            // publish also needs a parquet partition to publish into, because the
+            // token lives in that partition's _pm. So a POSTING-indexed table with
+            // no parquet partition -- the shape this feature area targets under
+            // the DEFAULT configuration -- used to pay the walk on every release
+            // to suppress something that could never happen. Both conditions are
+            // now required.
+            //
+            // Deliberately NOT keyed on the configured format as well. A DROP
+            // INDEX retirement is a token-only publish and can fire after the
+            // property has been flipped back to native, so the configuration says
+            // nothing about whether a publish is possible; the parquet partition
+            // does.
+            //
+            // Both staleness directions of BOTH predicates are benign: a wrong
+            // false only restores the spurious schedule, a wrong true only pays
+            // for a fingerprint. Neither can produce a wrong answer. That is what
+            // licenses memoising them.
+            final boolean suppressible = hasPostingIndexedColumn()
+                    && hasParquetPartitions(partitionTableVersion);
+            long partitionListFingerprint = suppressible ? partitionListFingerprint() : 0;
             // In scoreboard V2 isTxnAvailable(txn) can be relatively expensive. We do this check at the end.
             if (txFile.unsafeLoadAll() && txFile.getPartitionTableVersion() > partitionTableVersion && txnScoreboard.isTxnAvailable(txn)) {
+                if (suppressible && partitionListFingerprint() == partitionListFingerprint) {
+                    // The version moved but no partition directory did. This task
+                    // means "the partition list moved on while I held this txn, so
+                    // directories I pinned may be removable", and there is nothing
+                    // for it to remove: an O3 partition purge is keyed on
+                    // partition directory and name txn, both unchanged.
+                    //
+                    // Several writer-side bumps are not partition-list changes --
+                    // markPartitionDataChanged, markParquetPartitionRemoteStale,
+                    // the squash counter -- and the covering-index token publish
+                    // is one of them, on a per-commit trigger. Without this the
+                    // queue takes a task per reader release after every such
+                    // commit, and under saturation logs a "queue is full" error
+                    // for work that would find nothing.
+                    return;
+                }
                 // The last lock for this txn is released, and this is not the latest txn number
                 // Schedule a job to clean up partition versions this reader may hold
                 if (TableUtils.schedulePurgeO3Partitions(messageBus, tableToken, timestampType, partitionBy)) {
@@ -909,6 +1338,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(parquetPartitions.get(partitionIndex));
         parquetMetaDecoders.remove(partitionIndex);
         parquetMetadataPartitions.remove(partitionIndex);
+        parquetIndexForms.remove(partitionIndex);
         parquetPartitions.remove(partitionIndex);
         openPartitionInfo.removeIndexBlock(offset, PARTITIONS_SLOT_SIZE);
         LOG.info().$("closed deleted partition [table=").$(tableToken)
@@ -928,6 +1358,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.free(parquetMetaDecoders.getQuick(partitionIndex));
         parquetMetaDecoders.setQuick(partitionIndex, null);
         Misc.free(parquetMetadataPartitions.getQuick(partitionIndex));
+        // The _pm mapping is gone, so what was resolved from it must go with it.
+        // This is the single close-path site: closePartitionResources routes
+        // both formats here (a partition that transitioned PARQUET -> NATIVE
+        // still has parquet resources to release), and
+        // closeRewrittenPartitionFiles calls closeParquetPartition directly.
+        invalidateIndexFormCache(partitionIndex);
         Misc.free(parquetPartitions.getQuick(partitionIndex));
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
@@ -1085,7 +1521,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                         metadata,
                         columnVersionReader,
                         partitionTimestamp,
-                        txn
+                        txn,
+                        getPartitionIndexForm(partitionIndex, columnIndex),
+                        getPartitionIndexTxn(partitionIndex, columnIndex),
+                        getPartitionIndexImFileSize(partitionIndex, columnIndex)
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);
@@ -1197,6 +1636,14 @@ public class TableReader implements Closeable, SymbolTableSource {
         Misc.freeObjList(indexes);
     }
 
+    /**
+     * Deliberately does NOT invalidate the index form cache, unlike every other
+     * site that drops a {@code _pm} mapping. Both callers make that safe by
+     * construction rather than by luck: {@code close()} is the end of the
+     * reader, and {@code goActiveAtTxn}'s downgrade branch calls {@code init()}
+     * immediately after, which reallocates {@code parquetIndexForms} outright.
+     * A third caller would have to invalidate.
+     */
     private void freeParquetPartitions() {
         Misc.freeObjList(parquetMetaDecoders);
         Misc.freeObjList(parquetMetadataPartitions);
@@ -1224,6 +1671,85 @@ public class TableReader implements Closeable, SymbolTableSource {
         return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
     }
 
+    /**
+     * Whether this reader's snapshot has any parquet partition, i.e. whether the
+     * covering-index token publish that
+     * {@link #checkSchedulePurgeO3Partitions}'s fingerprint comparison exists to
+     * suppress has anywhere to publish INTO -- the token lives in a partition's
+     * {@code _pm}, so a table with no parquet partition can never produce one.
+     * <p>
+     * Cached against the partition table version, which every path that turns a
+     * partition into parquet or back bumps ({@code TableWriter} at the tail of
+     * both conversions), so the walk is paid once per partition-list change
+     * rather than once per reader release. Under continuous append-only ingest
+     * that version does not move, so this is O(1) in the case the gate exists
+     * for. See the call site for why a stale answer in either direction is
+     * harmless -- which is what makes caching it safe at all.
+     *
+     * @param partitionTableVersion this reader's own snapshot's version, read by
+     *                              the caller before {@code unsafeLoadAll}
+     */
+    private boolean hasParquetPartitions(long partitionTableVersion) {
+        if (parquetPartitionsPartitionTableVersion != partitionTableVersion) {
+            parquetPartitionsPresent = hasParquetPartitions();
+            parquetPartitionsPartitionTableVersion = partitionTableVersion;
+        }
+        return parquetPartitionsPresent;
+    }
+
+    /**
+     * Whether this table has a POSTING-indexed column, i.e. whether it can
+     * produce the covering-index token publish that
+     * {@link #checkSchedulePurgeO3Partitions}'s fingerprint comparison exists to
+     * suppress. Cached against the metadata version so the walk is paid once per
+     * metadata change rather than once per reader release; see the call site for
+     * why a stale answer in either direction is harmless.
+     */
+    private boolean hasPostingIndexedColumn() {
+        final long metadataVersion = metadata.getMetadataVersion();
+        if (postingIndexedColumnMetadataVersion != metadataVersion) {
+            boolean found = false;
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                    found = true;
+                    break;
+                }
+            }
+            hasPostingIndexedColumn = found;
+            postingIndexedColumnMetadataVersion = metadataVersion;
+        }
+        return hasPostingIndexedColumn;
+    }
+
+    /**
+     * Offset of {@code columnIndex}'s cached covering-index entry within
+     * {@code partitionIndex}'s list, or -1 when the partition publishes none for
+     * it.
+     * <p>
+     * Scans, because the entries are keyed by column id and there is one per
+     * covering index the partition publishes -- at most one per POSTING-indexed
+     * column, and none at all under the default format, where the list is empty
+     * and the loop does not run. The list load is what a partition costs when it
+     * has no covering index, which is the shape every existing user runs.
+     */
+    private int indexFormEntryOffset(int partitionIndex, int columnIndex) {
+        final LongList forms = parquetIndexForms.getQuick(partitionIndex);
+        if (forms == null) {
+            return -1;
+        }
+        final int n = forms.size();
+        if (n == 0) {
+            return -1;
+        }
+        final int columnId = metadata.getWriterIndex(columnIndex);
+        for (int i = 0; i < n; i += PIDX_FORM_ENTRY_SIZE) {
+            if (forms.getQuick(i) == columnId) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     private void init() {
         txPartitionVersion = txFile.getPartitionTableVersion();
         txColumnVersion = txFile.getColumnVersion();
@@ -1237,6 +1763,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         int capacity = getColumnBase(partitionCount);
         parquetMetadataPartitions = new ObjList<>(partitionCount);
         parquetMetadataPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
+        // Parallel to parquetMetadataPartitions, and maintained wherever that
+        // list is: a partition's index forms are a projection of its _pm.
+        parquetIndexForms = new ObjList<>(partitionCount);
+        parquetIndexForms.setAll(partitionCount, null);
         parquetPartitions = new ObjList<>(partitionCount);
         parquetPartitions.setAll(partitionCount, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders = new ObjList<>(partitionCount);
@@ -1280,6 +1810,9 @@ public class TableReader implements Closeable, SymbolTableSource {
         columns.insert(idx, columnSlotSize, NullMemoryCMR.INSTANCE);
         indexes.insert(idx, columnSlotSize, null);
         parquetMetadataPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
+        // Inserted by shifting the entries above it up, so without this the new
+        // partition would inherit its neighbour's cached index forms.
+        parquetIndexForms.insert(partitionIndex, 1, null);
         parquetPartitions.insert(partitionIndex, 1, NullMemoryCMR.INSTANCE);
         parquetMetaDecoders.insert(partitionIndex, 1, null);
 
@@ -1416,6 +1949,14 @@ public class TableReader implements Closeable, SymbolTableSource {
             parquetMetaMem = new MemoryCMRDetachedImpl();
             parquetMetadataPartitions.setQuick(partitionIndex, parquetMetaMem);
         }
+        // The mapping is about to be replaced, so whatever was resolved from the
+        // previous one is now about a file this reader no longer holds. Dropped
+        // BEFORE ofWithSizeFromHeader, not after: that call close()s the mapping
+        // on failure, so a throw out of it would otherwise leave a populated
+        // cache describing a mapping that no longer exists. Only the addr == 0
+        // fail-closed guard in checkPostingIndexIsReadable hides that today, and
+        // the dispatch that replaces it does not repeat the guard.
+        invalidateIndexFormCache(partitionIndex);
         parquetMetaMem.ofWithSizeFromHeader(ff, path.$(), MemoryTag.MMAP_PARQUET_METADATA_READER);
 
         try {
@@ -1423,6 +1964,7 @@ public class TableReader implements Closeable, SymbolTableSource {
             if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
                 throw CairoException.critical(0).put("invalid _pm file: failed to resolve footer [path=").put(path).put(']');
             }
+            cacheParquetIndexForms(partitionIndex);
             return parquetMetaReader.getParquetFileSize();
         } finally {
             // resolveFooter retains a native reader that borrows parquetMetaMem. This reader is
@@ -1595,6 +2137,36 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolMapReaders.set(i, newSymbolMapReader(metadata.getDenseSymbolIndex(i), i));
             }
         }
+    }
+
+    /**
+     * Identifies the partition list by the only two things an O3 partition purge
+     * can act on: which partitions are attached and which directory version each
+     * one names. A bump that leaves both alone -- a token publish, a data-changed
+     * mark, a squash-counter increment -- produces the same value, and a purge
+     * scheduled for it could only find nothing.
+     * <p>
+     * Deliberately not a proxy for "did anything change": it answers the
+     * narrower question the purge task exists to act on, and it is compared
+     * against the same reader's own pre-reload snapshot rather than against a
+     * latched version word.
+     * <p>
+     * It is a 64-bit hash, not the list, so a collision is possible and would
+     * make a needed schedule look unnecessary. It does not matter: the effect is
+     * that this ONE reader release does not queue a discovery task, and the
+     * directories stay on disk until the next release, the next partition change
+     * or any other reader's release schedules one. A collision delays a purge,
+     * it cannot lose data or free something still referenced -- and it takes
+     * two distinct partition lists agreeing in all 64 bits.
+     */
+    private long partitionListFingerprint() {
+        final int n = txFile.getPartitionCount();
+        long h = n;
+        for (int i = 0; i < n; i++) {
+            h = h * 31 + txFile.getPartitionTimestampByIndex(i);
+            h = h * 31 + txFile.getPartitionNameTxn(i);
+        }
+        return h;
     }
 
     private Path pathGenNativePartition(int partitionIndex, long nameTxn) {
@@ -1911,7 +2483,17 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                 if (metadata.isColumnIndexed(columnIndex)) {
                     IndexReader indexReader = indexReaders.getQuick(primaryIndex);
-                    if (indexReader != null) {
+                    if (indexReader instanceof AbstractParquetPostingIndexReader) {
+                        // A parquet-form reader is bound to an index_txn, which
+                        // this nine-argument of() does not carry and cannot
+                        // name the artifact pair without. Drop it instead:
+                        // getIndexReader rebuilds it through ofParquet off the
+                        // token, and the token itself is re-resolved by the same
+                        // partition open that got here. Reached only for a
+                        // DIR_BACKWARD reader -- the only direction this slot
+                        // holds -- over a parquet-form covering index.
+                        Misc.free(indexReaders.getAndSetQuick(primaryIndex, null));
+                    } else if (indexReader != null) {
                         indexReader.of(configuration, path.trimTo(plen), name, columnTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
                     }
                 } else {

@@ -61,7 +61,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
-public abstract class AbstractPostingIndexReader implements IndexReader {
+public abstract class AbstractPostingIndexReader implements PostingIndexReader {
     // Number of consecutive values decoded per FSST decompressBlock0 call.
     // The block as a whole is symbol-table-trained once (imported on first
     // access), then chunks are decoded on demand as the cursor walks the
@@ -240,6 +240,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * (and its {@code size()}) used, so the O(genCount) frame metadata matches
      * the traverse byte for byte.
      */
+    @Override
     public long getEntryMaxValue() {
         return entryMaxValue;
     }
@@ -273,6 +274,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * @param maxValueClamped inclusive upper bound for the GEN walk, already clamped to {@code entryMaxValue}
      * @return the exact clamped match count, or {@link Numbers#LONG_NULL} to signal "fall back to traverse"
      */
+    @Override
     public long countMatchesClamped(int key, long minValue, long nullMaxValue, long maxValueClamped) {
         if (key < 0 || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
             return Numbers.LONG_NULL;
@@ -392,6 +394,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * @param k               0-based match ordinal within the clamped range
      * @return the absolute row id, or {@link Numbers#LONG_NULL} to signal "fall back to traverse"
      */
+    @Override
     public long selectKthMatch(int key, long minValue, long nullMaxValue, long maxValueClamped, long k) {
         if (key < 0 || k < 0 || keyCount == 0 || genCount == 0 || maxValueClamped < minValue) {
             return Numbers.LONG_NULL;
@@ -525,6 +528,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      *
      * @param key column key (>= 0)
      */
+    @Override
     public void populateCacheForKey(int key) {
         if (key < 0 || !genLookup.anySparseGen()) {
             return;

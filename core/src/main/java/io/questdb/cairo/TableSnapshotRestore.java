@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
+import io.questdb.cairo.idx.ParquetIndexSeal;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -45,6 +46,7 @@ import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.griffin.engine.table.parquet.RowGroupBuffers;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -61,6 +63,7 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.str.Utf8s;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -960,6 +963,7 @@ public class TableSnapshotRestore implements QuietCloseable {
                     .$(", committed=").$(parquetFileSize).$(", onDisk=").$(onDiskSize).I$();
         }
 
+        refuseToRegenerateOverACoveringIndex(path, partitionDirLen);
         regenerateParquetMetaFile(path, partitionDirLen, parquetFileSize);
 
         path.trimTo(partitionDirLen).concat(TableUtils.PARQUET_METADATA_FILE_NAME).$();
@@ -1429,6 +1433,60 @@ public class TableSnapshotRestore implements QuietCloseable {
         } finally {
             path.close();
         }
+    }
+
+    /**
+     * Refuses to regenerate a {@code _pm} in a partition that still holds
+     * parquet-form covering index artifacts.
+     * <p>
+     * A regenerated chain is a fresh single footer built from
+     * {@code data.parquet} and carries no covering section, so every covering
+     * token in the partition is gone. That is not merely a lost optimisation: a
+     * parquet-form seal does NOT write the native {@code .pk}/{@code .pv} chain,
+     * yet a {@code .pk} carrying {@code V2_NO_HEAD} is created unconditionally,
+     * and the reader treats that as an EMPTY index. An indexed query then
+     * returns the wrong rows with no error -- measured as 1 row where 3 were
+     * expected.
+     * <p>
+     * Rebuilding is not a way out either: {@code processParquetPartition}
+     * returns early unless {@code cairo.checkpoint.recovery.rebuild.column.indexes}
+     * is set, and it defaults to false. So on default settings nothing would
+     * rebuild what this regeneration discards.
+     * <p>
+     * The presence of {@code <col>.pidx.*} files is the signal that a covering
+     * index existed here. When they are present this throws instead, leaving
+     * every artifact in place: failing loudly is recoverable, a silently wrong
+     * result is not -- the same rule the required feature bit enforces for
+     * downgrades.
+     */
+    private void refuseToRegenerateOverACoveringIndex(Path path, int partitionDirLen) {
+        final ObjList<String> artifacts = new ObjList<>();
+        final StringSink fileName = Misc.getThreadLocalSink();
+        path.trimTo(partitionDirLen).$();
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileName.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+            if (Chars.contains(fileName, ParquetIndexSeal.PIDX_INFIX)) {
+                artifacts.add(Chars.toString(fileName));
+            }
+        });
+        path.trimTo(partitionDirLen);
+        if (artifacts.size() == 0) {
+            return;
+        }
+        throw CairoException.critical(0)
+                .put("cannot regenerate the _pm of a partition holding a parquet covering index: ")
+                .put("the regenerated metadata publishes no covering token, and the partition has no ")
+                .put("native index chain to fall back on, so indexed reads would silently return the ")
+                .put("wrong rows [path=").put(path)
+                .put(", artifact=").put(artifacts.getQuick(0))
+                .put(", artifacts=").put(artifacts.size())
+                .put("]; rebuild the index with ALTER TABLE <table> ALTER COLUMN <column> DROP INDEX ")
+                .put("then ADD INDEX TYPE POSTING, or take the partition back to native with ")
+                .put("ALTER TABLE <table> CONVERT PARTITION TO NATIVE LIST '<partition>'");
     }
 
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {

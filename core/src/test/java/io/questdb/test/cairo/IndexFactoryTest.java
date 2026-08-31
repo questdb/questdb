@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.idx.BitmapIndexWriter;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.IndexWriter;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.std.str.Path;
@@ -42,7 +43,7 @@ public class IndexFactoryTest extends AbstractCairoTest {
     public void testCreateReaderNoneThrows() {
         try (Path path = new Path().put("/tmp/test/")) {
             try {
-                IndexFactory.createReader(IndexType.NONE, 1, configuration, path, "col", 0, 0, 0, null, null, 0, Long.MAX_VALUE);
+                IndexFactory.createReader(IndexType.NONE, 1, configuration, path, "col", 0, 0, 0, null, null, 0, Long.MAX_VALUE, PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE, -1, 0);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage().contains("unsupported index type: NONE"));
@@ -54,7 +55,7 @@ public class IndexFactoryTest extends AbstractCairoTest {
     public void testCreateReaderUnsupportedThrows() {
         try (Path path = new Path().put("/tmp/test/")) {
             try {
-                IndexFactory.createReader((byte) 99, 1, configuration, path, "col", 0, 0, 0, null, null, 0, Long.MAX_VALUE);
+                IndexFactory.createReader((byte) 99, 1, configuration, path, "col", 0, 0, 0, null, null, 0, Long.MAX_VALUE, PostingIndexUtils.PARQUET_INDEX_FORMAT_NATIVE, -1, 0);
                 Assert.fail("expected CairoException");
             } catch (CairoException e) {
                 Assert.assertTrue(e.getMessage().contains("unsupported index type"));

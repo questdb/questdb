@@ -105,6 +105,31 @@ public class LogCapture {
         consoleWriter.setInterceptor(null);
     }
 
+    /**
+     * KNOWN DEFECT, shared with {@link #waitForRegex(String)} and deliberately
+     * not fixed here -- it is a test-infrastructure change touching 16 call
+     * sites in 11 files, so it is its own PR. Seven further statements reach
+     * this class through {@code SqlLoggingTest}'s own one-line
+     * {@code waitForRegex} wrapper, so the number of affected test statements is
+     * larger than the number of call sites on this class.
+     * <p>
+     * <b>The post-loop check tests the CLOCK, not the CONDITION.</b> The loop
+     * exits either because the value arrived or because the wait elapsed, and
+     * the check cannot tell those apart:
+     * <ul>
+     *     <li>Exit at exactly {@code elapsed == maxWait} makes the loop
+     *     guard {@code < maxWait} false AND the check {@code > maxWait} false,
+     *     so a wait that never saw its value returns SILENTLY and the caller
+     *     asserts against a log that does not contain what it waited for.</li>
+     *     <li>Conversely, a value that DOES arrive on a late iteration -- a
+     *     descheduled thread, a loaded CI box -- throws anyway, because by then
+     *     the clock has passed {@code maxWait}. A false failure.</li>
+     * </ul>
+     * The fix is to test the predicate after the loop
+     * ({@code if (sink.indexOf(value) == -1) throw ...}), not the elapsed time,
+     * and to say in the message what was being waited for. Until then, treat a
+     * passing {@code waitFor} as weaker evidence than it looks.
+     */
     public void waitFor(String value) {
         waitFor(value, 120_000);
     }
@@ -120,6 +145,12 @@ public class LogCapture {
         }
     }
 
+    /**
+     * Same defect as {@link #waitFor(String)}: the post-loop check tests the
+     * elapsed time rather than whether the regex ever matched, so a wait that
+     * expires at exactly {@code maxWait} returns silently, and a match found
+     * after the deadline throws. Read that javadoc before relying on either.
+     */
     public void waitForRegex(String regex) {
         // Same deadline shape as waitFor(CharSequence, long): the timeout check runs BEFORE the
         // sleep and treats elapsed == maxWait as timed out. The old shape looped on

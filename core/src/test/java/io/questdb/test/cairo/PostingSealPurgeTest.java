@@ -56,6 +56,8 @@ import io.questdb.tasks.PostingSealPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
+import java.io.File;
+
 import org.junit.Before;
 import org.junit.Test;
 
@@ -74,6 +76,81 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY, 1);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_LIMIT, 10);
         node1.setProperty(PropertyKey.CAIRO_SQL_COLUMN_PURGE_RETRY_DELAY_MULTIPLIER, 2);
+    }
+
+
+    /**
+     * Review finding: RENAME COLUMN hard-links a column's parquet-form index
+     * artifacts under the new name and leaves the old-named ones behind for
+     * readers pinned before the rename. Nothing could then reclaim those: the
+     * orphan sweep resolves a file's column BY NAME, the superseded-token purge
+     * builds names from the CURRENT column name, and ColumnPurgeOperator has no
+     * pidx arm. Because the two names are hard links to the same inodes,
+     * purging the new name frees nothing either -- so one rename pinned the
+     * whole covering index of the partition forever.
+     * <p>
+     * The rename now publishes a scoreboard-gated purge under the OLD name.
+     * This asserts the old-named files actually go away once the job runs, and
+     * that the renamed column still answers from its index afterwards.
+     */
+    @Test
+    public void testRenameSchedulesThePurgeOfTheOldNamedParquetIndexArtifacts() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_ren (ts TIMESTAMP, sym SYMBOL, price DOUBLE)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_ren SELECT" +
+                    " dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP)," +
+                    " 'k' || (x % 3), x::DOUBLE FROM long_sequence(300)");
+            drainWalQueue();
+            execute("ALTER TABLE t_ren CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_ren ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final File partDir = findPartitionDir("t_ren", "2024-01-01");
+            assertTrue("the fixture must seal to the parquet form",
+                    countMatching(partDir, "sym.pidx.") > 0);
+
+            execute("ALTER TABLE t_ren RENAME COLUMN sym TO sym_new");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            assertTrue("the rename must carry the pair under the new name",
+                    countMatching(partDir, "sym_new.pidx.") > 0);
+
+            try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                runPurgeJob(job, 3);
+            }
+
+            assertEquals(
+                    "the old-named artifacts must be reclaimed once no reader can reach them;"
+                            + " nothing else in the system can free them",
+                    0,
+                    countMatching(partDir, "sym.pidx."));
+            assertTrue("the renamed column's artifacts must survive the purge",
+                    countMatching(partDir, "sym_new.pidx.") > 0);
+
+            sink.clear();
+            printSql("select count() from t_ren where sym_new = 'k1'");
+            assertTrue("the renamed column must still answer from its index [" + sink + ']',
+                    !sink.toString().contains("\n0\n"));
+        });
+    }
+
+    private static int countMatching(File dir, String prefix) {
+        final File[] files = dir.listFiles((d, n) -> n.startsWith(prefix));
+        return files == null ? 0 : files.length;
+    }
+
+    private File findPartitionDir(String table, String partition) {
+        final String dbRoot = engine.getConfiguration().getDbRoot();
+        final File tableDir = new File(dbRoot, engine.verifyTableName(table).getDirName());
+        final File[] candidates = tableDir.listFiles((d, n) -> n.startsWith(partition));
+        assertNotNull("no partition directory for " + partition, candidates);
+        assertTrue("no partition directory for " + partition, candidates.length > 0);
+        return candidates[0];
     }
 
     @Test
@@ -105,6 +182,60 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
 
                 runPurgeJob(job, 3);
                 assertFalse(".pv must be purged after the retry loop succeeds", ff.exists(pv));
+            }
+        });
+    }
+
+    @Test
+    public void testAPreV2PurgeLogIsDrainedAndCleared() throws Exception {
+        // The v2 rename exists so a RELEASED build -- which reads
+        // sys.posting_seal_purge_log positionally and knows nothing about
+        // artifact_form -- can never find a parquet-form row and run it down the
+        // NATIVE unlink path. The cost of that rename is that rows a pre-v2
+        // build left behind would leak forever, so recovery drains the legacy
+        // table too, treating its rows as NATIVE (the only form such a build
+        // could produce) and clearing it afterwards.
+        //
+        // Without the clear the same rows are re-drained on every restart: their
+        // artifacts are already gone, each pass reports success, and nothing
+        // empties the table. That is what this asserts.
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            final String legacy = configuration.getSystemTableNamePrefix() + "posting_seal_purge_log";
+            TableToken tok = createPostingTable("ps_purge_legacy");
+            FilesFacade ff = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok)) {
+                String col = "c_legacy";
+                long sealTxn = writeAndSeal(partitionPath, col);
+                LPSZ pv = PostingIndexUtils.valueFileName(partitionPath, col, COLUMN_NAME_TXN_NONE, sealTxn);
+                assertTrue(".pv must exist before the drain", ff.exists(pv));
+
+                // A pre-v2 log: same columns, NO artifact_form.
+                execute("CREATE TABLE \"" + legacy + "\" (" +
+                        "ts timestamp, table_name symbol, table_id int, column_name symbol, " +
+                        "posting_column_name_txn long, seal_txn long, partition_timestamp timestamp, " +
+                        "partition_name_txn long, partition_by int, from_table_txn long, " +
+                        "to_table_txn long, timestamp_type int, completed timestamp" +
+                        ") timestamp(ts) partition by MONTH BYPASS WAL");
+                execute("INSERT INTO \"" + legacy + "\" VALUES (" +
+                        "now(), '" + tok.getDirName() + "', " + tok.getTableId() + ", '" + col + "', " +
+                        COLUMN_NAME_TXN_NONE + ", " + sealTxn + ", 0, -1, " + PartitionBy.NONE + ", " +
+                        "1, 2, " + ColumnType.TIMESTAMP + ", null)");
+
+                // Starting the job runs recovery, which must drain the legacy log.
+                try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                    runPurgeJob(job, 3);
+                }
+                assertFalse("the legacy row must have been purged, not ignored", ff.exists(pv));
+                assertEquals(
+                        "the legacy log must be CLEARED after a successful drain, or the same rows"
+                                + " are re-drained on every restart",
+                        0,
+                        countRowsIn(legacy, "completed = null")
+                );
             }
         });
     }
@@ -872,7 +1003,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     null
             );
             String sql = "SELECT count(*) FROM \"" + configuration.getSystemTableNamePrefix()
-                    + "posting_seal_purge_log\" WHERE column_name = '" + columnFilter
+                    + "posting_seal_purge_log_v2\" WHERE column_name = '" + columnFilter
                     + "' AND completed IS NOT NULL";
             try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
                  RecordCursor cursor = factory.getCursor(ctx)) {
@@ -880,6 +1011,20 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 long actual = cursor.getRecord().getLong(0);
                 assertTrue("log table must have at least " + 1 + " completed row(s) for "
                         + columnFilter + ", got " + actual, actual >= 1);
+            }
+        }
+    }
+
+    /** Row count in an arbitrary log table, so the pre-v2 table can be checked too. */
+    private long countRowsIn(String tableName, String whereClause) throws Exception {
+        try (SqlCompiler compiler = engine.getSqlCompiler();
+             SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 1)) {
+            ctx.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
+            String sql = "SELECT count(*) FROM \"" + tableName + "\" WHERE " + whereClause;
+            try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+                 RecordCursor cursor = factory.getCursor(ctx)) {
+                assertTrue("count query must return a row", cursor.hasNext());
+                return cursor.getRecord().getLong(0);
             }
         }
     }
@@ -893,7 +1038,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     null
             );
             String sql = "SELECT count(*) FROM \"" + configuration.getSystemTableNamePrefix()
-                    + "posting_seal_purge_log\" WHERE " + whereClause;
+                    + "posting_seal_purge_log_v2\" WHERE " + whereClause;
             try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
                  RecordCursor cursor = factory.getCursor(ctx)) {
                 assertTrue("log query must return a row", cursor.hasNext());
@@ -922,6 +1067,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 columnName,
                 TableUtils.COLUMN_NAME_TXN_NONE,
                 sealTxn,
+                PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                 0L,
                 -1L,
                 PartitionBy.NONE,
@@ -930,6 +1076,136 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                 toTableTxn
         );
         return task;
+    }
+
+    /**
+     * C1, direction B: a parquet-form purge task must never apply its own
+     * scoreboard window to the native namespace's artifacts.
+     * <p>
+     * The two numbers a {@code PostingSealPurgeTask} can carry are counted
+     * independently -- {@code PostingIndexChainWriter}'s per-column generation
+     * for {@code .pv}/{@code .pc*}, the table txn for
+     * {@code <col>.pidx.<indexTxn>} -- and one partition directory can hold
+     * both forms for one column at once
+     * ({@code ParquetIndexSealTest.testANativePurgeDoesNotUnlinkALiveParquetIndexOfTheSameNumber}
+     * builds exactly that directory through production SQL), so equal numbers
+     * do not mean the same version.
+     * <p>
+     * The arrangement here is the one the fix has to survive. The generation is
+     * SUPERSEDED, not the chain head, so the operator's {@code .pk}-head re-read
+     * -- which only ever proved "not the live head" -- says nothing about it. A
+     * reader is pinned at a txn that is inside the native generation's
+     * reader-reachable range and OUTSIDE the parquet task's window, which is
+     * precisely the gap the head guard cannot see: the parquet task's
+     * {@code isRangeAvailable} is satisfied while the {@code .pv} it happens to
+     * be numbered like is still on the chain a pinned reader walks.
+     * <p>
+     * The genuine native-form task for the same generation is published
+     * alongside with a window the pinned reader DOES block, so the test also
+     * shows that the file is still reader-reachable at the moment the parquet
+     * task is allowed to run -- without that the assertion could pass on a file
+     * nobody could reach.
+     */
+    @Test
+    public void testAParquetFormPurgeDoesNotUnlinkASupersededNativeGenerationOfTheSameNumber() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_form_native");
+            FilesFacade ff = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                 TxnScoreboard scoreboard = engine.getTxnScoreboard(tok)) {
+                String col = "c_form";
+                long supersededSealTxn = writeCoveringAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+                long liveHead = PostingIndexUtils.readSealTxnFromKeyFile(
+                        ff, PostingIndexUtils.keyFileName(partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE));
+                partitionPath.trimTo(pLen);
+                assertNotEquals(
+                        "the fixture must target a SUPERSEDED generation; against the live head the .pk-head guard would mask the defect",
+                        liveHead,
+                        supersededSealTxn
+                );
+                assertTrue(".pv must exist after seal", ff.exists(PostingIndexUtils.valueFileName(
+                        partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+                assertTrue(".pc0 must exist after seal", ff.exists(PostingIndexUtils.coverDataFileName(
+                        partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, supersededSealTxn)));
+                partitionPath.trimTo(pLen);
+
+                // Pinned at 5: inside [0, 10), the native generation's own
+                // window, and outside [0, 1), the parquet task's.
+                assertTrue(scoreboard.acquireTxn(0, 5L));
+                try {
+                    publishPurgeTask(tok, col, supersededSealTxn, PostingSealPurgeTask.ARTIFACT_FORM_NATIVE, 10L);
+                    publishPurgeTask(tok, col, supersededSealTxn, PostingSealPurgeTask.ARTIFACT_FORM_PARQUET, 1L);
+                    runPurgeJob(job, 3);
+
+                    assertTrue(
+                            "a parquet-form purge must not unlink a native .pv a pinned reader can still reach",
+                            ff.exists(PostingIndexUtils.valueFileName(
+                                    partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, supersededSealTxn))
+                    );
+                    partitionPath.trimTo(pLen);
+                    assertTrue(
+                            "a parquet-form purge must not unlink a native .pc0 a pinned reader can still reach",
+                            ff.exists(PostingIndexUtils.coverDataFileName(
+                                    partitionPath.trimTo(pLen), col, 0, COLUMN_NAME_TXN_NONE, COLUMN_NAME_TXN_NONE, supersededSealTxn))
+                    );
+                    partitionPath.trimTo(pLen);
+                } finally {
+                    scoreboard.releaseTxn(0, 5L);
+                }
+
+                // Anti-vacuity: the native-form task was genuinely blocked by the
+                // pin, not already complete. Once the pin clears it purges, which
+                // proves the file was reader-reachable throughout the window above.
+                runPurgeJob(job, 3);
+                assertFalse(
+                        "the native-form task must purge the same .pv once the pin clears",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, supersededSealTxn))
+                );
+            }
+        });
+    }
+
+    /**
+     * A task recovered from a purge log or spill file written before the
+     * artifact form was recorded carries no attribution, and its sealTxn could
+     * name a live file in either namespace. It must unlink nothing -- and it
+     * must not retry forever either, or the job's retry queue grows without
+     * bound across every restart.
+     */
+    @Test
+    public void testAnUnattributedPurgeTaskUnlinksNothingAndIsNotRetried() throws Exception {
+        assertMemoryLeak(() -> {
+            if (configuration.disableColumnPurgeJob()) {
+                return;
+            }
+            TableToken tok = createPostingTable("ps_purge_form_unknown");
+            FilesFacade ff = configuration.getFilesFacade();
+
+            try (Path partitionPath = partitionPathFor(tok);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
+                String col = "c_unknown";
+                long supersededSealTxn = writeAndSeal(partitionPath, col);
+                int pLen = partitionPath.size();
+
+                publishPurgeTask(tok, col, supersededSealTxn, PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN, 1L);
+                runPurgeJob(job, 3);
+
+                assertTrue(
+                        "an unattributed task must not unlink a native .pv",
+                        ff.exists(PostingIndexUtils.valueFileName(
+                                partitionPath.trimTo(pLen), col, COLUMN_NAME_TXN_NONE, supersededSealTxn))
+                );
+                partitionPath.trimTo(pLen);
+                assertEquals("an unattributed task must be dropped, not re-queued", 0, job.getOutstandingPurgeTasks());
+            }
+        });
     }
 
     private Path partitionPathFor(TableToken tok) {
@@ -947,6 +1223,16 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
             long sealTxn,
             long toTableTxn
     ) {
+        publishPurgeTask(tok, colName, sealTxn, PostingSealPurgeTask.ARTIFACT_FORM_NATIVE, toTableTxn);
+    }
+
+    private void publishPurgeTask(
+            TableToken tok,
+            String colName,
+            long sealTxn,
+            int artifactForm,
+            long toTableTxn
+    ) {
         MessageBus bus = engine.getMessageBus();
         MPSequence pubSeq = bus.getPostingSealPurgePubSeq();
         RingQueue<PostingSealPurgeTask> queue = bus.getPostingSealPurgeQueue();
@@ -958,6 +1244,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         try {
             queue.get(cursor).of(
                     tok, colName, TableUtils.COLUMN_NAME_TXN_NONE, sealTxn,
+                    artifactForm,
                     0L, -1L, PartitionBy.NONE, ColumnType.TIMESTAMP_MICRO,
                     0L, toTableTxn
             );
@@ -1075,6 +1362,7 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     "c",
                     TableUtils.COLUMN_NAME_TXN_NONE,
                     1L,
+                    PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
                     0L,
                     -1L,
                     PartitionBy.NONE,

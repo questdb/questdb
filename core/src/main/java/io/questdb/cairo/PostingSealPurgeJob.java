@@ -53,6 +53,10 @@ import java.util.PriorityQueue;
 
 public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
+    private static final String ARTIFACT_FORM_COLUMN_NAME = "artifact_form";
+    private static final String LOG_TABLE_NAME = "posting_seal_purge_log_v2";
+    /** The name a build without artifact-form tagging writes. Drained, never written. */
+    private static final String LEGACY_LOG_TABLE_NAME = "posting_seal_purge_log";
     private static final int COLUMN_NAME_COLUMN = 3;
     // Hitting this many consecutive errors switches the job into throttled
     // mode: subsequent iterations are skipped until ERROR_BACKOFF_MICROS
@@ -121,6 +125,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                 this.tableToken = createLogTable(configuration, compiler, sqlExecutionContext);
             }
             this.writer = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            ensureArtifactFormColumn(this.writer);
             this.completedWriterIndex = writer.getMetadata().getColumnIndex("completed");
             this.operator = new PostingSealPurgeOperator(engine);
             recoverOpenTasks(engine);
@@ -206,6 +211,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     private static long appendTask(TableWriter writer, PostingSealPurgeTask task, long scheduledAt) {
         TableToken tok = task.getTableToken();
+        final int artifactFormColumn = writer.getMetadata().getColumnIndexQuiet(ARTIFACT_FORM_COLUMN_NAME);
         TableWriter.Row row = writer.newRow(scheduledAt);
         row.putSym(TABLE_NAME_COLUMN, tok.getDirName());
         row.putInt(TABLE_ID_COLUMN, tok.getTableId());
@@ -218,6 +224,9 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         row.putLong(FROM_TABLE_TXN_COLUMN, task.getFromTableTxn());
         row.putLong(TO_TABLE_TXN_COLUMN, task.getToTableTxn());
         row.putInt(TIMESTAMP_TYPE_COLUMN, task.getTimestampType());
+        if (artifactFormColumn > -1) {
+            row.putInt(artifactFormColumn, task.getArtifactForm());
+        }
         row.append();
         return Rows.toRowID(writer.getPartitionCount() - 1, writer.getTransientRowCount() - 1);
     }
@@ -241,7 +250,18 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             SqlCompiler compiler,
             SqlExecutionContextImpl sqlExecutionContext
     ) throws SqlException {
-        String tableName = configuration.getSystemTableNamePrefix() + "posting_seal_purge_log";
+        // _v2, NOT the name a released build uses. That build's PostingSealPurgeJob
+        // reads sys.posting_seal_purge_log positionally and knows nothing about
+        // artifact_form, so a parquet-form row written here would be found, be
+        // judged native, and be run down the NATIVE unlink path -- deleting the
+        // wrong thing. Appending the column could not prevent that: the older
+        // build simply never reads it.
+        //
+        // A distinct name makes the failure direction a LEAK instead. An older
+        // build does not see these rows, so the sidecars they name stay on disk
+        // until a form-aware build drains them. Leaking bytes is recoverable;
+        // unlinking a live artifact is not.
+        String tableName = configuration.getSystemTableNamePrefix() + LOG_TABLE_NAME;
         return compiler.query()
                 .$("CREATE TABLE IF NOT EXISTS \"")
                 .$(tableName)
@@ -258,10 +278,37 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                         "from_table_txn long, " +
                         "to_table_txn long, " +
                         "timestamp_type int, " +
-                        "completed timestamp" +
+                        "completed timestamp, " +
+                        // Appended last on purpose: a log table created by an
+                        // older build is upgraded with ADD COLUMN, which also
+                        // appends, so both layouts agree.
+                        "artifact_form int" +
                         ") timestamp(ts) partition by MONTH BYPASS WAL"
                 )
                 .createTable(sqlExecutionContext);
+    }
+
+    /**
+     * Adds {@code artifact_form} to a purge log table created by a build that
+     * did not record it. The column is appended, so every positional column
+     * constant above stays valid and an upgraded table has the same layout as a
+     * freshly created one. Rows written before the upgrade keep a NULL form,
+     * which {@link #recoverOpenTasks} turns into
+     * {@link PostingSealPurgeTask#ARTIFACT_FORM_UNKNOWN} and the operator drops
+     * without unlinking anything.
+     */
+    private static void ensureArtifactFormColumn(TableWriter writer) {
+        if (writer == null || writer.getMetadata().getColumnIndexQuiet(ARTIFACT_FORM_COLUMN_NAME) > -1) {
+            return;
+        }
+        try {
+            writer.addColumn(ARTIFACT_FORM_COLUMN_NAME, ColumnType.INT, null);
+            LOG.info().$("posting seal purge: upgraded the purge log with the artifact_form column").$();
+        } catch (Throwable th) {
+            // Not fatal: appendTask writes the column only when it resolves, and
+            // recovery treats an absent column as an unattributed task.
+            LOG.error().$("posting seal purge: could not add the artifact_form column to the purge log [err=").$(th).I$();
+        }
     }
 
     private static void logUnclampedSentinel(PostingSealPurgeTask task) {
@@ -294,6 +341,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                 logTableToken = createLogTable(configuration, compiler, sqlExecutionContext);
             }
             logWriter = engine.getWriter(logTableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            ensureArtifactFormColumn(logWriter);
             long scheduledAt = configuration.getMicrosecondClock().getTicks();
             for (int i = lo, n = Math.min(hi, tasks.size()); i < n; i++) {
                 PostingSealPurgeTask task = tasks.getQuick(i);
@@ -444,6 +492,22 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         return useful;
     }
 
+    /**
+     * DEFERRED, recorded here rather than only in a ledger that does not travel
+     * with the branch: neither this job nor {@link PostingSealPurgeOperator}
+     * consults {@code engine.getCheckpointStatus().isInProgress()}, while every
+     * peer that unlinks files does ({@code O3PartitionPurgeJob},
+     * {@code ColumnPurgeOperator}, {@code VacuumColumnVersions}). See the note at
+     * the scoreboard query in {@code PostingSealPurgeOperator.purge} for what is
+     * and is not established. Its absence is not a decision that it is safe.
+     * <p>
+     * Here because this is where the job dispatches an unlink -- the
+     * {@code operator.purge} below. The job's other dispatch is
+     * {@link #recoverOpenTasks}, which the constructor runs once over the log
+     * table and which calls {@code purge} directly rather than through this
+     * queue, so a job-level gate has to cover both: either at each dispatch, or
+     * once in {@link #runSerially}, this method's only caller.
+     */
     private boolean processRetryQueue() {
         boolean useful = false;
         long now = clock.getTicks();
@@ -480,20 +544,62 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     private void recoverOpenTasks(CairoEngine engine) {
+        if (recoverOpenTasks(engine, tableToken.getTableName(), PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN)
+                && writer != null) {
+            try {
+                writer.truncate();
+            } catch (Throwable th) {
+                LOG.error().$("posting seal purge: failed to truncate log table [err=").$(th).I$();
+            }
+        }
+        // Rows a pre-rename build left behind. Only a build WITHOUT artifact-form
+        // tagging wrote that table, and such a build could only ever seal the
+        // native chain -- so a row there with no form column is NATIVE by
+        // construction, not unknown. Draining it is what stops the rename from
+        // turning every in-flight task at upgrade time into a permanent leak.
+        // Absent table: the query fails and recovery logs and moves on.
+        final String legacyName =
+                sqlExecutionContext.getCairoEngine().getConfiguration().getSystemTableNamePrefix() + LEGACY_LOG_TABLE_NAME;
+        if (recoverOpenTasks(engine, legacyName, PostingSealPurgeTask.ARTIFACT_FORM_NATIVE)) {
+            // The legacy log is cleared through SQL, not through `writer`, which
+            // is bound to the v2 table. Without this the same legacy rows would
+            // be re-drained on EVERY restart: their artifacts are already gone,
+            // so each pass would report success and clear nothing.
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                compiler.query().$("TRUNCATE TABLE \"").$(legacyName).$('"')
+                        .compile(sqlExecutionContext)
+                        .execute(null)
+                        .await();
+                LOG.info().$("posting seal purge: drained and cleared the pre-v2 purge log [table=").$(legacyName).I$();
+            } catch (Throwable th) {
+                LOG.error().$("posting seal purge: could not clear the pre-v2 purge log [table=").$(legacyName)
+                        .$(", err=").$(th).I$();
+            }
+        }
+    }
+
+    /**
+     * @return true when every open row in {@code logTableName} was purged, which
+     * is the only case in which the caller may clear it
+     */
+    private boolean recoverOpenTasks(CairoEngine engine, CharSequence logTableName, int defaultArtifactForm) {
         RecordCursorFactory factory;
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             factory = compiler.query()
                     .$("SELECT * FROM \"")
-                    .$(tableToken.getTableName())
+                    .$(logTableName)
                     .$("\" WHERE completed = null")
                     .compile(sqlExecutionContext)
                     .getRecordCursorFactory();
         } catch (Throwable th) {
-            LOG.advisory().$("posting seal purge: recovery query failed, starting empty [err=").$(th).I$();
-            return;
+            LOG.advisory().$("posting seal purge: recovery query failed, starting empty [table=").$(logTableName)
+                    .$(", err=").$(th).I$();
+            return false;
         }
         int succeeded = 0;
         int failed = 0;
+        int unattributed = 0;
+        final int artifactFormColumn = factory.getMetadata().getColumnIndexQuiet(ARTIFACT_FORM_COLUMN_NAME);
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             Record rec = cursor.getRecord();
             RetryEntry entry = taskPool.pop();
@@ -506,11 +612,24 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                         continue;
                     }
                     String columnName = io.questdb.std.Chars.toString(rec.getSymA(COLUMN_NAME_COLUMN));
+                    // A log row written before artifact_form existed reads back as
+                    // NULL (or the column is missing entirely on a table the ADD
+                    // COLUMN upgrade could not reach). Either way the sealTxn is
+                    // unattributed, so the task is replayed as UNKNOWN and the
+                    // operator drops it without touching a file.
+                    int artifactForm = artifactFormColumn > -1
+                            ? rec.getInt(artifactFormColumn)
+                            : defaultArtifactForm;
+                    if (!PostingSealPurgeTask.isValidArtifactForm(artifactForm)) {
+                        artifactForm = PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN;
+                        unattributed++;
+                    }
                     entry.of(
                             token,
                             columnName,
                             rec.getLong(POSTING_COLUMN_NAME_TXN_COLUMN),
                             rec.getLong(SEAL_TXN_COLUMN),
+                            artifactForm,
                             rec.getTimestamp(PARTITION_TIMESTAMP_COLUMN),
                             rec.getLong(PARTITION_NAME_TXN_COLUMN),
                             rec.getInt(PARTITION_BY_COLUMN),
@@ -537,7 +656,19 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             }
             if (succeeded + failed > 0) {
                 LOG.info().$("posting seal purge: recovery done [succeeded=").$(succeeded)
-                        .$(", failed=").$(failed).I$();
+                        .$(", failed=").$(failed)
+                        .$(", unattributed=").$(unattributed).I$();
+            }
+            if (unattributed > 0) {
+                // Deliberately does NOT name a cause. The counter above
+                // increments for ANY value failing isValidArtifactForm --
+                // a NULL from a pre-upgrade row, a missing column, and equally
+                // a corrupt 99 -- and nothing here can tell those apart. The
+                // sibling message in TableWriter can, because it is gated on
+                // format == POSTING_SEAL_PURGE_PENDING_FORMAT_V1; this one is
+                // not, so it reports the effect and the value, not a diagnosis.
+                LOG.critical().$("posting seal purge: recovered purge-log rows carried no usable artifact form and were dropped without unlinking (a row written before artifact-form tagging, or an unrecognised value); the superseded sidecars they named stay on disk [rows=")
+                        .$(unattributed).I$();
             }
         } catch (Throwable th) {
             LOG.error().$("posting seal purge: recovery cursor failed [err=").$(th).I$();
@@ -545,13 +676,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             Misc.free(factory);
         }
 
-        if (failed == 0 && succeeded > 0 && writer != null) {
-            try {
-                writer.truncate();
-            } catch (Throwable th) {
-                LOG.error().$("posting seal purge: failed to truncate log table [err=").$(th).I$();
-            }
-        }
+        return failed == 0 && succeeded > 0;
     }
 
     @Override
@@ -617,6 +742,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
                     src.getIndexColumnName(),
                     src.getPostingColumnNameTxn(),
                     src.getSealTxn(),
+                    src.getArtifactForm(),
                     src.getPartitionTimestamp(),
                     src.getPartitionNameTxn(),
                     src.getPartitionBy(),

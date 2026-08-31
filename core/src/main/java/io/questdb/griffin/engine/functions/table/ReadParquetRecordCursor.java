@@ -146,6 +146,21 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
 
     /**
      * Validates that metadata columns can be projected from parquet and optionally populates column mappings.
+     * <p>
+     * A negative parquet field id is NEVER mapped into the writer-index space.
+     * The id a mapping entry carries is resolved through the map
+     * {@code PageFrameMemoryPool.buildColumnIdMap} builds, whose keys are
+     * {@link ColumnMapping#parquetLookupKey} values -- writer indices for the
+     * columns that have one, negated positions for the columns that do not --
+     * and a parquet POSITION on its own is a number some real column in the same
+     * file may legitimately hold as its writer index. Both sides therefore key a
+     * negative id by position in the negative half of the space, through the one
+     * {@link ColumnMapping#parquetLookupKey} that defines the rule; that javadoc
+     * records what the collision did before, and which files carry negative ids.
+     * <p>
+     * Only the PARALLEL page-frame path passes a {@code columnMapping} at all --
+     * the serial cursor passes {@code null} and projects by parquet index -- so
+     * only that path was ever affected.
      *
      * @param columns       if not null, will be populated with (parquetIndex, parquetType) pairs
      * @param columnMapping if not null, will be populated with (parquetIndex, writerIndex, originalWriterIndex) triples
@@ -199,7 +214,11 @@ public class ReadParquetRecordCursor implements NoRandomAccessRecordCursor {
             }
             if (columnMapping != null) {
                 final int columnId = parquetMetadata.getColumnId(parquetIndex);
-                final int effectiveId = columnId < 0 ? parquetIndex : columnId;
+                // Derived through ColumnMapping so this side and the map
+                // PageFrameMemoryPool.buildColumnIdMap resolves it through
+                // cannot drift: a negative field id is keyed by position in the
+                // negative half of the space, never in the writer-index space.
+                final int effectiveId = ColumnMapping.parquetLookupKey(columnId, parquetIndex);
                 columnMapping.addColumn(parquetIndex, effectiveId, effectiveId);
             }
         }

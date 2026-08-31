@@ -35,6 +35,7 @@ import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.ParquetIndexSeal;
 import io.questdb.cairo.idx.PostingIndexChainWriter;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -186,6 +187,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
+    // Above this many footers on a partition's _pm chain, publishParquetIndexTokens
+    // logs an advisory rather than growing the chain silently. The O3 rewrite
+    // trigger (cairo.partition.encoder.parquet.o3.rewrite.unused.ratio / .max.bytes)
+    // is what normally keeps the chain far below this; the warning exists for the
+    // configuration that disables or greatly raises that trigger. Not a refusal:
+    // chain growth is a cost, not a correctness problem.
+    private static final int MAX_UNWARNED_PM_FOOTERS = 512;
     /*
         The most recent logical partition is allowed to have up to cairo.o3.last.partition.max.splits (20 by default) splits.
         Any other partition is allowed to have cairo.o3.mid.partition.max.splits (1 by default) splits.
@@ -196,7 +204,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private static final int O3_ERRNO_FATAL = Integer.MAX_VALUE - 1;
     private static final int POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT = 32;
     private static final String POSTING_SEAL_PURGE_PENDING_FILE_NAME = "_posting_seal_purge_pending.d";
-    private static final int POSTING_SEAL_PURGE_PENDING_FORMAT = 1;
+    // v1 carried no artifact form. v2 adds one int after sealTxn. A v1 file is
+    // still parsed -- so the entries are counted and logged rather than silently
+    // vanishing -- but each entry is replayed with
+    // PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN, which the operator drops
+    // without unlinking: a v1 sealTxn cannot be attributed to a namespace, and
+    // guessing wrong deletes a live file in the other one.
+    private static final int POSTING_SEAL_PURGE_PENDING_FORMAT = 2;
+    private static final int POSTING_SEAL_PURGE_PENDING_FORMAT_V1 = 1;
     private static final int ROW_ACTION_NO_PARTITION = 1;
     private static final int ROW_ACTION_NO_TIMESTAMP = 2;
     private static final int ROW_ACTION_O3 = 3;
@@ -275,13 +290,68 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final Path other;
     private final MessageBus ownMessageBus;
     private final boolean parallelIndexerEnabled;
+    // Scratch for sweepOrphanParquetIndexArtifacts: the directory listing must
+    // finish before any unlink, so the names are collected first.
+    private final ObjList<CharSequence> orphanParquetIndexNames = new ObjList<>();
     private final DirectIntList parquetBloomFilterIndexes;
     private final IntIntHashMap parquetColIdToIdx = new IntIntHashMap();
     private final DirectIntList parquetColumnIdsAndTypes;
     private final IntList parquetDecodedTableColumnIdx = new IntList();
     private final ParquetPartitionDecoder parquetDecoder;
     private final ParquetFileDecoder parquetFileDecoder = new ParquetFileDecoder();
+    // Covering-index tokens the parquet seals of the partition currently being
+    // indexed produced, three longs per entry: column id (the writer index the
+    // _pm records as a column id), index txn and _im file size. Collected across
+    // the partition's whole column loop and published as one _pm footer
+    // afterwards, because a footer carries the complete set and a per-column
+    // append would drop the columns sealed before it.
+    private final LongList parquetIndexTokens = new LongList();
+    // Column ids (writer indices) whose covering-index token this batch must
+    // retire from the partition's _pm. DROP INDEX is the producer: the entry
+    // must stop being copied forward and the pair it names must be handed to the
+    // reader-gated purge, or the token outlives the index that produced it and
+    // the artifacts are never reclaimed.
+    private final LongList parquetIndexRetiredColumnIds = new LongList();
+    // Scratch for retireParquetIndexTokens' pre-read of a partition's published
+    // column ids.
+    private final IntList parquetRetireScratchColumnIds = new IntList();
+    // Scratch for sweepOrphanParquetIndexArtifacts' pre-read of the partition's
+    // committed covering-index tokens: column id (writer index) then index txn,
+    // two longs per entry.
+    private final LongList parquetSweepScratchTokens = new LongList();
+    // Timestamps of the partitions whose _pm this writer appended a covering
+    // index footer to since the last commit, one entry per partition TIMESTAMP.
+    // Not per (timestamp, name txn): the only consumer, rollback(), discards a
+    // recorded name txn and re-resolves the partition from the reloaded _txn by
+    // timestamp alone, so two entries for one timestamp at two name txns would
+    // land on one partition and stamp it twice for one publish window.
+    // A publish makes the _pm durable before the _txn commit,
+    // so a rollback has to re-apply the reader-facing marks the publish made in
+    // txWriter and unsafeLoadAll then threw away. Keyed on "a publish happened",
+    // not on "a purge task is pending": a first seal supersedes nothing and
+    // queues no task, and its append is exactly as durable.
+    private final LongList parquetIndexPublishedPartitions = new LongList();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
+    // Accompanies parquetSweepScratchTokens: true only when the partition's _pm
+    // was mapped AND its footer resolved, so that "the footers publish nothing"
+    // is distinguishable from "the _pm could not be read". Only the first
+    // licenses the sweep's committed-txn fallback.
+    private boolean parquetSweepTokensResolved;
+    // Accompanies parquetSweepScratchTokens: true when the tokens are the union
+    // over the whole footer chain rather than the last footer's alone. Only the
+    // union licenses an unlink -- the last footer is not the one a reader
+    // resolves. See readPublishedParquetIndexTokens.
+    private boolean parquetSweepTokensFullChain;
+    // The committed txn parquetIndexPublishedPartitions was recorded against.
+    // getTxn() does not move until the commit, so equality with it is what makes
+    // the list mean "published in the CURRENT uncommitted window".
+    private long parquetIndexPublishBaseTxn = -1;
+    // How many times publishParquetIndexTokens has logged the "_pm chain is
+    // long" advisory over this writer's whole lifetime. The chain is expected
+    // to stay short -- the O3 rewrite trigger resets it -- so this should stay
+    // 0 outside a configuration that disables or greatly raises that trigger.
+    private long pmChainWalkCount;
+    private long pmChainWarnCount;
     // Guards EVERY access to deferredPostingSealPurges + the seal-purge task pool.
     // Parquet index rebuilds run on parallel O3 workers, so several stash seal-purges
     // at once; the writer-thread paths touch the same list only after the O3 workers
@@ -315,6 +385,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int timestampType;
     private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
     private final MemoryMARW todoMem = Vm.getCMARWInstance();
+    private int pendingRetireCoveringTokenWriterIndex = -1;
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
     private final StringSink utf16Sink = new StringSink();
@@ -393,10 +464,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
     private volatile boolean o3oomObserved;
-    private IntList parquetRewriteColumnIndexes;
-    private SymbolColumnIndexer parquetRewriteIndexer;
-    private byte parquetRewriteIndexerType = IndexType.NONE;
-    private RowGroupBuffers parquetRewriteRowGroupBuffers;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -568,6 +635,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 case TODO_TRUNCATE:
                     repairTruncate();
                     break;
+                case TODO_RETIRE_COVERING_TOKEN:
+                    // Recorded here, ACTED ON at the end of the constructor.
+                    // The retirement reads the partition's _pm and stages a
+                    // purge, which needs writer state this point does not have
+                    // yet -- running it here dies on a null symbolCountProviders
+                    // and the todo is then cleared having done nothing.
+                    pendingRetireCoveringTokenWriterIndex = todoMem.size() >= TODO_META_INDEX_OFFSET + Long.BYTES
+                            ? (int) todoMem.getLong(TODO_META_INDEX_OFFSET)
+                            : -1;
+                    break;
                 case TODO_RESTORE_META:
                 case -1:
                     break;
@@ -605,7 +682,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             configureAppendPosition();
             purgeUnusedPartitions();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
-            clearTodoLog();
+            if (pendingRetireCoveringTokenWriterIndex < 0) {
+                // Held back when a covering-token retirement is outstanding.
+                // The replay is at the end of this constructor, because it
+                // needs writer state that does not exist yet here; clearing the
+                // record now would drop the intent while the work is still
+                // undone, and anything that throws in between -- or a crash --
+                // loses it for good. recoverRetireCoveringToken clears it once
+                // the retirement has actually run.
+                clearTodoLog();
+            }
             this.slaveTxReader = new TxReader(ff);
             commandQueue = new RingQueue<>(
                     TableWriterTask::new,
@@ -627,6 +713,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // table-local file because it could not reach the purge queue or the
             // shared purge-log writer. This is best-effort and never fails open.
             recoverSpilledPostingSealPurges();
+
+            // Finishes a covering-index token retirement a crash interrupted.
+            // Last, because it needs the fully built writer.
+            if (pendingRetireCoveringTokenWriterIndex > -1) {
+                recoverRetireCoveringToken(pendingRetireCoveringTokenWriterIndex);
+                pendingRetireCoveringTokenWriterIndex = -1;
+            }
         } catch (Throwable e) {
             doClose(false);
             throw e;
@@ -884,12 +977,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // configureCoveringIfNeeded can find them during index rebuild.
         columnMetadata.setCoveringColumnIndices(coveringColumnIndices);
 
+        // Set the index type before writeIndex, for the same reason the covering
+        // indices are set above: anything that inspects the writer's metadata
+        // DURING the rebuild -- a parquet seal publishing a covering token is the
+        // case that prompted this -- should see the column as indexed, because it
+        // is about to be. In-memory only until rewriteAndSwapMetadata below; a
+        // throw from writeIndex leaves nothing durable, and the catch restores the
+        // previous type so an aborted ADD INDEX does not leave the writer's own
+        // metadata claiming an index it failed to build.
+        final byte previousIndexType = columnMetadata.getIndexType();
+        final int previousBlockCapacity = columnMetadata.getIndexValueBlockCapacity();
+        columnMetadata.setIndexType(indexType);
+        columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
+
         final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
         try {
             writeIndex(columnName, indexValueBlockSize, indexType, columnIndex, indexer);
-
-            columnMetadata.setIndexType(indexType);
-            columnMetadata.setIndexValueBlockCapacity(indexValueBlockSize);
 
             // set the index flag in metadata and create new _meta.swp
             rewriteAndSwapMetadata(metadata);
@@ -898,6 +1001,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             indexers.extendAndSet(columnIndex, indexer);
             populateDenseIndexerList();
         } catch (Throwable th) {
+            columnMetadata.setIndexType(previousIndexType);
+            columnMetadata.setIndexValueBlockCapacity(previousBlockCapacity);
             Misc.free(indexer);
             throw th;
         }
@@ -1777,6 +1882,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long partitionRowCount = getPartitionSize(partitionIndex);
             copyOrRebuildColumnIndexes(partitionTimestamp, getTxn(), partitionRowCount);
             zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, false);
+            // After the tops are zeroed, so the seal reads the same [0, size)
+            // range the rewritten parquet materialises, and before the _txn
+            // commit, so the partition is never committed as parquet without the
+            // index copyOrRebuildColumnIndexes deliberately skipped.
+            resealParquetIndexesAfterSwitch(partitionTimestamp, getTxn(), parquetFileLength);
 
             columnVersionWriter.commit();
             // used to update txn and bump recordStructureVersion
@@ -2220,6 +2330,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (dropIndexOperator == null) {
                 dropIndexOperator = new DropIndexOperator(configuration, this, path, other, pathSize, getPurgingOperator());
             }
+            // Captured before the meta swap below clears them: the retirement
+            // needs both, and it deliberately runs after the column has stopped
+            // being indexed.
+            final boolean hadPostingIndex = IndexType.isPosting(metadata.getColumnIndexType(columnIndex));
+            final int postingWriterIndex = columnMetadata.getWriterIndex();
+
             dropIndexOperator.executeDropIndex(columnName, columnIndex); // upserts column version in partitions
             // swap meta commit
 
@@ -2229,6 +2345,56 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             columnMetadata.setCoveringColumnIndices(null);
             rewriteAndSwapMetadata(metadata);
             clearTodoAndCommitMeta();
+
+            // The parquet form is not the purging operator's to remove: retire
+            // the published token and hand its artifacts to the reader-gated
+            // purge. AFTER the drop commits, never before.
+            //
+            // Retiring first inverts the safe direction. The _pm header patch is
+            // durable the moment it lands, so a crash between it and the metadata
+            // commit leaves a column that metadata still calls POSTING-indexed,
+            // on a partition that is still parquet, with no token in the _pm --
+            // and checkPostingIndexIsReadable answers a missing token by
+            // returning, which hands the query to a native chain that has no
+            // visible generation for a parquet-sealed column. The query then
+            // silently returns nothing, which is precisely the failure this whole
+            // task exists to close, reached through a crash rather than a
+            // configuration flip. Removing a pointer whose absence is
+            // indistinguishable from "never had one" has to come last.
+            //
+            // In this order the crash window leaves the mirror state: the column
+            // is committed as not indexed while some partitions still carry a
+            // token for it. No query is wrong -- the probe returns on the first
+            // comparison and the scan does not use an index at all.
+            //
+            // That residue is PERMANENT, not self-healing. An earlier note here
+            // claimed the next publish for the partition drops any token naming
+            // a column that is no longer POSTING-indexed. publishParquetIndexTokens'
+            // merge loop has three outcomes -- retired (only for ids explicitly
+            // staged in parquetIndexRetiredColumnIds), copied forward, resealed
+            // -- and consults metadata in none of them. So the token is restated
+            // by every later footer for that partition and the pidx pair it
+            // names stays on disk until a later DROP INDEX on that column
+            // retires it for real. A leak, and what makes the reseal
+            // supersession branch in that merge reachable.
+            //
+            // Reclaiming it there by asking metadata whether the column is still
+            // indexed would be wrong as this code stands: addIndex flips
+            // columnMetadata.setIndexType only AFTER writeIndex returns, so every
+            // publish made during an ADD INDEX runs while metadata still reports
+            // the column as not indexed. Any such rule needs a signal that is
+            // not the live metadata flag.
+            if (hadPostingIndex) {
+                // Durable intent first: a crash between here and the clear
+                // leaves the drop committed and the token un-retired, and
+                // nothing would ever revisit it. Recovery on the next open
+                // re-runs this, idempotently.
+                writeRetireCoveringTokenTodo(postingWriterIndex);
+                if (retireParquetIndexTokens(postingWriterIndex)) {
+                    commitTxWriter();
+                }
+                clearTodoLog();
+            }
 
             // remove indexer - skip seal since the index is being dropped
             ColumnIndexer columnIndexer = indexers.getQuick(columnIndex);
@@ -2603,6 +2769,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return physicallyWrittenRowsSinceLastCommit.sum();
     }
 
+    /**
+     * How many times this writer has logged the "_pm chain is long" advisory.
+     * Exposed so a test can assert the warning fired without coupling to its
+     * message wording.
+     */
+    /**
+     * How many times this writer walked the {@code _pm} chain to size it.
+     * Exposed so a test can assert the size gate keeps the walk off the
+     * common path -- the walk is O(the chain) and the chain grows by one
+     * footer per publish.
+     */
+    @TestOnly
+    public long getPmChainWalkCount() {
+        return pmChainWalkCount;
+    }
+
+    @TestOnly
+    public long getPmChainWarnCount() {
+        return pmChainWarnCount;
+    }
+
     public long getRowCount() {
         return txWriter.getRowCount();
     }
@@ -2770,71 +2957,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
-    }
-
-    /**
-     * Carries indexed SYMBOL files into a freshly rewritten parquet partition.
-     * Indexes whose source column top is already zero are hard-linked. Indexes
-     * whose top will be normalized to zero are rebuilt from the rewritten
-     * parquet so their NULL prefix (or all-NULL body) and POSTING sidecars are
-     * physically present before the column-version commit publishes top zero.
-     */
-    public void linkOrRebuildPartitionIndexFilesAfterParquetRewrite(
-            long partitionTimestamp,
-            long oldPartitionNameTxn,
-            long newPartitionNameTxn,
-            long newParquetFileSize
-    ) {
-        if (parquetRewriteColumnIndexes == null) {
-            parquetRewriteColumnIndexes = new IntList();
-        } else {
-            parquetRewriteColumnIndexes.clear();
-        }
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
-        final int srcDirLen = path.size();
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
-        final int dstDirLen = other.size();
-        try {
-            for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
-                final byte indexType = metadata.getColumnIndexType(columnIndex);
-                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
-                    continue;
-                }
-                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                if (columnTop == 0) {
-                    linkColumnIndexFiles(
-                            srcDirLen,
-                            dstDirLen,
-                            metadata.getColumnName(columnIndex),
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
-                            indexType,
-                            partitionTimestamp,
-                            oldPartitionNameTxn
-                    );
-                } else {
-                    // The rewritten parquet materializes every current-schema
-                    // column and normalizeColumnTopsAfterParquetRewrite will set
-                    // this top to zero, including absent (-1), partial and
-                    // full-top (>= partitionSize) source states.
-                    assert columnTop == -1 || columnTop > 0;
-                    parquetRewriteColumnIndexes.add(columnIndex);
-                }
-            }
-
-            if (parquetRewriteColumnIndexes.size() > 0) {
-                rebuildParquetRewriteIndexes(
-                        partitionTimestamp,
-                        newPartitionNameTxn,
-                        newParquetFileSize,
-                        dstDirLen,
-                        parquetRewriteColumnIndexes
-                );
-            }
-        } finally {
-            parquetRewriteColumnIndexes.clear();
-            path.trimTo(pathSize);
-            other.trimTo(pathSize);
-        }
     }
 
     public void linkPartitionIndexFiles(long partitionTimestamp, long oldPartitionNameTxn, long newPartitionNameTxn) {
@@ -3490,7 +3612,37 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     checkDistressed();
                 }
                 freeColumns(false);
+                // Gated on "a _pm token publish happened in this window", not on
+                // "a parquet-form purge task is pending". The two are not the
+                // same set: a publish that supersedes nothing -- a first seal on
+                // a partition -- queues no task at all, while its _pm append is
+                // exactly as durable, and the old gate silently skipped it.
+                final boolean parquetIndexTokensDurable =
+                        parquetIndexPublishBaseTxn == txWriter.getTxn() && parquetIndexPublishedPartitions.size() > 0;
                 txWriter.unsafeLoadAll();
+                if (parquetIndexTokensDurable) {
+                    // unsafeLoadAll just discarded the partition table version
+                    // bump and the per-partition squash stamp
+                    // publishParquetIndexTokens made, but the _pm append they
+                    // accompanied is durable and the partition directory really
+                    // did change. Re-apply both, so the next commit still tells a
+                    // reader to drop the pre-publish mapping and still tells a
+                    // per-partition consumer the directory moved.
+                    txWriter.bumpPartitionTableVersion();
+                    for (int i = 0, n = parquetIndexPublishedPartitions.size(); i < n; i++) {
+                        final long publishedTimestamp = parquetIndexPublishedPartitions.getQuick(i);
+                        // Re-resolved against the reloaded _txn rather than taken
+                        // from a recorded name txn: the list holds the timestamp
+                        // alone, and the rollback may have taken the partition's
+                        // name txn back, or the partition away.
+                        final long publishedNameTxn =
+                                txWriter.getPartitionNameTxnByPartitionTimestamp(publishedTimestamp, Long.MIN_VALUE);
+                        if (publishedNameTxn != Long.MIN_VALUE) {
+                            stampParquetIndexPublishOnPartition(publishedTimestamp, publishedNameTxn);
+                        }
+                    }
+                }
+                parquetIndexPublishedPartitions.clear();
                 rollbackIndexes();
                 rollbackSymbolTables(true);
                 columnVersionWriter.readUnsafe();
@@ -3760,9 +3912,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn());
             if (ff.exists(path.$())) {
-                if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                // Copy, not hard link. data.parquet is hard-linked above and is
+                // immutable, but the _pm grows: a covering-index publish appends
+                // a footer and patches the header. A shared inode would make that
+                // append mutate the file the old partition directory also names,
+                // and with data.parquet byte-identical both directories' footers
+                // resolve for the same parquet size -- so a reader pinned to the
+                // old directory would resolve the new index_txn and name an _im
+                // that does not exist beside it. The _pm is kilobytes.
+                if (ff.copy(path.$(), other.$()) < 0) {
                     throw CairoException.critical(ff.errno())
-                            .put("could not hard link parquet metadata sidecar [table=")
+                            .put("could not copy parquet metadata sidecar [table=")
                             .put(tableToken.getTableName())
                             .put(", from=").put(path)
                             .put(", to=").put(other)
@@ -3777,6 +3937,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             LOG.info().$("linking index files to parquet [path=").$substr(pathRootSize, path).I$();
             linkPartitionIndexFiles(partitionTimestamp, partitionNameTxn, partitionDirLen, newPartitionDirLen);
+            // The native sidecars were not linked under the parquet index
+            // format, so the new directory has no index at all until the seal
+            // rebuilds one from the parquet it now holds.
+            resealParquetIndexesAfterSwitch(partitionTimestamp, getTxn(), parquetFileSize);
 
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
@@ -5912,6 +6076,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (colTop == -1 || colTop >= partitionRowCount) {
                     continue; // column does not exist or has no data in this partition
                 }
+                if (isParquetIndexFormat() && IndexType.isPosting(indexType)) {
+                    // Under the parquet index format a POSTING index over a
+                    // parquet partition is <col>.pidx.<indexTxn>.parquet plus its
+                    // _im, not the native .pv / .pci / .pc* set, so neither
+                    // carrying those over nor rebuilding them natively produces
+                    // what a reader of that partition will consult. The caller
+                    // reseals the column from the parquet it has just written,
+                    // once the column tops are zeroed. BITMAP indexes are
+                    // unaffected: the format selects nothing for them.
+                    continue;
+                }
 
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
@@ -6911,7 +7086,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int writePos = 0;
         for (int readPos = 0, n = deferredPostingSealPurges.size(); readPos < n; readPos++) {
             PostingSealPurgeTask task = deferredPostingSealPurges.getQuick(readPos);
-            if (task.getToTableTxn() > currentTableTxn) {
+            // A parquet-form task is never abandoned by a rollback. It is queued
+            // only after publishParquetIndexTokens has patched the _pm header and
+            // fsynced it, so the supersession it retires is durable and the
+            // rollback does not undo it; dropping the task would leak the pair it
+            // names for good, with nothing left to reference it and nothing left
+            // to remove it. Its window still holds: the bound is getTxn() + 1 and
+            // the rollback leaves getTxn() where it was, so the next commit is
+            // the txn the window names. A native-form task is the opposite case
+            // -- its seal is part of the transaction being rolled back -- and
+            // still goes.
+            if (task.getToTableTxn() > currentTableTxn
+                    && task.getArtifactForm() != PostingSealPurgeTask.ARTIFACT_FORM_PARQUET) {
                 releaseDeferredPostingSealPurgeTask(task);
             } else {
                 deferredPostingSealPurges.setQuick(writePos++, task);
@@ -7014,8 +7200,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // parquetMetaReader is a flyweight: it never owns its mmap, so
         // clear() (release native handle, zero state) is the right cleanup.
         parquetMetaReader.clear();
-        Misc.free(parquetRewriteIndexer);
-        Misc.free(parquetRewriteRowGroupBuffers);
         Misc.free(parquetBloomFilterIndexes);
         Misc.free(parquetColumnIdsAndTypes);
         Misc.free(segmentCopyInfo);
@@ -7749,6 +7933,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // POSTING: link active .pv (resolved from .pk sealTxn) plus .pci and
                 // all sidecar .pc<N>.* files under the renamed (name, nameTxn).
                 linkPostingIndexAuxFiles(plen, plen, columnName, columnNameTxn, newName, newColumnNameTxn, liveSealTxn);
+                // The parquet form too. Its token in the _pm is keyed by WRITER
+                // INDEX, so it survives a rename untouched, while the reader
+                // builds the artifact path from the column's CURRENT name --
+                // without this every indexed read of the partition fails with
+                // "could not read the covering index _im".
+                linkParquetIndexArtifacts(plen, columnName, newName, columnNameTxn, partitionTimestamp, partitionNameTxn);
             } else {
                 // BITMAP: sealTxn is unused, single .v file.
                 linkFile(ff,
@@ -7759,6 +7949,111 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         path.trimTo(pathSize);
         other.trimTo(pathSize);
         purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);
+    }
+
+    /**
+     * Hard-links a column's parquet-form covering index artifacts
+     * ({@code <col>.pidx.<indexTxn>.parquet} and {@code ._im}) under a new
+     * column name, for {@code RENAME COLUMN}.
+     * <p>
+     * EVERY generation present is linked, not just the committed head: the
+     * {@code _pm} is an append-only chain and a pinned reader may still resolve
+     * an older footer, whose token names an older {@code indexTxn}. Linking only
+     * the head would break exactly those readers.
+     * <p>
+     * The originals are not unlinked here, because a reader that took its
+     * snapshot before the rename still resolves the OLD name. They are instead
+     * handed to the scoreboard-gated posting-seal purge under the old name, with
+     * an upper bound of the txn the rename becomes visible at, so they are
+     * reclaimed once no reader can still reach them.
+     * <p>
+     * Publishing the purge is not optional bookkeeping. Nothing else can reclaim
+     * them: the orphan sweep resolves a file's column BY NAME and no longer
+     * finds one, {@code purgeSupersededParquetIndexArtifacts} builds names from
+     * {@code metadata.getColumnName()} which is now the NEW name, and
+     * {@code ColumnPurgeOperator} has no {@code pidx} arm. They are hard links
+     * to the same inodes as the new-named copies, so purging the new name later
+     * frees nothing either -- without this, one RENAME COLUMN would pin the
+     * whole covering index of every parquet partition for the life of the
+     * directory, and DROP INDEX would not release it.
+     */
+    private void linkParquetIndexArtifacts(
+            int plen,
+            CharSequence columnName,
+            CharSequence newName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
+        final ObjList<String> artifacts = new ObjList<>();
+        final StringSink fileName = Misc.getThreadLocalSink();
+        final StringSink prefix = new StringSink();
+        prefix.put(columnName).put(ParquetIndexSeal.PIDX_INFIX);
+        path.trimTo(plen).$();
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileName.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+            if (Chars.startsWith(fileName, prefix)) {
+                artifacts.add(Chars.toString(fileName));
+            }
+        });
+        final LongList orphanIndexTxns = new LongList();
+        for (int i = 0, n = artifacts.size(); i < n; i++) {
+            final CharSequence artifact = artifacts.getQuick(i);
+            // Everything after "<col>.pidx." -- the index txn and the suffix.
+            final CharSequence tail = artifact.subSequence(prefix.length(), artifact.length());
+            path.trimTo(plen).concat(artifact).$();
+            other.trimTo(plen).concat(newName).put(ParquetIndexSeal.PIDX_INFIX).put(tail).$();
+            linkFile(ff, path.$(), other.$());
+            // Each generation appears twice, as .parquet and as ._im, and one
+            // purge task retires both -- so record the index txn once.
+            final long indexTxn = parseLeadingIndexTxn(tail);
+            if (indexTxn > -1 && orphanIndexTxns.indexOf(indexTxn) < 0) {
+                orphanIndexTxns.add(indexTxn);
+            }
+        }
+        path.trimTo(plen);
+        other.trimTo(plen);
+        if (orphanIndexTxns.size() > 0) {
+            // Bound is the txn the rename becomes visible at, not the current
+            // one: a reader pinned at or below the current txn still resolves
+            // the old name. The publisher keeps the task deferred until that
+            // bound actually commits.
+            publishAbandonedPostingSealPurges(
+                    columnName,
+                    columnNameTxn,
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    PostingSealPurgeTask.ARTIFACT_FORM_PARQUET,
+                    txWriter.getTxn(),
+                    txWriter.getTxn() + 1,
+                    orphanIndexTxns
+            );
+        }
+    }
+
+    /**
+     * Parses the {@code <indexTxn>} that opens {@code <indexTxn>.parquet} or
+     * {@code <indexTxn>._im}. Returns -1 when it does not parse, which makes the
+     * caller skip the purge for that file rather than guess a txn -- leaving a
+     * file behind is the recoverable direction, unlinking the wrong one is not.
+     */
+    private static long parseLeadingIndexTxn(CharSequence tail) {
+        int end = 0;
+        while (end < tail.length() && tail.charAt(end) != '.') {
+            end++;
+        }
+        if (end == 0 || end == tail.length()) {
+            return -1;
+        }
+        try {
+            return Numbers.parseLong(tail, 0, end);
+        } catch (NumericException e) {
+            return -1;
+        }
     }
 
     private void hardLinkAndPurgeSymbolTableFiles(
@@ -8049,6 +8344,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final boolean hasCovering = coveringColumnIndices != null && coveringColumnIndices.size() > 0;
             final int coverCount = hasCovering ? coveringColumnIndices.size() : 0;
 
+            // Under the parquet index format the seal emits a key-aligned
+            // <col>.pidx.<indexTxn>.parquet plus its _im instead of the native
+            // .pv/.pc* sidecars. It needs the postings in key order, which the
+            // index writer's on-disk generations are not, so the key of each
+            // indexed row is collected here as it is fed to the writer: one int
+            // per row, indexed by rowId - columnTop.
+            final boolean isParquetIndexFormat = isParquetIndexFormat();
+            final DirectIntList sealRowKeys = isParquetIndexFormat
+                    ? new DirectIntList(partitionSize - columnTop, MemoryTag.NATIVE_TABLE_WRITER)
+                    : null;
+
             // Build combined column list: SYMBOL (chunk 0) + covered
             // columns (chunks 1..N). A single decodeRowGroup call per
             // row group replaces the two separate decode loops.
@@ -8114,9 +8420,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final long size = rowGroupBuffers.getChunkDataSize(0);
                         if (size == 0) {
                             BitmapIndexUtils.addNullEntries(indexWriter, rowId, rowCount + rowGroupSize);
+                            if (sealRowKeys != null) {
+                                for (long r = rowId, lim = rowCount + rowGroupSize; r < lim; r++) {
+                                    sealRowKeys.add(0);
+                                }
+                            }
                         } else {
                             for (long p = addr, lim = addr + size; p < lim; p += 4, rowId++) {
-                                indexWriter.add(TableUtils.toIndexKey(Unsafe.getInt(p)), rowId);
+                                final int indexKey = TableUtils.toIndexKey(Unsafe.getInt(p));
+                                indexWriter.add(indexKey, rowId);
+                                if (sealRowKeys != null) {
+                                    sealRowKeys.add(indexKey);
+                                }
                             }
                         }
                     }
@@ -8132,8 +8447,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 indexWriter.setMaxValue(partitionSize - 1);
-                indexer.seal();
+                if (isParquetIndexFormat) {
+                    sealParquetIndexColumn(
+                            columnName, columnIndex, plen, timestamp, columnTop,
+                            partitionSize, normalizeColumnTops,
+                            indexWriter.getKeyCount(), txWriter.getTxn() + 1,
+                            coveringColumnIndices, covMmaps, parquetMetadata, sealRowKeys
+                    );
+                } else {
+                    indexer.seal();
+                }
             } finally {
+                Misc.free(sealRowKeys);
                 if (hasCovering) {
                     indexer.releaseCoveredColumnReadMappings();
                 }
@@ -8143,6 +8468,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             coveringColumnIndices, timestamp, plen);
                 }
             }
+        }
+    }
+
+    /**
+     * Discards any covering-index token left staged on this writer and opens a
+     * fresh batch for one partition.
+     * <p>
+     * Staging happens per column in {@link #sealParquetIndexColumn}; only a
+     * successful {@link #publishParquetIndexTokens} clears it. A seal that
+     * throws part-way through a partition's column loop -- a cover the seal
+     * cannot gather, a mapping failure -- skips the publish entirely while the
+     * caller's rollback leaves the writer usable, so without this the next
+     * partition's publish would merge those triples into a different
+     * partition's footer, committing a token that names an {@code _im} which is
+     * not in that directory and, where the column id belongs to another column,
+     * names the wrong column too. Called at the head of every batch that ends in
+     * a publish, which is the only place the set is allowed to start non-empty.
+     * <p>
+     * {@code plen} is the length {@code path} is set to the partition directory
+     * with; the orphan sweep runs against it.
+     */
+    private void beginParquetIndexTokenBatch(int plen) {
+        parquetIndexRetiredColumnIds.clear();
+        // Reclaim what a previous seal on this partition left half-written,
+        // before this batch writes anything of its own. Done here rather than at
+        // publish time so the trigger is "a seal batch ran" and not "a seal batch
+        // reached its publish": the state the sweep is for is exactly the one a
+        // batch that threw leaves behind, and that batch never reaches a publish.
+        // Nothing of this batch exists yet, so it cannot match its own artifacts.
+        //
+        // Gated on the configured format, which costs nothing to read, because
+        // the sweep is a directory listing plus a read per pidx artifact it finds
+        // and this method is on the per-commit O3 seal path. Only a parquet-form
+        // seal can leave the state it reclaims, and only the parquet format runs
+        // one, so on the default configuration the listing would find nothing on
+        // every commit forever. The residual: an orphan left by a seal from a
+        // period when the property WAS parquet is not reclaimed while the
+        // property is native. It is inert -- no footer names it, which is the
+        // sweep's own criterion for removing it -- and the next batch under the
+        // parquet format takes it.
+        if (isParquetIndexFormat()) {
+            sweepOrphanParquetIndexArtifacts(plen);
+        }
+        if (parquetIndexTokens.size() > 0) {
+            LOG.error().$("discarding covering index tokens staged by a seal that never published [table=").$(tableToken)
+                    .$(", entries=").$(parquetIndexTokens.size() / 3)
+                    .I$();
+            parquetIndexTokens.clear();
         }
     }
 
@@ -8159,6 +8532,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         // parquet partition
         path.trimTo(plen);
+        beginParquetIndexTokenBatch(plen);
         LOG.info().$("indexing parquet [path=").$substr(pathRootSize, path).I$();
 
         long parquetAddr = 0;
@@ -8203,6 +8577,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
         }
+        // After the mappings above are released: the publish reopens the _pm
+        // through the same reader, and appends to the file the decoder was
+        // reading.
+        publishParquetIndexTokens(
+                timestamp,
+                txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp),
+                txWriter.getPartitionParquetFileSize(partitionIndex),
+                // ADD INDEX writes no row: the partition's _txn record does not
+                // move, so the squash stamp is the only per-partition signal.
+                false
+        );
     }
 
     private void initLastPartition(long timestamp) {
@@ -8234,6 +8619,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private boolean isLastPartitionParquet() {
         int partitionCount = txWriter.getPartitionCount();
         return partitionCount > 0 && txWriter.isPartitionParquet(partitionCount - 1);
+    }
+
+    /**
+     * True when {@code cairo.posting.index.parquet.partition.format} selects
+     * {@code parquet}, that is when a covering index over a parquet partition is
+     * sealed as {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im}
+     * instead of the native {@code .pv} / {@code .pc*} sidecars.
+     */
+    private boolean isParquetIndexFormat() {
+        return configuration.getPostingIndexParquetPartitionFormat() == PostingIndexUtils.PARQUET_INDEX_FORMAT_PARQUET;
     }
 
     /**
@@ -8303,6 +8698,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void linkPartitionIndexFiles(long partitionTimestamp, long partitionNameTxn, int partitionDirLen, int newPartitionDirLen) {
+        // Under the parquet index format a POSTING index over a parquet
+        // partition is <col>.pidx.<indexTxn>.parquet plus its _im, not the
+        // native .pk/.pv/.pci/.pc* set, so linking those would publish sidecars
+        // no reader of that partition consults and leave a chain the seal has to
+        // discard. The caller rebuilds from the destination parquet instead.
+        // BITMAP indexes are unaffected -- the format selects nothing for them --
+        // so the skip is per column, not for the whole partition. Decided here,
+        // in the one method both call sites funnel through, so a third call site
+        // cannot reintroduce the link.
+        final boolean isParquetIndexFormat = isParquetIndexFormat();
         try {
             final int columnCount = metadata.getColumnCount();
             final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
@@ -8316,12 +8721,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                if (isParquetIndexFormat && IndexType.isPosting(indexType)) {
+                    continue;
+                }
                 linkColumnIndexFiles(
                         partitionDirLen,
                         newPartitionDirLen,
                         metadata.getColumnName(columnIndex),
                         getColumnNameTxn(partitionTimestamp, columnIndex),
-                        metadata.getColumnIndexType(columnIndex),
+                        indexType,
                         partitionTimestamp,
                         partitionNameTxn
                 );
@@ -10915,6 +11324,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             plen = path.size();
         }
+        beginParquetIndexTokenBatch(plen);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
         // One parquet open/mmap/decoder for the whole partition: a partition with
         // several covering posting columns decodes the file once and feeds each
@@ -10999,6 +11409,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
             }
             path.trimTo(pathSize);
+        }
+        if (processed) {
+            // The seals above staged their tokens; nothing references the
+            // artifacts until the _pm footer names them.
+            // The only per-commit publish there is, and the only caller that
+            // passes true. It is reached from sealPostingIndexForPartition,
+            // which runs for a partition an O3 partition task just rewrote --
+            // in place (updatePartitionSizeByRawIndex plus
+            // setPartitionParquetFileSizeByRawIndex), as a new version
+            // (updatePartitionSizeAndTxnByRawIndex, which also resets the
+            // counter), or via a squash (same call). Every one of those moves
+            // the partition's own _txn record, so the consumer already sees the
+            // change and a stamp here would only walk the 16-bit counter toward
+            // saturation once per commit.
+            publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, txWriter.getPartitionParquetFileSize(partitionIndex), true);
         }
         return processed;
     }
@@ -12063,13 +12488,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long currentTableTxn,
             LongList orphanSealTxns
     ) {
+        // These sealTxns come off the native chain's own recovery trim, so they
+        // name .pv/.pc* generations.
+        publishAbandonedPostingSealPurges(
+                columnName,
+                columnNameTxn,
+                partitionTimestamp,
+                partitionNameTxn,
+                PostingSealPurgeTask.ARTIFACT_FORM_NATIVE,
+                currentTableTxn,
+                currentTableTxn,
+                orphanSealTxns
+        );
+    }
+
+    /**
+     * {@code toTableTxn} is the task's scoreboard upper bound: the txn at which
+     * the version being retired stopped being the committed view. It is kept
+     * separate from {@code currentTableTxn}, which is only the writer's
+     * committed txn used to decide whether the task may be published now or
+     * must stay deferred. They coincide for an abandoned seal (already invisible
+     * at the current txn) but not for one superseded inside the writer's
+     * uncommitted window, whose bound is a txn that has not committed yet and
+     * which therefore must stay deferred until it does.
+     */
+    private void publishAbandonedPostingSealPurges(
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int artifactForm,
+            long currentTableTxn,
+            long toTableTxn,
+            LongList orphanSealTxns
+    ) {
         synchronized (parquetSealPurgeLock) {
             publishAbandonedPostingSealPurges0(
                     columnName,
                     columnNameTxn,
                     partitionTimestamp,
                     partitionNameTxn,
+                    artifactForm,
                     currentTableTxn,
+                    toTableTxn,
                     orphanSealTxns
             );
         }
@@ -12080,7 +12541,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long columnNameTxn,
             long partitionTimestamp,
             long partitionNameTxn,
+            int artifactForm,
             long currentTableTxn,
+            long toTableTxn,
             LongList orphanSealTxns
     ) {
         if (orphanSealTxns.size() == 0) {
@@ -12093,12 +12556,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnName,
                     columnNameTxn,
                     orphanSealTxns.getQuick(i),
+                    artifactForm,
                     partitionTimestamp,
                     partitionNameTxn,
                     partitionBy,
                     timestampType,
                     0L,
-                    currentTableTxn
+                    toTableTxn
             );
             deferredPostingSealPurges.add(task);
         }
@@ -12171,6 +12635,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         deferredTask.getIndexColumnName(),
                         deferredTask.getPostingColumnNameTxn(),
                         deferredTask.getSealTxn(),
+                        deferredTask.getArtifactForm(),
                         deferredTask.getPartitionTimestamp(),
                         deferredTask.getPartitionNameTxn(),
                         deferredTask.getPartitionBy(),
@@ -12190,6 +12655,408 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void publishDeferredPostingSealPurgesOnClose(long currentTableTxn) {
         publishDeferredPostingSealPurges(currentTableTxn, true, POSTING_SEAL_PURGE_CLOSE_QUEUE_RETRY_COUNT);
+    }
+
+    /**
+     * Publishes the covering-index tokens staged by this partition's parquet
+     * seals into the partition's {@code _pm}, as one appended footer carrying
+     * the complete set.
+     * <p>
+     * The append is the last step of the seal's commit sequence:
+     * {@code pidx.parquet} (fsynced), then {@code _im} with its
+     * {@code IM_FILE_SIZE} patched last, then this footer with
+     * {@code PARQUET_META_FILE_SIZE} patched last, then {@code _txn}. Until
+     * those eight header bytes land, the committed footer is still the one a
+     * reader resolves, so a crash anywhere before them leaves the new bytes as
+     * an invisible dead tail rather than a half-published index.
+     * <p>
+     * The footer carries the complete set, never a delta, so any entry the
+     * prior footer held for a column this pass did not reseal is copied
+     * forward. An entry this pass did reseal is replaced, and its previous
+     * {@code index_txn} is handed to the reader-gated posting seal purge.
+     * <p>
+     * <b>The appended footer shadows the prior one; it does not leave it
+     * selectable.</b> This publish restates the same
+     * {@code parquet_footer_offset} / {@code parquet_footer_length}, so the new
+     * footer derives the same {@code data.parquet} size as the one it replaces,
+     * and {@code resolveFooter(parquetFileSize)} walks back from the mapped
+     * tail and returns the <i>newest</i> match. Both footers remain physically
+     * in the file, but no map made after the header patch can select the older
+     * one for that parquet size. What preserves a pinned reader's own view is
+     * not the chain, it is the mapping: {@code TableReader} maps the
+     * {@code _pm} at the size its own snapshot's header named and resolves from
+     * that tail, so a reader that mapped before the header patch never sees
+     * this footer at all. That is exactly the population the superseded
+     * artifacts must outlive, and it is what the purge's scoreboard window has
+     * to cover -- see {@link #purgeSupersededParquetIndexArtifacts}.
+     *
+     * @param partitionRecordAlreadyMoved true when the transaction this publish
+     *                                    belongs to has already moved the
+     *                                    partition's own {@code _txn} record, so
+     *                                    a per-partition consumer can see the
+     *                                    change without the squash stamp. Set
+     *                                    ONLY by the per-commit O3 reseal path;
+     *                                    see the stamp below for why the
+     *                                    distinction has to exist.
+     */
+    private void publishParquetIndexTokens(
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long parquetFileSize,
+            boolean partitionRecordAlreadyMoved
+    ) {
+        if (parquetIndexTokens.size() == 0 && parquetIndexRetiredColumnIds.size() == 0) {
+            return;
+        }
+        // Set the partition path here rather than take a length from the
+        // caller: every caller reaches this after its own finally block has
+        // already rewound the path buffer.
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int plen = path.size();
+        final LongList merged = new LongList();
+        final LongList supersededColumnIds = new LongList();
+        final LongList supersededIndexTxns = new LongList();
+        // Per superseded entry, the index txn of the seal that replaced it --
+        // the txn at which the supersession becomes visible, and therefore the
+        // purge window's upper bound. Carried rather than recomputed so the
+        // bound and the artifact names come from one value.
+        final LongList supersededVisibleAtTxns = new LongList();
+        long entriesAddr = 0;
+        long entriesSize = 0;
+        long parquetMetaAddr = 0;
+        long parquetMetaSize = 0;
+        long resultPtr = 0;
+        long fd = -1;
+        // Committed _pm size after the append, used below to decide whether a
+        // chain walk is even possible. Hoisted so it outlives the try.
+        long publishedParquetMetaFileSize = 0;
+        try {
+            openParquetMetadataOrThrow(path, plen, parquetFileSize);
+            parquetMetaAddr = parquetMetaReader.getAddr();
+            parquetMetaSize = parquetMetaReader.getFileSize();
+            final long parseAnchor = parquetMetaReader.getResolvedFileSize();
+            // An O3 in-place update writes its footer with the covering section
+            // EMPTIED (O3PartitionJob's updateFileMetadata(0, 0, 0)), because the
+            // merge rewrote the row group blocks the index was built over. The
+            // artifacts it named are still on disk and still named by the
+            // PREVIOUS footer, which the chain never truncates -- so reading only
+            // the anchor sees nothing to supersede and queues no purge, and the
+            // pair leaks. Measured at two files per O3 commit.
+            //
+            // So when the anchor publishes nothing, step back one footer and
+            // retire what it named. Retire, not restate: the merge invalidated
+            // the index, and updateParquetIndexes rebuilds it after this footer
+            // is written. The visible-at txn is the same txWriter.getTxn() + 1 a
+            // seal names its artifacts with, so a pinned reader's window is
+            // unchanged.
+            if (parquetMetaReader.getCoveringIndexCount() == 0 && parquetMetaReader.resolvePrevFooter()) {
+                // Only when the data.parquet itself changed. That is what
+                // distinguishes an O3 in-place update -- which rewrote row
+                // groups and emptied the section -- from an ordinary publish
+                // whose anchor happens to carry no token yet, where the prior
+                // footer's entries are still live and the normal supersession
+                // path will retire them at its own publish. Retiring them here
+                // too queues the pair twice.
+                final boolean o3Rewrote = parquetMetaReader.getParquetFileSize() != parquetFileSize;
+                for (int i = 0, n = o3Rewrote ? parquetMetaReader.getCoveringIndexCount() : 0; i < n; i++) {
+                    supersededColumnIds.add(parquetMetaReader.getCoveringIndexColumnId(i));
+                    supersededIndexTxns.add(parquetMetaReader.getCoveringIndexTxn(i));
+                    supersededVisibleAtTxns.add(txWriter.getTxn() + 1);
+                }
+                // Back to the anchor: everything below reads the committed view.
+                if (!parquetMetaReader.resolveFooter(parquetFileSize)) {
+                    throw CairoException.critical(0)
+                            .put("could not re-resolve the parquet metadata footer after reading the prior one [table=")
+                            .put(tableToken.getTableName())
+                            .put(", parquetFileSize=").put(parquetFileSize)
+                            .put(']');
+                }
+            }
+            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                final long existingColumnId = parquetMetaReader.getCoveringIndexColumnId(i);
+                final long existingIndexTxn = parquetMetaReader.getCoveringIndexTxn(i);
+                int resealedAt = -1;
+                for (int j = 0, m = parquetIndexTokens.size(); j < m; j += 3) {
+                    if (parquetIndexTokens.getQuick(j) == existingColumnId) {
+                        resealedAt = j;
+                        break;
+                    }
+                }
+                if (parquetIndexRetiredColumnIds.indexOf(existingColumnId) > -1) {
+                    // Dropped, not resealed: the entry goes away and the pair it
+                    // names is retired. Visible at the txn the drop commits,
+                    // which is the same txWriter.getTxn() + 1 a seal names its
+                    // artifacts with, so the reader window is the same one.
+                    supersededColumnIds.add(existingColumnId);
+                    supersededIndexTxns.add(existingIndexTxn);
+                    supersededVisibleAtTxns.add(txWriter.getTxn() + 1);
+                    continue;
+                }
+                if (resealedAt < 0) {
+                    merged.add(existingColumnId);
+                    merged.add(existingIndexTxn);
+                    merged.add(parquetMetaReader.getCoveringIndexImFileSize(i));
+                    continue;
+                }
+                if (parquetIndexTokens.getQuick(resealedAt + 1) != existingIndexTxn) {
+                    // Reachable, and tested by
+                    // ParquetIndexSealTest#testAResealSupersedesATokenTheDropIndexRetirementNeverRemoved.
+                    // An earlier note here claimed the branch was dead because
+                    // the only reseal trigger is an O3 write, which rewrites the
+                    // footer with an empty covering section first, so
+                    // getCoveringIndexCount() is 0 and this loop does not run.
+                    // That covers the O3 route only. The live route is a crash
+                    // between DROP INDEX's metadata commit and its retirement:
+                    // the footer keeps naming (C, oldIndexTxn), nothing reclaims
+                    // it (this merge has no "the column is no longer indexed"
+                    // rule -- see the residue note at the dropIndex call site),
+                    // and a later ADD INDEX TYPE POSTING on C reaches
+                    // indexParquetPartition, stages (C, newIndexTxn) and lands
+                    // here.
+                    //
+                    // The bound is the same expression the drop branch uses --
+                    // the staged index txn is txWriter.getTxn() + 1, the txn this
+                    // batch commits at -- so the superseded pair stays reachable
+                    // to every reader pinned below it.
+                    supersededColumnIds.add(existingColumnId);
+                    supersededIndexTxns.add(existingIndexTxn);
+                    supersededVisibleAtTxns.add(parquetIndexTokens.getQuick(resealedAt + 1));
+                }
+            }
+            for (int i = 0, n = parquetIndexTokens.size(); i < n; i++) {
+                merged.add(parquetIndexTokens.getQuick(i));
+            }
+
+            entriesSize = (long) merged.size() * Long.BYTES;
+            entriesAddr = Unsafe.malloc(entriesSize, MemoryTag.NATIVE_TABLE_WRITER);
+            for (int i = 0, n = merged.size(); i < n; i++) {
+                Unsafe.putLong(entriesAddr + (long) i * Long.BYTES, merged.getQuick(i));
+            }
+            resultPtr = ParquetMetaFileWriter.buildCoveringIndexAppend(
+                    parquetMetaAddr,
+                    parseAnchor,
+                    parquetMetaSize,
+                    entriesAddr,
+                    entriesSize,
+                    merged.size() / 3
+            );
+            final long dataPtr = ParquetMetaFileWriter.resultDataPtr(resultPtr);
+            final long dataLen = ParquetMetaFileWriter.resultDataLen(resultPtr);
+            final long newParquetMetaFileSize = ParquetMetaFileWriter.resultParquetMetaFileSize(resultPtr);
+            publishedParquetMetaFileSize = newParquetMetaFileSize;
+
+            path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
+            fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            final long written = ff.write(fd, dataPtr, dataLen, parquetMetaSize);
+            if (written != dataLen) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not append _pm covering index footer [path=").put(path)
+                        .put(", size=").put(dataLen)
+                        .put(", written=").put(written).put(']');
+            }
+            final boolean sync = configuration.getCommitMode() != CommitMode.NOSYNC;
+            if (sync) {
+                // The appended footer must be durable while the old header is
+                // still authoritative; otherwise a power loss can publish a
+                // header whose newest footer is torn.
+                ff.fsync(fd);
+            }
+            Unsafe.putLong(tempMem16b, newParquetMetaFileSize);
+            if (ff.write(fd, tempMem16b, Long.BYTES, 0) != Long.BYTES) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not patch _pm header [path=").put(path).put(']');
+            }
+            if (sync) {
+                ff.fsync(fd);
+            }
+        } finally {
+            if (resultPtr != 0) {
+                ParquetMetaFileWriter.destroyResult(resultPtr);
+            }
+            if (fd != -1) {
+                ff.close(fd);
+            }
+            if (entriesAddr != 0) {
+                Unsafe.free(entriesAddr, entriesSize, MemoryTag.NATIVE_TABLE_WRITER);
+            }
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            parquetIndexTokens.clear();
+            parquetIndexRetiredColumnIds.clear();
+            path.trimTo(pathSize);
+        }
+        // Every footer occupies at least ParquetMetaFileReader.FOOTER_MIN_SIZE
+        // bytes, so a _pm this small cannot hold more than
+        // MAX_UNWARNED_PM_FOOTERS of them however the bytes are divided up.
+        // Checking the size first keeps the common case free: the walk is O(the
+        // chain), the chain grows by one footer per publish, so walking on every
+        // publish would make publishing a partition quadratic in its own publish
+        // count -- and worst on exactly the unbounded chain this warns about. On
+        // defaults the O3 rewrite trigger keeps the file far below the bound and
+        // the walk never runs at all.
+        if (publishedParquetMetaFileSize > (long) MAX_UNWARNED_PM_FOOTERS * ParquetMetaFileReader.FOOTER_MIN_SIZE) {
+            // The append above is already durable (fsynced when sync is enabled),
+            // so re-reading the _pm here sees it. Reopen rather than reuse
+            // parquetMetaReader's now-cleared mapping: that mapping predates the
+            // footer just written and cannot see it.
+            warnIfPmChainIsUnbounded(plen, partitionTimestamp);
+        }
+        // The _pm changed under a partition whose name txn, row count and
+        // data.parquet size are all unchanged, so nothing else in the _txn tells
+        // a reader to drop the mapping it took at open time. Without this bump
+        // reconcileOpenPartitions takes its fast path, a reader can advance past
+        // the seal's txn still holding the pre-publish mapping, and the purge
+        // window below -- which is expressed in table txns -- would no longer
+        // cover it. Bumping makes reconcileOpenPartitions0 close the parquet
+        // partition, so a reader either still holds the old mapping and is still
+        // pinned below visibleAtTxn, or re-maps and reads the new footer.
+        //
+        // Load-bearing, not insurance. An earlier note called it "measured to be
+        // redundant on every path reachable today", from an experiment over six
+        // O3 token publishes into a non-last parquet partition. That experiment
+        // sampled one path, and it predates the squash stamp added to this same
+        // method below, so it no longer describes this code at all. Three
+        // reachable cases where this call is the ONLY signal:
+        //
+        //  - The DROP INDEX retirement commit. retireParquetIndexTokens runs
+        //    after clearTodoAndCommitMeta and commits on its own, so that second
+        //    transaction moves nothing but the _pm bytes: no rows, no partition
+        //    name txn, no data.parquet size, and the column version committed in
+        //    the transaction before it. reconcileOpenPartitions' fast path
+        //    compares exactly partitionTableVersion, columnVersion and
+        //    truncateVersion, and even when it is taken it only reconciles the
+        //    LAST partition -- so without a bump a reader reloads past the
+        //    retirement still holding its pre-retirement _pm mapping for any
+        //    other partition, resolving a token whose pair the purge is about to
+        //    unlink under it, from outside [0, visibleAtTxn).
+        //  - Squash-counter saturation. The stamp below bumps
+        //    partitionTableVersion itself, but only when it succeeds;
+        //    incrementPartitionSquashCounter returns false at
+        //    PARTITION_SQUASH_COUNTER_MAX without bumping anything.
+        //  - A partition the stamp cannot find (publishedPartitionIndex == -1),
+        //    where no stamp is attempted at all.
+        //
+        // Its cost is bounded -- checkSchedulePurgeO3Partitions no longer
+        // schedules a partition purge for a bump that moves no partition
+        // directory. TableReader#testAReloadingReaderDropsItsParquetMetaMappingAcrossATokenPublish
+        // pins the invariant; it cannot pin this call, and says so.
+        txWriter.bumpPartitionTableVersion();
+        // The partition's directory changed -- it gained a <col>.pidx pair and
+        // its _pm grew a footer -- while its own _txn record did not: same name
+        // txn, same row count, same data.parquet size, so setPartitionParquetFileSize
+        // is not called and the offset-3 value word does not move either. That is
+        // exactly the state the squash counter exists to make visible; its own
+        // comment names it, "even when the partition has the same version and row
+        // count it will be included in a backup". Stamping it here is what lets a
+        // per-partition consumer see the change at all.
+        //
+        // A consumer that compares per-partition state must therefore treat the
+        // squash counter (and .squash_ts on its 16-bit overflow) as part of the
+        // partition's identity, not only as a squash signal: for this event it is
+        // the ONLY field that moves.
+        //
+        // Bounded, and it has to be: the counter is 16 bits (TxReader
+        // PARTITION_SQUASH_COUNTER_MAX = 0xFFFF) and is reset only by
+        // updatePartitionSizeAndTxnByRawIndex, i.e. by a partition-version
+        // rewrite. O3 into a parquet partition that runs IN PLACE
+        // (o3ConsumePartitionUpdateSink's parquetFileSize > -1 mutate branch)
+        // takes updatePartitionSizeByRawIndex instead and never resets it. On a
+        // per-commit trigger that saturates after 65 535 commits into one
+        // partition -- minutes to hours of continuous late-data ingest -- after
+        // which every publish forever takes the .squash_ts file write.
+        //
+        // That much is checkable here. Who READS the counter is enterprise-side
+        // -- neither CheckpointManifest nor StoragePolicyJob exists in this
+        // checkout -- but the answer is settled and the two consumers differ,
+        // which is the part that matters:
+        //
+        //   - COLD STORAGE (StoragePolicyJob) consults the squash tracker only
+        //     while the partition is NATIVE. Once it is parquet the field is
+        //     ignored, so a stamp here cannot make it disagree with the
+        //     _pm-embedded tracker, and cannot trigger a reconversion. An
+        //     earlier note here treated that as an open hazard; it is not one.
+        //   - THE CHECKPOINT MANIFEST reads it for parquet partitions too. Its
+        //     record is name, version, timestamp, row_count, format,
+        //     squash_tracker, column_type_version, per-column version/col_top,
+        //     parquet_file_len -- and a token publish moves EXACTLY ONE of
+        //     them, squash_tracker. So this stamp is not decoration: it is the
+        //     only thing that tells incremental backup the directory gained a
+        //     <col>.pidx pair and a grown _pm.
+        //
+        // Which is also why nothing else moves the counter for a parquet
+        // partition -- squashSplitPartitions hard-refuses a parquet target. For
+        // such a partition the field has no squashing to record, so it is free
+        // to carry "the index metadata changed", and that is what it carries.
+        //
+        // The skip rests on neither. It rests on what is verifiable above: the
+        // trigger was per-commit, the counter is 16 bits, nothing on the
+        // in-place O3 path resets it, and every publish past saturation takes a
+        // file write forever. Keeping a 16-bit counter off a per-commit trigger
+        // needs no argument about who reads the fallback.
+        //
+        // Skipping the stamp when the transaction already moved the partition's
+        // own _txn record does exactly that, and costs nothing: on that path the
+        // consumer sees the row count, the data.parquet size or the name txn
+        // move anyway. Only the O3 reseal path is per-commit, and it is the only
+        // caller that passes true. What is left -- ADD INDEX, DROP INDEX's
+        // retirement, the native/parquet switch -- is DDL, so saturation now
+        // needs 65 535 index DDLs on one partition.
+        //
+        // The stamp is skipped when the transaction already moved the
+        // partition's own _txn record, because there the manifest sees the row
+        // count, the data.parquet size or the name txn move anyway. What is
+        // left -- ADD INDEX, DROP INDEX's retirement, the native/parquet switch
+        // -- is DDL, which is why saturation now needs 65 535 index DDLs on one
+        // partition rather than 65 535 commits.
+        //
+        // The embedded tracker in the _pm HEADER is NOT kept in step, and
+        // cannot be: every footer's CRC covers [HEADER_CRC_AREA_OFF, its own
+        // crc field), so rewriting the header would invalidate the checksum of
+        // every footer already in the file, including ones pinned readers
+        // resolve. That divergence is harmless precisely because the consumer
+        // that compares the two stops looking once the partition is parquet.
+        if (!partitionRecordAlreadyMoved) {
+            stampParquetIndexPublishOnPartition(partitionTimestamp, partitionNameTxn);
+        }
+        // Recorded so rollback() can re-apply both marks. The _pm append is
+        // durable before the _txn commit, and unsafeLoadAll throws the marks
+        // away; the list is what tells the rollback they were ever made. Reset
+        // on the first publish of each new committed txn, so it only ever
+        // describes the current uncommitted window.
+        if (parquetIndexPublishBaseTxn != txWriter.getTxn()) {
+            parquetIndexPublishedPartitions.clear();
+            parquetIndexPublishBaseTxn = txWriter.getTxn();
+        }
+        // Deduplicated, because the stamp the rollback re-applies is an
+        // increment of the same 16-bit counter the skip above exists to keep off
+        // its cliff. One partition can be published twice inside one uncommitted
+        // window -- resealParquetIndexesAfterSwitch followed by
+        // resealParquetCoveringForPartition on the same partition -- and a
+        // rollback would then advance the counter by two for one publish window.
+        //
+        // Keyed on the timestamp ALONE, and the name txn deliberately not
+        // recorded. rollback() re-resolves the partition from the reloaded _txn
+        // by timestamp (see the call site's own note: the rollback may have
+        // taken the name txn back, or the partition away), so it stamps once per
+        // DISTINCT TIMESTAMP in this list however the name txns differ. A
+        // (timestamp, name txn) key admits two entries that the consumer then
+        // collapses onto one partition, which is the double stamp this dedup
+        // exists to prevent. Linear scan: the list holds the partitions
+        // published since the last commit, which is one or a handful.
+        if (parquetIndexPublishedPartitions.indexOf(partitionTimestamp) < 0) {
+            parquetIndexPublishedPartitions.add(partitionTimestamp);
+        }
+        for (int i = 0, n = supersededIndexTxns.size(); i < n; i++) {
+            purgeSupersededParquetIndexArtifacts(
+                    supersededColumnIds.getQuick(i),
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    supersededIndexTxns.getQuick(i),
+                    supersededVisibleAtTxns.getQuick(i)
+            );
+        }
     }
 
     private void publishPendingPostingSealPurges(long currentTableTxn) {
@@ -12360,6 +13227,67 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", correlationId=").$(correlationId)
                     .I$();
         }
+    }
+
+    /**
+     * Hands one superseded {@code <col>.pidx.<indexTxn>} pair to the
+     * reader-gated posting seal purge, which unlinks it only once the table's
+     * scoreboard says no reader can still be inside its visibility window.
+     * <p>
+     * Supersession alone is not grounds to delete. A reader that mapped the
+     * partition's {@code _pm} before the replacing footer's header patch landed
+     * resolves from the tail its own snapshot named, so it still resolves the
+     * old {@code index_txn} and must still find the files it names. Every such
+     * reader is pinned at a table txn strictly below
+     * {@code visibleAtTxn} -- the index txn the replacing seal named its
+     * artifacts with, which is {@code txWriter.getTxn() + 1} because the
+     * publish runs inside the seal's own uncommitted window.
+     * <p>
+     * The window is therefore {@code [0, visibleAtTxn)}.
+     * {@code TxnScoreboardV2.isRangeAvailable(from, to)} blocks only on readers
+     * whose pinned txn lies in the half-open {@code [from, to)}, so a bound of
+     * {@code txWriter.getTxn()} would exclude readers pinned at exactly
+     * {@code getTxn()} -- that is, every reader that opened before the seal,
+     * which is precisely the population at risk. Narrowing this bound frees
+     * artifacts a live reader can still reach; widening it only delays the
+     * unlink. Never clamp it down to the committed txn: until that txn is
+     * durable, the superseded pair is still the committed reader and recovery
+     * view. This matches the native chain's bound
+     * ({@code PostingIndexWriter}'s {@code chain.getCurrentTxnAtSeal()}), and,
+     * because {@code visibleAtTxn > txWriter.getTxn()}, it also defers the task
+     * past the {@code _txn} commit instead of publishing it inside the writer's
+     * uncommitted window.
+     */
+    private void purgeSupersededParquetIndexArtifacts(
+            long columnId,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long indexTxn,
+            long visibleAtTxn
+    ) {
+        for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
+            if (metadata.getColumnType(columnIndex) <= 0
+                    || metadata.getColumnMetadata(columnIndex).getWriterIndex() != columnId) {
+                continue;
+            }
+            final LongList sealTxns = new LongList();
+            sealTxns.add(indexTxn);
+            publishAbandonedPostingSealPurges(
+                    metadata.getColumnName(columnIndex),
+                    getColumnNameTxn(partitionTimestamp, columnIndex),
+                    partitionTimestamp,
+                    partitionNameTxn,
+                    PostingSealPurgeTask.ARTIFACT_FORM_PARQUET,
+                    txWriter.getTxn(),
+                    visibleAtTxn,
+                    sealTxns
+            );
+            return;
+        }
+        LOG.error().$("could not resolve the column of a superseded parquet index token [table=").$(tableToken)
+                .$(", columnId=").$(columnId)
+                .$(", indexTxn=").$(indexTxn)
+                .I$();
     }
 
     private long readMinTimestamp() {
@@ -12671,77 +13599,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         );
     }
 
-    private void rebuildParquetRewriteIndexes(
-            long partitionTimestamp,
-            long partitionNameTxn,
-            long parquetFileSize,
-            int partitionDirLen,
-            IntList columnIndexes
-    ) {
-        long parquetAddr = 0;
-        long parquetSize = 0;
-        setPathForNativePartition(
-                path.trimTo(pathSize),
-                timestampType,
-                partitionBy,
-                partitionTimestamp,
-                partitionNameTxn
-        );
-        assert path.size() == partitionDirLen;
-        try {
-            if (parquetRewriteRowGroupBuffers == null) {
-                parquetRewriteRowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER, true);
-            }
-            parquetRewriteRowGroupBuffers.reopen();
-            openParquetMetadataOrThrow(path, partitionDirLen, parquetFileSize);
-            parquetSize = parquetMetaReader.getParquetFileSize();
-            path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
-            parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
-            for (int i = 0, n = columnIndexes.size(); i < n; i++) {
-                final int columnIndex = columnIndexes.getQuick(i);
-                final byte indexType = metadata.getColumnIndexType(columnIndex);
-                if (parquetRewriteIndexer == null || parquetRewriteIndexerType != indexType) {
-                    parquetRewriteIndexer = Misc.free(parquetRewriteIndexer);
-                    parquetRewriteIndexer = new SymbolColumnIndexer(configuration, indexType);
-                    parquetRewriteIndexerType = indexType;
-                }
-                try {
-                    indexParquetColumn(
-                            parquetRewriteIndexer,
-                            metadata.getColumnName(columnIndex),
-                            columnIndex,
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
-                            metadata.getIndexValueBlockCapacity(columnIndex),
-                            indexType,
-                            partitionDirLen,
-                            partitionTimestamp,
-                            parquetRewriteRowGroupBuffers,
-                            true,
-                            true,
-                            partitionNameTxn
-                    );
-                } finally {
-                    parquetRewriteIndexer.clear();
-                    path.trimTo(partitionDirLen);
-                }
-            }
-        } finally {
-            Misc.free(parquetRewriteRowGroupBuffers);
-            Misc.free(parquetDecoder);
-            if (parquetAddr != 0) {
-                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
-            }
-            final long parquetMetaAddr = parquetMetaReader.getAddr();
-            final long parquetMetaSize = parquetMetaReader.getFileSize();
-            parquetMetaReader.clear();
-            if (parquetMetaAddr != 0) {
-                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
-            }
-            path.trimTo(pathSize);
-        }
-    }
-
     private void rebuildColumnIndex(
             int columnIndex,
             CharSequence columnName,
@@ -12863,10 +13720,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             if (fileSize >= 2L * Integer.BYTES) {
                 mem = Vm.getCMRInstance(ff, path.$(), fileSize, MemoryTag.MMAP_TABLE_WRITER);
-                if (mem.getInt(0) == POSTING_SEAL_PURGE_PENDING_FORMAT) {
+                final int format = mem.getInt(0);
+                if (format == POSTING_SEAL_PURGE_PENDING_FORMAT || format == POSTING_SEAL_PURGE_PENDING_FORMAT_V1) {
+                    final boolean hasArtifactForm = format == POSTING_SEAL_PURGE_PENDING_FORMAT;
                     // count is the spill commit marker: 0 means the write was torn.
                     final int count = mem.getInt(Integer.BYTES);
-                    final long fixed = 6L * Long.BYTES + 2L * Integer.BYTES;
+                    final long fixed = 6L * Long.BYTES + (hasArtifactForm ? 3L : 2L) * Integer.BYTES;
                     long offset = 2L * Integer.BYTES;
                     for (int i = 0; i < count; i++) {
                         if (offset + fixed + Integer.BYTES > fileSize) {
@@ -12876,6 +13735,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         offset += Long.BYTES;
                         long sealTxn = mem.getLong(offset);
                         offset += Long.BYTES;
+                        int artifactForm = PostingSealPurgeTask.ARTIFACT_FORM_UNKNOWN;
+                        if (hasArtifactForm) {
+                            artifactForm = mem.getInt(offset);
+                            offset += Integer.BYTES;
+                        }
                         long partitionTimestamp = mem.getLong(offset);
                         offset += Long.BYTES;
                         long partitionNameTxn = mem.getLong(offset);
@@ -12900,6 +13764,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 indexColumnName,
                                 postingColumnNameTxn,
                                 sealTxn,
+                                artifactForm,
                                 partitionTimestamp,
                                 partitionNameTxn,
                                 taskPartitionBy,
@@ -12909,6 +13774,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         );
                         deferredPostingSealPurges.add(task);
                         recovered++;
+                    }
+                    if (!hasArtifactForm && recovered > 0) {
+                        LOG.critical().$("posting seal-purge pending file predates artifact-form tagging; entries are replayed but will be dropped without unlinking [table=").$(tableToken)
+                                .$(", format=").$(format)
+                                .$(", entries=").$(recovered)
+                                .I$();
                     }
                 } else {
                     LOG.advisory().$("posting seal-purge pending file has unknown format, discarding [table=").$(tableToken)
@@ -13386,6 +14257,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return timestamp;
     }
 
+    /**
+     * Finishes a covering-index token retirement that a crash interrupted.
+     * Reads the dropped column's writer index from the todo payload, re-runs
+     * the retirement and clears the record.
+     * <p>
+     * Failures are logged rather than thrown: the table is otherwise sound --
+     * the drop committed, the data is intact, and the only casualty is a stale
+     * token and its artifacts -- so refusing to open the writer would turn a
+     * leak into an outage.
+     */
+    private void recoverRetireCoveringToken(int writerIndex) {
+        try {
+            if (writerIndex < 0) {
+                LOG.error().$("covering token retirement todo is too short to recover [table=")
+                        .$(tableToken).I$();
+                clearTodoLog();
+                return;
+            }
+            LOG.info().$("finishing an interrupted covering index token retirement [table=")
+                    .$(tableToken).$(", writerIndex=").$(writerIndex).I$();
+            if (retireParquetIndexTokens(writerIndex)) {
+                commitTxWriter();
+            }
+            // Cleared only on success. A transient I/O fault must leave the
+            // record in place so the next writer open retries; clearing it in a
+            // finally would turn one bad open into a permanent leak of the
+            // token and its artifacts.
+            clearTodoLog();
+        } catch (Throwable th) {
+            LOG.error().$("could not finish a covering index token retirement, will retry on the next open [table=")
+                    .$(tableToken).$(", error=").$(th.getMessage()).I$();
+        }
+    }
+
     private void repairMetaRename(MemoryMARW todoMem) {
         try {
             if (todoMem.size() < TODO_META_INDEX_OFFSET + Long.BYTES) {
@@ -13536,12 +14441,202 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return overflowLo;
     }
 
+    /**
+     * Rebuilds every POSTING index of a partition that has just been switched
+     * to parquet, into the new txn-named directory.
+     * <p>
+     * {@link #linkPartitionIndexFiles} skipped those columns because under the
+     * parquet index format the native sidecars are not what an indexed parquet
+     * partition carries, so without this the new directory would hold no index
+     * at all. The rebuild reads the parquet the switch just linked in and seals
+     * a {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im}, then
+     * publishes the tokens into the directory's own {@code _pm}.
+     * <p>
+     * Runs before the {@code _txn} commit, so the partition is never committed
+     * as parquet without its index, and against the new directory's name txn
+     * rather than the one {@code txWriter} still holds.
+     */
+    private void resealParquetIndexesAfterSwitch(long partitionTimestamp, long partitionNameTxn, long parquetFileSize) {
+        if (!isParquetIndexFormat()) {
+            return;
+        }
+        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        final int plen = path.size();
+        beginParquetIndexTokenBatch(plen);
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        boolean opened = false;
+        try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_TABLE_WRITER)) {
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                final byte indexType = metadata.getColumnIndexType(columnIndex);
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex))
+                        || !IndexType.isIndexed(indexType)
+                        || !IndexType.isPosting(indexType)) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                if (columnTop == -1 || columnTop >= partitionSize) {
+                    continue;
+                }
+                if (!opened) {
+                    LOG.info().$("resealing posting indexes as parquet after switch [path=").$substr(pathRootSize, path).I$();
+                    openParquetMetadataOrThrow(path, plen, parquetFileSize);
+                    parquetSize = parquetMetaReader.getParquetFileSize();
+                    path.trimTo(plen).concat(PARQUET_PARTITION_NAME).$();
+                    parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+                    parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
+                    opened = true;
+                }
+                final SymbolColumnIndexer indexer = new SymbolColumnIndexer(configuration, indexType);
+                try {
+                    // The destination directory is fresh, so there is no
+                    // committed .pk a reader could hold: destructive recovery is
+                    // permitted, and the column tops are the source partition's
+                    // own and are not normalized by this switch.
+                    indexParquetColumn(
+                            indexer,
+                            metadata.getColumnName(columnIndex),
+                            columnIndex,
+                            getColumnNameTxn(partitionTimestamp, columnIndex),
+                            metadata.getIndexValueBlockCapacity(columnIndex),
+                            indexType,
+                            plen,
+                            partitionTimestamp,
+                            rowGroupBuffers,
+                            true,
+                            false,
+                            partitionNameTxn
+                    );
+                } finally {
+                    Misc.free(indexer);
+                    path.trimTo(plen);
+                }
+            }
+        } finally {
+            Misc.free(parquetDecoder);
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathSize);
+        }
+        publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize, false);
+    }
+
+    /**
+     * Retires the covering-index token of one column from every parquet
+     * partition that publishes one, and hands the {@code pidx} pair each token
+     * named to the reader-gated purge.
+     * <p>
+     * DROP INDEX removes the native {@code .pk} / {@code .pv} / {@code .pc*}
+     * through the purging operator, which knows nothing of the parquet form. Left
+     * alone the pair stays on disk with nothing naming it -- the orphan sweep does
+     * not match, its {@code _im} is committed -- and, worse, the token itself
+     * survives: {@link #publishParquetIndexTokens} copies forward every entry no
+     * pass resealed, so every later footer for that partition restates a token for
+     * an index that no longer exists.
+     * <p>
+     * Runs after the drop is committed -- see the ordering argument at the call
+     * site -- so the caller passes the column's writer index, which the meta
+     * swap does not change, rather than a column index into metadata that no
+     * longer describes an indexed column. {@code txWriter.getTxn() + 1} is the
+     * txn at which the retirement becomes visible and therefore the purge
+     * window's upper bound; the caller commits at exactly that txn when this
+     * returns true.
+     *
+     * @return true when at least one partition's {@code _pm} was rewritten, so
+     * the caller knows whether a commit is owed. False means nothing changed and
+     * a commit would only burn a txn.
+     */
+    private boolean retireParquetIndexTokens(int writerIndex) {
+        boolean retiredAny = false;
+        for (int partitionIndex = 0, n = txWriter.getPartitionCount(); partitionIndex < n; partitionIndex++) {
+            if (!txWriter.isPartitionParquet(partitionIndex)) {
+                continue;
+            }
+            final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+            final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
+            // Read before appending anything: most parquet partitions publish no
+            // token for this column, and a publish that changed nothing would
+            // still grow the _pm by a footer and force every reader to re-open
+            // the partition.
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            final int plen = path.size();
+            try {
+                readPublishedParquetIndexColumnIds(plen, parquetFileSize, parquetRetireScratchColumnIds);
+            } finally {
+                path.trimTo(pathSize);
+            }
+            if (!parquetRetireScratchColumnIds.contains(writerIndex)) {
+                continue;
+            }
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            try {
+                beginParquetIndexTokenBatch(path.size());
+            } finally {
+                path.trimTo(pathSize);
+            }
+            parquetIndexRetiredColumnIds.add(writerIndex);
+            publishParquetIndexTokens(partitionTimestamp, partitionNameTxn, parquetFileSize, false);
+            retiredAny = true;
+        }
+        return retiredAny;
+    }
+
     private void resizePartitionUpdateSink() {
         if (o3PartitionUpdateSink == null) {
             o3PartitionUpdateSink = new PagedDirectLongList(MemoryTag.NATIVE_O3);
         }
         o3PartitionUpdateSink.clear();
         o3PartitionUpdateSink.setBlockSize(PARTITION_SINK_SIZE_LONGS + metadata.getColumnCount());
+    }
+
+    /**
+     * Reads the source partition's {@code _pm} and collects the column ids its
+     * committed footer publishes a parquet-form covering index for.
+     * <p>
+     * This is the "what does this partition already carry" question, and only
+     * the published token answers it. The configured format answers a different
+     * one -- what the next seal would write -- and the two disagree in both
+     * directions: over a partition sealed as parquet the property can since have
+     * been flipped back to {@code native}, and over a natively sealed one it can
+     * since have been flipped to {@code parquet}.
+     */
+    private void readPublishedParquetIndexColumnIds(int partitionDirLen, long parquetFileSize, IntList out) {
+        out.clear();
+        long parquetMetaAddr = 0;
+        long parquetMetaSize = 0;
+        try {
+            openParquetMetadataOrThrow(path, partitionDirLen, parquetFileSize);
+            parquetMetaAddr = parquetMetaReader.getAddr();
+            parquetMetaSize = parquetMetaReader.getFileSize();
+            for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                out.add(parquetMetaReader.getCoveringIndexColumnId(i));
+            }
+        } finally {
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(partitionDirLen);
+        }
+    }
+
+    private boolean hasPostingIndexedSymbolColumn() {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (ColumnType.isSymbol(metadata.getColumnType(i))
+                    && IndexType.isPosting(metadata.getColumnIndexType(i))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void restoreIndexFilesAfterParquetToNative(
@@ -13552,6 +14647,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
         final int srcDirLen = path.size();
+        // Which columns this partition carries in the parquet form, read off its
+        // own _pm rather than inferred from the configured format. The partition
+        // is still parquet in the _txn here: setPartitionNative runs after this.
+        //
+        // Skipped outright when the table has no POSTING-indexed symbol column,
+        // because only such a column can carry a parquet-form index and the read
+        // throws on an unreadable _pm. Without the guard, CONVERT PARTITION TO
+        // NATIVE would start failing on tables that have nothing to do with this
+        // feature.
+        final IntList parquetIndexColumnIds = new IntList();
+        if (hasPostingIndexedSymbolColumn()) {
+            readPublishedParquetIndexColumnIds(
+                    srcDirLen,
+                    txWriter.getPartitionParquetFileSize(txWriter.getPartitionIndex(partitionTimestamp)),
+                    parquetIndexColumnIds
+            );
+        }
         try {
             final int columnCount = metadata.getColumnCount();
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
@@ -13567,8 +14679,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
+                // A POSTING index sealed as parquet leaves a .pk behind -- the
+                // seal still feeds the native index writer to count keys -- but
+                // no sealed .pv generation and no .pc* covers, so the link
+                // branch below would carry over a key file whose chain has no
+                // visible generation and a reader would answer "no keys, no
+                // rows". Force the rebuild fallback, which is complete
+                // (rebuildColumnIndex calls configureCoveringIfNeeded) and is
+                // the only path back for this form.
+                //
+                // Keyed on the published token, not on the configured format.
+                // Seal a partition as parquet, flip the property back to
+                // native, then CONVERT PARTITION TO NATIVE: a format-keyed test
+                // is false, the .pk exists, the link branch fires and the new
+                // native partition silently answers "no keys, no rows" -- on a
+                // path the reader's refusal cannot observe, because it returns
+                // early for a partition that is no longer parquet.
+                final boolean sealedAsParquetIndex = IndexType.isPosting(indexType)
+                        && parquetIndexColumnIds.contains(metadata.getColumnMetadata(columnIndex).getWriterIndex());
+
                 // Prefer linking the existing index files
-                if (ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                if (!sealedAsParquetIndex
+                        && ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
                     linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
                     continue;
                 }
@@ -13904,6 +15036,114 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTxn = txWriter.getPartitionNameTxn(i);
             partitionRemoveCandidates.add(timestamp, partitionTxn);
         }
+    }
+
+    /**
+     * Seals the just-built covering index of a parquet partition as a
+     * key-aligned {@code <col>.pidx.<indexTxn>.parquet} plus its {@code _im},
+     * in place of the native {@code .pv} / {@code .pc*} sidecars.
+     * <p>
+     * The covered column addresses are the same row-ordered temp mmaps the
+     * native seal reads, and are addressed by absolute row id: the indexed
+     * SYMBOL's columnTop on a parquet partition is 0 whenever the decode runs
+     * at all, and {@code zeroColumnTopsAfterParquetRewrite} has already
+     * collapsed every covered column's top to 0.
+     * <p>
+     * A slot {@link #prepareCoveredColumnMmaps} opened no mapping for arrives
+     * here with a 0 address. Its column top says why: at or above the partition
+     * size, or {@code getColumnTop}'s -1 sentinel for no record at all, the
+     * column has no rows in this partition and the seal emits nulls for it, as
+     * the native seal does; anywhere in between the column has rows the parquet
+     * does not carry, which {@code ParquetIndexSeal.validateCoveredColumns}
+     * refuses along with every other case it cannot gather.
+     */
+    private void sealParquetIndexColumn(
+            CharSequence columnName,
+            int columnIndex,
+            int plen,
+            long partitionTimestamp,
+            long columnTop,
+            long partitionSize,
+            boolean normalizeColumnTops,
+            int keySpaceSize,
+            long indexTxn,
+            IntList coveringColumnIndices,
+            ObjList<MemoryMARW> covMmaps,
+            ParquetMetaFileReader parquetMetadata,
+            DirectIntList sealRowKeys
+    ) {
+        final ObjList<CharSequence> coveredNames = new ObjList<>();
+        final IntList coveredTypes = new IntList();
+        final IntList coveredWriterIndices = new IntList();
+        final LongList coveredAddrs = new LongList();
+        final LongList coveredColumnTops = new LongList();
+        final int coverCount = coveringColumnIndices != null ? coveringColumnIndices.size() : 0;
+        for (int slot = 0; slot < coverCount; slot++) {
+            final int covCol = coveringColumnIndices.getQuick(slot);
+            if (covCol < 0 || metadata.getColumnType(covCol) <= ColumnType.UNDEFINED) {
+                // Dropped covered column: no name and no type to describe it
+                // with, so it is passed through as undefined and refused with
+                // the rest.
+                coveredNames.add(null);
+                coveredTypes.add(ColumnType.UNDEFINED);
+                coveredWriterIndices.add(-1);
+                coveredAddrs.add(0);
+                coveredColumnTops.add(0);
+                continue;
+            }
+            final MemoryMARW dataMem = covMmaps != null ? covMmaps.getQuick(2 * slot + 1) : null;
+            coveredNames.add(metadata.getColumnName(covCol));
+            coveredTypes.add(metadata.getColumnType(covCol));
+            coveredWriterIndices.add(metadata.getColumnMetadata(covCol).getWriterIndex());
+            coveredAddrs.add(dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
+            // The same top prepareCoveredColumnMmaps decided on, so the two
+            // cannot disagree about which slots are all null.
+            coveredColumnTops.add(normalizeColumnTops ? 0 : columnVersionWriter.getColumnTop(partitionTimestamp, covCol));
+        }
+
+        // data.parquet's cumulative row counts: one more entry than it has row
+        // groups, starting at 0. The _im records them so a reader can map an
+        // index row id back to the data row group holding it.
+        final LongList dataRowGroupBoundaries = new LongList();
+        long cumulative = 0;
+        dataRowGroupBoundaries.add(0);
+        for (int i = 0, n = parquetMetadata.getRowGroupCount(); i < n; i++) {
+            cumulative += parquetMetadata.getRowGroupSize(i);
+            dataRowGroupBoundaries.add(cumulative);
+        }
+
+        final long imFileSize = ParquetIndexSeal.seal(
+                configuration,
+                ff,
+                path.trimTo(plen),
+                columnName,
+                indexTxn,
+                keySpaceSize,
+                sealRowKeys,
+                columnTop,
+                partitionSize,
+                coveredNames,
+                coveredTypes,
+                coveredWriterIndices,
+                coveredAddrs,
+                coveredColumnTops,
+                dataRowGroupBoundaries
+        );
+        path.trimTo(plen);
+        if (imFileSize > 0) {
+            // Stage the token rather than publishing it here: the _pm footer
+            // carries the complete set, so it is written once the partition's
+            // whole column loop has run.
+            parquetIndexTokens.add(metadata.getColumnMetadata(columnIndex).getWriterIndex());
+            parquetIndexTokens.add(indexTxn);
+            parquetIndexTokens.add(imFileSize);
+        }
+        LOG.info().$("sealed parquet covering index [table=").$(tableToken)
+                .$(", column=").$(columnName)
+                .$(", partitionTimestamp=").$ts(partitionTimestamp)
+                .$(", indexTxn=").$(indexTxn)
+                .$(", keySpaceSize=").$(keySpaceSize)
+                .I$();
     }
 
     /**
@@ -14327,6 +15567,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 mem.putLong(task.getPostingColumnNameTxn());
                 mem.putLong(task.getSealTxn());
+                mem.putInt(task.getArtifactForm());
                 mem.putLong(task.getPartitionTimestamp());
                 mem.putLong(task.getPartitionNameTxn());
                 mem.putInt(task.getPartitionBy());
@@ -14729,6 +15970,350 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return partitionIndex;
     }
 
+    /**
+     * True when {@code indexTxn} is above every index txn the tokens in
+     * {@link #parquetSweepScratchTokens} publish for {@code columnId}, and --
+     * when they publish none at all -- above the writer's committed txn.
+     * <p>
+     * The list may name one column several times, once per footer the read
+     * covered, so every entry is tested rather than the first match: the bound
+     * is the largest txn any of them published. The committed-txn arm is the
+     * only rule left for a column no footer names, and one above the committed
+     * txn was named by a seal whose batch never committed. That is the rule
+     * that catches a first seal.
+     */
+    private boolean isAboveEveryPublishedIndexTxn(long columnId, long indexTxn) {
+        boolean published = false;
+        for (int i = 0, n = parquetSweepScratchTokens.size(); i < n; i += 2) {
+            if (parquetSweepScratchTokens.getQuick(i) == columnId) {
+                published = true;
+                if (indexTxn <= parquetSweepScratchTokens.getQuick(i + 1)) {
+                    return false;
+                }
+            }
+        }
+        return published || indexTxn > txWriter.getTxn();
+    }
+
+    /**
+     * True when {@code stem} ({@code <col>.pidx.<indexTxn>}) names an index txn
+     * no footer ever published, on either of two grounds: it is above every
+     * index txn the partition's {@code _pm} publishes for that column, or --
+     * for a column no footer names at all -- it is above the writer's committed
+     * txn. Index txns are table txns, so both comparisons run in the same
+     * direction: above means never published, below means superseded and
+     * possibly still reachable by a pinned reader, which is the reader-gated
+     * purge's business and not this sweep's.
+     * <p>
+     * The footers are consulted FIRST and the writer's txn is only the fallback
+     * for a column no footer publishes a token for at all. The order is
+     * load-bearing, not stylistic. A seal names its artifacts
+     * {@code txWriter.getTxn() + 1} and {@link #publishParquetIndexTokens} makes
+     * the {@code _pm} header patch durable BEFORE the {@code _txn} commit, so
+     * between the two -- and permanently, after a crash or a
+     * {@link #rollback()} in that window -- a published footer names an index
+     * txn one ABOVE the committed txn. Testing the writer's txn first would
+     * unlink, on the next seal batch, a pair the {@code _pm} still names and a
+     * reader at the committed snapshot still resolves, while
+     * {@link #publishParquetIndexTokens} copies that token forward unchanged.
+     * The footers are the authority on what was published; the writer's txn only
+     * bounds what could ever have been.
+     * <p>
+     * "The footers", plural, and that is the point: no single footer is the
+     * authority. The physically-last one can be an in-flight or orphaned append
+     * that a reader never selects, and the one a reader selects depends on the
+     * committed {@code data.parquet} size in ITS snapshot, which on the O3
+     * reseal path is not the size {@code txWriter} holds -- the update sink has
+     * already moved that to the in-flight value. So the fallback is licensed
+     * only after {@link #readPublishedParquetIndexTokens} has enumerated the
+     * whole {@code prev} chain, which is a superset of every footer any reader
+     * can resolve. The cheap single-footer read comes first and can only
+     * PREVENT a deletion; the chain walk is what permits one, and it is paid
+     * for only when a candidate survives the cheap read.
+     * <p>
+     * Answers false whenever anything cannot be established: an unparseable
+     * name, a column that is not in metadata, or a partition whose published
+     * tokens could not be read. It leaves one case uncovered: a first seal that
+     * strands a pair and is only swept after later commits have carried the
+     * committed txn past it. That leaks a pair rather than losing one, which is
+     * the recoverable direction.
+     * <p>
+     * <b>The scope of what this sweep reclaims, stated plainly, because an
+     * earlier version of this note understated it by a class.</b> This sweep
+     * reclaims exactly the pairs NO footer on the chain ever named. A pair that
+     * ANY footer names is out of its reach for the life of the partition
+     * directory, because the chain is never truncated -- and that is not a
+     * shortfall, it is the licence: a footer that names the pair is a footer
+     * some pinned reader can resolve, so unlinking it is the silent deletion
+     * this predicate exists to prevent.
+     * <p>
+     * A superseded pair therefore has exactly one owner, the reader-gated purge,
+     * and exactly one producer feeds it: the merge loop in
+     * {@link #publishParquetIndexTokens}, via
+     * {@link #purgeSupersededParquetIndexArtifacts}. That merge reads the parse
+     * anchor's covering section. On the O3 in-place reseal path the parse anchor
+     * is the update's own footer, whose covering section
+     * {@code PartitionUpdater.updateFileMetadata(0, 0, 0)} emptied, so the merge
+     * sees nothing to supersede and queues nothing -- and every pair the
+     * partition carried before that commit leaks. Measured on a covering-indexed
+     * parquet partition: two files per O3 commit, accumulating linearly (2, 12,
+     * 22, ... at 5-commit intervals), with the purge job drained between
+     * commits. It is NOT specific to a pair a rolled-back publish stranded;
+     * that is one instance of it. Bound on the damage, also measured: the O3
+     * REWRITE lands the partition in a new directory (name txn 2 -> 68 at the
+     * 61st commit on that fixture) and the whole leaked set goes with the old
+     * one, so the accumulation is bounded by the rewrite period -- dead bytes in
+     * {@code data.parquet} against the configured ratio and byte cap -- not by
+     * the partition's lifetime. That bound holds only on the default trigger:
+     * both knobs are settable
+     * ({@code cairo.partition.encoder.parquet.o3.rewrite.unused.ratio}, default
+     * 0.5, and {@code cairo.partition.encoder.parquet.o3.rewrite.unused.max.bytes},
+     * default 1 GiB -- {@code PropServerConfiguration.java:2355-2356}), and
+     * under a configuration that disables or greatly raises either one the
+     * rewrite trigger never fires, so the leak reverts to bounded only by the
+     * partition directory's lifetime. Not hypothetical:
+     * {@code ParquetIndexSealTest#testAChainWalkVerifiesOneChecksumHoweverLongTheChainIs}
+     * sets the ratio to {@code 1000000} and the byte cap to
+     * {@code 1000000000000L} to switch the rewrite off for exactly this reason,
+     * then drives the chain past 150 footers on a single partition. Fixing it
+     * belongs at the O3 update / publish boundary and is tracked as the O3
+     * in-place update-mode leak; nothing this sweep can do reaches it.
+     * <p>
+     * DROP INDEX retires a column's token while the pair it named waits for its
+     * pinned readers. The retirement's own footer publishes nothing for the
+     * column, but the footers behind it still name the pair, so the chain walk
+     * finds it and the fallback is never reached -- and the retirement hands
+     * the pair to the reader-gated purge regardless.
+     *
+     * @param plen length {@code path} is set to the partition directory with,
+     *             needed to re-read the {@code _pm} if the chain walk is reached
+     */
+    private boolean isUnpublishedParquetIndexPair(CharSequence stem, int plen) {
+        final int infix = Chars.indexOf(stem, 0, stem.length(), ParquetIndexSeal.PIDX_INFIX);
+        if (infix < 1) {
+            return false;
+        }
+        final long indexTxn;
+        try {
+            indexTxn = Numbers.parseLong(stem, infix + ParquetIndexSeal.PIDX_INFIX.length(), stem.length());
+        } catch (NumericException e) {
+            return false;
+        }
+        if (!parquetSweepTokensResolved) {
+            // The _pm could not be read, so nothing about what it publishes can
+            // be established. An empty token list means "publishes nothing" only
+            // when the read succeeded; conflating the two here is what would
+            // turn an unreadable _pm into a deletion.
+            return false;
+        }
+        final int columnIndex = metadata.getColumnIndexQuiet(stem, 0, infix);
+        if (columnIndex < 0 || metadata.getColumnType(columnIndex) <= 0) {
+            return false;
+        }
+        final long columnId = metadata.getColumnMetadata(columnIndex).getWriterIndex();
+        if (!isAboveEveryPublishedIndexTxn(columnId, indexTxn)) {
+            return false;
+        }
+        if (parquetSweepTokensFullChain) {
+            return true;
+        }
+        // Only the last footer has been read, and it is not in general the one a
+        // reader resolves. It can be an append this commit has not committed yet,
+        // or an orphan a rolled-back in-place update left at the tail -- both of
+        // which drop the covering section outright (PartitionUpdater's
+        // updateFileMetadata(0, 0, 0) contract) -- or an orphan a rolled-back
+        // TOKEN PUBLISH left, which CARRIES a covering section. The three do not
+        // fail the same way, so do not read this as an exhaustive two-case
+        // split: the first two under-report and the third over-reports. Only
+        // under-reporting is what this escalation exists for -- deleting on it
+        // would unlink a pair the footer a reader DOES resolve still names --
+        // but neither is safe to license an unlink on. Re-read across the whole
+        // chain before licensing one.
+        // Passing the candidate lets the walk stop at the first footer that
+        // answers the question, instead of always enumerating to the end of the
+        // chain. That matters because the state that arms this escalation is
+        // not transient: a pair the O3 in-place update's (0,0,0) dropped from
+        // the covering section, and which no later publish supersedes, survives
+        // every sweep, so the escalation fires on every subsequent seal batch on
+        // the partition while the chain grows two footers per commit.
+        readPublishedParquetIndexTokens(plen, parquetSweepScratchTokens, true, columnId, indexTxn);
+        return parquetSweepTokensResolved && isAboveEveryPublishedIndexTxn(columnId, indexTxn);
+    }
+
+    /**
+     * Walks the {@code _pm} chain and warns if it is longer than
+     * {@link #MAX_UNWARNED_PM_FOOTERS}. Only call this when the file is big
+     * enough to hold that many footers -- the walk is O(the chain), and the
+     * chain grows by one footer per publish.
+     */
+    private void warnIfPmChainIsUnbounded(int plen, long partitionTimestamp) {
+        final int footerCount = countPmChainFooters(plen);
+        if (footerCount > MAX_UNWARNED_PM_FOOTERS) {
+            LOG.advisory().$("parquet metadata chain is long and nothing is resetting it [table=")
+                    .$(tableToken).$(", partition=").$ts(partitionTimestamp)
+                    .$(", footers=").$(footerCount)
+                    .$("]; the O3 rewrite trigger normally resets it -- check "
+                            + "cairo.partition.encoder.parquet.o3.rewrite.unused.ratio and .max.bytes").I$();
+            pmChainWarnCount++;
+        }
+    }
+
+    /**
+     * Counts every footer on the partition's {@code _pm} chain, walking fresh
+     * from the physical tail with the same {@code resolveLastFooter} /
+     * {@code resolvePrevFooter} pair {@link #readPublishedParquetIndexTokens}'s
+     * {@code walkChain} union uses. Reopens the file rather than reusing
+     * {@link #parquetMetaReader}'s existing mapping, which -- when called from
+     * {@link #publishParquetIndexTokens} -- predates the footer that call just
+     * appended.
+     * <p>
+     * Returns 0 if the {@code _pm} cannot be read. Called once per publish
+     * purely to size the chain-length advisory; the count itself is not used
+     * for anything that must not under- or over-report.
+     */
+    private int countPmChainFooters(int plen) {
+        pmChainWalkCount++;
+        path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
+        long addr = 0;
+        long fileSize = 0;
+        try {
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (addr == 0 || !parquetMetaReader.resolveLastFooter()) {
+                return 0;
+            }
+            fileSize = parquetMetaReader.getFileSize();
+            int footers = 0;
+            do {
+                footers++;
+            } while (parquetMetaReader.resolvePrevFooter());
+            return footers;
+        } finally {
+            // capture BEFORE clear(), which zeroes it -- the early-return path
+            // above (resolveLastFooter() failed) leaves the try body's own
+            // fileSize assignment unreached.
+            if (addr != 0) {
+                fileSize = fileSize == 0 ? parquetMetaReader.getFileSize() : fileSize;
+            }
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Reads the partition's published {@code _pm} covering-index tokens into
+     * {@code out} as column id / index txn pairs. Leaves {@code out} empty when
+     * there is no {@code _pm}, it cannot be read, or it publishes nothing.
+     * <p>
+     * With {@code walkChain} false only the physically-last footer is read.
+     * That footer is NOT in general the one a reader resolves: a reader matches
+     * on the committed {@code data.parquet} size in its own snapshot
+     * ({@code TableReader.readTxnSlow} -> {@code resolveFooter}), and the last
+     * footer can be an append whose {@code _txn} commit has not happened yet --
+     * the O3 in-place update patches the {@code _pm} header on the worker,
+     * before the commit -- or the orphan a rolled-back one left behind. Those
+     * two drop the covering section outright, so reading only the last footer
+     * under-reports what is published. A third case exists and is not a
+     * variation on those two: the orphan a rolled-back TOKEN PUBLISH leaves
+     * carries a covering section, so the cheap read over-reports instead.
+     * Neither direction licenses an unlink, which is the only thing this method
+     * is asked about, and under-reporting can only make the sweep hold on to a
+     * pair, which is why the cheap read is allowed to be the common path.
+     * <p>
+     * With {@code walkChain} true the whole {@code prev} chain is enumerated and
+     * {@code out} carries the union, a column appearing once per footer that
+     * names it. That union is a superset of every token any reader can resolve:
+     * {@code resolveFooter} selects by walking this same chain, and a reader
+     * holding an older, smaller mapping walks a suffix of it. Nothing weaker
+     * than the union establishes "no footer, live or superseded, names this
+     * pair", which is what licenses an unlink.
+     * <p>
+     * Sets {@link #parquetSweepTokensResolved} to record which of "publishes
+     * nothing" and "could not be read" an empty {@code out} means, and
+     * {@link #parquetSweepTokensFullChain} to record whether the union was
+     * taken. The sweep's fallback rule is licensed by "no footer publishes a
+     * token for this column" and NOT by "the footer could not be read", so the
+     * two must not be conflated.
+     */
+    private void readPublishedParquetIndexTokens(int plen, LongList out, boolean walkChain) {
+        readPublishedParquetIndexTokens(plen, out, walkChain, -1, 0);
+    }
+
+    /**
+     * As {@link #readPublishedParquetIndexTokens(int, LongList, boolean)}, plus
+     * the one question an escalating caller asks of the union: does any footer
+     * name {@code stopColumnId} with an index txn at or above
+     * {@code stopIndexTxn}? Once the answer is yes it cannot become no -- the
+     * remaining footers can only add entries -- so the walk stops there.
+     * <p>
+     * That is a cost bound, not a semantic change: the caller's verdict is
+     * identical either way. What it is NOT allowed to do is leave
+     * {@link #parquetSweepTokensFullChain} set, because a walk stopped early
+     * carries a PREFIX of the union, and that field is the memo on the strength
+     * of which a later candidate for a DIFFERENT column skips its own walk.
+     * <p>
+     * Pass {@code stopColumnId < 0} to enumerate unconditionally. Column ids are
+     * writer indices, so no real column matches.
+     */
+    private void readPublishedParquetIndexTokens(int plen, LongList out, boolean walkChain, long stopColumnId, long stopIndexTxn) {
+        out.clear();
+        parquetSweepTokensResolved = false;
+        parquetSweepTokensFullChain = false;
+        long addr = 0;
+        long fileSize = 0;
+        try {
+            path.trimTo(plen).concat(PARQUET_METADATA_FILE_NAME).$();
+            addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+            if (addr == 0 || !parquetMetaReader.resolveLastFooter()) {
+                return;
+            }
+            fileSize = parquetMetaReader.getFileSize();
+            boolean decided = false;
+            do {
+                for (int i = 0, n = parquetMetaReader.getCoveringIndexCount(); i < n; i++) {
+                    final long tokenColumnId = parquetMetaReader.getCoveringIndexColumnId(i);
+                    final long tokenIndexTxn = parquetMetaReader.getCoveringIndexTxn(i);
+                    out.add(tokenColumnId);
+                    out.add(tokenIndexTxn);
+                    decided |= tokenColumnId == stopColumnId && stopIndexTxn <= tokenIndexTxn;
+                }
+            } while (!decided && walkChain && parquetMetaReader.resolvePrevFooter());
+            parquetSweepTokensResolved = true;
+            parquetSweepTokensFullChain = walkChain && !decided;
+        } catch (CairoException e) {
+            out.clear();
+            parquetSweepTokensResolved = false;
+            parquetSweepTokensFullChain = false;
+            LOG.error().$("could not read the published covering index tokens, sweeping conservatively [path=")
+                    .$(path).$(", msg=").$safe(e.getFlyweightMessage()).I$();
+        } finally {
+            if (addr != 0) {
+                fileSize = fileSize == 0 ? parquetMetaReader.getFileSize() : fileSize;
+            }
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, fileSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            path.trimTo(plen);
+        }
+    }
+
+    /**
+     * Stamps the per-partition change token a covering-index token publish is
+     * otherwise invisible to: the publish grows the partition's {@code _pm} and
+     * adds a {@code pidx} pair without moving anything in the partition's own
+     * {@code _txn} record. Falls back to {@code .squash_ts} when the 16-bit
+     * counter has no room left.
+     */
+    private void stampParquetIndexPublishOnPartition(long partitionTimestamp, long partitionNameTxn) {
+        final int publishedPartitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (publishedPartitionIndex > -1 && !txWriter.incrementPartitionSquashCounter(publishedPartitionIndex)) {
+            squashSplitPartitions_updateSquashTimestampFile(partitionTimestamp, partitionNameTxn);
+        }
+    }
+
     private void squashSplitPartitions_updateSquashTimestampFile(long targetPartition, long targetPartitionNameTxn) {
         try {
             setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
@@ -14748,6 +16333,105 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             other.trimTo(pathSize);
         }
+    }
+
+    /**
+     * Removes every {@code <col>.pidx.<txn>.parquet} in the partition directory
+     * that has no committed {@code _im} beside it.
+     * <p>
+     * The seal must write the parquet before the {@code _im} -- the {@code _im}
+     * is generated from the finished writer's own thrift metadata -- so a seal
+     * that fails between the two leaves the parquet behind. Such a file can
+     * never be referenced: the {@code _pm} token is published only after the
+     * {@code _im} commits, so no footer, live or superseded, names it and no
+     * reader can reach it. That makes it removable on sight, without the
+     * scoreboard gate a superseded artifact needs.
+     * <p>
+     * An {@code _im} whose {@code IM_FILE_SIZE} is still zero counts as absent:
+     * that is exactly the uncommitted state a crash between the body write and
+     * the header patch leaves, and no token was published for it either.
+     * <p>
+     * The same argument reaches one file further, and this is the state a crash
+     * between the {@code _im} commit and the {@code _pm} header patch leaves: a
+     * pair whose {@code _im} <i>is</i> committed but whose index txn no footer
+     * ever named. Every seal in a batch commits its {@code _im} before the
+     * single publish, so a crash or a throw in
+     * {@link #publishParquetIndexTokens} strands the whole batch, and nothing
+     * else would ever reclaim it -- no later publish supersedes it, because the
+     * committed footer still names the pre-batch {@code index_txn}.
+     * <p>
+     * Such a pair is told apart from a superseded one by the direction: index
+     * txns are table txns, so the largest txn the partition's footers name for
+     * the column is the largest one ever published. An index txn <b>above</b>
+     * every one of them was never published and is unreferenced on sight; one
+     * <b>at or below</b> is superseded and may still be reachable by a pinned
+     * reader, so it belongs to the reader-gated purge and this sweep must not
+     * touch it. "Every one of them" and not "the last one": which footer a
+     * reader selects depends on the committed {@code data.parquet} size in its
+     * own snapshot, so the bound is taken over the whole chain -- see
+     * {@link #isUnpublishedParquetIndexPair}. When the tokens cannot be read at
+     * all, or the file's column cannot be resolved, only the
+     * uncommitted-{@code _im} rule applies -- leaving a file behind is the
+     * recoverable direction.
+     */
+    private void sweepOrphanParquetIndexArtifacts(int plen) {
+        orphanParquetIndexNames.clear();
+        path.trimTo(plen);
+        final StringSink fileName = Misc.getThreadLocalSink();
+        ff.iterateDir(path.$(), (pUtf8NameZ, type) -> {
+            if (type != Files.DT_FILE && type != Files.DT_LNK && type != Files.DT_UNKNOWN) {
+                return;
+            }
+            fileName.clear();
+            Utf8s.utf8ToUtf16Z(pUtf8NameZ, fileName);
+            if (Chars.endsWith(fileName, ParquetIndexSeal.PIDX_SUFFIX) && Chars.contains(fileName, ParquetIndexSeal.PIDX_INFIX)) {
+                orphanParquetIndexNames.add(Chars.toString(fileName));
+            }
+        });
+        path.trimTo(plen);
+        if (orphanParquetIndexNames.size() == 0) {
+            return;
+        }
+        // The cheap single-footer read. It can only prevent deletions; a
+        // candidate that survives it makes isUnpublishedParquetIndexPair pay for
+        // the chain walk that is allowed to license one.
+        readPublishedParquetIndexTokens(plen, parquetSweepScratchTokens, false);
+        for (int i = 0, n = orphanParquetIndexNames.size(); i < n; i++) {
+            final CharSequence parquetName = orphanParquetIndexNames.getQuick(i);
+            final CharSequence stem = parquetName.subSequence(0, parquetName.length() - ParquetIndexSeal.PIDX_SUFFIX.length());
+            path.trimTo(plen).concat(stem).put(ParquetIndexSeal.IM_SUFFIX).$();
+            final long imFd = ff.openRO(path.$());
+            long imFileSize = -1;
+            if (imFd > -1) {
+                try {
+                    imFileSize = ff.readNonNegativeLong(imFd, 0);
+                } finally {
+                    ff.close(imFd);
+                }
+            }
+            path.trimTo(plen);
+            final boolean unpublished = imFileSize > 0 && isUnpublishedParquetIndexPair(stem, plen);
+            if (imFileSize > 0 && !unpublished) {
+                continue;
+            }
+            path.trimTo(plen).concat(parquetName).$();
+            if (ff.removeQuiet(path.$())) {
+                LOG.info().$(unpublished
+                                ? "removed a committed parquet index pair no footer ever published [table="
+                                : "removed orphan parquet index with no committed _im [table=").$(tableToken)
+                        .$(", file=").$(parquetName)
+                        .I$();
+            }
+            // And the uncommitted _im beside it, if one was written. It is
+            // unreferenced for the same reason -- no footer names it -- and
+            // leaving it would keep a file on disk permanently that nothing can
+            // ever read or reclaim, since the predicate above is keyed on the
+            // parquet that is now gone.
+            path.trimTo(plen).concat(stem).put(ParquetIndexSeal.IM_SUFFIX).$();
+            ff.removeQuiet(path.$());
+            path.trimTo(plen);
+        }
+        orphanParquetIndexNames.clear();
     }
 
     private void swapO3ColumnsExcept(int timestampIndex) {
@@ -15274,6 +16958,38 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         clearTodoAndCommitMeta();
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.hydrateTable(metadata);
+        }
+    }
+
+    /**
+     * Records that a covering-index token retirement is outstanding for
+     * {@code writerIndex}, before the retirement is attempted.
+     * <p>
+     * The retirement runs AFTER the drop commits -- deliberately, because the
+     * other order leaves a crash window in which the column is still indexed
+     * with its token already gone, which reads as a silent empty result. The
+     * cost of that order is a window where the drop is durable and the token is
+     * not yet retired, and nothing else would ever revisit it: no seal runs for
+     * a column that is no longer indexed, so the publish that owns the merge
+     * never runs for it again. This makes the intent durable so the next writer
+     * open finishes the job.
+     */
+    private void writeRetireCoveringTokenTodo(int writerIndex) {
+        try {
+            todoMem.putLong(0, txWriter.txn);
+            Unsafe.storeFence();
+            todoMem.putLong(8, configuration.getDatabaseIdLo());
+            todoMem.putLong(16, configuration.getDatabaseIdHi());
+            Unsafe.storeFence();
+            todoMem.putLong(32, 1);
+            todoMem.putLong(40, TODO_RETIRE_COVERING_TOKEN);
+            todoMem.putLong(TODO_META_INDEX_OFFSET, writerIndex);
+            Unsafe.storeFence();
+            todoMem.putLong(24, txWriter.txn);
+            todoMem.jumpTo(56);
+            todoMem.sync(false);
+        } catch (CairoException e) {
+            runFragile(RECOVER_FROM_TODO_WRITE_FAILURE, e);
         }
     }
 

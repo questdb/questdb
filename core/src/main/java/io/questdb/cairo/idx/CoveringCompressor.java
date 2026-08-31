@@ -759,6 +759,101 @@ public class CoveringCompressor {
      * The workspace must have room for count longs (read from the header at srcAddr).
      * Handles plain FoR and linear-prediction FoR.
      */
+    /**
+     * Decodes {@code count} longs starting at {@code from} into {@code destAddr},
+     * parsing the block header ONCE.
+     * <p>
+     * {@link #readLongAt} re-reads the count, bit width, frame-of-reference
+     * base, first value and stride on every call, which is fine for a point read
+     * and ruinous for a run: a 25,000-posting key drained through it re-parsed
+     * that header 25,000 times and measured at half the speed of the batched
+     * AVX2 widen it replaced. This is the batched form -- one header parse, then
+     * {@link BitpackUtils#unpackValuesFrom} over the residuals.
+     * <p>
+     * Reads in place: no workspace, because the residuals are widened straight
+     * into the destination and the linear-prediction term is added over it.
+     */
+    /**
+     * True when {@code srcAddr}'s block encodes an exact arithmetic progression:
+     * linear prediction with every residual zero.
+     * <p>
+     * Such a block needs no decoding at all -- value {@code i} is
+     * {@link #arithmeticStart} + {@code i} * {@link #arithmeticStride} -- so a
+     * cursor can generate its values with a multiply-add and touch no memory.
+     * That is what the native chain's constant-delta path does, and why it reads
+     * ZERO bytes per row on evenly spaced postings.
+     * <p>
+     * It is the common case for row ids: residuals are zero whenever a key's
+     * postings are evenly spaced, which is what per-key linear prediction was
+     * chosen to exploit.
+     */
+    public static boolean isArithmeticBlock(long srcAddr) {
+        final int rawBw = Unsafe.getByte(srcAddr + 4) & 0xFF;
+        return (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG && (rawBw & BW_MASK_6BIT) == 0;
+    }
+
+    /** First value of an {@link #isArithmeticBlock} block. */
+    public static long arithmeticStart(long srcAddr) {
+        // forBase at +5, firstValue at +13 -- the residual every value carries.
+        return Unsafe.getLong(srcAddr + 13) + Unsafe.getLong(srcAddr + 5);
+    }
+
+    /** Common difference of an {@link #isArithmeticBlock} block. */
+    public static long arithmeticStride(long srcAddr) {
+        return Unsafe.getLong(srcAddr + 21);
+    }
+
+    public static void readLongsInto(long srcAddr, int from, int count, long destAddr) {
+        long pos = srcAddr;
+        final int total = Unsafe.getInt(pos);
+        pos += 4;
+        final int rawBw = Unsafe.getByte(pos++) & 0xFF;
+        final boolean isLinearPred = (rawBw & LINEAR_PRED_FLAG) == LINEAR_PRED_FLAG;
+        final int bw = isLinearPred ? rawBw & BW_MASK_6BIT : rawBw;
+        final long forBase = Unsafe.getLong(pos);
+        pos += 8;
+        if (from < 0 || count < 0 || from + count > total) {
+            throw new IndexOutOfBoundsException("readLongsInto [from=" + from + ", count=" + count + ", total=" + total + ']');
+        }
+
+        long firstValue = 0;
+        long stride = 0;
+        if (isLinearPred) {
+            firstValue = Unsafe.getLong(pos);
+            pos += 8;
+            stride = Unsafe.getLong(pos);
+            pos += 8;
+        }
+        if (bw == 0) {
+            // Every residual is the same, so the values are an arithmetic
+            // progression and one pass computes them outright. Filling with
+            // forBase and then re-reading each element to add the prediction is
+            // two passes over the buffer for a sequence that needs none -- and
+            // this is the COMMON case for row ids, whose residuals are zero
+            // whenever a key's postings are evenly spaced. A forked profile,
+            // scoped to the measurement iterations, put that second pass at 28%
+            // of a packed scan.
+            final long start = firstValue + forBase;
+            if (isLinearPred) {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.putLong(destAddr + (long) i * Long.BYTES, start + (long) (from + i) * stride);
+                }
+            } else {
+                for (int i = 0; i < count; i++) {
+                    Unsafe.putLong(destAddr + (long) i * Long.BYTES, forBase);
+                }
+            }
+            return;
+        }
+        BitpackUtils.unpackValuesFrom(pos, from, count, bw, forBase, destAddr);
+        if (isLinearPred) {
+            for (int i = 0; i < count; i++) {
+                final long at = destAddr + (long) i * Long.BYTES;
+                Unsafe.putLong(at, Unsafe.getLong(at) + firstValue + (long) (from + i) * stride);
+            }
+        }
+    }
+
     public static void decompressLongsToAddr(long srcAddr, long outputAddr, long workspaceAddr) {
         long pos = srcAddr;
         int count = Unsafe.getInt(pos);
@@ -991,6 +1086,64 @@ public class CoveringCompressor {
      * Compute the maximum compressed size for a stride of values.
      * Used to pre-allocate the output buffer.
      */
+    /**
+     * Compresses one block of a covered column, dispatching on its type: ALP for
+     * DOUBLE and FLOAT, linear-prediction FoR for the designated timestamp,
+     * frame-of-reference for the integer widths, raw for the rest. Falls back to
+     * a RAW_BLOCK_FLAG block whenever the codec would not be smaller.
+     * <p>
+     * Shared by the native chain and the parquet form. They must agree byte for
+     * byte, because the same {@code readXxxAt} decoders serve both, and a
+     * covering index that encoded differently per form would be two formats
+     * wearing one name.
+     */
+    public static int compressCoveredBlock(long rawBuf, int valueCount, int shift, int colType,
+                                            boolean isDesignatedTs,
+                                            long destBuf, long longWorkspaceAddr, long exceptionWorkspaceAddr) {
+        if (isDesignatedTs) {
+            // Designated timestamp: non-null, monotonically increasing per key.
+            // Linear-prediction FoR gives O(1) random access with same compression as delta.
+            return compressLongsLinearPred(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+        }
+        return switch (ColumnType.tagOf(colType)) {
+            case ColumnType.DOUBLE -> {
+                int alpSize = compressDoubles(rawBuf, valueCount, 3, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                int rawSize = 4 + valueCount * Double.BYTES;
+                if (alpSize <= rawSize) {
+                    yield alpSize;
+                }
+                Unsafe.putInt(destBuf, valueCount | RAW_BLOCK_FLAG);
+                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount * Double.BYTES);
+                yield rawSize;
+            }
+            case ColumnType.FLOAT -> {
+                int alpSize = compressFloats(rawBuf, valueCount, destBuf, longWorkspaceAddr, exceptionWorkspaceAddr);
+                int rawSize = 4 + valueCount * Float.BYTES;
+                if (alpSize <= rawSize) {
+                    yield alpSize;
+                }
+                Unsafe.putInt(destBuf, valueCount | RAW_BLOCK_FLAG);
+                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount * Float.BYTES);
+                yield rawSize;
+            }
+            case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
+                    compressLongs(rawBuf, valueCount, destBuf);
+            case ColumnType.GEOINT, ColumnType.INT, ColumnType.IPv4, ColumnType.SYMBOL,
+                 ColumnType.DECIMAL32 ->
+                    compressInts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            case ColumnType.CHAR, ColumnType.SHORT, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
+                    compressShorts(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
+                    compressBytes(rawBuf, valueCount, destBuf, longWorkspaceAddr);
+            default -> {
+                // Raw copy for remaining fixed-width types: LONG128, UUID, LONG256, DECIMAL128/256
+                Unsafe.putInt(destBuf, valueCount);
+                Unsafe.copyMemory(rawBuf, destBuf + 4, (long) valueCount << shift);
+                yield 4 + (valueCount << shift);
+            }
+        };
+    }
+
     public static int maxCompressedSize(int count, int columnType) {
         return switch (ColumnType.tagOf(columnType)) {
             case ColumnType.DOUBLE ->
