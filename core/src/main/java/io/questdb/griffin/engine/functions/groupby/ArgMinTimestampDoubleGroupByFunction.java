@@ -70,7 +70,7 @@ public class ArgMinTimestampDoubleGroupByFunction extends TimestampFunction impl
             return;
         }
         double minKey = mapValue.getDouble(valueIndex + 1);
-        if (Numbers.isNull(minKey) || nextKey < minKey) {
+        if (isArgNotNull ? Numbers.isNull(nextKey) || nextKey < minKey : nextKey < minKey || Numbers.isNull(minKey)) {
             mapValue.putLong(valueIndex, valueArg.getTimestamp(record));
             mapValue.putDouble(valueIndex + 1, nextKey);
         }
@@ -130,7 +130,7 @@ public class ArgMinTimestampDoubleGroupByFunction extends TimestampFunction impl
             return;
         }
         double destMinKey = destValue.getDouble(valueIndex + 1);
-        if (Numbers.isNull(destMinKey) || srcMinKey < destMinKey) {
+        if (isArgNotNull ? Numbers.isNull(srcMinKey) || srcMinKey < destMinKey : srcMinKey < destMinKey || Numbers.isNull(destMinKey)) {
             destValue.putLong(valueIndex, srcValue.getLong(valueIndex));
             destValue.putDouble(valueIndex + 1, srcMinKey);
         }

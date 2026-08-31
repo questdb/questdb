@@ -66,7 +66,7 @@ public class ArgMinCharDoubleGroupByFunction extends CharFunction implements Gro
             return;
         }
         double minKey = mapValue.getDouble(valueIndex + 1);
-        if (nextKey < minKey || Numbers.isNull(minKey)) {
+        if (isArgNotNull ? Numbers.isNull(nextKey) || nextKey < minKey : nextKey < minKey || Numbers.isNull(minKey)) {
             mapValue.putChar(valueIndex, valueArg.getChar(record));
             mapValue.putDouble(valueIndex + 1, nextKey);
         }
@@ -126,7 +126,7 @@ public class ArgMinCharDoubleGroupByFunction extends CharFunction implements Gro
             return;
         }
         double destMinKey = destValue.getDouble(valueIndex + 1);
-        if (srcMinKey < destMinKey || Numbers.isNull(destMinKey)) {
+        if (isArgNotNull ? Numbers.isNull(srcMinKey) || srcMinKey < destMinKey : srcMinKey < destMinKey || Numbers.isNull(destMinKey)) {
             destValue.putChar(valueIndex, srcValue.getChar(valueIndex));
             destValue.putDouble(valueIndex + 1, srcMinKey);
         }

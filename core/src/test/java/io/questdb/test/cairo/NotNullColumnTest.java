@@ -498,6 +498,30 @@ public class NotNullColumnTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExplicitNotNullSentinelsPreservedAcrossDecimalTypeChanges() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (i INT NOT NULL, dd DECIMAL(2, 0) NOT NULL, df DECIMAL(2, 0) NOT NULL, "
+                    + "ds DECIMAL(2, 0) NOT NULL, dv DECIMAL(2, 0) NOT NULL, ts TIMESTAMP NOT NULL) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t VALUES (NULL, NULL, NULL, NULL, NULL, '2024-01-01')");
+
+            execute("ALTER TABLE t ALTER COLUMN i TYPE DECIMAL(10, 0)");
+            execute("ALTER TABLE t ALTER COLUMN dd TYPE DECIMAL(4, 0)");
+            execute("ALTER TABLE t ALTER COLUMN df TYPE DOUBLE");
+            execute("ALTER TABLE t ALTER COLUMN ds TYPE STRING");
+            execute("ALTER TABLE t ALTER COLUMN dv TYPE VARCHAR");
+
+            assertSql(
+                    """
+                            i\tdd\tdf\tds\tdv
+                            -2147483648\t-128\t-128.0\t-128\t-128
+                            """,
+                    "SELECT i, dd, df, ds, dv FROM t"
+            );
+        });
+    }
+
+    @Test
     public void testExplicitNotNullSentinelPreservedOnWalTypeChange() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (b INT NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -510,6 +534,22 @@ public class NotNullColumnTest extends AbstractCairoTest {
             assertQuery("SELECT b FROM t")
                     .expectSize()
                     .returns("b\n-2147483648\n");
+        });
+    }
+
+    @Test
+    public void testExplicitNotNullDecimalSentinelPreservedOnWalTypeChange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DECIMAL(2, 0) NOT NULL, ts TIMESTAMP NOT NULL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t VALUES (NULL, '2024-01-01')");
+            drainWalQueue();
+
+            execute("ALTER TABLE t ALTER COLUMN d TYPE VARCHAR");
+            drainWalQueue();
+
+            assertQuery("SELECT d FROM t")
+                    .expectSize()
+                    .returns("d\n-128\n");
         });
     }
 
@@ -1621,9 +1661,39 @@ public class NotNullColumnTest extends AbstractCairoTest {
             execute("CREATE TABLE t (d DOUBLE NOT NULL, z DOUBLE NOT NULL, x INT NOT NULL, y INT, xl LONG NOT NULL, yl LONG)");
             execute("INSERT INTO t VALUES (-1, 0, -2147483648, 2, CAST(-9223372036854775807 AS LONG) - 1, 2)");
 
-            assertQuery("SELECT sqrt(d) sq, sqrt(d) IS NULL sq_null, d / z div, (d / z) IS NULL div_null, x / y idiv, x % y irem, xl / yl ldiv, xl % yl lrem FROM t")
+            assertQuery("SELECT sqrt(d) sq, sqrt(d) IS NULL sq_null, d / z div, (d / z) IS NULL div_null, "
+                    + "x + y iadd, x - y isub, x * y imul, x & y iand, x | y ior, x ^ y ixor, x / y idiv, x % y irem, "
+                    + "xl + yl ladd, xl - yl lsub, xl * yl lmul, xl & yl land, xl | yl lor, xl ^ yl lxor, xl / yl ldiv, xl % yl lrem FROM t")
                     .expectSize()
-                    .returns("sq\tsq_null\tdiv\tdiv_null\tidiv\tirem\tldiv\tlrem\nnull\ttrue\tnull\ttrue\t-1073741824\t0\t-4611686018427387904\t0\n");
+                    .returns("sq\tsq_null\tdiv\tdiv_null\tiadd\tisub\timul\tiand\tior\tixor\tidiv\tirem\tladd\tlsub\tlmul\tland\tlor\tlxor\tldiv\tlrem\n"
+                            + "null\ttrue\tnull\ttrue\t-2147483646\t2147483646\t0\t0\t-2147483646\t-2147483646\t-1073741824\t0\t"
+                            + "-9223372036854775806\t9223372036854775806\t0\t0\t-9223372036854775806\t-9223372036854775806\t-4611686018427387904\t0\n");
+        });
+    }
+
+    @Test
+    public void testArgMinMaxKeepNotNullSentinelKeys() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v CHAR, kl LONG NOT NULL, kd DOUBLE NOT NULL, g SYMBOL, ts TIMESTAMP NOT NULL) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', NULL, NULL, 'x', '2024-01-01'),
+                        ('b', 5, 5, 'x', '2024-01-02'),
+                        ('c', 7, 7, 'y', '2024-01-03'),
+                        ('d', NULL, NULL, 'y', '2024-01-04')
+                    """);
+
+            assertSql(
+                    """
+                            g\targ_min\targ_min1\targ_max
+                            x\ta\ta\ta
+                            y\td\td\td
+                            """,
+                    "SELECT g, arg_min(v, kl), arg_min(v, kd), arg_max(v, kd) FROM t GROUP BY g ORDER BY g"
+            );
         });
     }
 

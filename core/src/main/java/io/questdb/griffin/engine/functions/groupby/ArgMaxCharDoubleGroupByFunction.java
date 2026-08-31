@@ -66,7 +66,7 @@ public class ArgMaxCharDoubleGroupByFunction extends CharFunction implements Gro
             return;
         }
         double maxKey = mapValue.getDouble(valueIndex + 1);
-        if (nextKey > maxKey || Numbers.isNull(maxKey)) {
+        if (isArgNotNull ? Numbers.isNull(nextKey) || nextKey > maxKey : nextKey > maxKey || Numbers.isNull(maxKey)) {
             mapValue.putChar(valueIndex, valueArg.getChar(record));
             mapValue.putDouble(valueIndex + 1, nextKey);
         }
@@ -126,7 +126,7 @@ public class ArgMaxCharDoubleGroupByFunction extends CharFunction implements Gro
             return;
         }
         double destMaxKey = destValue.getDouble(valueIndex + 1);
-        if (srcMaxKey > destMaxKey || Numbers.isNull(destMaxKey)) {
+        if (isArgNotNull ? Numbers.isNull(srcMaxKey) || srcMaxKey > destMaxKey : srcMaxKey > destMaxKey || Numbers.isNull(destMaxKey)) {
             destValue.putChar(valueIndex, srcValue.getChar(valueIndex));
             destValue.putDouble(valueIndex + 1, srcMaxKey);
         }

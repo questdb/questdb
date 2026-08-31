@@ -113,15 +113,15 @@ public class ColumnTypeConverter {
             convertFromSymbol(skipRows, rowCount, srcFixFd, symbolTable, dstColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
             return true;
         } else if (ColumnType.isFixedSize(ColumnType.tagOf(srcColumnType)) && ColumnType.isDecimal(dstColumnType)) {
-            return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
+            return convertToDecimal(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink, notNull);
         } else if (ColumnType.isDecimal(srcColumnType) && (dstColumnType == ColumnType.DOUBLE || dstColumnType == ColumnType.FLOAT)) {
-            return convertDecimalToBinaryFloat(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink);
+            return convertDecimalToBinaryFloat(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstColumnType, ff, columnSizesSink, notNull);
         } else if (ColumnType.isDecimal(srcColumnType) && ColumnType.isVarSize(dstColumnType)) {
             return switch (dstColumnType) {
                 case ColumnType.STRING ->
-                        convertDecimalToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                        convertFixedToString(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink, notNull);
                 case ColumnType.VARCHAR ->
-                        convertDecimalToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink);
+                        convertFixedToVarchar(skipRows, rowCount, srcFixFd, srcColumnType, dstFixFd, dstVarFd, ff, appendPageSize, columnSizesSink, notNull);
                 default -> throw unsupportedConversion(srcColumnType, dstColumnType);
             };
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
@@ -879,7 +879,8 @@ public class ColumnTypeConverter {
             long dstFixFd,
             int dstColumnType,
             FilesFacade ff,
-            ColumnConversionOffsetSink columnSizesSink
+            ColumnConversionOffsetSink columnSizesSink,
+            boolean isSrcNotNull
     ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
@@ -902,7 +903,15 @@ public class ColumnTypeConverter {
             dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, rowCount * dstColumnTypeSize, memoryTag);
             dstFixMem.jumpTo(0);
 
-            return DecimalColumnTypeConverter.convertToDecimal(srcMapAddress, srcColumnType, dstFixMem, dstColumnType, srcColumnTypeSize, rowCount);
+            return DecimalColumnTypeConverter.convertToDecimal(
+                    srcMapAddress,
+                    srcColumnType,
+                    dstFixMem,
+                    dstColumnType,
+                    srcColumnTypeSize,
+                    rowCount,
+                    isSrcNotNull
+            );
         } finally {
             if (srcMapAddress != 0) {
                 TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
@@ -1188,7 +1197,8 @@ public class ColumnTypeConverter {
             long dstFixFd,
             int dstColumnType,
             FilesFacade ff,
-            ColumnConversionOffsetSink columnSizesSink
+            ColumnConversionOffsetSink columnSizesSink,
+            boolean isSrcNotNull
     ) {
         final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
         final long skipBytes = skipRows * srcColumnTypeSize;
@@ -1220,8 +1230,28 @@ public class ColumnTypeConverter {
             final Decimal256 decimal = Misc.getThreadLocalDecimal256();
             final long hi = srcMapAddress + srcColumnTypeSize * rowCount;
             for (long addr = srcMapAddress; addr < hi; addr += srcColumnTypeSize) {
-                loader.load(decimal, addr);
-                if (isDstDouble) {
+                if (isSrcNotNull) {
+                    DecimalColumnTypeConverter.loadNotNull(decimal, addr, srcColumnType);
+                } else {
+                    loader.load(decimal, addr);
+                }
+                if (decimal.isNull() && isSrcNotNull) {
+                    sink.clear();
+                    Decimals.appendNonNull(decimal, precision, scale, sink);
+                    try {
+                        if (isDstDouble) {
+                            dstFixMem.putDouble(Numbers.parseDouble(sink));
+                        } else {
+                            dstFixMem.putFloat(Numbers.parseFloat(sink));
+                        }
+                    } catch (NumericException ignored) {
+                        if (isDstDouble) {
+                            dstFixMem.putDouble(Double.NaN);
+                        } else {
+                            dstFixMem.putFloat(Float.NaN);
+                        }
+                    }
+                } else if (isDstDouble) {
                     dstFixMem.putDouble(decimal.isNull() ? Double.NaN : DecimalUtil.toDouble(sink, decimal, scale, precision));
                 } else {
                     dstFixMem.putFloat(decimal.isNull() ? Float.NaN : DecimalUtil.toFloat(sink, decimal, scale, precision));

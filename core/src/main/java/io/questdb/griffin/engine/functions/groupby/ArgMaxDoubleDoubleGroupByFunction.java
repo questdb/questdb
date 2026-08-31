@@ -69,7 +69,7 @@ public class ArgMaxDoubleDoubleGroupByFunction extends DoubleFunction implements
             return;
         }
         double maxKey = mapValue.getDouble(valueIndex + 1);
-        if (nextKey > maxKey || Numbers.isNull(maxKey)) {
+        if (isArgNotNull ? Numbers.isNull(nextKey) || nextKey > maxKey : nextKey > maxKey || Numbers.isNull(maxKey)) {
             mapValue.putDouble(valueIndex, valueArg.getDouble(record));
             mapValue.putDouble(valueIndex + 1, nextKey);
         }
@@ -129,7 +129,7 @@ public class ArgMaxDoubleDoubleGroupByFunction extends DoubleFunction implements
             return;
         }
         double destMaxKey = destValue.getDouble(valueIndex + 1);
-        if (srcMaxKey > destMaxKey || Numbers.isNull(destMaxKey)) {
+        if (isArgNotNull ? Numbers.isNull(srcMaxKey) || srcMaxKey > destMaxKey : srcMaxKey > destMaxKey || Numbers.isNull(destMaxKey)) {
             destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
             destValue.putDouble(valueIndex + 1, srcMaxKey);
         }

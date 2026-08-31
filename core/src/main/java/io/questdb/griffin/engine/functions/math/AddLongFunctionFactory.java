@@ -87,7 +87,8 @@ public class AddLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             final long l = left.getLong(rec);
             final long r = right.getLong(rec);
-            if (!areArgsNotNull() && (l == Numbers.LONG_NULL || r == Numbers.LONG_NULL)) {
+            if ((!left.isNotNull() && l == Numbers.LONG_NULL)
+                    || (!right.isNotNull() && r == Numbers.LONG_NULL)) {
                 return Numbers.LONG_NULL;
             }
             return l + r;

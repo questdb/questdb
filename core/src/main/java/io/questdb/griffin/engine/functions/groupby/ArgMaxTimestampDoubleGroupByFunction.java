@@ -70,7 +70,7 @@ public class ArgMaxTimestampDoubleGroupByFunction extends TimestampFunction impl
             return;
         }
         double maxKey = mapValue.getDouble(valueIndex + 1);
-        if (nextKey > maxKey || Numbers.isNull(maxKey)) {
+        if (isArgNotNull ? Numbers.isNull(nextKey) || nextKey > maxKey : nextKey > maxKey || Numbers.isNull(maxKey)) {
             mapValue.putLong(valueIndex, valueArg.getTimestamp(record));
             mapValue.putDouble(valueIndex + 1, nextKey);
         }
@@ -130,7 +130,7 @@ public class ArgMaxTimestampDoubleGroupByFunction extends TimestampFunction impl
             return;
         }
         double destMaxKey = destValue.getDouble(valueIndex + 1);
-        if (srcMaxKey > destMaxKey || Numbers.isNull(destMaxKey)) {
+        if (isArgNotNull ? Numbers.isNull(srcMaxKey) || srcMaxKey > destMaxKey : srcMaxKey > destMaxKey || Numbers.isNull(destMaxKey)) {
             destValue.putLong(valueIndex, srcValue.getLong(valueIndex));
             destValue.putDouble(valueIndex + 1, srcMaxKey);
         }

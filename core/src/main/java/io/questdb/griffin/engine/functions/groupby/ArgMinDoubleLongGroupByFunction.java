@@ -66,7 +66,7 @@ public class ArgMinDoubleLongGroupByFunction extends DoubleFunction implements G
             return;
         }
         long minKey = mapValue.getLong(valueIndex + 1);
-        if (minKey == Numbers.LONG_NULL || nextKey < minKey) {
+        if (nextKey < minKey || (!isArgNotNull && minKey == Numbers.LONG_NULL)) {
             mapValue.putDouble(valueIndex, valueArg.getDouble(record));
             mapValue.putLong(valueIndex + 1, nextKey);
         }
@@ -126,7 +126,7 @@ public class ArgMinDoubleLongGroupByFunction extends DoubleFunction implements G
             return;
         }
         long destMinKey = destValue.getLong(valueIndex + 1);
-        if (destMinKey == Numbers.LONG_NULL || srcMinKey < destMinKey) {
+        if (srcMinKey < destMinKey || (!isArgNotNull && destMinKey == Numbers.LONG_NULL)) {
             destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
             destValue.putLong(valueIndex + 1, srcMinKey);
         }

@@ -28,10 +28,6 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.BinaryFunction;
 
 public interface ArithmeticBinaryFunction extends BinaryFunction {
-    default boolean areArgsNotNull() {
-        return getLeft().isNotNull() && getRight().isNotNull();
-    }
-
     @Override
     default int getComplexity() {
         return Function.addComplexity(COMPLEXITY_ARITHMETIC, BinaryFunction.super.getComplexity());

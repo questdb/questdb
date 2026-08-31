@@ -66,7 +66,7 @@ public class ArgMinUuidTimestampGroupByFunction extends UuidFunction implements 
             return;
         }
         long minKey = mapValue.getLong(valueIndex + 1);
-        if (minKey == Numbers.LONG_NULL || nextKey < minKey) {
+        if (nextKey < minKey || (!isArgNotNull && minKey == Numbers.LONG_NULL)) {
             mapValue.putLong128(valueIndex, valueArg.getLong128Lo(record), valueArg.getLong128Hi(record));
             mapValue.putLong(valueIndex + 1, nextKey);
         }
@@ -131,7 +131,7 @@ public class ArgMinUuidTimestampGroupByFunction extends UuidFunction implements 
             return;
         }
         long destMinKey = destValue.getLong(valueIndex + 1);
-        if (destMinKey == Numbers.LONG_NULL || srcMinKey < destMinKey) {
+        if (srcMinKey < destMinKey || (!isArgNotNull && destMinKey == Numbers.LONG_NULL)) {
             destValue.putLong128(valueIndex, srcValue.getLong128Lo(valueIndex), srcValue.getLong128Hi(valueIndex));
             destValue.putLong(valueIndex + 1, srcMinKey);
         }
