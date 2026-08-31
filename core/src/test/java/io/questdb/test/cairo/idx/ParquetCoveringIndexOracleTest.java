@@ -1179,8 +1179,8 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PARTITION_FORMAT, "parquet");
             node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_PARQUET_PACKED_PAYLOAD, true);
             final StringBuilder out = new StringBuilder(
-                    "\n  postings/key   rows     refills   refills/row\n");
-            for (int keys : new int[]{16, 240, 10_000, 60_000}) {
+                    "\n  postings/key   keys/group   refills/row   widened/row\n");
+            for (int keys : new int[]{16, 60, 240, 3_000, 10_000, 60_000}) {
                 final String name = "refill_" + keys;
                 execute("CREATE TABLE " + name + " (ts TIMESTAMP, sym SYMBOL, price DOUBLE, qty LONG)"
                         + " TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1208,15 +1208,19 @@ public class ParquetCoveringIndexOracleTest extends AbstractCairoTest {
                         }
                     }
                     final long refills = idx.getRefillCount();
-                    out.append(String.format("  %-14d %-8d %-9d %.5f%n",
-                            ROW_COUNT / keys, emitted, refills, refills / (double) emitted));
+                    final long widened = idx.getWidenedRowIdCount();
+                    final int groups = idx.getIndexRowGroupCount();
+                    out.append(String.format("  %-14d %-12.1f %-13.5f %.5f%n",
+                            ROW_COUNT / keys, keys / (double) groups,
+                            refills / (double) emitted, widened / (double) emitted));
+                    final long allRows = emitted;
                     Assert.assertEquals("the scan must emit every row", ROW_COUNT, emitted);
                     // One refill per key at minimum -- a run is taken in at
                     // least one batch -- and never more than one per row.
                     Assert.assertTrue(
-                            "refills outside [keys, rows] means the batch policy is not what it claims"
-                                    + " [refills=" + refills + ", keys=" + keys + ", rows=" + emitted + ']',
-                            refills >= keys && refills <= emitted);
+                            "refills outside [keys, rows] per pass means the batch policy is not what it claims"
+                                    + " [refills=" + refills + ", keys=" + keys + ", rows=" + allRows + ']',
+                            refills >= keys && refills <= allRows);
                 }
                 execute("DROP TABLE " + name);
                 drainWalQueue();
