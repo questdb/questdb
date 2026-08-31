@@ -1128,8 +1128,13 @@ public final class LiveViewCheckpointRepairPlan {
      *     {@code segmentStart(t)}, because the reset there put every function on the
      *     anchor back to identity, and a row at {@code m} reaches output only within
      *     {@code m}'s own segment. Both are pure timestamp arithmetic - no key domain
-     *     enters either - and {@code segmentStart} is monotone, so the floor taken at
-     *     {@code R} bounds every row above it. The floor is deliberately not
+     *     enters either. Both also rest on the segment being an interval of the
+     *     timestamp, which a zone floor need not make it: a DST fall-back can hand one
+     *     anchor value two disjoint intervals, and an {@code H} at the end of the lower
+     *     one would leave the upper one holding stale output. That is the plan's to
+     *     refuse rather than this arm's to reason about, and
+     *     {@link LiveViewCheckpointAnchorPlan#getSegmentEndExclusive} does refuse it,
+     *     which reaches this arm as {@code H = EOF}. The floor is deliberately not
      *     {@code segmentStart(changeMaxTs)}: the replacement re-emits from {@code R},
      *     and when a non-durable lead dropped {@code R} into an earlier segment the
      *     replay has to reconstruct that segment's state too.</li>

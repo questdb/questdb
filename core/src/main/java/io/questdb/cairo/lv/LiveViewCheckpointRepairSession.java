@@ -491,6 +491,12 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * Parks a repair whose replay has spent its turn budget, taking ownership of
      * everything the next turn continues from. The caller has committed nothing,
      * so the durable state a reader sees is still the pre-repair one.
+     * <p>
+     * All three handles move or none of them do: the only statement here that can
+     * fail runs before the first handover, so a throw leaves the reader, the writer
+     * and the capture with the caller. A caller whose park failed therefore did not
+     * park, and owes all three the cleanup a turn that never parked gets - see the
+     * catch around this call in {@link LiveViewRefreshJob}.
      *
      * @param baseReader         the pinned base snapshot {@code E}, which must stay
      *                           open: no as-of reader could reopen it
@@ -523,6 +529,13 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
             long replayMaxTs,
             @NotNull LiveViewCheckpointOutputUniqueness outputUniqueness
     ) {
+        // Ahead of the three handovers below, because it is the only statement here that can
+        // fail: its key-set copy allocates. The caller owns the reader, the writer and the
+        // capture until this method returns - LiveViewRefreshJob raises walWriterRetained
+        // after the call and its finally closes the writer while that flag is down - so a
+        // throw that came after the handover would have close() return the writer to the pool
+        // a second time, which the pool answers with "double close".
+        this.outputUniqueness.copyFrom(outputUniqueness);
         this.baseReader = baseReader;
         this.walWriter = walWriter;
         this.capture = capture;
@@ -533,7 +546,6 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         this.scanRows = scanRows;
         this.replayMinTs = replayMinTs;
         this.replayMaxTs = replayMaxTs;
-        this.outputUniqueness.copyFrom(outputUniqueness);
         this.isSuspended = true;
         this.turns++;
     }

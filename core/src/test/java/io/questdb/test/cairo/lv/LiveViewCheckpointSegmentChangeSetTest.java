@@ -111,35 +111,47 @@ public class LiveViewCheckpointSegmentChangeSetTest {
 
     @Test
     public void testAFallBackSegmentsRepairRangeCoversEveryRowTheEntryHolds() throws SqlException {
-        // A zone floor is not monotone through a fall-back, so two probes inside what the
-        // decomposition treats as one segment disagree about its end: the row before the
-        // transition reports a 24-hour segment and the row after it a 25-hour one, both off
-        // the same start. indexOf keys an entry on the start alone, so the entry keeps the
-        // end the first row installed while its maxTs widens past it.
+        // A zone floor is not monotone through a fall-back, and on 2024-10-27 Europe/Berlin
+        // gives the 02:30 anchor of 26 October TWO intervals: everything up to 00:30Z, and
+        // then 01:00Z..01:30Z again, once the clocks have gone back and local time reads
+        // 02:00..02:29 CET. A probe in the lower interval and a probe in the upper one share
+        // a start and disagree about the end - 24 hours against 25 - and the entry indexOf
+        // keys on the start alone would keep whichever end arrived first while its maxTs
+        // widened past it.
         //
-        // Nothing bounds a repair with that stored end. LiveViewCheckpointRepairPlan derives
-        // the replacement's own H from the entry's maxTs - getSegmentEndExclusive answers
-        // either a bound strictly above the timestamp it was asked about or LONG_NULL, which
-        // declines the segment outright - so the range the repair replaces covers every row
-        // the entry holds however stale the stored end is. That is the property to hold on
-        // to: a repair may read wider than the entry claims, and may never read narrower.
+        // The plan closes that from its own side: it reports no finite end for the lower
+        // interval, because the end it would name has the upper interval standing above it.
+        // The upper interval keeps a finite end, and the interval it names spans both - wider
+        // than one run, but a wall at each end.
         final LiveViewCheckpointAnchorPlan plan = berlinPlan();
         final long segmentStart = ts("2024-10-26T00:30:00.000000Z");
         final long lowRow = ts("2024-10-26T23:00:00.000000Z");
         final long highRow = ts("2024-10-27T01:00:00.000000Z");
         Assert.assertEquals(segmentStart, plan.getSegmentStart(lowRow));
         Assert.assertEquals(segmentStart, plan.getSegmentStart(highRow));
-        Assert.assertEquals(ts("2024-10-27T00:30:00.000000Z"), plan.getSegmentEndExclusive(lowRow));
+        Assert.assertEquals(Numbers.LONG_NULL, plan.getSegmentEndExclusive(lowRow));
         Assert.assertEquals(ts("2024-10-27T01:30:00.000000Z"), plan.getSegmentEndExclusive(highRow));
 
         // The frontier sits a week above the transition, so both rows are below the runtime's
         // own segment and the decomposition may place them.
         final long frontierTs = ts("2024-11-05T12:00:00.000000Z");
         final long activeSegmentStart = plan.getSegmentStart(frontierTs);
+
+        // Reached from below, the refused end declines the row outright and the caller falls
+        // back to the union range rather than repairing a segment that stops mid-value.
+        final LiveViewCheckpointSegmentChangeSet fromBelow = new LiveViewCheckpointSegmentChangeSet();
+        fromBelow.of(activeSegmentStart);
+        Assert.assertFalse(fromBelow.addRow(lowRow, null, plan));
+        Assert.assertTrue(fromBelow.isOverflowed());
+        Assert.assertEquals(0, fromBelow.getClosedSegmentCount());
+
+        // Reached from above, the surviving end opens an entry that already spans both rows,
+        // so the second one joins it through the containment cache without a plan call and
+        // the entry's stored end covers everything it holds.
         final LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet();
         changeSet.of(activeSegmentStart);
-        Assert.assertTrue(changeSet.addRow(lowRow, null, plan));
         Assert.assertTrue(changeSet.addRow(highRow, null, plan));
+        Assert.assertTrue(changeSet.addRow(lowRow, null, plan));
         Assert.assertEquals(1, changeSet.getClosedSegmentCount());
         Assert.assertEquals(segmentStart, changeSet.getSegmentStart(0));
         Assert.assertEquals(lowRow, changeSet.getSegmentMinTs(0));
@@ -159,10 +171,9 @@ public class LiveViewCheckpointSegmentChangeSetTest {
                         frontierTs
                 )
         );
-        // The replay reads from the segment's own start, and the replacement runs past the
-        // highest row the entry holds - past the stored end with it. The pinned bound is the
-        // 25-hour end highRow itself reports, so it already sits above that highest row; only
-        // the stored end and the entry's own minimum need a comparison of their own.
+        // The property to hold on to, whatever the entry stores: a repair may read wider than
+        // the entry claims, and may never read narrower. The replay reads from the segment's
+        // own start, and the replacement runs past the highest row the entry holds.
         Assert.assertEquals(segmentStart, repairPlan.getReplayLowTs());
         Assert.assertEquals(ts("2024-10-27T01:30:00.000000Z"), repairPlan.getHighTsExclusive());
         Assert.assertTrue(

@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointOpenSegmentCost;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.sql.RecordCursor;
@@ -44,6 +45,11 @@ import org.junit.Test;
  * an ordinary checkpoint resume and the cold keyed bootstrap, including sparse fallback.
  */
 public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
+    // How many extra rows of one account a hot hour of openTheDayAboveARoot carries.
+    // Enough that the account's postings over the partition the replay starts inside
+    // outrun what the whole-range estimate counts of that partition, which is the slice
+    // above the anchor and not the partition.
+    private static final int HOT_ACCOUNT_ROWS_PER_HOUR = 60;
 
     @Test
     public void testAHeadMissReplaysTheOpenSegmentColdByKeyAndPublishesSparsely() throws Exception {
@@ -650,6 +656,79 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testASaturatedKeyedEstimateDeniesTheRestoreAwareOverride() throws Exception {
+        // The row verdict survives a budgeted estimate that stopped early - the merge charges
+        // at least one row per posting row, so a count that reached wholeRangeRows answers
+        // "not cheaper" whatever the uncounted keys and partitions hold. The restore-aware
+        // override does not: it prices the keyed side against an elapsed model whose other
+        // term is a state restore, and wholeRangeRows bounds only the whole side. Its whole
+        // population is !rowCheaper, which is exactly where a stopped count lands, so without
+        // a guard the route reads a floor as a total precisely when the real posting count is
+        // furthest above it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job, HOT_ACCOUNT_ROWS_PER_HOUR);
+                seedRestoreDominantRates();
+
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertTrue(
+                        "the fixture must saturate: the estimate has to reach the whole-range"
+                                + " count it was budgeted at",
+                        job.openSegmentKeyedPostingRowsForTest()
+                                >= job.openSegmentKeyedWholeRangeRowsForTest()
+                );
+                Assert.assertEquals(
+                        "a saturated count can never read as the cheaper row verdict",
+                        0,
+                        job.openSegmentKeyedCheaperCountForTest()
+                );
+                // A restore-aware count of 0 is what the override reports for ANY of its
+                // reasons, so on its own it does not say the saturation guard is the one
+                // that declined. The elapsed estimates the same pricing pass recorded are
+                // what pin the rest of that predicate. They are its own figures: the pass
+                // runs once here - one non-cold priced count - and a cold pass never calls
+                // the elapsed model at all. Under the seeded rates the two can only sit
+                // this far apart with a positive selected-root byte count priced cold,
+                // because the restore term is the only one carrying the whole side: both
+                // scan terms are one nanosecond per row, so a warm or byte-free whole side
+                // would price at the row count the saturated keyed side has already passed.
+                // A factor of two is stricter than the margin the override itself needs -
+                // a 150% keyed upper bound under an 85% hysteresis floor is a factor of
+                // about 1.77 - so clearing it means the model preferred the keyed side and
+                // the saturation guard is what is left to deny the route.
+                final LiveViewCheckpointOpenSegmentCost elapsedCost =
+                        viewInstance().getOpenSegmentRepairCost();
+                Assert.assertTrue(
+                        "the elapsed model must prefer the keyed side, or the case cannot"
+                                + " tell the guard from the model declining: keyed="
+                                + elapsedCost.getLastKeyedEstimateNanos() + "ns whole="
+                                + elapsedCost.getLastWholeEstimateNanos() + "ns",
+                        elapsedCost.getLastKeyedEstimateNanos()
+                                < elapsedCost.getLastWholeEstimateNanos() / 2
+                );
+                Assert.assertEquals(
+                        "and restore-dominant rates must not turn that floor into a route",
+                        0,
+                        job.openSegmentRestoreAwareCheaperCountForTest()
+                );
+                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                // The resume the declined override leaves reads the whole range off a
+                // restored root rather than off the live window state, which is the same
+                // reading the sibling case that lets the override through takes of its own
+                // drive - the one this fixture repeats with two hot hours added.
+                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
     private void seedRestoreDominantRates() {
         viewInstance().getOpenSegmentRepairCost().setRatesForTest(
                 1_000_000_000L,
@@ -743,8 +822,31 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
      * wider than the one partition the floor sits in.
      */
     private void openTheDayAboveARoot(LiveViewRefreshJob job) throws Exception {
+        openTheDayAboveARoot(job, 0);
+    }
+
+    /**
+     * The same forward drive, with two of its hours carrying {@code hotRowsPerHour} extra
+     * rows of one account. A key holding almost every row of the partition the replay
+     * interval starts inside is what stops a budgeted estimate early: the keyed side counts
+     * that partition's postings whole while the whole-range side counts only the slice above
+     * the anchor, so the keyed count passes the budget inside the first partition or two and
+     * every partition above them goes uncounted. Zero leaves the plain drive above.
+     * <p>
+     * The hot rows sit in the hour's first minute, below the four hourly rows, so every
+     * commit is still in timestamp order and none of them is itself a correction.
+     */
+    private void openTheDayAboveARoot(LiveViewRefreshJob job, int hotRowsPerHour) throws Exception {
         for (int hour = 0; hour < 10; hour++) {
             final StringBuilder rows = new StringBuilder();
+            if (hour == 1 || hour == 2) {
+                for (int second = 0; second < hotRowsPerHour; second++) {
+                    if (rows.length() > 0) {
+                        rows.append(", ");
+                    }
+                    rows.append(hotRow(hour, second));
+                }
+            }
             for (int account = 1; account <= 4; account++) {
                 if (rows.length() > 0) {
                     rows.append(", ");
@@ -753,6 +855,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             }
             commit(rows.toString(), job);
         }
+    }
+
+    /**
+     * One acct-1 row at 2026-01-04 {@code hour}:00:{@code second}, as an INSERT tuple.
+     */
+    private String hotRow(int hour, int second) {
+        return "('2026-01-04T" + String.format("%02d", hour) + ":00:"
+                + String.format("%02d", second) + ".000000Z', 'acct-1', 1.0)";
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {

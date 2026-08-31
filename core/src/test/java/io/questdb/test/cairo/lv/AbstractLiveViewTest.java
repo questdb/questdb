@@ -256,6 +256,27 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Drives one refresh pass at a time until the named view has a repair parked on it, so a
+     * caller can read the durable state a reader would see mid-repair, or what the parked
+     * session itself holds before a later turn resumes or discards it. Fails if the repair
+     * never parks, which would leave every assertion after it vacuous.
+     */
+    protected void driveUntilParked(LiveViewRefreshJob job, String viewName) {
+        for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES; pass++) {
+            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+            drainWalQueue();
+            job.processNotificationsForTest();
+            drainWalQueue();
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+            Assert.assertNotNull("live view '" + viewName + "' must be registered", instance);
+            if (instance.getSuspendedRepair() != null) {
+                return;
+            }
+        }
+        Assert.fail("the repair on '" + viewName + "' never parked on its turn budget");
+    }
+
+    /**
      * Whether the millisecond clock this test's engine reads - the clock the storage engine measures
      * every spin deadline against - is the simulated one the tests hand-drive through
      * {@code setCurrentMicros}, rather than the production wall clock.

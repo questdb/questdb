@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
@@ -252,6 +253,195 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     public void setUpCheckpointCadence() {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
         setCurrentMicros(0);
+    }
+
+    @Test
+    public void testAnEofLocalizedRepairResumesWhileAnIsolatedRuntimeIsCached() throws Exception {
+        // The end-of-frame splice parks on the PRIMARY runtime: its plan keeps an EOF high
+        // bound, so the isolated runtime is not offered to it and its session records the
+        // primary window factory. The same view can be holding an isolated runtime a
+        // converging repair built earlier - nothing frees one short of a factory rebuild -
+        // and the resuming turn must compare the parked session against the runtime this
+        // repair actually replays through rather than against whatever the view has cached.
+        // Reading the cache instead discards every such candidate, which costs the replay
+        // its work and drops the view back onto the unlocalized rebuild from the START FROM
+        // boundary that the localization exists to remove.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 3);
+        assertMemoryLeak(() -> {
+            createNarrowRangeView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildSparseHistory(job, HISTORY_COMMITS + 2);
+
+                // A correction deep in history: its influence converges below the frontier,
+                // so it replays in an isolated runtime, and the view caches that runtime.
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertNotNull(
+                        "a converging repair must leave its isolated runtime on the view",
+                        instance.getRepairRuntime()
+                );
+
+                // A correction near the head: no dependency stops its influence below the
+                // end of the base table, so this one is localized behind an EOF bound and
+                // replays through the primary runtime.
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(138) + "', 'a', 200)");
+                drainWalQueue();
+                driveUntilRepairParks(job, instance);
+
+                final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                Assert.assertSame(
+                        "an EOF-localized repair parks on the primary factory, not the isolated one",
+                        instance.getCompiledPlan().getWindowFactory(),
+                        parked.getWindowFactory()
+                );
+                Assert.assertNotNull(
+                        "the isolated runtime the earlier repair built must still be cached",
+                        instance.getRepairRuntime()
+                );
+
+                final long resumesBefore = instance.getCheckpointRepairResumes();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertTrue(
+                        "the parked repair must resume, not be discarded over a runtime it never entered",
+                        instance.getCheckpointRepairResumes() > resumesBefore
+                );
+                Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
+                // The discard's real cost, stated as the number it moves. The counter is
+                // cumulative over the view: one row for the converging repair above, two for
+                // this one's [L, +inf). A discarded candidate leaves the change unconsumed and
+                // the replan behind it is the unlocalized rebuild from the START FROM
+                // boundary, which reads all sixteen rows the view holds instead.
+                Assert.assertEquals(
+                        "the resumed repair must read its localized interval, not the view's whole history",
+                        3,
+                        instance.getO3ReplayScanRows()
+                );
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t2.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t100.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t4.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t5.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t6.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t7.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t8.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t9.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t10.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t11.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t12.0\n" +
+                            "2026-01-01T00:02:10.000000Z\ta\t13.0\n" +
+                            "2026-01-01T00:02:18.000000Z\ta\t200.0\n" +
+                            // The corrected row sits two seconds below this one, so it falls
+                            // inside its frame: the repair re-emits this row too.
+                            "2026-01-01T00:02:20.000000Z\ta\t214.0\n");
+        });
+    }
+
+    @Test
+    public void testAParkedPrimaryRepairResumesWhenTheIsolatedRuntimeSwitchIsTurnedOn() throws Exception {
+        // The mirror of the case above, and the one that says the guard reads where the
+        // replay is standing rather than what the switch would hand a fresh repair. A
+        // converging repair opens with the isolated runtime declined, so it copies the
+        // primary's state aside, wipes those functions and parks in them; an operator then
+        // turns the switch back on. The candidate is still standing in the primary and only
+        // the primary holds what it has folded, so it resumes there. Deciding from the
+        // switch instead discards it - and the discard drops the copy-aside with it, which
+        // leaves the primary at the wipe with nothing recording that it must be rebuilt.
+        //
+        // The same instance state - the switch on, the cache empty, the session on the
+        // primary factory - is what isolatedRepairRuntime() leaves behind when its second
+        // compile throws or the two anchor shapes disagree, both of which it documents as
+        // non-failures the copy-aside path absorbs. This is therefore also the case that
+        // says those fallbacks still converge.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 3);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createNarrowRangeView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildSparseHistory(job, HISTORY_COMMITS + 2);
+
+                // Two rows one second apart, deep in history: the repair converges - so it
+                // is the shape the isolated runtime is offered to - and its replay reads
+                // more rows than the one-row budget carries, so it parks.
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(24) + "', 'a', 101), ('" + timestamp(25) + "', 'a', 102)");
+                drainWalQueue();
+                driveUntilRepairParks(job, instance);
+
+                final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
+                Assert.assertSame(
+                        "a declined isolated runtime parks the repair on the primary factory",
+                        instance.getCompiledPlan().getWindowFactory(),
+                        parked.getWindowFactory()
+                );
+                Assert.assertTrue(
+                        "a converging repair on the primary must have copied its state aside",
+                        parked.getOverlay().isCaptured()
+                );
+                Assert.assertNull(
+                        "a declined isolated runtime must not be compiled at all",
+                        instance.getRepairRuntime()
+                );
+
+                final long resumesBefore = instance.getCheckpointRepairResumes();
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "true");
+                // Lifted before the drive so the resumed turn carries the rest of the replay
+                // in one go, which is what makes the resume count below exact.
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000);
+                Assert.assertNull(
+                        "the switch alone builds nothing: the cache is empty while it is on",
+                        instance.getRepairRuntime()
+                );
+                driveRefreshToQuiescence(job);
+
+                Assert.assertEquals(
+                        "the parked repair must resume in the runtime it is standing in",
+                        resumesBefore + 1,
+                        instance.getCheckpointRepairResumes()
+                );
+                Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
+
+                // Where a dropped copy-aside shows up: the accumulators the next forward
+                // drain reads. This row's RANGE frame reaches two seconds back, so its output
+                // depends on the runtime still holding the row before it.
+                appendAndRefresh(job, 141, 500);
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t1.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t2.0\n" +
+                            "2026-01-01T00:00:24.000000Z\ta\t101.0\n" +
+                            "2026-01-01T00:00:25.000000Z\ta\t203.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t3.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t4.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t5.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t6.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t7.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t8.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t9.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t10.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t11.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t12.0\n" +
+                            "2026-01-01T00:02:10.000000Z\ta\t13.0\n" +
+                            "2026-01-01T00:02:20.000000Z\ta\t14.0\n" +
+                            "2026-01-01T00:02:21.000000Z\ta\t514.0\n");
+        });
     }
 
     @Test
@@ -2925,6 +3115,24 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The same shape as {@link #createWideRangeView()} over a frame narrow enough that a
+     * correction deep in history converges below the runtime frontier while one near the
+     * head does not. That is what lets a single view produce both repairs the parked-repair
+     * guard has to tell apart: a converging one, which replays in an isolated runtime and
+     * leaves it cached on the view, and an end-of-frame one, which replays through the
+     * primary runtime.
+     */
+    private void createNarrowRangeView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute(
+                "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                        "SELECT ts, sym, sum(x) OVER (" +
+                        "PARTITION BY sym ORDER BY ts RANGE BETWEEN '2' SECOND PRECEDING AND CURRENT ROW" +
+                        ") s FROM base"
+        );
+    }
+
+    /**
      * The same shape over a frame three minutes wide, which is what puts a repair behind
      * an end-of-frame bound: a correction anywhere in this history converges past the
      * runtime frontier, so the plan can name no finite {@code H}.
@@ -2942,6 +3150,23 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         "PARTITION BY sym ORDER BY ts RANGE BETWEEN '180' SECOND PRECEDING AND CURRENT ROW" +
                         ") s FROM base"
         );
+    }
+
+    /**
+     * Drives one refresh pass at a time until the view has a repair parked on it, so a caller
+     * can read what the parked session recorded before a later turn resumes or discards it.
+     * Fails if the repair never parks, which would leave every assertion after it vacuous.
+     */
+    private void driveUntilRepairParks(LiveViewRefreshJob job, LiveViewInstance instance) {
+        for (int pass = 0; pass < 64; pass++) {
+            if (!job.processNotificationsForTest()) {
+                break;
+            }
+            if (instance.getSuspendedRepair() != null) {
+                return;
+            }
+        }
+        Assert.fail("the repair never parked on its turn budget");
     }
 
     /**

@@ -25,15 +25,28 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
+import io.questdb.std.IntHashSet;
+import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+import java.lang.reflect.Field;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -81,6 +94,9 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     private static final String REPAIR_READING_HEADER =
             "checkpoint_repair_in_progress\tcheckpoint_repair_last_disposition\t"
                     + "o3_resume_replay_rows\to3_boundary_replay_rows\to3_replay_scan_rows\n";
+    // The one key the injected set carries into the resumed turn, so the park that follows
+    // it has a key to copy back and therefore an add() to fail on.
+    private static final int SEEDED_GROUP_KEY = 7;
 
     @Test
     public void testAForeignWorkerLeavesAParkedSegmentLoopToItsOwner() throws Exception {
@@ -148,7 +164,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 // worker.
                 execute("insert into tx values " + row(2, 5, "acct-1") + ", " + row(3, 5, "acct-1"));
                 drainWalQueue();
-                driveUntilParked(owner);
+                driveUntilParked(owner, "lv");
                 final LiveViewCheckpointRepairSession parked = instance.getSuspendedRepair();
                 Assert.assertNotNull("the segment repair must park before the foreign pass", parked);
                 Assert.assertSame("the worker that parked the repair must own it", owner, parked.getOwner());
@@ -250,6 +266,189 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAParkThatFailsItsUniquenessCopyKeepsTheCallerOwningEverything() throws Exception {
+        // A park hands suspend() the three resources the next turn continues from - the pinned
+        // base reader, the writer carrying the uncommitted replacement and the staged capture -
+        // and the caller only stops owning them once suspend() returns. LiveViewRefreshJob
+        // raises walWriterRetained after the call, its finally closes the writer while that flag
+        // is down, and the unwind then runs endRepairSession -> close(), which frees whatever
+        // the session holds. So a suspend() that takes them and then throws has the writer
+        // returned to the pool twice, and AbstractMultiTenantPool answers the second return with
+        // "double close" - which masks the original fault and aborts close() before it frees the
+        // descriptor, the overlay and the seal carryover.
+        //
+        // The one statement in suspend() that can throw is the uniqueness copy, whose
+        // IntHashSet.add() allocates when the parked timestamp group is wider than the set it
+        // grew from. A real allocation failure is not reproducible, so the set injected below
+        // stands in for one: what the case pins is the ordering, which holds for any throwable
+        // the copy raises.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE park_owner (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("park_owner");
+
+            // Two rows of one timestamp group, which is what leaves keys in the set the copy walks -
+            // a group of one is held in a scalar and never touches it.
+            final LiveViewCheckpointOutputUniqueness parked = new LiveViewCheckpointOutputUniqueness();
+            parked.of(1);
+            Assert.assertTrue(parked.observe(1_000, 7));
+            Assert.assertTrue(parked.observe(1_000, 8));
+
+            // A bare window factory over the base table, built here rather than taken off a
+            // compiled view: the session only stores it and hands it back through
+            // getWindowFactory(), and neither suspend() nor close() reads it, which is what
+            // lets the case stand on a session rather than on a compiled view. It is built
+            // at all because the constructor parameter is @NotNull, which an instrumented
+            // build enforces at the call.
+            try (
+                    LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+                    TableReader baseReader = engine.getReader(token);
+                    WalWriter walWriter = engine.getWalWriter(token);
+                    RecordCursorFactory baseFactory = select("SELECT ts, x FROM park_owner");
+                    WindowRecordCursorFactory windowFactory = new WindowRecordCursorFactory(
+                            baseFactory,
+                            GenericRecordMetadata.copyOf(baseFactory.getMetadata()),
+                            new ObjList<>()
+                    )
+            ) {
+                final LiveViewCheckpointRepairSession session =
+                        new LiveViewCheckpointRepairSession(engine.getConfiguration(), job, windowFactory);
+                try {
+                    failTheUniquenessCopy(session);
+                    try {
+                        session.suspend(
+                                baseReader,
+                                walWriter,
+                                null,
+                                1_000,
+                                0,
+                                0,
+                                0,
+                                0,
+                                Numbers.LONG_NULL,
+                                Numbers.LONG_NULL,
+                                parked
+                        );
+                        Assert.fail("the injected copy failure must have failed the park");
+                    } catch (InjectedAllocationFailure expected) {
+                        // The park failed, so none of it may have taken effect.
+                    }
+
+                    // The two that discriminate. Both are non-null once the pre-fix ordering has
+                    // run its three handovers, and the pool answers the second close of either
+                    // with "double close".
+                    Assert.assertNull("the caller still owns the pinned reader", session.takeBaseReader());
+                    Assert.assertNull("the caller still owns the writer", session.takeWalWriter());
+                    // The two below hold under the pre-fix ordering too - it sets both after the
+                    // copy - so they pin that a failed park leaves no half-parked bookkeeping
+                    // behind rather than pinning the ordering itself. The capture is not asserted
+                    // here: this case passes suspend() a null one, which makes any claim about it
+                    // vacuous. testAParkWhoseSuspendFailsFreesTheStagedCapture drives the job's own
+                    // park with a real staged capture and pins what happens to it.
+                    Assert.assertFalse("a failed park must not read as suspended", session.isSuspended());
+                    Assert.assertEquals("a failed park must not count as a turn", 0, session.getTurns());
+                } finally {
+                    session.close();
+                }
+            }
+            // The try-with-resources closes the reader and the writer exactly once each. A session
+            // that had taken them would have closed them first, and the pool refuses the second
+            // return with "double close".
+        });
+    }
+
+    @Test
+    public void testAParkWhoseSuspendFailsFreesTheStagedCapture() throws Exception {
+        // The caller-side half of the park's ownership contract, which only the job's own path
+        // shows. suspend() takes the staged capture along with the reader and the writer, and
+        // LiveViewRefreshJob clears its own timelineCapture only after the call returns. The
+        // executor's cleanup for that capture is gated on !yielded - a repair that really parked
+        // keeps it for its next turn - so a suspend() that throws leaves a turn that IS yielded
+        // holding a capture nothing frees: the local still points at it and the session never
+        // took it. The direct-call case above cannot observe that gate; it calls suspend() rather
+        // than the job.
+        //
+        // What leaks is not bookkeeping. A RepairCapture owns two Paths of its own and a data
+        // segment writer holding three more plus its mapping, and that is what assertMemoryLeak
+        // catches here - the whole leak, before any boundary is frozen.
+        //
+        // The same close() is also the only thing that unlinks a staged d.<id>.tmp segment,
+        // while the session's own close() discards the descriptor that named it and
+        // LiveViewCheckpointRepairState.sweep reaches a staged segment only through a descriptor
+        // that names it. This fixture does not reach that: the repair it parks re-versions no
+        // logical boundary, so the capture never opens a data segment. The .tmp assertion below
+        // is a guard against a fixture that does, not a live check here.
+        //
+        // The failure is injected into the park that follows the first one, so the turn under
+        // test is a genuine resumed turn: the detector the session hands back is disarmed and
+        // seeded with one key, so the resumed turn's own copy carries that key forward untouched
+        // and the next park's copy into the session hits the injected set. One shot, no timing.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // Head rows, so the runtime's own segment is the fifth day and the three seeded
+                // days are all closed below it.
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+
+                execute("insert into tx values " + row(2, 5, "acct-1"));
+                drainWalQueue();
+                driveUntilParked(job, "lv");
+
+                final LiveViewCheckpointRepairSession parked = viewInstance().getSuspendedRepair();
+                Assert.assertNotNull("the repair must park for the case to reach a second park", parked);
+                Assert.assertNotNull(
+                        "the parked repair must hold a staged capture, or there is nothing to strand",
+                        stagedCapture(parked)
+                );
+
+                final ThrowingIntHashSet injected = failTheNextUniquenessCopy(parked);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertTrue(
+                        "the injected copy failure never fired, so the case pinned nothing",
+                        injected.hasFired()
+                );
+                // The turn unwound through handleRefreshFailure, which counts the fault and
+                // recomputes the view from the applied base. Exactly one: the recompute must not
+                // fault again.
+                Assert.assertEquals(
+                        "the injected park failure must cost exactly one refresh fault",
+                        1L,
+                        viewInstance().getRefreshFaultCount()
+                );
+                Assert.assertNull(
+                        "a park that failed must leave no repair parked on the view",
+                        viewInstance().getSuspendedRepair()
+                );
+                // Zero on both sides of the fix in this fixture, for the reason stated above.
+                // It fails only if a future fixture parks a repair that has frozen a boundary,
+                // which is the shape where a stranded capture also strands its segment.
+                Assert.assertEquals(
+                        "no staged segment may outlive the repair that opened it",
+                        0,
+                        stagedTmpSegmentCount(viewInstance())
+                );
+                // The view still converges: the fault is recoverable and the recompute is what
+                // recovers it. assertViewMatchesRecompute() is not used here - it also asserts
+                // zero faults, and this case injects one on purpose.
+                TestUtils.assertSqlCursors(
+                        engine,
+                        sqlExecutionContext,
+                        "(" + recompute() + ") order by 2, 1",
+                        "(lv) order by 2, 1",
+                        LOG,
+                        true
+                );
+            }
+            // assertMemoryLeak is the oracle for the capture itself: a stranded one leaves its own
+            // and its data segment writer's Paths allocated, which shows up as a NATIVE_PATH
+            // difference no other assertion here can see.
+        });
+    }
+
+    @Test
     public void testAParkedSegmentRepairNamesNoDispositionAheadOfItsCounters() throws Exception {
         // What a reader of live_views() must not be shown: a repair's route beside counters
         // that carry none of its rows. The disposition is settled when the segment repair is
@@ -269,7 +468,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
                 execute("insert into tx values " + row(2, 5, "acct-1"));
                 drainWalQueue();
-                driveUntilParked(job);
+                driveUntilParked(job, "lv");
 
                 // Mid-repair. checkpoint_repair_in_progress is the column that says a repair
                 // is in flight; the disposition names the last one that ran, and this one has
@@ -379,7 +578,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
                 execute("insert into tx values " + row(2, 5, "acct-1") + ", " + row(3, 5, "acct-1"));
                 drainWalQueue();
-                driveUntilParked(job);
+                driveUntilParked(job, "lv");
 
                 setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
                 driveRefreshToQuiescence(job);
@@ -472,7 +671,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 final String beforeRepair = viewContents();
                 execute("insert into tx values " + row(2, 5, "acct-1"));
                 drainWalQueue();
-                driveUntilParked(job);
+                driveUntilParked(job, "lv");
 
                 TestUtils.assertEquals(
                         "a parked repair must leave the durable view exactly as it found it",
@@ -485,6 +684,58 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 assertViewMatchesRecompute();
             }
         });
+    }
+
+    /**
+     * Makes the next park of an already-parked {@code session} fail inside suspend()'s uniqueness
+     * copy, once, while leaving the resume that precedes it able to run.
+     * <p>
+     * The copy's only fallible statement is {@link IntHashSet#add(int)} on the session's own key
+     * set, and it runs once per key the resuming turn's detector holds - so the injection needs
+     * that detector to hold at least one key by the time the turn parks. Two edits arrange it
+     * without depending on the data: the session's detector is disarmed, which the resume copies
+     * over and which makes the replay observe nothing and touch no key set; and the session's key
+     * set is replaced by one seeded with a single key, which the resume therefore carries forward
+     * untouched into the detector the next park copies back.
+     *
+     * @return the injected set, which records whether it actually fired
+     */
+    private static ThrowingIntHashSet failTheNextUniquenessCopy(LiveViewCheckpointRepairSession session)
+            throws Exception {
+        final LiveViewCheckpointOutputUniqueness uniqueness = session.getOutputUniqueness();
+        final Field keyColumnIndexField =
+                LiveViewCheckpointOutputUniqueness.class.getDeclaredField("keyColumnIndex");
+        keyColumnIndexField.setAccessible(true);
+        keyColumnIndexField.setInt(uniqueness, LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
+        final ThrowingIntHashSet injected = new ThrowingIntHashSet(SEEDED_GROUP_KEY);
+        final Field groupKeysField =
+                LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
+        groupKeysField.setAccessible(true);
+        groupKeysField.set(uniqueness, injected);
+        return injected;
+    }
+
+    /**
+     * Replaces the scratch key set inside {@code session}'s own uniqueness detector with one that
+     * fails on the first key {@code copyFrom} adds - which is what an allocation failure inside
+     * {@link IntHashSet#add(int)} looks like from suspend()'s side.
+     */
+    private static void failTheUniquenessCopy(LiveViewCheckpointRepairSession session) throws Exception {
+        final LiveViewCheckpointOutputUniqueness uniqueness = session.getOutputUniqueness();
+        final Field groupKeysField =
+                LiveViewCheckpointOutputUniqueness.class.getDeclaredField("groupKeys");
+        groupKeysField.setAccessible(true);
+        groupKeysField.set(uniqueness, new ThrowingIntHashSet());
+    }
+
+    /**
+     * The staged capture {@code session} is holding, read straight off the field rather than
+     * through {@code takeCapture()}, which would take it away from the parked repair.
+     */
+    private static Object stagedCapture(LiveViewCheckpointRepairSession session) throws Exception {
+        final Field captureField = LiveViewCheckpointRepairSession.class.getDeclaredField("capture");
+        captureField.setAccessible(true);
+        return captureField.get(session);
     }
 
     private void assertViewMatchesRecompute() throws Exception {
@@ -533,24 +784,6 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 + "sum(amount) over w as cumulative_sum, "
                 + "count(account_id) over w as cumulative_count "
                 + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
-    }
-
-    /**
-     * Drives one refresh pass at a time until the view has a repair parked on it, so a
-     * caller can read the durable state a reader would see mid-repair. Fails if the repair
-     * never parks - which would make every assertion after it vacuous.
-     */
-    private void driveUntilParked(LiveViewRefreshJob job) {
-        for (int i = 0; i < REFRESH_QUIESCENCE_PASSES; i++) {
-            setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-            drainWalQueue();
-            job.processNotificationsForTest();
-            drainWalQueue();
-            if (viewInstance().getSuspendedRepair() != null) {
-                return;
-            }
-        }
-        Assert.fail("the segment repair never parked on its turn budget");
     }
 
     /**
@@ -626,6 +859,40 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         return rows.toString();
     }
 
+    /**
+     * Temporary data segments under the named view's checkpoint directory. A capture stages one
+     * as {@code d.<id>.tmp} and its close() unlinks it when no splice published it, so at
+     * quiescence - no repair in flight - every file this counts is an orphan.
+     * <p>
+     * A directory that cannot be listed counts as zero, exactly as it does in
+     * {@code LiveViewCheckpointStatePageElisionTest.dataDirBytes()} over the same directory:
+     * the caller asks whether this view stranded a staged segment, and a data directory the
+     * view never created holds no staged segment to strand. So the reading says only that
+     * nothing is stranded - never that anything was staged. Its one caller says the same of
+     * itself: that assertion is a guard for a fixture that stages a segment rather than a
+     * live check of the one it stands in.
+     */
+    private int stagedTmpSegmentCount(LiveViewInstance instance) {
+        int count = 0;
+        try (
+                Path checkpointsDir = new Path().of(engine.getConfiguration().getDbRoot())
+                        .concat(instance.getLiveViewToken())
+                        .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+                Path dataDir = new Path()
+        ) {
+            LiveViewCheckpointLayout.dataDirPath(dataDir, checkpointsDir);
+            final File[] files = new File(dataDir.toString()).listFiles();
+            if (files != null) {
+                for (File file : files) {
+                    if (file.getName().endsWith(LiveViewCheckpointLayout.TMP_SUFFIX)) {
+                        count++;
+                    }
+                }
+            }
+        }
+        return count;
+    }
+
     private String viewContents() throws Exception {
         final StringSink out = new StringSink();
         printSql("lv order by 2, 1", out);
@@ -636,5 +903,48 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
         return instance;
+    }
+
+    /**
+     * Stands in for the {@link OutOfMemoryError} a real key-set growth raises. The case is about
+     * suspend() unwinding without having taken anything, which holds for any throwable the copy
+     * can raise.
+     */
+    private static final class InjectedAllocationFailure extends RuntimeException {
+        private InjectedAllocationFailure() {
+            super("injected allocation failure");
+        }
+    }
+
+    private static final class ThrowingIntHashSet extends IntHashSet {
+        private boolean hasFired;
+        private boolean isArmed = true;
+
+        private ThrowingIntHashSet() {
+        }
+
+        /**
+         * One that carries {@code seedKey} into the copy that reads it before it fails the copy
+         * that writes it. The seed goes in through {@code super.add} with the injection off, so
+         * the set is a real one-key set to every reader.
+         */
+        private ThrowingIntHashSet(int seedKey) {
+            isArmed = false;
+            super.add(seedKey);
+            isArmed = true;
+        }
+
+        @Override
+        public boolean add(int key) {
+            if (isArmed) {
+                hasFired = true;
+                throw new InjectedAllocationFailure();
+            }
+            return super.add(key);
+        }
+
+        private boolean hasFired() {
+            return hasFired;
+        }
     }
 }

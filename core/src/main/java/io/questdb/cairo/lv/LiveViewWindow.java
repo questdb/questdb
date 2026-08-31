@@ -1677,6 +1677,24 @@ public class LiveViewWindow implements QuietCloseable {
         // its functions either have no per-partition state yet (in which case
         // resetPartition is a no-op) or carry stale state from a prior partition the sweep
         // evicted, and resetting it is the safe default.
+        //
+        // Inequality rather than an increase, and that is load-bearing rather than
+        // incidental. A zoned anchor is not monotone through a DST transition: under
+        // ANCHOR DAILY '02:30' 'Europe/Berlin' the rows of 2026-10-25 carry
+        // 2026-10-24T00:30Z, then 2026-10-25T00:30Z from 00:30Z, then 2026-10-24T00:30Z
+        // AGAIN from the 01:00Z fall-back instant - the row reads 02:00 local under CET,
+        // below the day's own 02:30 - and finally 2026-10-25T01:30Z. A segment is one
+        // maximal RUN of rows sharing an anchor value rather than one bucket per value
+        // (see LiveViewCheckpointAnchorPlan), so the second run of a repeated value opens
+        // its own accumulator here.
+        //
+        // The repair path bounds a localized repair at LiveViewCheckpointAnchorPlan's
+        // segment end, and that is a BUCKET boundary: it advances the local grid by one
+        // period and converts back, wherever the rows happen to sit. It therefore lands
+        // BELOW the second run of a repeated value, and would leave that run holding
+        // pre-correction output. The plan refuses to report a finite end for a segment a
+        // fall-back splits this way, which widens the repair to the unbounded rebuild;
+        // LiveViewAnchorResetScopeTest pins the forward reading and that agreement.
         if (shouldReset) {
             // Grouped functions no-op here; their component is zeroed in the loaded
             // value instead. Residual ones keep the dispatch they have always had.

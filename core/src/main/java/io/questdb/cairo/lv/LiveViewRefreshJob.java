@@ -4987,7 +4987,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     keyedCostRows,
                     keyedScanKeys.size()
             );
-            final boolean restoreAwareCheaper = !rowCheaper && elapsedCheaper;
+            // The row verdict survives a saturated estimate - a count that reached
+            // wholeRangeRows answers "not cheaper" whatever the uncounted keys and
+            // partitions hold, because the merge charges at least one row per posting row -
+            // but the restore-aware override does not. It prices the keyed side against an
+            // elapsed model whose other term is a state restore, and only the whole side is
+            // bounded by wholeRangeRows: the figure it reads for the keyed route is a floor
+            // that sits at the budget precisely when the real posting count is furthest
+            // above it. Decline the override there rather than pick a route off it, which
+            // leaves the resume reading the whole range exactly as it did before the
+            // override existed.
+            final boolean keyedEstimateSaturated = keyedScanCost.isSaturated();
+            final boolean restoreAwareCheaper = !rowCheaper && !keyedEstimateSaturated && elapsedCheaper;
             if (coldHeadMiss) {
                 openSegmentColdKeyedPricedCount++;
                 openSegmentColdKeyedPostingRows += postingRows;
@@ -5025,6 +5036,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", keyedEstimateNanos=").$(elapsedCost.getLastKeyedEstimateNanos())
                     .$(", wholeEstimateNanos=").$(elapsedCost.getLastWholeEstimateNanos())
                     .$(", rowCheaper=").$(rowCheaper)
+                    .$(", keyedEstimateSaturated=").$(keyedEstimateSaturated)
                     .$(", restoreAwareCheaper=").$(restoreAwareCheaper)
                     .$(", keyedCheaper=").$(openSegmentKeyedScanCheaper).I$();
             return openSegmentKeyedScanCheaper;
@@ -6687,15 +6699,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * reconciliation discards the candidate so a later turn replans at a freshly
      * pinned one.
      * <p>
-     * What it will not do is continue in a runtime that drifted. The whole premise is
-     * that the compiled factory still stands where the last turn left it, so a factory
-     * rebuilt since the capture - a base-metadata recompile frees the primary and the
-     * isolated runtime together - takes the candidate away rather than the replay: its
-     * bounds and its staged roots describe a state those functions no longer hold, and its
-     * overlay holds bytes that belong to functions now freed. An operator who declines the
-     * isolated runtime mid-repair drifts it the other way, moving the replay onto a primary
-     * holding the forward drain's state rather than the parked replay's, and the same check
-     * catches it. Discarding is bounded and cheap, and
+     * What it will not do is continue in a runtime that drifted. A parked replay is
+     * standing part-way through one specific set of window functions - the isolated repair
+     * runtime's for a repair that was offered one, the primary's otherwise - and only those
+     * hold the state of the interval it has already folded. The session recorded that
+     * factory when its first turn opened it, so this turn continues in that one rather than
+     * deciding again which runtime a repair of this shape would be given: both inputs to
+     * that decision move between turns, and re-deciding would fold the rest of the replay
+     * into a runtime holding none of it.
+     * <p>
+     * Two things still take the candidate away rather than the replay. A base-metadata
+     * recompile frees the compiled factory, the compiled plan and the isolated runtime
+     * together ({@code LiveViewInstance.freeCompiledArtifacts}), so the recorded factory is
+     * then neither of the view's runtimes: its bounds and its staged roots describe a state
+     * those functions no longer hold, and its overlay holds bytes that belong to functions
+     * now freed. And an operator who declines the isolated runtime mid-repair is asking an
+     * isolated replay to stop; that one costs the candidate and nothing else, because an
+     * isolated replay leaves the primary exactly as the forward drain left it and takes no
+     * copy of it aside. Discarding is bounded and cheap, and
      * the change that triggered the repair is still unconsumed in the base, so the next
      * tick replans it at a freshly pinned snapshot. {@code prepareForBaseSchemaRecompile}
      * discards on that path already; this is the guard that keeps a future one honest.
@@ -6704,25 +6725,56 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             throws SqlException {
         final RecordCursorFactory compiledFactory = instance.getCompiledFactory();
         final LiveViewCompiledPlan compiledPlan = instance.getCompiledPlan();
-        // The runtime this turn would replay through, which is the one the parked repair
-        // has to still be standing in. It covers both ways it can drift: a base-metadata
-        // recompile frees the primary and the isolated runtime together, and an operator
-        // who declines the isolated runtime mid-repair moves the replay back onto a
-        // primary that holds the forward drain's state rather than the parked replay's.
+        // The window functions the parked replay is standing part-way through, taken off
+        // the session rather than derived again. The session recorded them when its first
+        // turn opened - see LiveViewCheckpointRepairSession.getWindowFactory() - and they
+        // are the only ones holding the state of the interval that turn folded. Deriving
+        // them again is what this must not do, because neither input to that decision
+        // answers the question: the view keeps its isolated runtime across repairs, so a
+        // repair that was never offered one still finds one in the cache; and
+        // isolatedRepairRuntime() hands back null with the switch on when the second
+        // compile threw or the two anchor shapes disagreed, so a repair the switch says is
+        // isolated may be standing in the primary.
+        final WindowRecordCursorFactory parkedWindowFactory = session.getWindowFactory();
         final LiveViewRepairRuntime repairRuntime = instance.getRepairRuntime();
-        final WindowRecordCursorFactory replayWindowFactory =
-                repairRuntime != null && engine.getConfiguration().isLiveViewCheckpointRepairIsolatedRuntimeEnabled()
-                        ? repairRuntime.getWindowFactory()
-                        : compiledPlan == null ? null : compiledPlan.getWindowFactory();
-        if (compiledFactory == null || compiledPlan == null || replayWindowFactory != session.getWindowFactory()) {
+        final boolean standsInIsolated = repairRuntime != null
+                && repairRuntime.getWindowFactory() == parkedWindowFactory;
+        final boolean standsInPrimary = compiledPlan != null
+                && compiledPlan.getWindowFactory() == parkedWindowFactory;
+        // An operator who declines the isolated runtime mid-repair is asking the isolated
+        // replay to stop, and this is where it stops. A replay standing in the primary has
+        // no such switch to read: the primary is the route the switch turns repairs back
+        // onto, so one already there is what the operator asked for.
+        final boolean resumable = standsInPrimary
+                || (standsInIsolated && engine.getConfiguration().isLiveViewCheckpointRepairIsolatedRuntimeEnabled());
+        if (compiledFactory == null || compiledPlan == null || !resumable) {
             LOG.info().$("live view runtime changed under a parked O3 repair, discarding the candidate [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", turns=").$(session.getTurns())
+                    .$(", standsInPrimary=").$(standsInPrimary)
+                    .$(", standsInIsolated=").$(standsInIsolated)
                     .$(", highTsExclusive=").$(session.getPlan().getHighTsExclusive()).I$();
-            // Forget rather than restore: close() would otherwise put the capture's bytes
-            // back into whichever functions the view holds now, which are not the ones
-            // they came out of.
-            session.forgetRuntime();
+            if (!standsInPrimary) {
+                // Defensive, and unreachable as the code stands: this arm needs
+                // compiledFactory or compiledPlan null, or a runtime the candidate does not
+                // stand in, and standsInPrimary already implies compiledPlan is not null and
+                // resumable is true - so it could only be reached with standsInPrimary true
+                // if compiledFactory were null while compiledPlan was not. LiveViewInstance
+                // writes the two together (setCompiledFactory) and nulls them together
+                // (freeCompiledArtifacts), so no state does that today.
+                //
+                // The gate stays because forgetting is correct only on this arm, and a later
+                // change that separated the two artifacts would need it. An overlay capture
+                // exists only for a repair that ran through the primary - it is the copy
+                // aside a converging one takes before wiping those functions - and reaching
+                // here means they are no longer the functions the view holds, so close()
+                // would write one factory's bytes into another's, or into functions a
+                // recompile has already freed. A candidate still standing in the live
+                // primary must keep its capture instead: close() then puts the pre-repair
+                // state back, which is the condition the wipe's skipped
+                // markWindowStateDirty rests on.
+                session.forgetRuntime();
+            }
             instance.discardSuspendedRepair();
             return;
         }
@@ -7228,7 +7280,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // that cannot open one - a view whose timeline an earlier repair retired and
             // no seal has re-opened - falls back to the truncate below, which is what
             // this path always did.
-            session = openRepairSession(plan, windowFactory);
+            //
+            // It records replayWindowFactory, not the primary: the session names the
+            // runtime its replay is standing in, and a keyed resume folds every row into
+            // the isolated runtime's functions (the freeze cursor, the anchor restore, the
+            // incremental cursor and the transplant all read replayWindowFactory below).
+            // Nothing reads the recorded factory on this path today - only a parked repair
+            // does, and this executor never parks - but recording the primary here would
+            // arm the trap for the first turn budget this path ever grows.
+            session = openRepairSession(plan, replayWindowFactory);
             timelineCapture = beginCheckpointTimelineRepair(
                     instance,
                     plan,
@@ -8218,10 +8278,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     keyedReplay.clear();
                 }
             }
-            final LiveViewRepairRuntime repairRuntime = isolatedRepairRuntime(
-                    instance,
-                    finiteHighBound || coldKeyedRoute
-            );
+            // The runtime this turn folds its rows into. A first turn decides it. A resumed
+            // turn does not get to: the parked replay is already standing part-way through
+            // one runtime's accumulators and no other holds what it folded, so it continues
+            // in the factory the session recorded rather than in whatever the cache and the
+            // switch would name now. resumeSuspendedRepair is the only caller that passes a
+            // session, and it has just refused every candidate whose recorded factory is
+            // neither of the view's two live runtimes - so a cache that does not match it
+            // means the parked replay is standing in the primary.
+            final LiveViewRepairRuntime repairRuntime;
+            if (resumed != null) {
+                final LiveViewRepairRuntime cachedRuntime = instance.getRepairRuntime();
+                repairRuntime = cachedRuntime != null && cachedRuntime.getWindowFactory() == resumed.getWindowFactory()
+                        ? cachedRuntime
+                        : null;
+            } else {
+                repairRuntime = isolatedRepairRuntime(instance, finiteHighBound || coldKeyedRoute);
+            }
             if (coldKeyedRoute && repairRuntime == null) {
                 Misc.free(storedRowCursor);
                 storedRowCursor = null;
@@ -8300,9 +8373,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // aside and puts it back; false for one whose own replay state becomes the
             // runtime. The empty-range branch below is the one place it is retracted.
             //
-            // A resumed turn recovers it rather than being told: the isolation is decided by
-            // the same plan the prior turn read, and a copy-aside repair left the scratch
-            // overlay captured, once, by its first turn.
+            // A resumed turn recovers it rather than being told: it replays through the
+            // runtime its session recorded, so isolation is the same answer the first turn
+            // reached, and a copy-aside repair left the scratch overlay captured, once, by
+            // that same turn.
             boolean primaryKept = isolated || (session != null && session.getOverlay().isCaptured());
             // Cumulative across every turn of this repair; a resumed turn continues the
             // counts the prior ones left.
@@ -9012,19 +9086,37 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // instead - and commits nothing, which is what leaves the durable
                             // view as the repair found it.
                             if (yielded) {
-                                session.suspend(
-                                        reader,
-                                        walWriter,
-                                        timelineCapture,
-                                        resumeFromTs,
-                                        resumeSkipRows,
-                                        capturedBoundaries,
-                                        appendedRows,
-                                        o3ScanRows,
-                                        replayMinTs,
-                                        replayMaxTs,
-                                        outputUniqueness
-                                );
+                                try {
+                                    session.suspend(
+                                            reader,
+                                            walWriter,
+                                            timelineCapture,
+                                            resumeFromTs,
+                                            resumeSkipRows,
+                                            capturedBoundaries,
+                                            appendedRows,
+                                            o3ScanRows,
+                                            replayMinTs,
+                                            replayMaxTs,
+                                            outputUniqueness
+                                    );
+                                } catch (Throwable t) {
+                                    // suspend() runs its only fallible statement - the uniqueness
+                                    // copy - before it takes any of the three handles, so a throw
+                                    // here leaves the pinned reader, the writer and the staged
+                                    // capture with this turn. A turn that still owns them did not
+                                    // park, and saying so is what puts it back on the unwinding
+                                    // path: the cleanup in the finally below frees the capture and
+                                    // retires the descriptor only for a turn that is NOT yielded,
+                                    // because a repair that really parked keeps both for its next
+                                    // turn. Without this the capture is stranded - the local still
+                                    // points at it, the session never took it, and close() then
+                                    // discards the descriptor that named its staged segment.
+                                    // walWriterRetained stays down, so the finally that owns the
+                                    // writer still closes it exactly once.
+                                    yielded = false;
+                                    throw t;
+                                }
                                 walWriterRetained = true;
                                 timelineCapture = null;
                             } else {
@@ -9255,6 +9347,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // staged roots in the session, and the runtime standing where the replay
                 // left it. Refresh for this view is blocked until a later turn on this
                 // worker finishes the repair.
+                //
+                // resumeSuspendedRepair reads the recorded factory as the sole authority on
+                // which runtime the parked replay is standing in, so a session that names a
+                // runtime other than the one this turn actually folded its rows into would
+                // have the next turn continue in accumulators holding none of them - wrong
+                // rows, silently. Cheap to state here, at the only place a repair parks.
+                assert session.getWindowFactory() == replayWindowFactory
+                        : "parked repair records a runtime its replay did not fold into";
                 instance.setSuspendedRepair(session);
                 if (suspendedRepairViews.indexOf(instance) < 0) {
                     suspendedRepairViews.add(instance);

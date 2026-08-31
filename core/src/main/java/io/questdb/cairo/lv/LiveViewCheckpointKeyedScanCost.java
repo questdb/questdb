@@ -100,7 +100,10 @@ import org.jetbrains.annotations.NotNull;
  * size - is walked, and the walk stops at {@link #estimateKeyedScanRows}'s budget. The
  * budget is not an approximation of the answer: once the keyed side has passed the
  * whole-range scan's row count there is no verdict left to change, so stopping there costs
- * nothing and bounds the pricing by the cost of the option it prices.
+ * nothing and bounds the pricing by the cost of the option it prices. It costs nothing for
+ * <b>that</b> verdict only - a stopped walk leaves every key below it and every partition
+ * above it out of all three figures - so {@link #isSaturated()} reports the stop for any
+ * consumer that prices the keyed side against something the budget does not bound.
  * <p>
  * One instance per refresh job, bound to the repair's pinned reader by {@link #of} and
  * reused across repairs.
@@ -167,6 +170,7 @@ public final class LiveViewCheckpointKeyedScanCost {
     private int pageFrameMinRows;
     private long postingRows;
     private TableReader reader;
+    private boolean saturated;
     private int sharedQueryWorkerCount;
 
     /**
@@ -178,7 +182,9 @@ public final class LiveViewCheckpointKeyedScanCost {
      *                    {@code PageFrameRecordCursorFactory.getBaseColumnIndex}
      * @param budgetRows  the point above which the answer cannot change the verdict, so
      *                    the count saturates rather than continuing. Pass
-     *                    {@link Long#MAX_VALUE} to count exactly
+     *                    {@link Long#MAX_VALUE} to count exactly. A count that stopped
+     *                    there is an understatement and not a total, which
+     *                    {@link #isSaturated()} reports
      * @return the posting rows, or {@link #UNPRICEABLE}
      */
     public long estimateKeyedScanRows(
@@ -191,6 +197,7 @@ public final class LiveViewCheckpointKeyedScanCost {
         indexOpens = 0;
         indexSeeks = 0;
         postingRows = 0;
+        saturated = false;
         if (highTsInclusive < lowTs || symbolKeys.size() == 0 || reader.size() == 0) {
             return 0;
         }
@@ -252,8 +259,13 @@ public final class LiveViewCheckpointKeyedScanCost {
                 rows += countPostings(indexReader, symbolKeys.getQuick(k), partitionRows, budgetRows - rows);
                 if (rows >= budgetRows) {
                     // The verdict is settled. Report what is known and stop paying for an
-                    // answer nothing reads.
+                    // answer nothing reads - but say that it is what is known and not what
+                    // there is, because every key below k and every partition above i is
+                    // now uncounted in all three figures.
                     postingRows = rows;
+                    final boolean hasPartitionAbove = i + 1 < partitionCount
+                            && reader.getPartitionMinTimestampFromMetadata(i + 1) <= highTsInclusive;
+                    saturated |= k + 1 < n || hasPartitionAbove;
                     return rows;
                 }
             }
@@ -284,7 +296,8 @@ public final class LiveViewCheckpointKeyedScanCost {
     }
 
     /**
-     * @return the posting rows the last estimate reached, saturating at its budget
+     * @return the posting rows the last estimate reached, saturating at its budget.
+     * {@link #isSaturated()} says whether that is a total or a floor
      */
     public long getPostingRows() {
         return postingRows;
@@ -326,6 +339,24 @@ public final class LiveViewCheckpointKeyedScanCost {
         }
         return keyedScanCostRows(postingRows, indexOpens, indexSeeks, keyCount, indexOpenRows, indexSeekRows)
                 < wholeRangeRows;
+    }
+
+    /**
+     * Whether the last {@link #estimateKeyedScanRows} stopped on its budget with postings
+     * still uncounted, so that {@link #getPostingRows()}, {@link #getIndexOpens()} and
+     * {@link #getIndexSeeks()} are floors rather than totals.
+     * <p>
+     * {@link #isKeyedScanCheaper} needs no such warning - a count that reached the budget
+     * already answers "not cheaper", because the merge charge is at least one row per
+     * posting row. Any consumer that prices the keyed side against something the budget
+     * does <b>not</b> bound - an elapsed-time model whose other term is a state restore,
+     * say - has to read this before it trusts the figure, because the estimate is least
+     * accurate exactly where the keyed route is most expensive: the more postings there
+     * really are, the earlier the walk stops and the closer the reported count sits to the
+     * budget it was given.
+     */
+    public boolean isSaturated() {
+        return saturated;
     }
 
     /**
@@ -417,7 +448,7 @@ public final class LiveViewCheckpointKeyedScanCost {
      * Counts one key's postings inside one partition, in constant time where the index can
      * and by walking where it cannot.
      */
-    private static long countPostings(IndexReader indexReader, int symbolKey, long partitionRows, long budgetRows) {
+    private long countPostings(IndexReader indexReader, int symbolKey, long partitionRows, long budgetRows) {
         // The index keys its postings by symbolKey + 1, with 0 reserved for the null value,
         // which is what SymbolIndexRowCursorFactory converts on the way in. Passing the
         // table-local key straight through would count the neighbouring key's rows.
@@ -431,6 +462,12 @@ public final class LiveViewCheckpointKeyedScanCost {
                 cursor.next();
                 rows++;
             }
+            // A walk that stopped on the budget leaves this one key's own postings
+            // uncounted, which the caller's own budget check cannot see: the count it
+            // reads back is the budget either way. The extra hasNext is the first call
+            // for that position - the loop short-circuits before making it - so it costs
+            // one step and misreports neither an exhausted cursor nor a truncated one.
+            saturated |= rows >= budgetRows && cursor.hasNext();
             return rows;
         }
     }

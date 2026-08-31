@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyedScanCost;
@@ -650,6 +651,121 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
         });
     }
 
+    @Test
+    public void testABudgetedEstimateSaysWhenItStoppedShortOfThePostingsItPrices() throws Exception {
+        // The budget answers one question and only one: whether the keyed side already
+        // reads more than the whole range. Every other consumer needs to know that a count
+        // which reached it is a floor - every key below the stop and every partition above
+        // it is missing from the posting rows, the index opens and the index seeks alike -
+        // because the figure understates the keyed route by the most exactly where that
+        // route is most expensive.
+        assertMemoryLeak(() -> {
+            seedEightAccountsOverTwoDays();
+
+            final long lowTs = ts("2026-01-02T00:00:00.000000Z");
+            final long highTs = ts("2026-01-03T23:59:59.999999Z");
+            final long firstDayHighTs = ts("2026-01-02T23:59:59.999999Z");
+            final IntList keys = new IntList();
+            final LiveViewCheckpointKeyedScanCost cost = new LiveViewCheckpointKeyedScanCost();
+            try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
+                keys.add(reader.getSymbolMapReader(1).keyOf("acct-3"));
+                cost.of(reader, sqlExecutionContext);
+
+                Assert.assertEquals(250, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, Long.MAX_VALUE));
+                Assert.assertFalse(
+                        "an unbounded count visited every partition and every key, so it is a total",
+                        cost.isSaturated()
+                );
+                Assert.assertEquals(2, cost.getIndexOpens());
+
+                // A budget the first day's 125 postings reach on their own, which leaves the
+                // second day unopened, unsought and uncounted.
+                Assert.assertEquals(125, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, 125));
+                Assert.assertTrue(
+                        "the walk stopped with a partition of this key's rows still ahead of it",
+                        cost.isSaturated()
+                );
+                Assert.assertEquals(
+                        "and the setup term stopped with it - one open, not the two the scan pays",
+                        1,
+                        cost.getIndexOpens()
+                );
+                Assert.assertEquals(125, cost.getPostingRows());
+
+                // The same stop, with nothing behind it: the budget lands on the last key of
+                // the last partition, and the key's own postings are exhausted. Nothing is
+                // missing from the figures, so nothing may be reported as missing - a stop
+                // is not by itself an understatement.
+                Assert.assertEquals(250, cost.estimateKeyedScanRows(lowTs, highTs, 1, keys, 250));
+                Assert.assertFalse(
+                        "a count that stopped having already reached every posting is a total",
+                        cost.isSaturated()
+                );
+                Assert.assertEquals(2, cost.getIndexOpens());
+
+                // One partition and one key, so the outer walk has neither a key nor a
+                // partition left to skip when it stops. Where the index reports no size the
+                // count is still short, and the key's own truncated walk is the only thing
+                // that can say so.
+                final boolean isKeySizedByTheIndex = IndexType.isPosting(configuration.getDefaultSymbolIndexType());
+                final long truncated = cost.estimateKeyedScanRows(lowTs, firstDayHighTs, 1, keys, 100);
+                Assert.assertEquals(isKeySizedByTheIndex ? 125 : 100, truncated);
+                Assert.assertEquals(
+                        "a bitmap index reports no size, so this key's postings are walked and"
+                                + " the walk is what the budget cut short; a posting index sizes"
+                                + " the key exactly and loses nothing",
+                        !isKeySizedByTheIndex,
+                        cost.isSaturated()
+                );
+                Assert.assertEquals(1, cost.getIndexOpens());
+            }
+        });
+    }
+
+    @Test
+    public void testABudgetedEstimateSaysWhenItStoppedWithKeysStillAheadOfIt() throws Exception {
+        // The other half of the stop, and the one a single-key fixture cannot reach: the
+        // walk can end inside a partition with keys of that same partition still unvisited,
+        // and their postings are as absent from the three figures as an unopened
+        // partition's. One key and two keys over the same rows, the same range and the same
+        // budget are what separate the two - the one-key run stops having counted every
+        // posting there is, the two-key run stops with a whole key ahead of it.
+        assertMemoryLeak(() -> {
+            seedEightAccountsOverTwoDays();
+
+            final long lowTs = ts("2026-01-02T00:00:00.000000Z");
+            // The first day alone. No partition stands above the stop, so the keys are the
+            // only thing the walk can leave uncounted.
+            final long firstDayHighTs = ts("2026-01-02T23:59:59.999999Z");
+            final IntList oneKey = new IntList();
+            final IntList twoKeys = new IntList();
+            final LiveViewCheckpointKeyedScanCost cost = new LiveViewCheckpointKeyedScanCost();
+            try (TableReader reader = engine.getReader(engine.getTableTokenIfExists("tx"))) {
+                final int firstKey = reader.getSymbolMapReader(1).keyOf("acct-3");
+                oneKey.add(firstKey);
+                twoKeys.add(firstKey);
+                twoKeys.add(reader.getSymbolMapReader(1).keyOf("acct-5"));
+                cost.of(reader, sqlExecutionContext);
+
+                // The budget is exactly the first key's postings in the range's only
+                // partition, so both runs stop on the same row of the same key.
+                Assert.assertEquals(125, cost.estimateKeyedScanRows(lowTs, firstDayHighTs, 1, oneKey, 125));
+                Assert.assertFalse(
+                        "the only key of the only partition was counted whole, so this is a total",
+                        cost.isSaturated()
+                );
+
+                Assert.assertEquals(125, cost.estimateKeyedScanRows(lowTs, firstDayHighTs, 1, twoKeys, 125));
+                Assert.assertTrue(
+                        "the second key's 125 postings are uncounted, so this is a floor",
+                        cost.isSaturated()
+                );
+                Assert.assertEquals(125, cost.getPostingRows());
+                Assert.assertEquals(1, cost.getIndexOpens());
+            }
+        });
+    }
+
     private long count(String sql) throws Exception {
         try (
                 RecordCursorFactory factory = select(sql);
@@ -1005,6 +1121,21 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
                         postingRows, 0, indexSeeks, keys.size(), 2_000, 256, 256)
         );
+    }
+
+    /**
+     * Two days of 1_000 rows over eight accounts, round-robin: the 86.4-second step puts
+     * 1_000 rows in each daily partition, and one account holds exactly 125 of each day's.
+     */
+    private void seedEightAccountsOverTwoDays() throws Exception {
+        execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL NOCACHE INDEX CAPACITY 8, "
+                + "amount DOUBLE) TIMESTAMP(created_at) PARTITION BY DAY WAL");
+        execute("INSERT INTO tx SELECT "
+                + "timestamp_sequence('2026-01-02T00:00:00.000000Z', 86_400_000), "
+                + "('acct-' || (x % 8))::symbol, "
+                + "x::double "
+                + "FROM long_sequence(2_000)");
+        drainWalQueue();
     }
 
     private String seedFourAccountsOverThreeDays() {

@@ -84,6 +84,18 @@ import org.jetbrains.annotations.Nullable;
  * that overlap or reverse for the rows around it. The end check catches that from above and
  * answers EOF; the start check catches it from below and answers an open-below start.
  * <p>
+ * A fall-back needs one check more than either, because it can split a segment in two. It
+ * winds local time back, so an instant well above the segment's end can read below the
+ * segment's own local boundary again and floor straight back to its start - the anchor value
+ * is then carried by two disjoint intervals with a different value between them. The bounds
+ * describe the lower interval and say nothing about the upper one, which a repair bounded by
+ * them would leave standing with stale output, so {@link #getSegmentEndExclusive(long)} walks
+ * the transitions above its end and reports no finite end when one of them winds local time
+ * back below the boundary. A probe in the UPPER interval keeps both bounds, and the pair it
+ * gets spans from the lower interval's start: wider than that probe's own run, but still a
+ * wall at each end, so it is a union of whole runs and a repair over it recomputes each of
+ * them from a reset.
+ * <p>
  * <b>The two checks are independent, and refuse independently.</b> They are separate
  * expressions over separate instants, so a probe on one of the two days a year this applies
  * usually gets one finite bound and one refusal rather than two refusals: a start the
@@ -209,8 +221,9 @@ public final class LiveViewCheckpointAnchorPlan {
      * Returns the exclusive end of the segment that contains {@code timestamp}, or
      * {@link Numbers#LONG_NULL} when the period cannot be advanced exactly - a
      * sub-resolution unit, an addition that leaves the timestamp domain, or a zone
-     * transition the anchor's own wall time straddles. The absent answer is the high
-     * bound {@code H = EOF}: the caller may not treat it as a timestamp.
+     * transition the anchor's own wall time straddles - and also when a fall-back above
+     * the end gives the segment a second part the end does not cover. The absent answer
+     * is the high bound {@code H = EOF}: the caller may not treat it as a timestamp.
      */
     public long getSegmentEndExclusive(long timestamp) {
         if (tzRules != null) {
@@ -352,6 +365,34 @@ public final class LiveViewCheckpointAnchorPlan {
                 || tzFloor(end) != end
                 || tzFloor(end - 1) != start) {
             return Numbers.LONG_NULL;
+        }
+        // Those checks prove the segment is closed just BELOW its end. They prove nothing
+        // about the instants further above it, and a fall-back transition puts rows there
+        // that carry this segment's own anchor value: it winds local time back, and while
+        // local time reads below localEnd again the floor lands back on localStart. Under
+        // ANCHOR DAILY '02:30' 'Europe/Berlin' the segment that ends at 2026-10-25T00:30Z
+        // has exactly that second part, [2026-10-25T01:00Z, 2026-10-25T01:30Z) - those rows
+        // read 02:00..02:29 CET, below the day's own 02:30. A repair bounded at the end
+        // would stop below them and leave their output standing, so this reports no finite
+        // end for such a segment and the caller widens to the unbounded rebuild instead.
+        //
+        // A row floors to localStart only while its local time reads below localEnd, and
+        // local time increases strictly with the instant between two transitions. So over
+        // the tail above the end the minimum local time is taken at the end itself or at one
+        // of the transitions above it, and probing those instants covers the whole tail. The
+        // end's own local time already reads at or above localEnd - a lower one would floor
+        // back into this segment, which the tzFloor(end) == end check above rejects - so the
+        // transitions are all that is left to probe. Every instant that reads below localEnd
+        // sits below end + tzGuard: it is below localEnd less its own zone offset, end is
+        // localEnd less another, and tzGuard bounds the difference between any two zone
+        // offsets (see the field's own note). So the walk is finite.
+        for (long transition = tzRules.getNextDST(end - 1);
+             transition != Long.MAX_VALUE && transition < end + tzGuard;
+             transition = tzRules.getNextDST(transition)) {
+            if (!isTzRepresentable(transition)
+                    || transition + CommonUtils.getFloorUtcTzOffset(tzRules, transition, unit) < localEnd) {
+                return Numbers.LONG_NULL;
+            }
         }
         return end;
     }

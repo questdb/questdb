@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewFunctionSnapshot;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -203,6 +204,161 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                 // The same view, a correction two days below: converging, and isolated.
                 commit(row(2, 3, "acct-1"), job);
                 Assert.assertEquals(1, job.isolatedReplayTurnCountForTest());
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAParkedCopyAsideRepairKeepsThePrimaryStateWhenTheSwitchIsTurnedOn() throws Exception {
+        // The copy-aside repair is the one with something to lose. It captures the primary's
+        // whole window state, wipes those same functions and replays over them, and it is
+        // exempted from markWindowStateDirty on the sole ground that its session's close()
+        // puts the capture back. So the turn that finds it parked may not drop the capture
+        // while those functions are still the view's own: the primary would be left at
+        // identity with nothing recording that it must be rebuilt, and the next forward
+        // drain would accumulate on top of the wipe.
+        //
+        // The drift driven here is the one that makes the resuming turn re-decide: the
+        // repair opens with the isolated runtime declined, so it parks on the primary with
+        // the cache empty, and the switch is turned back on before it resumes. That is also
+        // the state isolatedRepairRuntime() leaves behind when the switch is on but the
+        // second compile threw or the two anchor shapes disagreed - it returns null and the
+        // cache stays empty - so the resume has to read where the replay is standing rather
+        // than what the switch says it would be given.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                // Head rows, so the runtime stands in the fifth day and the seeded days are
+                // all closed below it.
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+
+                MemoryCARW before = null;
+                MemoryCARW after = null;
+                try {
+                    before = imageOfPrimaryRuntime();
+
+                    execute("insert into tx (created_at, account_id, amount) values " + row(2, 3, "acct-1"));
+                    drainWalQueue();
+                    driveUntilParked(job, "lv");
+
+                    final LiveViewCheckpointRepairSession parked = viewInstance().getSuspendedRepair();
+                    Assert.assertSame(
+                            "a declined isolated runtime parks the repair on the primary factory",
+                            viewInstance().getCompiledPlan().getWindowFactory(),
+                            parked.getWindowFactory()
+                    );
+                    Assert.assertTrue(
+                            "a converging repair on the primary must have copied the state aside",
+                            parked.getOverlay().isCaptured()
+                    );
+
+                    setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED, "true");
+                    Assert.assertNull(
+                            "the switch alone builds nothing: the cache is empty while it is on, "
+                                    + "which is the state a failed second compile also leaves",
+                            viewInstance().getRepairRuntime()
+                    );
+
+                    final long resumesBefore = viewInstance().getCheckpointRepairResumes();
+                    // Lifted before the drive so the resumed turn carries the rest of the
+                    // replay in one go. Without it a candidate that is discarded instead
+                    // still advances the counter, through the replan behind the discard.
+                    setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000);
+                    driveRefreshToQuiescence(job);
+
+                    // The state assertion first: whatever the turn decided, the primary must
+                    // come out of this repair holding the state it went in with. A discard
+                    // that drops the copy-aside leaves it at the wipe instead, and nothing
+                    // marks it for a rebuild.
+                    after = imageOfPrimaryRuntime();
+                    assertImagesEqual(before, after);
+
+                    Assert.assertEquals(
+                            "the parked repair must resume in the runtime it is standing in",
+                            resumesBefore + 1,
+                            viewInstance().getCheckpointRepairResumes()
+                    );
+                    Assert.assertNull("the repair must finish", viewInstance().getSuspendedRepair());
+                    Assert.assertEquals(
+                            "no turn of this repair may fold rows into an isolated runtime",
+                            0,
+                            job.isolatedReplayTurnCountForTest()
+                    );
+                } finally {
+                    Misc.free(before);
+                    Misc.free(after);
+                }
+
+                // Where a dropped capture shows up: the accumulators the drain reads next.
+                // An image comparison taken before this is not enough on its own, because a
+                // repair that never resumed at all would also leave them alone.
+                commit(row(5, 3, "acct-1") + ", " + row(5, 4, "acct-2"), job);
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAParkedIsolatedRepairIsDiscardedWhenItsRuntimeIsFreed() throws Exception {
+        // The other half of the guard, and the reason it may not be relaxed into a no-op.
+        // A repair standing in the isolated runtime has nowhere to continue once that runtime
+        // is gone, so the candidate goes with it. Freeing it is driven directly, the way
+        // testABaseSchemaRecompileDropsTheIsolatedRuntime drives the recompile: the
+        // production transition is isolatedRepairRuntime()'s own setRepairRuntime(null) when
+        // the two anchor shapes disagree. Nothing is lost with the candidate - an isolated
+        // replay leaves the primary exactly as the forward drain left it - and the change is
+        // still unconsumed, so a later turn replans it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
+
+                execute("insert into tx (created_at, account_id, amount) values " + row(2, 3, "acct-1"));
+                drainWalQueue();
+                driveUntilParked(job, "lv");
+
+                final LiveViewCheckpointRepairSession parked = viewInstance().getSuspendedRepair();
+                final LiveViewRepairRuntime runtime = viewInstance().getRepairRuntime();
+                Assert.assertNotNull(runtime);
+                Assert.assertSame(
+                        "a converging repair parks in the isolated runtime",
+                        runtime.getWindowFactory(),
+                        parked.getWindowFactory()
+                );
+                Assert.assertFalse(
+                        "an isolated replay copies nothing aside",
+                        parked.getOverlay().isCaptured()
+                );
+
+                final long resumesBefore = viewInstance().getCheckpointRepairResumes();
+                viewInstance().setRepairRuntime(null);
+                // Lifted before the drive so the replan the discard leaves behind runs in one
+                // turn. Its own resumes would otherwise be indistinguishable from a resume of
+                // the candidate under test, which is what the count below has to rule out.
+                setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1_000_000);
+                driveRefreshToQuiescence(job);
+
+                Assert.assertNull(
+                        "the candidate must be discarded rather than continued elsewhere",
+                        viewInstance().getSuspendedRepair()
+                );
+                Assert.assertEquals(
+                        "the candidate must not be resumed even once",
+                        resumesBefore,
+                        viewInstance().getCheckpointRepairResumes()
+                );
+
+                commit(row(5, 3, "acct-1") + ", " + row(5, 4, "acct-2"), job);
                 assertViewMatchesRecompute();
             }
         });
