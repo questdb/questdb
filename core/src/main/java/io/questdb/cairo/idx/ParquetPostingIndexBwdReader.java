@@ -230,6 +230,25 @@ public class ParquetPostingIndexBwdReader extends AbstractParquetPostingIndexRea
          * serialising the caller's loop on a store-to-load dependency every row.
          */
         public boolean hasNext() {
+            // Fast path, and the overwhelmingly common one: another row of a
+            // group already decoded. Without it every row re-enters the group
+            // loop below and re-tests decodedGroup, though that only changes at
+            // a group boundary -- async-profiler put this method at 77.9% of a
+            // 16-key backward scan against the native chain's 44.2%, while the
+            // forward reader, which has had this path all along, sat at 48.6%.
+            if (decodedGroup && rowInGroup > rowFloor) {
+                final long i = --rowInGroup;
+                final long rowId = seqMode
+                        ? seqStart + (coverOrdinalBase + i - packedKeyStart) * seqStride
+                        : Unsafe.getUnsafe().getLong(rowIdPtr + (i << 3));
+                if (windowNarrowed || (rowId >= minValue && rowId <= maxValue)) {
+                    setEmittedRow(coverOrdinalBase + i);
+                    next = rowId;
+                    return true;
+                }
+                // Rejected by the window. rowInGroup has moved on, so the loop
+                // below resumes from it.
+            }
             while (rg >= rgLo) {
                 if (!decodedGroup && !decodeCurrentGroup()) {
                     // Out of groups, NOT out of answers: the implicit-null
