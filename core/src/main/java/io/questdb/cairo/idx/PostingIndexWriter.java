@@ -7655,6 +7655,23 @@ public class PostingIndexWriter implements IndexWriter {
 
                 mem.putInt(totalValues);
 
+                // Reserve the whole fixed-size block up front and write into the
+                // mapped region directly, instead of appending value-by-value.
+                // mem.putLong re-checks the append offset and can extend the
+                // mapping on every call; the block size here is exact
+                // (totalValues * valueSize -- fixed-width, no compression on this
+                // path), so one jumpTo makes the region contiguous and the loop
+                // becomes a plain typed store. Same idiom flushAllPending already
+                // uses for the .pv gen ("extend to guarantee contiguous mapped
+                // region for direct encoding"). Staging through a scratch buffer
+                // was tried instead and was SLOWER -- it doubles the stores and
+                // this loop is memory-bound.
+                final long blockDataStart = mem.getAppendOffset();
+                final long blockDataSize = (long) totalValues * valueSize;
+                mem.jumpTo(blockDataStart + blockDataSize);
+                long dst = mem.addressOf(blockDataStart);
+                final long dstEnd = dst + blockDataSize;
+
                 for (int idx = 0; idx < activeKeyCount; idx++) {
                     int key = activeKeyIds[idx];
                     int pendingCount = Unsafe.getInt(pendingCountsAddr + (long) key * Integer.BYTES);
@@ -7690,14 +7707,21 @@ public class PostingIndexWriter implements IndexWriter {
                     }
 
                     for (int i = 0; i < spillCount; i++) {
-                        writeSidecarValueHoisted(mem, c, colTop, Unsafe.getLong(spillAddr + (long) i * Long.BYTES),
+                        writeSidecarValueDirect(dst, c, colTop, Unsafe.getLong(spillAddr + (long) i * Long.BYTES),
                                 shift, valueSize, colType, base, baseLimit);
+                        dst += valueSize;
                     }
                     for (int i = 0; i < pendingCount; i++) {
-                        writeSidecarValueHoisted(mem, c, colTop, Unsafe.getLong(keyValuesAddr + (long) i * Long.BYTES),
+                        writeSidecarValueDirect(dst, c, colTop, Unsafe.getLong(keyValuesAddr + (long) i * Long.BYTES),
                                 shift, valueSize, colType, base, baseLimit);
+                        dst += valueSize;
                     }
                 }
+                // totalValues is computed by the caller from the same pending +
+                // spill counts this loop walks, so the reserved block must be
+                // exactly filled. Under-filling would publish uninitialised bytes
+                // as covered values.
+                assert dst == dstEnd : "sidecar gen block underfilled";
             }
             mem.putLong((long) genIndex * Long.BYTES, blockStart);
         }
@@ -7801,6 +7825,57 @@ public class PostingIndexWriter implements IndexWriter {
             writeNullSentinel(mem, valueSize, colType);
         } else {
             putFixedValue(mem, addr, valueSize);
+        }
+    }
+
+    /**
+     * {@link #writeSidecarValueHoisted} writing to a raw address inside the
+     * sidecar's already-reserved mapped block, rather than appending through
+     * MemoryMARW. Avoids the per-value append-offset check and possible mapping
+     * extend; the caller reserved the exact block with a single jumpTo.
+     */
+    private void writeSidecarValueDirect(
+            long dst,
+            int covIdx,
+            long colTop,
+            long rowId,
+            int shift,
+            int valueSize,
+            int colType,
+            long base,
+            long baseLimit
+    ) {
+        if (rowId < colTop) {
+            writeNullSentinel(dst, valueSize, colType);
+            return;
+        }
+        final long srcOffset = (rowId - colTop) << shift;
+        long addr;
+        if (base != 0 && (baseLimit == 0 || srcOffset + valueSize <= baseLimit)) {
+            addr = base + srcOffset;
+        } else {
+            addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
+        }
+        if (addr == 0) {
+            writeNullSentinel(dst, valueSize, colType);
+            return;
+        }
+        switch (valueSize) {
+            case Long.BYTES:
+                Unsafe.putLong(dst, Unsafe.getLong(addr));
+                break;
+            case Integer.BYTES:
+                Unsafe.putInt(dst, Unsafe.getInt(addr));
+                break;
+            case Short.BYTES:
+                Unsafe.putShort(dst, Unsafe.getShort(addr));
+                break;
+            case Byte.BYTES:
+                Unsafe.putByte(dst, Unsafe.getByte(addr));
+                break;
+            default:
+                Unsafe.copyMemory(addr, dst, valueSize);
+                break;
         }
     }
 
