@@ -1789,7 +1789,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
             final int workerCount = 4;
             WorkerPool pool = new WorkerPool(() -> workerCount);
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
                         String symbolGen = "rnd_symbol_zipf(1000, 2.0)";
@@ -1872,9 +1872,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                         engine.print(sql, result, sqlExecutionContext);
                         // Verify we got results (1201 offset values)
                         TestUtils.assertContains(result, "sec_offs");
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }

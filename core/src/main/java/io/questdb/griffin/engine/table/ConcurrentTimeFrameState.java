@@ -62,7 +62,7 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
 public class ConcurrentTimeFrameState implements QuietCloseable {
     private final PageFrameAddressCache addressCache = new PageFrameAddressCache();
     private final IntList columnIndexes = new IntList();
-    private final LongList columnTops = new LongList();
+    private final NativeFrameBoundaries frameBoundaries = new NativeFrameBoundaries();
     private final DirectIntList framePartitionIndexes;
     private final DirectLongList frameRowCounts;
     private final Object openLock = new Object();
@@ -276,36 +276,24 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
             int pageFrameMaxRows,
             int workerCount
     ) {
-        final long pageFrameRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
-                0,
+        frameBoundaries.of(
+                tableReader,
+                columnVersionReader,
+                columnIndexes,
+                columnCount,
+                partitionIndex,
+                partitionTimestamp,
                 partitionRowCount,
                 pageFrameMinRows,
                 pageFrameMaxRows,
                 workerCount
         );
 
-        FwdTableReaderPageFrameCursor.populateColumnTops(
-                columnTops,
-                tableReader,
-                columnVersionReader,
-                columnIndexes,
-                columnCount,
-                partitionTimestamp,
-                partitionRowCount
-        );
-
         long lo = 0;
-        while (lo < partitionRowCount) {
-            long adjustedHi = Math.min(partitionRowCount, lo + pageFrameRowLimit);
-            // Shrink frame boundary at column top splits
-            for (int i = 0; i < columnCount; i++) {
-                long top = columnTops.getQuick(i);
-                if (top > lo && top < adjustedHi) {
-                    adjustedHi = top;
-                }
-            }
-            addUninitializedFrame(partitionIndex, lo, adjustedHi);
-            lo = adjustedHi;
+        for (int i = 0, n = frameBoundaries.size(); i < n; i++) {
+            final long hi = frameBoundaries.getQuick(i);
+            addUninitializedFrame(partitionIndex, lo, hi);
+            lo = hi;
         }
     }
 

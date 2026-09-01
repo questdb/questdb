@@ -53,7 +53,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.griffin.engine.table.FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit;
 
 public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private final int columnCount;
@@ -512,7 +511,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+        reenterPageFrameRowLimit = NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
     }
 

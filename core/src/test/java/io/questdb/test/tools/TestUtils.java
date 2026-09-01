@@ -1554,9 +1554,12 @@ public final class TestUtils {
     }
 
     public static void drainWalQueue(CairoEngine engine) {
-        try (final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0)) {
+        try (
+                final ApplyWal2TableJob walApplyJob = new ApplyWal2TableJob(engine, 0);
+                final CheckWalTransactionsJob checkWalTransactionsJob = new CheckWalTransactionsJob(engine)
+        ) {
             walApplyJob.drain(0);
-            new CheckWalTransactionsJob(engine).run();
+            checkWalTransactionsJob.run();
             // run once again as there might be notifications to handle now
             walApplyJob.drain(0);
         }

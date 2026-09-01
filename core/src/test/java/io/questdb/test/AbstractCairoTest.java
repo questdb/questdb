@@ -74,6 +74,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.SOCountDownLatch;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
@@ -105,6 +106,7 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.engine.join.AsOfJoinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.griffin.CustomisableRunnable;
 import io.questdb.test.tools.CompositePartitionRandomiser;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
@@ -244,7 +246,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     public static void executeWithRewriteTimestamp(CharSequence sqlText, String timestampType) throws SqlException {
         sqlText = sqlText.toString().replaceAll("#TIMESTAMP", timestampType);
-        engine.execute(sqlText, sqlExecutionContext);
+        execute(sqlText, sqlExecutionContext);
     }
 
     //ignores:
@@ -428,6 +430,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
         super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
         isCompositePartitionRandomisationEnabled = false;
+        CompositePartitionRandomiser.clear();
         engine.getViewStateStore().clear();
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
@@ -815,6 +818,20 @@ public abstract class AbstractCairoTest extends AbstractTest {
     }
 
     /**
+     * Opts this test out of composite partition randomisation, for a test whose assertions the
+     * round-trip cannot be made compatible with - one that renames, drops or swaps the table it
+     * asserts on, say, where the transaction the round-trip commits cannot be subtracted back out
+     * by a single per-table offset. Call it from the test body.
+     */
+    protected static void disableCompositePartitionRandomisation() {
+        isCompositePartitionRandomisationEnabled = false;
+        // Put WAL back the way the test-harness default has it. The sweep is what drains the WAL
+        // queue, so leaving WAL tables on with the sweep off would hand the test tables whose rows
+        // are still sitting in the WAL.
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "false");
+    }
+
+    /**
      * Gives every WAL table this test creates a genuine composite partition, with no change
      * to the table's logical content - see {@link CompositePartitionRandomiser}. Also turns
      * on the two settings the round-trip needs: WAL tables, because REPLACE RANGE only
@@ -863,6 +880,24 @@ public abstract class AbstractCairoTest extends AbstractTest {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             compiler.setFullFatJoins(fullFatJoins);
             execute(compiler, ddlSql, sqlExecutionContext);
+        }
+    }
+
+    /**
+     * Runs {@code runnable} on its own ad-hoc {@link CairoEngine} bound to {@code pool}, same as a
+     * plain {@link TestUtils#execute} call, except the shared engine's table-registry lock is
+     * released first so the ad-hoc engine can create WAL tables of its own (the registry lock is
+     * otherwise held for the whole class's lifetime, and a second engine without it can open and
+     * query existing tables fine but fails on CREATE TABLE with "table registry is not locked").
+     * Restores the shared engine's own view of the registry afterward, so later code in the same
+     * test - and {@code @After} teardown - see whatever the ad-hoc engine created.
+     */
+    protected static void executeWithPool(WorkerPool pool, CustomisableRunnable runnable) throws Exception {
+        engine.closeNameRegistry();
+        try {
+            TestUtils.execute(pool, runnable, configuration, LOG);
+        } finally {
+            engine.reloadTableNames();
         }
     }
 
@@ -951,9 +986,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    /** Sweeps {@code engine}, whichever engine that is - {@link QueryAssertion} may carry its own. */
+    protected static void randomiseCompositePartitions(CairoEngine engine, SqlExecutionContext executionContext) {
+        if (isCompositePartitionRandomisationEnabled) {
+            CompositePartitionRandomiser.sweep(engine, executionContext);
+        }
+    }
+
     protected static void randomiseCompositePartitions(SqlExecutionContext executionContext, CharSequence sqlText) {
         if (isCompositePartitionRandomisationEnabled) {
-            CompositePartitionRandomiser.apply(engine, executionContext, sqlText);
+            CompositePartitionRandomiser.sweepAfter(engine, executionContext, sqlText);
         }
     }
 

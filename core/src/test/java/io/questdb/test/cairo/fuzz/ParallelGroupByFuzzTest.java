@@ -4929,24 +4929,6 @@ public class ParallelGroupByFuzzTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs {@code runnable} on its own ad-hoc {@link CairoEngine} bound to {@code pool}, same as a
-     * plain {@link TestUtils#execute} call, except the shared engine's table-registry lock is
-     * released first so the ad-hoc engine can create WAL tables of its own (the registry lock is
-     * otherwise held for the whole class's lifetime, and a second engine without it can open and
-     * query existing tables fine but fails on CREATE TABLE with "table registry is not locked").
-     * Restores the shared engine's own view of the registry afterward, so later code in the same
-     * test - and {@code @After} teardown - see whatever the ad-hoc engine created.
-     */
-    private void executeWithPool(WorkerPool pool, CustomisableRunnable runnable) throws Exception {
-        engine.closeNameRegistry();
-        try {
-            TestUtils.execute(pool, runnable, configuration, LOG);
-        } finally {
-            engine.reloadTableNames();
-        }
-    }
-
-    /**
      * With {@code compositePartition} set, makes {@code tableName}'s rows in
      * [{@code rangeLoIso}, {@code rangeHiIso}) - a range that must fall inside a non-active
      * partition - a genuine merge-append composite partition, with no change to the table's

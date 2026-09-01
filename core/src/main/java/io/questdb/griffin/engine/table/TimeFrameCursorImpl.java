@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
-import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
@@ -74,7 +73,7 @@ import static io.questdb.griffin.engine.table.ConcurrentTimeFrameCursor.populate
  */
 public final class TimeFrameCursorImpl implements TimeFrameCursor {
     private final IntList columnIndexes = new IntList();
-    private final LongList columnTops = new LongList();
+    private final NativeFrameBoundaries frameBoundaries = new NativeFrameBoundaries();
     private final PageFrameAddressCache frameAddressCache;
     private final PageFrameMemoryPool frameMemoryPool;
     // Off-heap because it's per-frame and can be large unlike per-partition lists
@@ -361,56 +360,24 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
             long partitionTimestamp,
             long partitionRowCount
     ) {
-        FwdTableReaderPageFrameCursor.populateColumnTops(
-                columnTops,
+        frameBoundaries.of(
                 tableReader,
                 columnVersionReader,
                 columnIndexes,
                 columnCount,
+                partitionIndex,
                 partitionTimestamp,
-                partitionRowCount
-        );
-
-        final long pageFrameRowLimit = FwdTableReaderPageFrameCursor.calculatePageFrameRowLimit(
-                0,
                 partitionRowCount,
                 pageFrameMinRows,
                 pageFrameMaxRows,
                 workerCount
         );
 
-        // A COMPOSITE partition is several PIECES over one set of column files, each at its own place in
-        // those files - see computeNativeFrame's own comment. A frame must stay within one piece, so this
-        // pre-computation has to split there too, or it undercounts frames and ensurePartitionOpened's
-        // later real count trips its own consistency assert.
-        final PartitionGeometry geometry = tableReader.getTxFile().isPartitionComposite(partitionIndex)
-                ? tableReader.getGeometry()
-                : null;
-
         long lo = 0;
-        while (lo < partitionRowCount) {
-            long adjustedHi = Math.min(partitionRowCount, lo + pageFrameRowLimit);
-            long pieceShift = 0;
-            if (geometry != null) {
-                final int piece = geometry.findPieceByRow(partitionIndex, lo);
-                pieceShift = geometry.getPieceShift(partitionIndex, piece);
-                final long pieceHi = geometry.getPieceCumulativeLo(partitionIndex, piece)
-                        + geometry.getPieceRowCount(partitionIndex, piece);
-                if (pieceHi > lo && pieceHi < adjustedHi) {
-                    adjustedHi = pieceHi;
-                }
-            }
-            // Shrink frame boundary at column top splits. Tops are FILE rows while lo/adjustedHi are
-            // PARTITION rows, so the piece's shift has to apply before the comparison - same ordering
-            // requirement computeNativeFrame's own comment explains.
-            for (int i = 0; i < columnCount; i++) {
-                long top = columnTops.getQuick(i) - pieceShift;
-                if (top > lo && top < adjustedHi) {
-                    adjustedHi = top;
-                }
-            }
-            addUninitializedFrame(partitionIndex, lo, adjustedHi);
-            lo = adjustedHi;
+        for (int i = 0, n = frameBoundaries.size(); i < n; i++) {
+            final long hi = frameBoundaries.getQuick(i);
+            addUninitializedFrame(partitionIndex, lo, hi);
+            lo = hi;
         }
     }
 
