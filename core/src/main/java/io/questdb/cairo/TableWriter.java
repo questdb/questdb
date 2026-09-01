@@ -3542,8 +3542,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } else {
             parquetRewriteColumnIndexes.clear();
         }
-        final StringSink cellSegment = Misc.getThreadLocalSink();
-        renderCellSegment(cellSegment, cellKey);
+        // renderCellSegment throws on a non-composite table, and the 4-arg form above delegates here
+        // with cellKey 0 -- so a plain table takes a NULL segment and renders exactly as it always did.
+        final CharSequence cellSegment = renderCellSegmentOrNull(cellKey);
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn, cellSegment);
         final int srcDirLen = path.size();
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn, cellSegment);
@@ -3631,8 +3632,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(", partitionTimestamp=").ts(timestampType, partitionTimestamp)
                     .put(", cellKey=").put(cellKey).put(']');
         }
-        final StringSink cellSegment = Misc.getThreadLocalSink();
-        renderCellSegment(cellSegment, cellKey);
+        final CharSequence cellSegment = renderCellSegmentOrNull(cellKey);
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn, cellSegment);
         final int partitionDirLen = path.size();
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn, cellSegment);
@@ -3656,6 +3656,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         partitionRemoveCandidates.clear();
         partitionRemoveCandidates.add(timestamp, partitionNameTxn, cellKey);
         processPartitionRemoveCandidates();
+    }
+
+    /**
+     * This cell's rendered segment, or {@code null} when the table is not composite --
+     * {@link #renderCellSegment(CharSink, int)} throws there, and every cell-scoped entry point in
+     * this class is reachable from a plain table through its cellKey-0 delegate.
+     */
+    private @Nullable CharSequence renderCellSegmentOrNull(int cellKey) {
+        if (metadata.getPartitionSpec().getDimensionCount() <= 0) {
+            return null;
+        }
+        final StringSink cellSegment = Misc.getThreadLocalSink();
+        renderCellSegment(cellSegment, cellKey);
+        return cellSegment;
     }
 
     public void markDistressed() {
@@ -18397,8 +18411,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         long parquetAddr = 0;
         long parquetSize = 0;
-        final StringSink cellSegment = Misc.getThreadLocalSink();
-        renderCellSegment(cellSegment, cellKey);
+        final CharSequence cellSegment = renderCellSegmentOrNull(cellKey);
         setPathForNativePartition(
                 path.trimTo(pathSize),
                 timestampType,
