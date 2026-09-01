@@ -13478,7 +13478,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         //    range for replace via a separate mechanism; the two gates intentionally
         //    diverge here but SHARE the legacy-covering disqualifier below;
         //  - the block's first row sits at/after the committed max (pure append,
-        //    NOT late data / a merge) and inside the last partition.
+        //    NOT late data / a merge) and inside the last partition;
+        //  - NOT a FORMAT PARQUET table. Its partitions are born parquet, written
+        //    by the O3 path (writeFreshParquetFromO3), and processWalCommit
+        //    disables LAG for it entirely (see `noLag`): on an empty such table
+        //    the last partition is the NATIVE placeholder openPartition created
+        //    to hold LAG, so isLastPartitionParquet() is false and the guards
+        //    above would let a pure append land in it -- committing the
+        //    partition as native and permanently skipping its parquet write.
         // FORCE_FULL_COMMIT (commit-to == Long.MAX_VALUE) needs no guard: the
         // fast-lag tail FULLY commits the block (lagRowCount -> 0), satisfying
         // "commit everything"; the only thing deferred is covered COMPACTION,
@@ -13488,6 +13495,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || txWriter.getLagRowCount() != 0
                 || lastPartitionTimestamp == Long.MIN_VALUE
                 || isLastPartitionParquet()
+                || metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET
                 || !isCommitPlainInsert()
                 || txWriter.getMaxTimestamp() > blockMin
                 || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp
