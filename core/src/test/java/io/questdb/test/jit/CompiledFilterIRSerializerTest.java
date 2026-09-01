@@ -86,6 +86,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     public static void setUpStatic2() {
         bindVarFunctions = new ObjList<>();
         irMemory = Vm.getCARWInstance(2048, 1, MemoryTag.NATIVE_JIT);
+        irMemory.extend(1);
         serializer = new CompiledFilterIRSerializer();
     }
 
@@ -2984,9 +2985,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // which is what the walk's answer is about, rather than the shapes today's emitter happens
         // to produce.
         assertMemoryLeak(() -> {
-            // A buffer of its own rather than the shared irMemory: the shared one is allocated
-            // once for the class and its first page would land inside this block as an unbalanced
-            // NATIVE_JIT allocation.
+            // A buffer of its own keeps the hand-built stream's native-memory lifetime inside this
+            // method's leak scope.
             try (
                     MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
@@ -3115,9 +3115,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // testShortCircuitOpcodeConsumesOneOperandInWidthWalk plants its streams: what it pins is
         // the bound, not a shape today's emitter produces.
         assertMemoryLeak(() -> {
-            // A buffer of its own rather than the shared irMemory: the shared one is allocated
-            // once for the class and its first page would land inside this block as an unbalanced
-            // NATIVE_JIT allocation.
+            // A buffer of its own keeps the hand-built stream's native-memory lifetime inside this
+            // method's leak scope.
             try (
                     MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
@@ -3189,9 +3188,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // jitIRMem in a finally, so a filter this very check REJECTED leaves its offending IR in
         // the buffer for the next query to serialize over.
         assertMemoryLeak(() -> {
-            // A buffer of its own rather than the shared irMemory: the shared one is allocated
-            // once for the class and its first page would land inside this block as an unbalanced
-            // NATIVE_JIT allocation.
+            // A buffer of its own keeps the hand-built stream's native-memory lifetime inside this
+            // method's leak scope.
             try (
                     MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
@@ -3287,9 +3285,8 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // Each stream is planted by hand, as in the two tests above: what these pin is what the
         // BACKENDS harmonise, which the emitter's current output does not enumerate.
         assertMemoryLeak(() -> {
-            // A buffer of its own rather than the shared irMemory: the shared one is allocated
-            // once for the class and its first page would land inside this block as an unbalanced
-            // NATIVE_JIT allocation.
+            // A buffer of its own keeps the hand-built stream's native-memory lifetime inside this
+            // method's leak scope.
             try (
                     MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT);
                     PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)
