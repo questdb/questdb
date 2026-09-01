@@ -469,6 +469,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * than a lambda, so a {@link Frame} publishing its column tops through it costs no per-call
      * allocation. {@link #setColumnTop} forwards to the outer writer's own {@link #mergeColumnTop}
      * against whichever partition was last armed.
+     * <p>
+     * Keeps {@link ColumnTopSink#isThreadSafe}'s default {@code false}: every report goes straight into
+     * the outer writer's record list, which a single upsert can insert into the middle of. Callers only
+     * ever drive it from the writer thread, after a frame has already joined - see
+     * {@link Frame#publishColumnTops}.
      */
     private final class ColumnTopSinkImpl implements ColumnTopSink {
         private long partitionTimestamp = Long.MIN_VALUE;

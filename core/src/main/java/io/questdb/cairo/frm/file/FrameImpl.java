@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.frm.file;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
@@ -33,6 +34,7 @@ import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.DeletedFrameColumn;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameColumn;
+import io.questdb.cairo.frm.FrameColumnFanOut;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.frm.FrameColumnTypePool;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -42,6 +44,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.TableUtils.setSinkForNativePartition;
 import static io.questdb.cairo.frm.FrameColumn.COLUMN_CONTIGUOUS_FILE;
@@ -50,20 +53,30 @@ import static io.questdb.cairo.frm.FrameColumn.COLUMN_MEMORY;
 public class FrameImpl implements Frame {
     private final FrameColumnPool columnPool;
     private boolean canWrite = false;
+    // Created on first use and kept for the life of this pooled frame, so an operation pays no
+    // allocation for it. Null when this factory was built without a message bus - a test that stands a
+    // FrameFactory up on its own - and then every operation stays on the calling thread.
+    private FrameColumnFanOut columnFanOut;
     private ReadOnlyObjList<? extends MemoryCR> columnsMemory;
     private ColumnTopSink columnTopSink;
     /**
-     * Per-column tracked top, index = column index, -1 = untouched this open. Populated only by
-     * {@link #saveChanges} when this frame has no external {@link ColumnTopSink} - see
+     * Per-column tracked top, index = column index, -1 = untouched this open. Populated by
+     * {@link #saveChanges} whether or not this frame also has an external {@link ColumnTopSink} - see
      * {@link #publishColumnTops}. Reset (not reallocated) on every open/create, since a pooled
      * {@code FrameImpl} outlives any one partition and a stale entry from a previous, unrelated use would
      * otherwise leak through {@link #getContiguousFileFrameColumn}.
+     * <p>
+     * That reset is a {@code setPos(columnCount)}, so every slot a column can ever address exists before
+     * the first one reports and {@link #saveChanges} only ever writes an existing slot. Nothing here has
+     * to grow, and no two column indices share a slot - which is what lets a frame's per-column work fan
+     * out across threads, exactly as {@link ColumnTopSink} describes for an external sink.
      */
     private final LongList columnTops = new LongList();
     private boolean create = false;
     private ColumnVersionReader crv;
     private RecycleBin<FrameImpl> frameRecycleBin;
     private int frameType;
+    private final MessageBus messageBus;
     private RecordMetadata metadata;
     private long offset = 0;
     private Path partitionPath = new Path();
@@ -71,8 +84,9 @@ public class FrameImpl implements Frame {
     private long rowCount;
     private long timestampIndexAddr;
 
-    public FrameImpl(FrameColumnPool columnPool) {
+    public FrameImpl(FrameColumnPool columnPool, @Nullable MessageBus messageBus) {
         this.columnPool = columnPool;
+        this.messageBus = messageBus;
     }
 
     @Override
@@ -90,6 +104,13 @@ public class FrameImpl implements Frame {
     @Override
     public int columnCount() {
         return metadata.getColumnCount();
+    }
+
+    @Override
+    public void commitColumnTops() {
+        if (columnTopSink != null) {
+            columnTopSink.commitColumnTops();
+        }
     }
 
     @Override
@@ -151,6 +172,7 @@ public class FrameImpl implements Frame {
         resetColumnTops(metadata.getColumnCount());
         this.crv = cvr;
         this.columnTopSink = columnTopSink;
+        columnTopSink.ofColumnCount(metadata.getColumnCount());
         this.rowCount = size;
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
@@ -158,6 +180,18 @@ public class FrameImpl implements Frame {
         this.create = true;
         this.frameType = COLUMN_CONTIGUOUS_FILE;
         this.timestampIndexAddr = 0;
+    }
+
+    @Override
+    public FrameColumnFanOut getColumnFanOut() {
+        if (!canWrite || messageBus == null) {
+            // A read-only frame is never an operation's target, so it never runs the fan-out.
+            return null;
+        }
+        if (columnFanOut == null) {
+            columnFanOut = new FrameColumnFanOut(messageBus);
+        }
+        return columnFanOut;
     }
 
     @Override
@@ -234,6 +268,7 @@ public class FrameImpl implements Frame {
         resetColumnTops(metadata.getColumnCount());
         this.crv = cvr;
         this.columnTopSink = columnTopSink;
+        columnTopSink.ofColumnCount(metadata.getColumnCount());
         this.rowCount = size;
         this.partitionTimestamp = partitionTimestamp;
         this.partitionPath.of(partitionPath);
@@ -270,6 +305,8 @@ public class FrameImpl implements Frame {
         // column's tracked top - only up or unchanged, matching how a column's top can only ever advance
         // while this frame is written to (addTop grows it; once real bytes land below it, it is fixed for
         // good) - so a stale, smaller read can never overwrite a piece that already advanced it further.
+        // The read-modify-write below touches this column's own slot and nothing else, and the list is
+        // already sized for every column, so it stays correct with one thread per column.
         final int columnIndex = frameColumn.getColumnIndex();
         final long columnTop = Math.max(frameColumn.getColumnTop(), columnTops.getQuick(columnIndex));
         columnTops.setQuick(columnIndex, columnTop);

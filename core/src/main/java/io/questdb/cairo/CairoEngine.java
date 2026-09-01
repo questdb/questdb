@@ -360,7 +360,7 @@ public class CairoEngine implements Closeable, WriterSource {
             this.matViewTimerQueue = createMatViewTimerQueue();
             this.matViewGraph = createMatViewGraph();
             this.viewGraph = createViewGraph();
-            this.frameFactory = new FrameFactory(configuration);
+            this.frameFactory = new FrameFactory(configuration, messageBus);
             this.dataID = DataID.open(configuration);
 
             if (completeInit) {
@@ -2046,7 +2046,7 @@ public class CairoEngine implements Closeable, WriterSource {
     @TestOnly
     public void resetFrameFactory() {
         frameFactory.close();
-        frameFactory = new FrameFactory(configuration);
+        frameFactory = new FrameFactory(configuration, messageBus);
     }
 
     @TestOnly
