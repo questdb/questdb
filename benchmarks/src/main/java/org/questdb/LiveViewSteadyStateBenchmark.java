@@ -165,7 +165,10 @@ import java.util.Locale;
  * be worth: {@code --key-type=symbol} is what ships and {@code --key-type=int} is the
  * upper bound, since it keys the same 4 bytes without paying for a translation.
  * {@code --partition-key-mode} is where the switch between the two key domains lands once
- * a sink can emit a translated id; it accepts only {@code legacy} today.
+ * a live view binds a translator; it accepts only {@code legacy} today. A sink can emit a
+ * translated id already - {@code LiveViewPartitionKeySinkBenchmark} prices both mechanisms
+ * that do it - but nothing yet classifies a partition term as translated or owns the
+ * dictionary behind it.
  * <p>
  * <b>The selective shape.</b> {@code --residual-percent} puts a residual filter on the
  * view, admitting roughly that share of base rows. The generator gives every row a
@@ -2220,8 +2223,11 @@ public class LiveViewSteadyStateBenchmark {
         void reject() {
             if (this == PRIVATE_ID) {
                 throw new IllegalArgumentException(
-                        "--partition-key-mode=private has nothing to switch to: no sink can emit a translated "
-                                + "symbol id yet. Use --key-type=int for the upper bound on what one would be worth"
+                        "--partition-key-mode=private has nothing to switch to: a sink can emit a translated "
+                                + "symbol id now, but no live view binds one - the shared partition-term "
+                                + "classifier and the translator registry it would read are not built yet. Use "
+                                + "--key-type=int for the upper bound on what one would be worth, and "
+                                + "LiveViewPartitionKeySinkBenchmark for what the emission itself costs"
                 );
             }
         }
