@@ -900,13 +900,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         }
 
         @Override
-        public boolean hasParquetFormatPartitions(SqlExecutionContext executionContext) {
-            return delegate.hasParquetFormatPartitions(executionContext);
-        }
-
-        @Override
-        public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> conditions) {
-            delegate.setPushdownFilterCondition(conditions);
+        public void setPushdownFilterCondition(
+                long partitionTableVersion,
+                @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> conditions
+        ) {
+            delegate.setPushdownFilterCondition(partitionTableVersion, conditions);
         }
 
         @Override
