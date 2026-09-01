@@ -42,6 +42,9 @@ public final class FiberRuntime {
     public static final int NO_WORKER = -1;
     private static final long ADMISSION_OPEN = Long.MIN_VALUE;
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
+    // Bound global-injection starvation under continuous local work without probing the shared
+    // MPMC queue on every selection. The countdown measures successful selections, not time; 61
+    // also leaves room for a global probe within the default mount budget of 64.
     private static final int GLOBAL_PROBE_INTERVAL = 61;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
     private static final int PROCESS_OWNED = 2;
