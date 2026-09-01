@@ -25,7 +25,6 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.ColumnTypes;
-import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -134,8 +133,11 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
      * <p>
      * The same binding rule applies: {@link #initKeyFunctions} must have bound the
      * plan's key functions to the cursor the records come from.
+     * <p>
+     * Wrapped in {@link LiveViewCheckpointKeySink}, not assignment-compatible with
+     * {@link #getKeySink()} - see that wrapper's javadoc.
      */
-    public @NotNull RecordSink getCheckpointKeySink() {
+    public @NotNull LiveViewCheckpointKeySink getCheckpointKeySink() {
         return keyProjector.getCheckpointKeySink();
     }
 
@@ -162,8 +164,11 @@ public final class LiveViewCheckpointRowsPlan implements QuietCloseable {
      * against one pinned reader, so the key identity holds for exactly as long as it is
      * used. A SYMBOL-typed key <i>function</i> is written as its resolved string instead:
      * the integers a function hands out index its own map rather than the reader's.
+     * <p>
+     * Wrapped in {@link LiveViewReaderLocalKeySink}, not assignment-compatible with
+     * {@link #getCheckpointKeySink()} - see that wrapper's javadoc.
      */
-    public @NotNull RecordSink getKeySink() {
+    public @NotNull LiveViewReaderLocalKeySink getKeySink() {
         return keyProjector.getKeySink();
     }
 

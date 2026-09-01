@@ -39,13 +39,12 @@ import java.io.Closeable;
 /**
  * Builds one checkpoint root's LV-private symbol-key dictionary directory, path-copying every
  * predecessor column's chunk list unchanged and appending one new chunk per column whose live
- * dictionary has grown since the predecessor (section 6.3).
+ * dictionary has grown since the predecessor.
  * <p>
  * A column's chunk list therefore only ever grows: {@link #writeIntoOpenSegment} refuses a
  * column whose live entry count is <em>smaller</em> than the predecessor's frozen
- * {@code symbolCount}, which section 6.3 states as a hard invariant - ids are never renumbered
- * or reclaimed - and section 8 confirms a dictionary shrinking would mean an id downstream
- * state still holds has stopped meaning what it did.
+ * {@code symbolCount}. Ids are never renumbered or reclaimed, so a dictionary shrinking would
+ * mean an id downstream state still holds has stopped meaning what it did.
  * <p>
  * Reading the predecessor is deliberately cheap: {@link LiveViewCheckpointKeyDictionaryReader#of}
  * decodes only the directory, not the strings each chunk holds, so a seal's cost stays

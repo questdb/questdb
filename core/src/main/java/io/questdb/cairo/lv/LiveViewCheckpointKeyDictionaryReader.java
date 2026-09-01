@@ -52,9 +52,9 @@ import java.io.Closeable;
  * page framing and checksums (via {@link LiveViewCheckpointMetaSegmentReader}), decodes and
  * strictly validates each entry's UTF-8, rejects a duplicate string, and interns every entry
  * into the caller's {@link DirectSymbolMap} in id order - which is also how it builds the
- * {@code string -> lvId} reverse index, in the same pass, per section 6.6. A caller that
- * restores every bound column therefore pays the eager validation section 6.6 asks for; a
- * caller that never touches a column - one no live slot binds - never pays for it. On failure
+ * {@code string -> lvId} reverse index, in the same pass. A caller that restores every bound
+ * column therefore pays this eager validation once per column; a caller that never touches a
+ * column - one no live slot binds - never pays for it. On failure
  * {@code target} is left partially populated: the caller must discard it rather than continue
  * using it, exactly like every other {@code LV_CHECKPOINT_TIMELINE_INVALID} on this path.
  */
@@ -307,9 +307,9 @@ public class LiveViewCheckpointKeyDictionaryReader implements Closeable {
      * Rebuilds {@code target} from {@code columnIndex}'s chunks: clears it, then interns every
      * entry in id order, validating page framing/checksums, UTF-8 well-formedness and string
      * uniqueness as it goes, and finally checks the reconstructed size against the directory's
-     * frozen {@code symbolCount}. Clearing rather than merging is deliberate - section 6.3's
-     * per-root-chain invariant means a restore replaces a slot's dictionary wholesale, so an id
-     * a caller already assigned past this root's {@code symbolCount} (a rollback fork) is
+     * frozen {@code symbolCount}. Clearing rather than merging is deliberate: a restore's
+     * per-root-chain invariant means it replaces a slot's dictionary wholesale, so an id a
+     * caller already assigned past this root's {@code symbolCount} (a rollback fork) is
      * discarded along with it.
      */
     public void restoreInto(int columnIndex, @NotNull DirectSymbolMap target) {

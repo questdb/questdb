@@ -54,7 +54,9 @@ import org.junit.Test;
 
 /**
  * The stage-1 classifier and the per-map binding the six live-view partition-key sites
- * share, held to the shape table in section 3.1 of the design.
+ * share, held to the classification rule: a term may key as SYMBOL only when it is a direct
+ * window-input column reference that resolves to a base-scan SYMBOL column and for which the
+ * runtime installs an LV-private translator; a symbol-valued expression stays STRING.
  * <p>
  * What is being pinned is that one rule decides all six, in both of its states: today's,
  * where no dictionary exists and every SYMBOL term keys through its resolved string, and

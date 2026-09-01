@@ -61,9 +61,9 @@ public interface LiveViewCheckpointKeyDictionaryColumnSource {
     CharSequence getColumnName(int columnIndex);
 
     /**
-     * @return the base column's type. Every column reaching this source is SYMBOL today
-     * (section 1's scope), but the persisted format carries the type so a future column
-     * shape needs no format change to be told apart.
+     * @return the base column's type. Every column reaching this source is SYMBOL today,
+     * but the persisted format carries the type so a future column shape needs no format
+     * change to be told apart.
      */
     int getColumnType(int columnIndex);
 

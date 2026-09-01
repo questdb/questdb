@@ -119,8 +119,8 @@ import org.jetbrains.annotations.TestOnly;
  */
 public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslator, QuietCloseable {
     /**
-     * The id-capacity guard from the design's section 8. The dictionary hands out
-     * non-negative ints, {@link SymbolTable#VALUE_IS_NULL} is the only NULL encoding and
+     * The id-capacity guard. The dictionary hands out non-negative ints,
+     * {@link SymbolTable#VALUE_IS_NULL} is the only NULL encoding and
      * {@link SymbolTable#VALUE_NOT_FOUND} is a cache sentinel, so the space ends here.
      */
     public static final int MAX_DICTIONARY_SIZE = Integer.MAX_VALUE;
@@ -230,9 +230,10 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
 
     /**
      * Binds one slot to the base column whose dictionary it keys through, creating that
-     * dictionary on first sight. This is stage 2 of the design's section 3.2: stage 1 admits
-     * a term locally, at the point the key type has to be fixed, and this resolves the source
-     * the term really reads once the compiled plan can trace it.
+     * dictionary on first sight. This is stage 2 of classification: stage 1
+     * ({@link LiveViewPartitionKeyClassifier}) admits a term locally, at the point the key
+     * type has to be fixed, and this resolves the source the term really reads once the
+     * compiled plan can trace it.
      * <p>
      * A rebind - a base schema recompile builds a second factory over the same view - has to
      * name the same base column. A slot that moved to a different column would key rows
@@ -453,6 +454,26 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
     }
 
     /**
+     * Reverse-resolves one slot's id for a string this registry has already interned,
+     * without interning it. A keyed repair uses this to translate a logical key off the
+     * change set - which stays string-keyed regardless of whether the checkpoint key
+     * domain is translated - into the id its dictionary holds, and must refuse the key
+     * rather than mint one when it comes back unresolved: a string the dictionary has never
+     * interned names no entry any published map or root could hold.
+     *
+     * @return the id, or {@link SymbolTable#VALUE_NOT_FOUND} when the slot is unbound or
+     * the dictionary has never interned this string
+     */
+    public int keyOf(int slot, @NotNull CharSequence value) {
+        final Slot s = slotOf(slot);
+        if (s == null) {
+            return SymbolTable.VALUE_NOT_FOUND;
+        }
+        final int lvId = s.dictionary.keyOf(value);
+        return lvId >= 0 ? lvId : SymbolTable.VALUE_NOT_FOUND;
+    }
+
+    /**
      * Resolves one slot's string for an id this registry handed out. The seal reads the
      * dictionary through here, and so does a repair resolving a persisted key.
      *
@@ -468,10 +489,10 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
      * source, sorted ascending by {@code (baseTableId, baseWriterColumnIndex)} as the writer
      * requires. The registry does not track a base column's canonical name, so every column
      * persists an empty one; identity for matching purposes is always
-     * {@code (baseTableId, baseWriterColumnIndex)} (section 5.3), and every bound slot's
-     * column type is {@link ColumnType#SYMBOL} - the only base type this optimization's scope
-     * ever binds a slot to (section 1). The returned source is a live view over this
-     * registry's slots and must not be read past the next mutation.
+     * {@code (baseTableId, baseWriterColumnIndex)}, and every bound slot's column type is
+     * {@link ColumnType#SYMBOL} - the only base type a slot ever binds to. The returned
+     * source is a live view over this registry's slots and must not be read past the next
+     * mutation.
      */
     public LiveViewCheckpointKeyDictionaryColumnSource newDictionaryColumnSource() {
         final int n = boundSlots.size();
@@ -499,7 +520,7 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
      * predecessor its dictionary hangs off, or a column bound only after the restored root
      * sealed.
      * <p>
-     * This is section 6.3's per-root-chain invariant at the unit this registry owns:
+     * This is the per-root-chain restore invariant at the unit this registry owns:
      * {@link LiveViewCheckpointKeyDictionaryReader#restoreInto} replaces a slot's dictionary
      * wholesale rather than merging into it, so an id this run already assigned past the
      * restored root's frozen {@code symbolCount} - the case a rollback fork's abandoned root

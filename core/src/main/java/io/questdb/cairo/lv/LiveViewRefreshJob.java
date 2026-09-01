@@ -1758,7 +1758,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     /**
      * Binds every partition-key slot the compiler admitted to the base column its dictionary
-     * hangs off, which is stage 2 of the design's section 3.2.
+     * hangs off, which is stage 2 of classification (see {@link LiveViewPartitionKeyClassifier}
+     * for stage 1).
      * <p>
      * Stage 1 runs inside {@code generateSelectWindow}, where the key type and the sink have
      * to be fixed and {@link LiveViewCompiledPlan} does not exist yet, so it can only say
@@ -5936,6 +5937,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     scanColumnIndex,
                     reader.getSymbolMapReader(readerColumnIndex),
                     projector.getCheckpointKeyColumnTypes(),
+                    instance.getPartitionKeyTranslators(),
+                    projector.getIndexedSymbolColumnIndex(),
                     segmentChangeSet.getResidualKeys(),
                     segmentChangeSet.hasResidualNullKey()
             );
@@ -6072,6 +6075,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     scanColumnIndex,
                     reader.getSymbolMapReader(readerColumnIndex),
                     projector.getCheckpointKeyColumnTypes(),
+                    instance.getPartitionKeyTranslators(),
+                    projector.getIndexedSymbolColumnIndex(),
                     segmentKeys,
                     loop.hasInFlightNullKey()
             );

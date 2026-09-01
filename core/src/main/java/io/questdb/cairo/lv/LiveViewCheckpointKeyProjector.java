@@ -82,11 +82,11 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class LiveViewCheckpointKeyProjector implements QuietCloseable {
     private final ColumnTypes checkpointKeyColumnTypes;
-    private final RecordSink checkpointKeySink;
+    private final LiveViewCheckpointKeySink checkpointKeySink;
     private final int indexedSymbolColumnIndex;
     private final ColumnTypes keyColumnTypes;
     private final ObjList<Function> keyFunctions;
-    private final RecordSink keySink;
+    private final LiveViewReaderLocalKeySink keySink;
     private final IntList partitionByColumnIndexes = new IntList();
     private final String partitionSignature;
 
@@ -121,9 +121,9 @@ public final class LiveViewCheckpointKeyProjector implements QuietCloseable {
         this.keyFunctions = keyFunctions;
         this.partitionSignature = partitionSignature.toString();
         this.keyColumnTypes = keyColumnTypes;
-        this.keySink = keySink;
+        this.keySink = new LiveViewReaderLocalKeySink(keySink);
         this.checkpointKeyColumnTypes = checkpointKeyColumnTypes;
-        this.checkpointKeySink = checkpointKeySink;
+        this.checkpointKeySink = new LiveViewCheckpointKeySink(checkpointKeySink);
         this.indexedSymbolColumnIndex = resolveIndexedSymbolColumn(this.partitionByColumnIndexes, inputMetadata);
     }
 
@@ -151,8 +151,11 @@ public final class LiveViewCheckpointKeyProjector implements QuietCloseable {
      * <p>
      * {@link #initKeyFunctions} must have bound the key functions to the cursor the
      * records come from.
+     * <p>
+     * Returned wrapped in {@link LiveViewCheckpointKeySink} so it is not
+     * assignment-compatible with {@link #getKeySink()} - see that wrapper's javadoc.
      */
-    public @NotNull RecordSink getCheckpointKeySink() {
+    public @NotNull LiveViewCheckpointKeySink getCheckpointKeySink() {
         return checkpointKeySink;
     }
 
@@ -191,8 +194,12 @@ public final class LiveViewCheckpointKeyProjector implements QuietCloseable {
      * against one pinned reader, so the key identity holds for exactly as long as it is
      * used. A SYMBOL-typed key <i>function</i> is written as its resolved string instead:
      * the integers a function hands out index its own map rather than the reader's.
+     * <p>
+     * Returned wrapped in {@link LiveViewReaderLocalKeySink} so it is not
+     * assignment-compatible with {@link #getCheckpointKeySink()} - see that wrapper's
+     * javadoc.
      */
-    public @NotNull RecordSink getKeySink() {
+    public @NotNull LiveViewReaderLocalKeySink getKeySink() {
         return keySink;
     }
 

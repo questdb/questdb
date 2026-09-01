@@ -148,6 +148,11 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     private boolean hasNullKey;
     private boolean hasPendingRow;
     private LiveViewInstance instance;
+    // Whether checkpointKeyTypes armed this repair with the translated SYMBOL domain
+    // rather than today's resolved-STRING one. Set by arm() and read by addOutputKey(),
+    // which is the only thing that has to know: everything else here works off the same
+    // logical strings either way (7.2).
+    private boolean isTranslatedDomain;
     private long mergedMaxTs = Numbers.LONG_NULL;
     private long mergedMinTs = Numbers.LONG_NULL;
     private long mergedRows;
@@ -164,6 +169,11 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
     private Record storedRecord;
     private RecordCursor storedRowCursor;
     private int storedTimestampIndex = -1;
+    // The translated domain's dictionary and slot, bound only while isTranslatedDomain -
+    // null/-1 otherwise, including throughout the resolved-STRING domain every view keys
+    // through today.
+    private LiveViewSymbolIdRegistry symbolIdRegistry;
+    private int symbolIdSlot = -1;
     private WalWriter walWriter;
 
     public LiveViewCheckpointKeyedReplay() {
@@ -183,9 +193,18 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
      *
      * @param baseKeyColumnIndex the key column's index in the base scan's metadata
      * @param baseSymbols        the base reader's symbol map for that column
-     * @param checkpointKeyTypes the key shape a checkpoint partition map keys by, which a
-     *                           keyed replay requires to be the single STRING one SYMBOL
-     *                           partition column encodes to
+     * @param checkpointKeyTypes the key shape a checkpoint partition map keys by: a single
+     *                           STRING column for every view today, or - once a term
+     *                           translates - a single SYMBOL one, which additionally
+     *                           requires {@code symbolIdRegistry} to have that view's
+     *                           dictionary bound at {@code symbolIdSlot}
+     * @param symbolIdRegistry   the view's LV-private symbol-id registry, or null while
+     *                           nothing translates. Read only when {@code checkpointKeyTypes}
+     *                           says SYMBOL; a repair over a STRING checkpoint key needs no
+     *                           dictionary, because the key already is the string
+     * @param symbolIdSlot       the classifier slot - a window-input column index - the
+     *                           indexed partition column binds its dictionary to, meaningful
+     *                           only together with a non-null {@code symbolIdRegistry}
      * @param keys               the segment's logical key values
      * @param hasNullKey         whether the correction also touched the null key, which
      *                           both indexes name under a key of its own
@@ -196,22 +215,48 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             int baseKeyColumnIndex,
             @NotNull StaticSymbolTable baseSymbols,
             @NotNull ColumnTypes checkpointKeyTypes,
+            @Nullable LiveViewSymbolIdRegistry symbolIdRegistry,
+            int symbolIdSlot,
             @NotNull CharSequenceHashSet keys,
             boolean hasNullKey
     ) {
         clear();
-        if (checkpointKeyTypes.getColumnCount() != 1
-                || ColumnType.tagOf(checkpointKeyTypes.getColumnType(0)) != ColumnType.STRING) {
-            // A single SYMBOL partition column encodes to a single STRING checkpoint key,
-            // and the gate that admitted this repair proved there is exactly one such
-            // column. Anything else is a projector this route cannot name a key through.
+        if (checkpointKeyTypes.getColumnCount() != 1) {
+            // The gate that admitted this repair proved there is exactly one indexed
+            // SYMBOL partition column. Anything else is a projector this route cannot
+            // name a key through.
             return false;
+        }
+        final boolean translatedDomain;
+        switch (ColumnType.tagOf(checkpointKeyTypes.getColumnType(0))) {
+            case ColumnType.STRING:
+                // Every view today: a single SYMBOL partition column resolved to its
+                // string. No dictionary is needed - the checkpoint key already is the
+                // logical value this repair's own keys carry.
+                translatedDomain = false;
+                break;
+            case ColumnType.SYMBOL:
+                // A translated term: the checkpoint key is this view's LV-private id, and
+                // resolving a change-set string to it needs the dictionary that assigned
+                // it in the first place. No dictionary bound is not a denial of the
+                // repair, only of the localization - the segment reads whole instead,
+                // exactly as an unresolved base symbol below does.
+                if (symbolIdRegistry == null || !symbolIdRegistry.isBound(symbolIdSlot)) {
+                    return false;
+                }
+                translatedDomain = true;
+                break;
+            default:
+                return false;
         }
         if (keys.size() == 0 && !hasNullKey) {
             // A segment whose corrections carried no key at all. The decomposition does
             // not produce one, and a keyed scan over an empty key set reads nothing.
             return false;
         }
+        this.isTranslatedDomain = translatedDomain;
+        this.symbolIdRegistry = symbolIdRegistry;
+        this.symbolIdSlot = symbolIdSlot;
         this.baseKeyColumnIndex = baseKeyColumnIndex;
         this.hasNullKey = hasNullKey;
         if (hasNullKey) {
@@ -236,8 +281,14 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
                 clear();
                 return false;
             }
+            if (!addOutputKey(key)) {
+                // Translated domain only: a key the dictionary has never interned names no
+                // entry any published map or root could hold, so it is refused rather than
+                // minted here.
+                clear();
+                return false;
+            }
             baseSymbolKeys.add(baseKey);
-            addOutputKey(key);
             // Copied rather than referenced: the change set these come from is refilled by
             // the next repair this worker classifies, and the merge resolves them against
             // the view's map after the replay has begun.
@@ -337,6 +388,9 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         releaseMergeState();
         armed = false;
         hasNullKey = false;
+        isTranslatedDomain = false;
+        symbolIdRegistry = null;
+        symbolIdSlot = -1;
         baseKeyColumnIndex = -1;
         baseSymbolKeys.clear();
         storedSymbolKeys.clear();
@@ -552,13 +606,33 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         pendingRowTs = Numbers.LONG_NULL;
     }
 
-    private void addOutputKey(@Nullable CharSequence value) {
+    /**
+     * @return false when the translated domain cannot resolve {@code value} to an id,
+     * leaving the caller to abandon arming rather than mint one. Always true in the
+     * resolved-STRING domain, which has no such failure mode.
+     */
+    private boolean addOutputKey(@Nullable CharSequence value) {
         keyBuffer.jumpTo(0);
-        // The one encoding both sides have to be comparable in: a live-view partition-by
-        // RecordSink rewrites a SYMBOL partition column as its resolved STRING, so this is
-        // the byte image LiveViewSnapshotKeyCodec writes off a window function's own map
-        // record for the same key.
-        keyBuffer.putStr(value);
+        if (isTranslatedDomain) {
+            final int lvId;
+            if (value == null) {
+                lvId = SymbolTable.VALUE_IS_NULL;
+            } else {
+                lvId = symbolIdRegistry.keyOf(symbolIdSlot, value);
+                if (lvId == SymbolTable.VALUE_NOT_FOUND) {
+                    return false;
+                }
+            }
+            // The same 4-byte int image LiveViewSnapshotKeyCodec writes for a SYMBOL
+            // column off a window function's own map record - see its writeKey/readKey.
+            keyBuffer.putInt(lvId);
+        } else {
+            // The one encoding both sides have to be comparable in: a live-view
+            // partition-by RecordSink rewrites an untranslated SYMBOL partition column as
+            // its resolved STRING, so this is the byte image LiveViewSnapshotKeyCodec
+            // writes off a window function's own map record for the same key.
+            keyBuffer.putStr(value);
+        }
         final long length = keyBuffer.getAppendOffset();
         if (length > Integer.MAX_VALUE) {
             throw CairoException.critical(0)
@@ -569,6 +643,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
             key[i] = keyBuffer.getByte(i);
         }
         outputKeys.add(key);
+        return true;
     }
 
     /**

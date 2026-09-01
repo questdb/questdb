@@ -221,6 +221,31 @@ public class LiveViewSymbolIdRegistryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyOfReverseResolvesAnInternedStringAndRefusesTheRest() {
+        // A keyed repair holds a logical string from the change set and needs the id back
+        // without minting one - keyOf is the reverse half of translate/lookup that does
+        // that, and it must never intern.
+        try (LiveViewSymbolIdRegistry registry = registry()) {
+            registry.bind(SLOT, SCAN_COLUMN, WRITER_COLUMN, BASE_TABLE_ID);
+            final Dictionary base = new Dictionary("acct-1", "acct-2");
+            registry.armFor(source(base, 2, 0));
+            final int id1 = registry.translate(SLOT, 0);
+            final int id2 = registry.translate(SLOT, 1);
+            final long internedBefore = registry.getInternCount();
+
+            Assert.assertEquals(id1, registry.keyOf(SLOT, "acct-1"));
+            Assert.assertEquals(id2, registry.keyOf(SLOT, "acct-2"));
+            // A string the dictionary was never asked to intern names no id, and asking
+            // must not create one.
+            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, registry.keyOf(SLOT, "acct-3"));
+            // An unbound slot names no dictionary at all.
+            Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, registry.keyOf(SLOT + 1, "acct-1"));
+            Assert.assertEquals(internedBefore, registry.getInternCount());
+            Assert.assertEquals(2, registry.getDictionarySize(SLOT));
+        }
+    }
+
+    @Test
     public void testNullTranslatesToItselfAndIsNeverInterned() {
         // VALUE_IS_NULL is the only NULL encoding. A dictionary entry for it would give NULL
         // two spellings in one key, and the second would compare unequal to the first.

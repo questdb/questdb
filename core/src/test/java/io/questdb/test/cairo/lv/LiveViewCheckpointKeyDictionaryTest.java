@@ -58,11 +58,11 @@ import java.nio.charset.StandardCharsets;
 /**
  * The LV-private symbol-key dictionary's durable format, on its own: the directory/chunk page
  * shapes {@link LiveViewCheckpointKeyDictionaryWriter} and
- * {@link LiveViewCheckpointKeyDictionaryReader} share, the append-only path-copy growth section
- * 6.3 requires, and {@link LiveViewCheckpointRoot}'s {@code keyDictionaryRef}.
+ * {@link LiveViewCheckpointKeyDictionaryReader} share, the append-only path-copy growth an
+ * incremental seal requires, and {@link LiveViewCheckpointRoot}'s {@code keyDictionaryRef}.
  * <p>
- * Nothing in the live seal or restore path calls any of this yet - see the design doc's status
- * table - so every test here drives the mechanism directly rather than through a live view.
+ * Nothing in the live seal or restore path calls any of this yet, so every test here drives
+ * the mechanism directly rather than through a live view.
  */
 public class LiveViewCheckpointKeyDictionaryTest extends AbstractCairoTest {
 

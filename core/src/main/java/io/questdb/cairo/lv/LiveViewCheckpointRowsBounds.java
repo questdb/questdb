@@ -466,7 +466,10 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
      */
     private MapValue createKey(LiveViewCheckpointRowsPlan plan, Record record) {
         final MapKey key = keyMap.withKey();
-        key.put(record, plan.getKeySink());
+        // Reader-local domain: plan.getKeySink() is a LiveViewReaderLocalKeySink, which
+        // cannot be swapped for the checkpoint-domain sink below without failing to
+        // compile - see LiveViewReaderLocalKeySink's javadoc.
+        key.put(record, plan.getKeySink().unwrap());
         final MapValue value = key.createValue();
         if (value.isNew()) {
             value.putLong(IDX_FOLLOWING, NOT_AFFECTED);
@@ -479,7 +482,8 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             // what the publication compares against, and nothing reads it until the
             // repair decides to splice.
             final MapKey checkpointKey = outputKeyMap.withKey();
-            checkpointKey.put(record, plan.getCheckpointKeySink());
+            // Checkpoint domain: plan.getCheckpointKeySink() is a LiveViewCheckpointKeySink.
+            checkpointKey.put(record, plan.getCheckpointKeySink().unwrap());
             checkpointKey.createValue().putLong(0, 0);
         }
         return value;
@@ -630,7 +634,7 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
      */
     private MapValue findKey(LiveViewCheckpointRowsPlan plan, Record record) {
         final MapKey key = keyMap.withKey();
-        key.put(record, plan.getKeySink());
+        key.put(record, plan.getKeySink().unwrap());
         return key.findValue();
     }
 

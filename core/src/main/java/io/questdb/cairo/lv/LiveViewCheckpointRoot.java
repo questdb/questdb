@@ -106,8 +106,8 @@ public class LiveViewCheckpointRoot implements Closeable {
     /**
      * Returns the root of this boundary's LV-private symbol-key dictionary, or a null
      * reference when the view binds no translated SYMBOL partition column - which is every
-     * view today (section 12 step 7 is what starts publishing a non-null one) - or when this
-     * root was written before the dictionary existed (format version 1).
+     * view today, since nothing yet publishes a non-null one - or when this root was written
+     * before the dictionary existed (format version 1).
      */
     public void getKeyDictionaryRef(@NotNull LiveViewCheckpointPageRef out) {
         out.of(keyDictionaryRef.getSegmentId(), keyDictionaryRef.getOffset(), keyDictionaryRef.getLength());

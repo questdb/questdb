@@ -51,8 +51,8 @@ import org.junit.Test;
  * The two mechanisms a live view can emit an LV-private partition-key id through, held to
  * one contract: {@link RecordSinkFactory#getTranslatingInstance} compiles the translator
  * call into the key sink, {@link LiveViewTranslatingRecord} interposes it over the record a
- * vanilla sink reads. Section 5.6 of the design picks between them on cost; this test is
- * what says they are interchangeable, so the pick stays a cost question.
+ * vanilla sink reads. A benchmark picks between them on cost; this test is what says they
+ * are interchangeable, so the pick stays a cost question.
  * <p>
  * The narrow cases key into {@link Unordered4Map} on purpose. That map's key throws from
  * {@code skip} and from every putter but {@code putInt}, so a sink that emitted a resolved
