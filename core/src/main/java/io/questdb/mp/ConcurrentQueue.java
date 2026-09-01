@@ -104,7 +104,7 @@ public class ConcurrentQueue<T> implements Queue<T> {
      * @param size             The initial capacity of the queue, must be a power of 2.
      */
     public ConcurrentQueue(ObjectFactory<T> factory, ConcurrentSegmentManipulator<T> queueManipulator, int size) {
-        assert (size & (size - 1)) == 0; // must be a power of 2
+        assert size >= 2 && (size & (size - 1)) == 0; // must be a power of 2, at least 2
         this.factory = factory;
         tail = head = new ConcurrentQueueSegment<>(factory, queueManipulator, size);
         this.queueManipulator = queueManipulator;
