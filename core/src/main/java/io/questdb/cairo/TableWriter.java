@@ -11019,7 +11019,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
                 indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxn(partitionIndex));
-                configureCoveringIfNeeded(indexer, columnIndex, timestamp);
+                // The cell resolved above, not cellKey 0: this method already reads THIS cell's column
+                // top and size, but its covering configuration still read the covered columns' tops and
+                // name txns at cell 0 -- so a non-zero cell's covering was sealed over cell 0's data,
+                // and the index answered with a sibling's values. Native partitions keep genuinely
+                // per-cell tops (a parquet one carries zeros), so this is where it shows.
+                configureCoveringIfNeeded(indexer, columnIndex, timestamp, cellKey);
                 // Tag this seal's chain entry with the txn the upcoming
                 // clearTodoAndCommitMeta will assign. Must come AFTER
                 // configureWriter (of() inside it resets pendingTxnAtSeal).
@@ -16123,54 +16128,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @return true if at least one covering posting column was rebuilt.
      */
-    private boolean resealParquetCoveringForPartition(long partitionTimestamp) {
+    private boolean resealParquetCoveringForPartition(long partitionTimestamp, int cellKey) {
         // No covering posting index anywhere on the table: the worker-built
         // non-covering .pv already stands, so skip the path resolution + stat(2)
         // and the per-column scan entirely.
         if (!hasCoveringPostingIndex()) {
             return false;
         }
-        // Plan 4b feature-gate sweep: reachable via ordinary commit finalization (finishO3Commit ->
-        // sealPostingIndexesForO3Partitions -> sealPostingIndexForPartition -> here) through a
-        // dormant-to-real transition, not any single DDL command: CONVERT PARTITION TO PARQUET and ADD
-        // INDEX ... TYPE POSTING (with a covering column) are both permitted on a still-DORMANT
-        // composite table (every gate in this sweep exempts dormant tables, by design -- a dormant
-        // composite table behaves identically to a plain one). If that same table LATER receives an
-        // ordinary INSERT that routes a genuinely second cellKey, it flips table-wide from dormant to
-        // real -- but the caller's own dispatch (sealPostingIndexForPartition, via
-        // TxReader#isPartitionParquetByPartitionTimestamp -> the cellKey-0-only
-        // findAttachedPartitionRawIndexByLoTimestamp wrapper) still resolves "is this day parquet" at
-        // cellKey 0 only, and this method then resolves the on-disk path with the bare 5-arg
-        // setPathForNativePartition (below) -- no cell segment. Unlike the automatic split/squash
-        // housekeeping gate elsewhere in this file, skipping here is NOT provably safe: this method's
-        // job is to keep a covering POSTING index's parquet-backed rowids in sync with the committed
-        // partition size after a shrink/split/replace, so silently skipping it risks a STALE index
-        // (a genuine wrong-answer risk for that index), not merely an un-consolidated file count. Reject
-        // loudly instead. Plain and dormant-composite tables are completely unaffected (the
-        // hasCoveringPostingIndex()/dormant-CONVERT preconditions above and below mean this is reached
-        // rarely, only for a table that actually combines composite + covering POSTING + PARQUET).
-        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
-        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
-        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        if (isRoutedComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support a covering POSTING index reseal on a PARQUET partition [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
-        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
+        // CELL-AWARE as of 2026-09-01. This refused a routed composite table outright, because every
+        // resolution below answered for cellKey 0: the partition index, the on-disk path (the bare
+        // 5-arg setPathForNativePartition, i.e. the day's debris container rather than the cell that
+        // holds the data), the row count, and the covering columns' tops and name txns. Skipping was
+        // never an option either -- this method keeps a covering POSTING index's parquet-backed rowids
+        // in sync with the committed partition size, so a silent skip leaves a STALE index, which is a
+        // wrong-answer risk rather than an untidy one.
+        // The caller already resolved the cell (it dispatches here on isPartitionParquetByRawIndex for
+        // that cell), so the cellKey is threaded in and every lookup below is scoped to one record.
+        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp, cellKey);
         if (partitionIndex < 0) {
             return false;
         }
         boolean processed = false;
-        long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
+        final CharSequence cellSegment = renderCellSegmentOrNull(cellKey);
+        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
         int plen = path.size();
         if (!ff.exists(path.slash().$()) && PartitionBy.isPartitioned(partitionBy)) {
+            // Pre-commit: the new version directory is named by the txn this commit will carry.
             path.trimTo(pathSize);
             partitionNameTxn = txWriter.getTxn();
-            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             plen = path.size();
         }
-        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        final long partitionSize = txWriter.getPartitionSize(partitionIndex);
         // One parquet open/mmap/decoder for the whole partition: a partition with
         // several covering posting columns decodes the file once and feeds each
         // column to indexParquetColumn, instead of re-opening the parquet per
@@ -16189,7 +16179,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Non-covering parquet posting: the worker-built .pv stands.
                     continue;
                 }
-                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, colIdx);
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
@@ -16208,7 +16198,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                     parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 }
-                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, colIdx);
                 try {
                     try {
                         indexParquetColumn(
@@ -16220,7 +16210,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 metadata.getColumnIndexType(colIdx),
                                 plen,
                                 partitionTimestamp,
-                                0,
+                                cellKey,
                                 rowGroupBuffers,
                                 false,
                                 false,
@@ -19961,7 +19951,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // non-covering .pv -- else a reader opening the new version walks the chain
             // (count() correct) but finds no .pci, reports coverCount=0 and returns NULL
             // covered values. Rebuild covering from the parquet here, pre-commit.
-            return resealParquetCoveringForPartition(partitionTimestamp);
+            return resealParquetCoveringForPartition(partitionTimestamp, cellKey);
         }
 
         boolean processed = false;

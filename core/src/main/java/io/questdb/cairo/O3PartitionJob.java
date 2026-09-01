@@ -607,6 +607,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 updateParquetIndexes(
                         partitionBy,
                         partitionTimestamp,
+                        cellSegment,
+                        cellKey,
                         tableWriter,
                         txnName,
                         o3Basket,
@@ -798,7 +800,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         partitionUpdateSinkAddr,
                         o3Basket,
                         newPartitionSize,
-                        cellSegment
+                        cellSegment,
+                        cellKey
                 );
                 return;
             }
@@ -3660,6 +3663,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static void updateParquetIndexes(
             int partitionBy,
             long partitionTimestamp,
+            // COMPOSITE: the cell whose parquet was just rewritten. Its index files live in the CELL's
+            // directory and its column tops and name txns are keyed by (timestamp, cellKey, column) --
+            // the day-level rebuild below addressed the bare day container, whose sym.pk does not exist.
+            @Nullable CharSequence cellSegment,
+            int cellKey,
             TableWriter tableWriter,
             long srcNameTxn,
             O3Basket o3Basket,
@@ -3707,7 +3715,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriterMetadata.getTimestampType(),
                     partitionBy,
                     partitionTimestamp,
-                    srcNameTxn
+                    srcNameTxn,
+                    cellSegment
             );
             final int pLen = path.size();
 
@@ -3721,7 +3730,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
 
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, cellKey, columnIndex);
 
                     byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
 
@@ -3759,7 +3768,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // In rewrite mode all columns exist in the new parquet file
                         // (the Rust encoder fills missing columns with NULLs),
                         // so the index must cover all rows from row 0.
-                        final long columnTop = isRewrite ? 0 : tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
+                        final long columnTop = isRewrite ? 0 : tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, cellKey, columnIndex);
                         if (columnTop > -1 && newPartitionSize > columnTop) {
                             parquetColumns.clear();
                             parquetColumns.add(parquetColumnIndex);
@@ -3905,7 +3914,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // instead of <day>/<cell>. Unreachable while FORMAT PARQUET is refused at CREATE, but the
             // refusal is a shadow, not a guarantee -- and this branch has twice seen a "cannot happen"
             // assumption become live the moment its gate moved. null for a plain table.
-            @Nullable CharSequence cellSegment    ) {
+            @Nullable CharSequence cellSegment,
+            // The same cell as a dense key, for the `_cv` lookups the index build makes: `_cv` is
+            // keyed by (timestamp, cellKey, column). 0 for a plain table.
+            int cellKey
+    ) {
         assert !tableWriter.getTableToken().isMatView() : "FORMAT PARQUET should be rejected on mat views at SQL level";
         // DEFENCE IN DEPTH, added 2026-08-26 after auditing every path into the native parquet encoder.
         // This method builds its target with the bare setPathForParquetPartition overload and never
@@ -4055,6 +4068,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             updateParquetIndexes(
                     partitionBy,
                     partitionTimestamp,
+                    cellSegment,
+                    cellKey,
                     tableWriter,
                     partitionNameTxn,
                     o3Basket,
