@@ -24,6 +24,7 @@
 
 package io.questdb.cairo.frm.file;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
@@ -38,16 +39,22 @@ import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     private final FrameColumnPool columnPool;
     private final ConcurrentPool<FrameImpl> framePool = new ConcurrentPool<>();
+    // Handed to every frame this factory hands out, and through them to
+    // io.questdb.cairo.frm.FrameColumnFanOut - the shared column-task pool a frame operation spreads
+    // its per-column work over. Null leaves every operation on its calling thread.
+    private final MessageBus messageBus;
     private boolean closed;
 
-    public FrameFactory(CairoConfiguration configuration) {
+    public FrameFactory(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         this.columnPool = new ContiguousFileColumnPool(configuration);
+        this.messageBus = messageBus;
     }
 
     // This method is used to clear the frame pool and release all frames.
@@ -288,7 +295,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         if (frm != null) {
             return frm;
         }
-        FrameImpl frame = new FrameImpl(columnPool);
+        FrameImpl frame = new FrameImpl(columnPool, messageBus);
         frame.setRecycleBin(this);
         return frame;
     }

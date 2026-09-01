@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.frm;
 
+import org.jetbrains.annotations.Nullable;
+
 import java.io.Closeable;
 
 /**
@@ -35,7 +37,23 @@ public interface Frame extends Closeable {
 
     int columnCount();
 
+    /**
+     * Forwards {@link ColumnTopSink#commitColumnTops()} to this frame's sink, if it has one. A frame
+     * that tracks its own tops has nothing to commit - {@link #saveChanges} already lands the final
+     * value - so this is a no-op there.
+     */
+    void commitColumnTops();
+
     FrameColumn createColumn(int columnIndex);
+
+    /**
+     * The fan-out this frame's per-column work can run on, or {@code null} when it has none and every
+     * operation against it stays on the calling thread. Only a writable frame has one - it is the
+     * TARGET of an operation that owns it - and one frame runs one operation at a time, so the same
+     * instance is handed out for every call.
+     */
+    @Nullable
+    FrameColumnFanOut getColumnFanOut();
 
     long getOffset();
 

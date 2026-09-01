@@ -51,18 +51,27 @@ public class FrameAlgebra {
      */
     public static void append(Frame target, Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode) {
         if (sourceLo < sourceHi) {
-            for (int i = 0, n = source.columnCount(); i < n; i++) {
-                try (
-                        FrameColumn sourceColumn = source.createColumn(i);
-                        FrameColumn targetColumn = target.createColumn(i)
-                ) {
-                    if (sourceColumn.getColumnType() >= 0) {
-                        targetColumn.setUpcomingTableTxn(upcomingTableTxn);
-                        append(targetColumn, target.getRowCount(), sourceColumn, sourceLo, sourceHi, commitMode);
-                        target.saveChanges(targetColumn);
+            final int columnCount = source.columnCount();
+            final FrameColumnFanOut fanOut = target.getColumnFanOut();
+            if (fanOut != null && fanOut.isWorthwhile(columnCount)) {
+                fanOut.append(target, source, sourceLo, sourceHi, upcomingTableTxn, commitMode);
+            } else {
+                for (int i = 0; i < columnCount; i++) {
+                    try (
+                            FrameColumn sourceColumn = source.createColumn(i);
+                            FrameColumn targetColumn = target.createColumn(i)
+                    ) {
+                        if (sourceColumn.getColumnType() >= 0) {
+                            targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+                            append(targetColumn, target.getRowCount(), sourceColumn, sourceLo, sourceHi, commitMode);
+                            target.saveChanges(targetColumn);
+                        }
                     }
                 }
             }
+            // Every column of this append has reported, so the join point is here: the sink applies
+            // whatever the per-column reports staged. See ColumnTopSink#commitColumnTops.
+            target.commitColumnTops();
             target.setRowCount(target.getRowCount() + (sourceHi - sourceLo));
         }
     }
@@ -105,30 +114,49 @@ public class FrameAlgebra {
         // together, and only whoever built the index knows by how much.
         assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
         if (mergeIndexRows > 0) {
-            for (int i = 0, n = source1.columnCount(); i < n; i++) {
-                try (
-                        FrameColumn sourceColumn1 = source1.createColumn(i);
-                        FrameColumn sourceColumn2 = source2.createColumn(i);
-                        FrameColumn targetColumn = target.createColumn(i)
-                ) {
-                    if (sourceColumn1.getColumnType() >= 0) {
-                        targetColumn.setUpcomingTableTxn(upcomingTableTxn);
-                        targetColumn.merge(
-                                target.getRowCount(),
-                                sourceColumn1,
-                                source1Lo,
-                                source1Hi,
-                                sourceColumn2,
-                                source2Lo,
-                                source2Hi,
-                                mergeIndexAddr,
-                                mergeIndexRows,
-                                commitMode
-                        );
-                        target.saveChanges(targetColumn);
+            final int columnCount = source1.columnCount();
+            final FrameColumnFanOut fanOut = target.getColumnFanOut();
+            if (fanOut != null && fanOut.isWorthwhile(columnCount)) {
+                fanOut.merge(
+                        target,
+                        source1,
+                        source1Lo,
+                        source1Hi,
+                        source2,
+                        source2Lo,
+                        source2Hi,
+                        mergeIndexAddr,
+                        mergeIndexRows,
+                        upcomingTableTxn,
+                        commitMode
+                );
+            } else {
+                for (int i = 0; i < columnCount; i++) {
+                    try (
+                            FrameColumn sourceColumn1 = source1.createColumn(i);
+                            FrameColumn sourceColumn2 = source2.createColumn(i);
+                            FrameColumn targetColumn = target.createColumn(i)
+                    ) {
+                        if (sourceColumn1.getColumnType() >= 0) {
+                            targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+                            targetColumn.merge(
+                                    target.getRowCount(),
+                                    sourceColumn1,
+                                    source1Lo,
+                                    source1Hi,
+                                    sourceColumn2,
+                                    source2Lo,
+                                    source2Hi,
+                                    mergeIndexAddr,
+                                    mergeIndexRows,
+                                    commitMode
+                            );
+                            target.saveChanges(targetColumn);
+                        }
                     }
                 }
             }
+            target.commitColumnTops();
             target.setRowCount(target.getRowCount() + mergeIndexRows);
         }
     }
@@ -192,7 +220,11 @@ public class FrameAlgebra {
         }
     }
 
-    private static void append(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+    /**
+     * One column's share of {@link #append}. Package private because {@link FrameColumnFanOut} runs
+     * exactly this, one column per task, when the loop above fans out instead of stepping through.
+     */
+    static void append(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         int columnType = sourceColumn.getColumnType();
         if (columnType != targetColumn.getColumnType()) {
             throw new UnsupportedOperationException();
