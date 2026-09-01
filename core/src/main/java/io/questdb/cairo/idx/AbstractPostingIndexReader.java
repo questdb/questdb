@@ -767,6 +767,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @TestOnly
+    public long getSidecarMemoRowBytesForTesting() {
+        return sidecarPrefixSum.rowBytesRetained();
+    }
+
+    @TestOnly
     public boolean isSidecarGenFullPrefixForTesting(int gen) {
         return sidecarPrefixSum.isFullPrefix(gen);
     }
@@ -3508,6 +3513,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * flag threaded into {@link SparseGenSidecarPrefixSum#baseOrdinal} asserts that no build (or version
      * drop / grow) happens while frozen — i.e. that priming was complete — turning
      * a would-be silent data race into a deterministic {@code -ea} failure.
+     * <p>
+     * <b>Memory.</b> Deliberately unbudgeted. A row costs at most two ints per
+     * active key before promotion and exactly one after — a quarter of the
+     * 16-bytes/key gen header ({@link PostingIndexUtils#genHeaderSizeSparse}) the
+     * reader maps anyway. Rows drop whole on every version bump and on close. A
+     * drop-past-budget gate would silently reintroduce the O(slot) per-open scan
+     * on the parallel-decode path this memo removes.
      */
     protected static final class SparseGenSidecarPrefixSum {
         private static final int FULL_PREFIX_PROMOTION_SLOTS = 16;
@@ -3600,6 +3612,21 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         @TestOnly
         boolean isPrimed(int gen) {
             return perGen != null && gen >= 0 && gen < perGen.length && perGen[gen] != null;
+        }
+
+        // Retained row bytes; pins the documented bound (<= 2 ints/key un-promoted, 1 int/key promoted).
+        @TestOnly
+        long rowBytesRetained() {
+            long bytes = 0;
+            if (perGen != null) {
+                for (int i = 0, n = perGen.length; i < n; i++) {
+                    final int[] row = perGen[i];
+                    if (row != null) {
+                        bytes += (long) row.length * Integer.BYTES;
+                    }
+                }
+            }
+            return bytes;
         }
 
         void setFrozenBaseOrdinalObserver(FrozenBaseOrdinalObserver observer) {
