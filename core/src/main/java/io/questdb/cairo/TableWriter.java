@@ -5303,24 +5303,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int partitionDirLen,
             int newPartitionDirLen
     ) {
-        final int columnCount = metadata.getColumnCount();
-        for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
-            if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
-                continue;
+        // The trims are the point of the try/finally, not tidiness: `path` and `other` are writer
+        // FIELDS, and the very next thing a caller does can be a purge, whose loop calls
+        // setPathForNativePartition(other, ...) WITHOUT trimming first -- it relies on `other` sitting
+        // at the table root. Left at a partition directory here, that purge builds
+        // "<day>/<cell>.<newTxn>/<day>/<cell>.<oldTxn>", fails to unlink it, and schedules an async
+        // purge against a path that never existed. The by-timestamp sibling of this method has always
+        // had these trims; this one was written without them and a tiering fuzz found the difference.
+        try {
+            final int columnCount = metadata.getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
+                if (columnTop == -1 || columnTop >= partitionSize) {
+                    continue;
+                }
+                linkColumnIndexFiles(
+                        partitionDirLen,
+                        newPartitionDirLen,
+                        metadata.getColumnName(columnIndex),
+                        getColumnNameTxn(partitionTimestamp, cellKey, columnIndex),
+                        metadata.getColumnIndexType(columnIndex),
+                        partitionTimestamp,
+                        partitionNameTxn
+                );
             }
-            final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
-            if (columnTop == -1 || columnTop >= partitionSize) {
-                continue;
-            }
-            linkColumnIndexFiles(
-                    partitionDirLen,
-                    newPartitionDirLen,
-                    metadata.getColumnName(columnIndex),
-                    getColumnNameTxn(partitionTimestamp, cellKey, columnIndex),
-                    metadata.getColumnIndexType(columnIndex),
-                    partitionTimestamp,
-                    partitionNameTxn
-            );
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
         }
     }
 
