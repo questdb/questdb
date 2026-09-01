@@ -154,7 +154,7 @@ public class O3CompositePartitionAggregationTest extends AbstractCairoTest {
         });
     }
 
-    private static void assertPartitionHasDeadSpace(String table, int partitionIndex) throws Exception {
+    private static void assertPartitionHasDeadSpace(String table, int partitionIndex) {
         final TableToken tt = engine.verifyTableName(table);
         try (TableReader reader = engine.getReader(tt)) {
             final TxReader txReader = reader.getTxFile();
