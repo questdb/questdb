@@ -25,8 +25,10 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -44,6 +46,16 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
     @Before
     public void pinClockBelowTestData() {
         setCurrentMicros(0L);
+    }
+
+    @Test
+    public void testActiveDedupNativeToParquetModeFlipDoesNotReplayHistory() throws Exception {
+        assertActiveDedupFormatModeFlips(false);
+    }
+
+    @Test
+    public void testActiveDedupParquetToNativeModeFlipDoesNotReplayHistory() throws Exception {
+        assertActiveDedupFormatModeFlips(true);
     }
 
     @Test
@@ -171,6 +183,90 @@ public class LiveViewParquetBaseTest extends AbstractLiveViewTest {
             assertQuery("SELECT i FROM base WHERE i > 0 LIMIT 2,5")
                     .noLeakCheck()
                     .returns("i\n30\n40\n50\n");
+            execute("DROP TABLE base");
+        });
+    }
+
+    private void assertActiveDedupFormatModeFlips(boolean isInitiallyParquet) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG) "
+                    + "TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+            execute("""
+                    INSERT INTO base (ts, sym, i) VALUES
+                    ('2026-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2026-01-01T00:01:00.000000Z', 'a', 2),
+                    ('2026-01-02T00:00:00.000000Z', 'a', 3),
+                    ('2026-01-02T00:01:00.000000Z', 'a', 4)
+                    """);
+            drainWalQueue();
+            if (isInitiallyParquet) {
+                execute("ALTER TABLE base CONVERT PARTITION TO PARQUET LIST '2026-01-01'");
+                drainWalQueue();
+            }
+
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
+                    SELECT ts, sym, i,
+                           sum(i) OVER (
+                               PARTITION BY sym
+                               ORDER BY ts
+                               ROWS BETWEEN 3 PRECEDING AND CURRENT ROW
+                           ) AS v
+                    FROM base
+                    WHERE i > 0
+                    """);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                boolean isParquet = isInitiallyParquet;
+                for (int i = 0; i < 3; i++) {
+                    final long faultCount = instance.getRefreshFaultCount();
+                    final long replayScanRows = instance.getO3ReplayScanRows();
+                    final long processedSeqTxn = instance.getLastProcessedSeqTxn();
+                    isParquet = !isParquet;
+
+                    execute("ALTER TABLE base CONVERT PARTITION TO "
+                            + (isParquet ? "PARQUET" : "NATIVE")
+                            + " LIST '2026-01-01'");
+                    drainWalQueue();
+                    driveRefreshToQuiescence(job);
+
+                    assertQuery("SELECT ts, sym, i, v FROM lv ORDER BY ts")
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .expectSize()
+                            .returns("""
+                                    ts\tsym\ti\tv
+                                    2026-01-01T00:00:00.000000Z\ta\t1\t1.0
+                                    2026-01-01T00:01:00.000000Z\ta\t2\t3.0
+                                    2026-01-02T00:00:00.000000Z\ta\t3\t6.0
+                                    2026-01-02T00:01:00.000000Z\ta\t4\t10.0
+                                    """);
+                    Assert.assertFalse("format conversion must not invalidate the live view", instance.isInvalid());
+                    Assert.assertEquals(
+                            "format conversion must not count as a refresh fault",
+                            faultCount,
+                            instance.getRefreshFaultCount()
+                    );
+                    Assert.assertEquals(
+                            "format conversion must not replay retained history",
+                            replayScanRows,
+                            instance.getO3ReplayScanRows()
+                    );
+                    Assert.assertEquals(
+                            "the structural transaction must be processed exactly once",
+                            processedSeqTxn + 1,
+                            instance.getLastProcessedSeqTxn()
+                    );
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
             execute("DROP TABLE base");
         });
     }
