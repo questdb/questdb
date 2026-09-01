@@ -8504,10 +8504,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean keyedRoute = resumed != null && resumed.getKeyedReplay() != null
                     ? resumed.isKeyedReplayRoute()
                     : coldKeyedRoute || (repairKeyedReplay.isArmed()
-                    && !resuming
-                    && !fullRebuild
-                    && localized
-                    && finiteHighBound);
+                                         && !resuming
+                                         && !fullRebuild
+                                         && localized
+                                         && finiteHighBound);
             if (keyedRoute && !coldKeyedRoute && !resuming) {
                 storedRowCursor = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive());
                 if (storedRowCursor == null) {
