@@ -3579,6 +3579,50 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         linkPartitionIndexFiles(partitionTimestamp, oldPartitionNameTxn, partitionDirLen, newPartitionDirLen);
     }
 
+    /**
+     * Cell-scoped {@link #linkPartitionIndexFiles(long, long, long)}, for a caller installing ONE cell
+     * of a composite day into a new partition version (the enterprise cold-switch does this per cell).
+     * <p>
+     * Both directories carry the cell segment, and the index files are linked with THAT cell's row
+     * count, column tops and column name-txns: `_cv` is keyed by (timestamp, cellKey, column), so the
+     * by-timestamp form would apply cell 0's tops to another cell's index files. A day whose only cell
+     * key is 0 -- which is every plain table -- renders and links exactly as the form above.
+     */
+    public void linkPartitionIndexFiles(long partitionTimestamp, int cellKey, long oldPartitionNameTxn, long newPartitionNameTxn) {
+        final int index = getPartitionIndexByTimestamp(partitionTimestamp, cellKey);
+        if (index < 0) {
+            throw CairoException.nonCritical()
+                    .put("cannot link index files, partition cell is gone [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(timestampType, partitionTimestamp)
+                    .put(", cellKey=").put(cellKey).put(']');
+        }
+        final StringSink cellSegment = Misc.getThreadLocalSink();
+        renderCellSegment(cellSegment, cellKey);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn, cellSegment);
+        final int partitionDirLen = path.size();
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn, cellSegment);
+        final int newPartitionDirLen = other.size();
+        linkPartitionIndexFiles(
+                partitionTimestamp,
+                cellKey,
+                oldPartitionNameTxn,
+                txWriter.getPartitionSize(index),
+                partitionDirLen,
+                newPartitionDirLen
+        );
+    }
+
+    /**
+     * Cell-scoped {@link #safeDeletePartitionDir(long, long)}: reclaims the superseded version dir of
+     * ONE cell. The by-timestamp form removes cellKey 0's directory whatever cell the caller meant.
+     */
+    public void safeDeletePartitionDir(long timestamp, long partitionNameTxn, int cellKey) {
+        // Call O3 methods to remove check TxnScoreboard and remove partition directly
+        partitionRemoveCandidates.clear();
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn, cellKey);
+        processPartitionRemoveCandidates();
+    }
+
     public void markDistressed() {
         this.distressed = true;
     }
@@ -19677,13 +19721,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * lag partition" first-commit cleanup, in processWalCommitFinishApply) uses this overload instead,
      * passing the true resolved cellKey.
      */
-    private void safeDeletePartitionDir(long timestamp, long partitionNameTxn, int cellKey) {
-        // Call O3 methods to remove check TxnScoreboard and remove partition directly
-        partitionRemoveCandidates.clear();
-        partitionRemoveCandidates.add(timestamp, partitionNameTxn, cellKey);
-        processPartitionRemoveCandidates();
-    }
-
     private void scaleSymbolCapacities() {
         // Plan 4b feature-gate sweep: another automatic housekeeping call from housekeep() (same
         // class as the split/squash gate above), reachable on ordinary commits once

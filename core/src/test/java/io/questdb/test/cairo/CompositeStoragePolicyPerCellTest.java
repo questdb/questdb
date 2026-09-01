@@ -273,6 +273,91 @@ public class CompositeStoragePolicyPerCellTest extends AbstractCompositeTwinTest
         });
     }
 
+    /**
+     * {@code linkPartitionIndexFiles(ts, cellKey, oldNameTxn, newNameTxn)} -- the entry point the
+     * enterprise cold-switch uses to carry ONE cell's symbol index into a new partition version.
+     * <p>
+     * NON-VACUITY comes from the second cell being the one linked while the FIRST is left alone: the
+     * by-timestamp form resolves both directories at cellKey 0, so a cell-blind implementation reads
+     * cell 0's directory (and cell 0's row count and column tops from `_cv`) and writes the index of
+     * the wrong cell -- or nothing at all, cell 0's new-version dir not existing. Asserting that the
+     * files appear under cell 1's new dir, and that cell 0's dir did NOT gain any, distinguishes them.
+     * <p>
+     * WHAT THIS DOES NOT PIN: the inner helper's use of the cell's own row count, column tops and
+     * column name-txns. Both cells here have no tops and name-txn 0, so passing cell 0's would produce
+     * the same links; that resolution belongs to the private helper the parquet switch already drives.
+     * Measured, not assumed -- mutating the inner cellKey to 0 leaves this test green.
+     */
+    @Test
+    public void testIndexFilesLinkForTheNamedCellOnly() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, sym SYMBOL INDEX, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch WAL");
+            execute("INSERT INTO c VALUES ('2023-01-01T01:00:00.000000Z','E0','A',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1','B',2.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0','A',3.0)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            try (TableWriter w = getWriter("c")) {
+                final TxWriter tx = w.getTxWriter();
+                final long day1 = tx.getPartitionTimestampByIndex(0);
+                final IntList cells = cellsOfDay(w, day1);
+                Assert.assertEquals("the day must have two cells or the per-cell claim is untestable",
+                        2, cells.size());
+                final int firstCell = cells.getQuick(0);
+                final int targetCell = cells.getQuick(1);
+                final long oldNameTxn = tx.getPartitionNameTxn(tx.getPartitionIndex(day1));
+                final long newNameTxn = w.getTxn() + 1;
+
+                final FilesFacade ff = configuration.getFilesFacade();
+                final int indexFilesBefore = indexFileCount(ff, w, "c", day1, targetCell, newNameTxn);
+                Assert.assertEquals("the new version dir must start empty or the link proves nothing",
+                        0, indexFilesBefore);
+
+                try (Path dir = new Path()) {
+                    cellPartitionPath(dir, "c", day1, targetCell, newNameTxn, w);
+                    Assert.assertEquals("could not create the target version dir",
+                            0, ff.mkdirs(dir.slash(), configuration.getMkDirMode()));
+                }
+                w.linkPartitionIndexFiles(day1, targetCell, oldNameTxn, newNameTxn);
+
+                Assert.assertTrue("the named cell's index files must be linked into the new version",
+                        indexFileCount(ff, w, "c", day1, targetCell, newNameTxn) > 0);
+                Assert.assertEquals("the sibling cell must be untouched -- a cell-blind link writes here",
+                        0, indexFileCount(ff, w, "c", day1, firstCell, newNameTxn));
+            }
+        });
+    }
+
+    /**
+     * {@code .k}/{@code .v} files present in one cell's version directory.
+     */
+    private int indexFileCount(FilesFacade ff, TableWriter w, String table, long dayTs, int cellKey, long nameTxn) {
+        int found = 0;
+        try (Path path = new Path()) {
+            for (String suffix : new String[]{".k", ".v"}) {
+                cellPartitionPath(path, table, dayTs, cellKey, nameTxn, w);
+                path.concat("sym").put(suffix);
+                if (ff.exists(path.$())) {
+                    found++;
+                }
+            }
+        }
+        return found;
+    }
+
+    /**
+     * {@code <root>/<table>/<day>/<cell>.<nameTxn>} -- the directory one cell of a day lives in.
+     */
+    private void cellPartitionPath(Path path, String table, long dayTs, int cellKey, long nameTxn, TableWriter w) {
+        final StringSink segment = new StringSink();
+        w.renderCellSegment(segment, cellKey);
+        final TableToken tt = engine.verifyTableName(table);
+        path.of(configuration.getDbRoot()).concat(tt);
+        TableUtils.setPathForNativePartition(path, w.getTimestampType(), PartitionBy.DAY, dayTs, nameTxn, segment);
+    }
+
     private IntList cellsOfDay(TableWriter w, long dayTs) {
         final TxWriter tx = w.getTxWriter();
         final IntList out = new IntList();
