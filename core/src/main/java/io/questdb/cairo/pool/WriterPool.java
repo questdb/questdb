@@ -73,6 +73,7 @@ import java.util.Map;
  * closed.
  */
 public class WriterPool extends AbstractPool {
+    public static final String OWNERSHIP_REASON_ASYNC_COMMAND = "async command";
     public static final String OWNERSHIP_REASON_MISSING = "missing or owned by other process";
     public static final String OWNERSHIP_REASON_NONE = null;
     public static final String OWNERSHIP_REASON_RELEASED = "released";
@@ -235,6 +236,7 @@ public class WriterPool extends AbstractPool {
 
             // try to change owner
             if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+                e.ownershipReason = lockReason;
                 closeWriter(thread, e, PoolListener.EV_LOCK_CLOSE, PoolConstants.CR_NAME_LOCK);
                 if (lockAndNotify(thread, e, tableToken, lockReason)) {
                     return OWNERSHIP_REASON_NONE;
@@ -363,6 +365,10 @@ public class WriterPool extends AbstractPool {
 
         // If the writer is suddenly in the pool, lock it and call tick to process command queue
         if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
+            // The one borrow that has no caller-supplied reason. It still needs to name itself: a holder
+            // that never stamps anything leaves awaitOwnershipReason waiting on the whole tick below,
+            // rather than on the single store every other acquisition takes to identify itself.
+            e.ownershipReason = OWNERSHIP_REASON_ASYNC_COMMAND;
             // Writer became available straight after setting items in the queue.
             // Don't leave it unprocessed
             try {
@@ -389,6 +395,34 @@ public class WriterPool extends AbstractPool {
         if (isClosed()) {
             LOG.info().$("is closed").$();
             throw PoolClosedException.INSTANCE;
+        }
+    }
+
+    /**
+     * Resolves the reason a holder took {@code e}, waiting out the window between the holder taking the
+     * entry and stamping its reason - {@code owner} and {@code ownershipReason} are two separate stores,
+     * so a reader can land between them however early the stamp happens.
+     * <p>
+     * Unbounded, and safe to be: every path that puts a real owner on an entry either stamps the reason
+     * in the very next instruction - nothing in between can throw - or, having failed, hands the entry
+     * back by setting {@code owner} to {@link #UNALLOCATED}, which this loop also stops on. So the wait
+     * is one store, and the worst a future acquisition that forgets to stamp can cost is a wait until
+     * that holder releases.
+     *
+     * @return the holder's reason, or {@link #OWNERSHIP_REASON_NONE} if it released while we waited -
+     * the entry is no longer busy and the caller should retry rather than report it as such
+     */
+    private String awaitOwnershipReason(Entry e) {
+        while (true) {
+            final String reason = e.ownershipReason;
+            //noinspection StringEquality
+            if (reason != OWNERSHIP_REASON_NONE) {
+                return reason;
+            }
+            if (e.owner == UNALLOCATED) {
+                return OWNERSHIP_REASON_NONE;
+            }
+            Os.pause();
         }
     }
 
@@ -504,6 +538,7 @@ public class WriterPool extends AbstractPool {
                 // We are racing to create new writer!
                 final String dirName = tableToken.getDirName();
                 e = new Entry(clock.getTicks(), dirName);
+                e.ownershipReason = lockReason;
                 Entry other = entries.putIfAbsent(dirName, e);
                 if (other == null) {
                     // race won
@@ -516,6 +551,7 @@ public class WriterPool extends AbstractPool {
             // try to change owner
             if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
                 // we managed to grab the writer
+                e.ownershipReason = lockReason;
 
                 // in an extreme race condition it is possible that e.writer will be null
                 // in this case behaviour should be identical to entry missing entirely
@@ -549,7 +585,13 @@ public class WriterPool extends AbstractPool {
                     return null;
                 }
 
-                String reason = reinterpretOwnershipReason(e.ownershipReason);
+                String reason = awaitOwnershipReason(e);
+                //noinspection StringEquality
+                if (reason == OWNERSHIP_REASON_NONE) {
+                    // The holder released while we were resolving its reason, so the entry may well be
+                    // free now - retry the acquire rather than report a busy entry that is not busy.
+                    continue;
+                }
 
                 if (!tableToken.isWal()) {
                     // Don't log busy for WAL table it's BAU.
