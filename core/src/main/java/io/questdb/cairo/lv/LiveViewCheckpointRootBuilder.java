@@ -69,6 +69,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
     private final LiveViewCheckpointFunctionRoot functionRoot;
     private final ObjList<LiveViewCheckpointPageRef> functionRootRefs = new ObjList<>();
     private boolean initialized;
+    private final LiveViewCheckpointPageRef keyDictionaryRef = new LiveViewCheckpointPageRef();
     private long lastSegmentBytes;
     private long maxTimestamp;
     private final LiveViewCheckpointRoot resultRoot;
@@ -126,6 +127,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         this.anchorRootRef.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
         functionCount = 0;
         functionIdentityBytes.reset();
+        keyDictionaryRef.clear();
         segmentIds.clear();
         if (!anchorRootRef.isNull()) {
             if (windowRoot.ofIfWindowRoot(checkpointsDir, anchorRootRef)) {
@@ -194,6 +196,7 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
                 definitionTxn,
                 anchorRootRef,
                 functionDirectoryRef,
+                keyDictionaryRef,
                 segmentIds
         );
         resultRoot.writeTo(writer, out);
@@ -222,6 +225,21 @@ public class LiveViewCheckpointRootBuilder implements Closeable {
         initialized = false;
         functionCount = 0;
         segmentIds.clear();
+    }
+
+    /**
+     * Binds the key dictionary root this checkpoint publishes, folding every segment
+     * {@code referencedSegmentIds} names into this checkpoint's own closure - the same
+     * treatment {@link #begin} already gives the anchor/window root's segments. Optional: a
+     * view with no bound SYMBOL partition column never calls this, and the root then publishes
+     * with a null key dictionary reference exactly as it did before this method existed.
+     */
+    public void setKeyDictionaryRef(@NotNull LiveViewCheckpointPageRef ref, @NotNull LongList referencedSegmentIds) {
+        ensureInitialized();
+        keyDictionaryRef.of(ref.getSegmentId(), ref.getOffset(), ref.getLength());
+        for (int i = 0, n = referencedSegmentIds.size(); i < n; i++) {
+            addSegmentId(referencedSegmentIds.getQuick(i));
+        }
     }
 
     public void getReferencedSegmentIds(@NotNull LongList out) {

@@ -49,12 +49,21 @@ import java.io.Closeable;
 public class LiveViewCheckpointRoot implements Closeable {
 
     public static final int PAGE_KIND = 0x1a;
-    private static final int FIXED_SIZE = 2 * Integer.BYTES + 3 * Long.BYTES + 2 * LiveViewCheckpointPageRef.BYTES;
-    private static final int FORMAT_VERSION = 1;
+    /**
+     * Format written before the key dictionary existed: {@code anchorRootRef} and
+     * {@code functionDirectoryRef} only, no {@code keyDictionaryRef}. Still decoded so a root a
+     * released build wrote stays readable; {@link #of} treats a version-1 root as carrying a
+     * null key dictionary reference.
+     */
+    private static final int FORMAT_VERSION_1 = 1;
+    private static final int FIXED_SIZE_V1 = 2 * Integer.BYTES + 3 * Long.BYTES + 2 * LiveViewCheckpointPageRef.BYTES;
+    private static final int FIXED_SIZE_V2 = FIXED_SIZE_V1 + LiveViewCheckpointPageRef.BYTES;
+    private static final int FORMAT_VERSION = 2;
     private final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
     private long checkpointId;
     private long definitionTxn;
     private final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
+    private final LiveViewCheckpointPageRef keyDictionaryRef = new LiveViewCheckpointPageRef();
     private long maxTimestamp;
     private final LiveViewCheckpointMetaSegmentReader reader;
     /**
@@ -94,6 +103,16 @@ public class LiveViewCheckpointRoot implements Closeable {
         out.of(functionDirectoryRef.getSegmentId(), functionDirectoryRef.getOffset(), functionDirectoryRef.getLength());
     }
 
+    /**
+     * Returns the root of this boundary's LV-private symbol-key dictionary, or a null
+     * reference when the view binds no translated SYMBOL partition column - which is every
+     * view today (section 12 step 7 is what starts publishing a non-null one) - or when this
+     * root was written before the dictionary existed (format version 1).
+     */
+    public void getKeyDictionaryRef(@NotNull LiveViewCheckpointPageRef out) {
+        out.of(keyDictionaryRef.getSegmentId(), keyDictionaryRef.getOffset(), keyDictionaryRef.getLength());
+    }
+
     public long getMaxTimestamp() {
         return maxTimestamp;
     }
@@ -129,12 +148,13 @@ public class LiveViewCheckpointRoot implements Closeable {
             throw LiveViewCheckpointMetadata.invalid("root page kind unknown, kind=").put(reader.getPageKind());
         }
         final int payloadLength = reader.getPagePayloadLength();
-        if (payloadLength < FIXED_SIZE) {
+        if (payloadLength < FIXED_SIZE_V1) {
             throw LiveViewCheckpointMetadata.invalid("root payload too small, length=").put(payloadLength);
         }
         final int version = reader.getInt(0);
         final int segmentCount = reader.getInt(Integer.BYTES);
-        if (version != FORMAT_VERSION || segmentCount < 0 || segmentCount > LiveViewCheckpointMetadata.MAX_ENTRY_COUNT) {
+        if ((version != FORMAT_VERSION_1 && version != FORMAT_VERSION)
+                || segmentCount < 0 || segmentCount > LiveViewCheckpointMetadata.MAX_ENTRY_COUNT) {
             throw LiveViewCheckpointMetadata.invalid("root version or segment count invalid")
                     .put(" [version=").put(version).put(", segmentCount=").put(segmentCount).put(']');
         }
@@ -152,7 +172,17 @@ public class LiveViewCheckpointRoot implements Closeable {
         LiveViewCheckpointMetadata.readMetaRef(reader, offset, functionDirectoryRef);
         LiveViewCheckpointMetadata.validateMetaRef(functionDirectoryRef, false, "function directory");
         offset += LiveViewCheckpointPageRef.BYTES;
-        final long expectedLength = (long) FIXED_SIZE + (long) segmentCount * Long.BYTES;
+        final int fixedSize;
+        if (version >= FORMAT_VERSION) {
+            LiveViewCheckpointMetadata.readMetaRef(reader, offset, keyDictionaryRef);
+            LiveViewCheckpointMetadata.validateMetaRef(keyDictionaryRef, true, "key dictionary");
+            offset += LiveViewCheckpointPageRef.BYTES;
+            fixedSize = FIXED_SIZE_V2;
+        } else {
+            keyDictionaryRef.clear();
+            fixedSize = FIXED_SIZE_V1;
+        }
+        final long expectedLength = (long) fixedSize + (long) segmentCount * Long.BYTES;
         if (expectedLength != payloadLength) {
             throw LiveViewCheckpointMetadata.invalid("root payload length mismatch")
                     .put(" [expected=").put(expectedLength).put(", actual=").put(payloadLength).put(']');
@@ -177,6 +207,7 @@ public class LiveViewCheckpointRoot implements Closeable {
             long definitionTxn,
             LiveViewCheckpointPageRef anchorRootRef,
             LiveViewCheckpointPageRef functionDirectoryRef,
+            LiveViewCheckpointPageRef keyDictionaryRef,
             LongList segmentIds
     ) {
         this.checkpointId = checkpointId;
@@ -184,6 +215,7 @@ public class LiveViewCheckpointRoot implements Closeable {
         this.definitionTxn = definitionTxn;
         this.anchorRootRef.of(anchorRootRef.getSegmentId(), anchorRootRef.getOffset(), anchorRootRef.getLength());
         this.functionDirectoryRef.of(functionDirectoryRef.getSegmentId(), functionDirectoryRef.getOffset(), functionDirectoryRef.getLength());
+        this.keyDictionaryRef.of(keyDictionaryRef.getSegmentId(), keyDictionaryRef.getOffset(), keyDictionaryRef.getLength());
         this.segmentIds.clear();
         this.segmentIds.add(segmentIds);
     }
@@ -197,6 +229,7 @@ public class LiveViewCheckpointRoot implements Closeable {
         mem.putLong(definitionTxn);
         LiveViewCheckpointMetadata.putMetaRef(mem, anchorRootRef);
         LiveViewCheckpointMetadata.putMetaRef(mem, functionDirectoryRef);
+        LiveViewCheckpointMetadata.putMetaRef(mem, keyDictionaryRef);
         for (int i = 0, n = segmentIds.size(); i < n; i++) {
             mem.putLong(segmentIds.getQuick(i));
         }

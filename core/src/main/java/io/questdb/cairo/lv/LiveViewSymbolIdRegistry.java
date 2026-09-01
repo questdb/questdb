@@ -26,6 +26,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
@@ -463,6 +464,66 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
     }
 
     /**
+     * Adapts this registry's bound slots to a {@link LiveViewCheckpointKeyDictionaryWriter}
+     * source, sorted ascending by {@code (baseTableId, baseWriterColumnIndex)} as the writer
+     * requires. The registry does not track a base column's canonical name, so every column
+     * persists an empty one; identity for matching purposes is always
+     * {@code (baseTableId, baseWriterColumnIndex)} (section 5.3), and every bound slot's
+     * column type is {@link ColumnType#SYMBOL} - the only base type this optimization's scope
+     * ever binds a slot to (section 1). The returned source is a live view over this
+     * registry's slots and must not be read past the next mutation.
+     */
+    public LiveViewCheckpointKeyDictionaryColumnSource newDictionaryColumnSource() {
+        final int n = boundSlots.size();
+        final IntList order = new IntList(n);
+        for (int i = 0; i < n; i++) {
+            order.add(boundSlots.getQuick(i));
+        }
+        for (int i = 1; i < n; i++) {
+            final int value = order.getQuick(i);
+            final Slot toPlace = slots.getQuick(value);
+            int j = i;
+            while (j > 0 && compareSlots(slots.getQuick(order.getQuick(j - 1)), toPlace) > 0) {
+                order.setQuick(j, order.getQuick(j - 1));
+                j--;
+            }
+            order.setQuick(j, value);
+        }
+        return new DictionaryColumnSource(order);
+    }
+
+    /**
+     * Rebuilds every bound slot whose {@code (baseTableId, baseWriterColumnIndex)} the reader's
+     * directory names, from that column's chunks. A bound slot the directory does not name is
+     * left untouched - the case of a column that has not interned anything since the
+     * predecessor its dictionary hangs off, or a column bound only after the restored root
+     * sealed.
+     * <p>
+     * This is section 6.3's per-root-chain invariant at the unit this registry owns:
+     * {@link LiveViewCheckpointKeyDictionaryReader#restoreInto} replaces a slot's dictionary
+     * wholesale rather than merging into it, so an id this run already assigned past the
+     * restored root's frozen {@code symbolCount} - the case a rollback fork's abandoned root
+     * left behind - is discarded along with it. The slot's {@code baseId -> lvId} cache and
+     * dirty band are cleared and its epoch is unarmed for the same reason: both name positions
+     * in a numbering the restore may have just replaced.
+     */
+    public void restoreDictionary(@NotNull LiveViewCheckpointKeyDictionaryReader reader) {
+        for (int i = 0, n = boundSlots.size(); i < n; i++) {
+            final Slot slot = slots.getQuick(boundSlots.getQuick(i));
+            final int columnIndex = reader.findColumn(slot.baseTableId, slot.baseWriterColumnIndex);
+            if (columnIndex < 0) {
+                continue;
+            }
+            reader.restoreInto(columnIndex, slot.dictionary);
+            slot.baseIdToLvId.clear();
+            slot.dirtyToLvId.clear();
+            slot.dirtyEpoch.clear();
+            slot.armedEpoch = UNARMED_EPOCH;
+            slot.resolver = null;
+        }
+    }
+
+    /**
      * Lowers the id ceiling so a test can drive exhaustion without interning two billion
      * strings. Production runs at {@link #MAX_DICTIONARY_SIZE}.
      */
@@ -511,6 +572,11 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
             throw rejectRawId(s, rawId, "above the source's symbol count");
         }
         return translateDirty(s, dirtyIndex, rawId);
+    }
+
+    private static int compareSlots(Slot a, Slot b) {
+        final int cmp = Integer.compare(a.baseTableId, b.baseTableId);
+        return cmp != 0 ? cmp : Integer.compare(a.baseWriterColumnIndex, b.baseWriterColumnIndex);
     }
 
     private static void extendWith(IntList list, int size, int fill) {
@@ -696,6 +762,57 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
             dirtyToLvId.clear();
             dirtyEpoch.clear();
             resolver = null;
+        }
+    }
+
+    /**
+     * A one-shot {@link LiveViewCheckpointKeyDictionaryColumnSource} view over a snapshot of
+     * bound slot ordinals, already sorted by {@link #newDictionaryColumnSource}.
+     */
+    private final class DictionaryColumnSource implements LiveViewCheckpointKeyDictionaryColumnSource {
+        private final IntList order;
+
+        DictionaryColumnSource(IntList order) {
+            this.order = order;
+        }
+
+        @Override
+        public int getBaseTableId(int columnIndex) {
+            return slot(columnIndex).baseTableId;
+        }
+
+        @Override
+        public int getBaseWriterColumnIndex(int columnIndex) {
+            return slot(columnIndex).baseWriterColumnIndex;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return order.size();
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            return "";
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            return ColumnType.SYMBOL;
+        }
+
+        @Override
+        public int getEntryCount(int columnIndex) {
+            return slot(columnIndex).dictionary.size();
+        }
+
+        @Override
+        public CharSequence getEntryValue(int columnIndex, int lvId) {
+            return slot(columnIndex).dictionary.valueOf(lvId);
+        }
+
+        private Slot slot(int columnIndex) {
+            return slots.getQuick(order.getQuick(columnIndex));
         }
     }
 
