@@ -192,6 +192,9 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     private ScanBudgetStatus scanBudgetStatus = ScanBudgetStatus.WITHIN;
     private long scanRowBudget;
     private long scanRows;
+    // The view's dictionaries, or null while nothing translates. Rebound per discover() so a
+    // repair never runs against the registry the previous one happened to leave behind.
+    private LiveViewSymbolIdRegistry symbolIdRegistry;
 
     public LiveViewCheckpointRowsBounds(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -265,12 +268,18 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             @NotNull PageFrameRecordCursorFactory pageFrameFactory,
             @NotNull SqlExecutionContext executionContext,
             @Nullable Function filter,
+            @Nullable LiveViewSymbolIdRegistry symbolIdRegistry,
             long viewLowerBoundTs,
             long outputLowTs,
             long changeLowTs,
             long changeMaxTs
     ) throws SqlException {
         clear();
+        // These scans project base rows into the repair's key domain through the very sinks a
+        // translated view keys by, so each of their cursors has to arm the dictionaries like
+        // any other source. The repair path is where a wrong key is least likely to be
+        // noticed and most expensive to undo.
+        this.symbolIdRegistry = symbolIdRegistry;
         scanRowBudget = budgetOf(configuration.getLiveViewCheckpointRepairScanMaxRows());
         outputKeyBudget = budgetOf(configuration.getLiveViewCheckpointRepairScanMaxKeys());
         // No bound is discoverable below S: the view holds no row down there, so a floor
@@ -418,6 +427,10 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         return configured > 0 ? configured : Long.MAX_VALUE;
     }
 
+    private @Nullable QuietCloseable armSymbolIdRegistry(RecordCursor cursor) {
+        return symbolIdRegistry != null ? symbolIdRegistry.armForPinnedReader(cursor) : null;
+    }
+
     /**
      * Base rows the open scan has pulled, given the {@code qualifyingRows} it has
      * returned. The two coincide without a filter; with one, only the base count
@@ -539,11 +552,14 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
         // deliberately excludes that row - it belongs to neither the interval nor Q - but
         // the budget counts every row read.
         long pulled = 0;
-        try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
-                executionContext,
-                outputLowTs,
-                Long.MAX_VALUE
-        )) {
+        try (
+                RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
+                        executionContext,
+                        outputLowTs,
+                        Long.MAX_VALUE
+                );
+                QuietCloseable armed = armSymbolIdRegistry(pageCursor)
+        ) {
             final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
             final Record record = source.getRecord();
@@ -687,11 +703,14 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     ) throws SqlException {
         final long precedingRows = plan.getMaxPrecedingRows();
         long pendingKeys = outputKeyCount;
-        try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRangeBackward(
-                executionContext,
-                viewLowerBoundTs,
-                outputLowTs - 1
-        )) {
+        try (
+                RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRangeBackward(
+                        executionContext,
+                        viewLowerBoundTs,
+                        outputLowTs - 1
+                );
+                QuietCloseable armed = armSymbolIdRegistry(pageCursor)
+        ) {
             final SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
             final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
             final Record record = source.getRecord();
@@ -757,13 +776,16 @@ public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
             indexedKeyLookups++;
             long preceding = 0;
             long keyLowTs = Numbers.LONG_NULL;
-            try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRangeBackwardIndexed(
-                    executionContext,
-                    viewLowerBoundTs,
-                    outputLowTs - 1,
-                    indexedKeyColumnIndex,
-                    outputKeys.getQuick(i)
-            )) {
+            try (
+                    RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRangeBackwardIndexed(
+                            executionContext,
+                            viewLowerBoundTs,
+                            outputLowTs - 1,
+                            indexedKeyColumnIndex,
+                            outputKeys.getQuick(i)
+                    );
+                    QuietCloseable armed = armSymbolIdRegistry(pageCursor)
+            ) {
                 final RecordCursor source = openSource(plan, pageCursor, filter, executionContext);
                 final Record record = source.getRecord();
                 while (preceding < precedingRows && source.hasNext()) {

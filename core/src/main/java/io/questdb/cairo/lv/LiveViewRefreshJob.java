@@ -61,6 +61,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
@@ -1717,6 +1718,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Arms this view's dictionary slots against a pinned-reader scan - the applied-base,
+     * seed, O3 replay and repair-bounds families, none of which carries a dirty band because
+     * every id they produce is already committed to the base table's dictionary.
+     * <p>
+     * Held in a try-with-resources beside the cursor it arms for, so the arming dies with the
+     * scan. That matters more than it looks: a scan that forgets to arm at all would otherwise
+     * key its rows through whichever boundary the previous scan left behind, and the resulting
+     * id is in range for the dictionary. Clearing on close turns that into a loud refusal.
+     *
+     * @return the handle that clears the arming, or null when this view translates nothing -
+     * which a try-with-resources skips
+     */
+    private static @Nullable QuietCloseable armPartitionKeyTranslators(
+            LiveViewInstance instance,
+            SymbolTableSource cursor
+    ) {
+        final LiveViewSymbolIdRegistry registry = instance.getPartitionKeyTranslators();
+        return registry != null ? registry.armForPinnedReader(cursor) : null;
+    }
+
+    /**
      * The base table's writer index for {@code columnName}, or -1 when the base table
      * cannot name it. The same resolution {@link #buildColumnMappings} performs for a whole
      * projection, for callers that need one column and must not disturb the shared mapping
@@ -1731,6 +1753,59 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // that has gone away cannot. Callers use this to decide whether an optional
             // column is addressable, never to drive a failure.
             return -1;
+        }
+    }
+
+    /**
+     * Binds every partition-key slot the compiler admitted to the base column its dictionary
+     * hangs off, which is stage 2 of the design's section 3.2.
+     * <p>
+     * Stage 1 runs inside {@code generateSelectWindow}, where the key type and the sink have
+     * to be fixed and {@link LiveViewCompiledPlan} does not exist yet, so it can only say
+     * that a term is a plain SYMBOL column reference into the window's input. Which base
+     * column that input column reads is a property of the compiled chain, and this is the
+     * first point that can answer it - the same trace {@link #keyedScanColumnIndex} follows,
+     * carried one step further to the writer index a WAL segment names its columns by.
+     * <p>
+     * A term stage 1 admitted whose trace fails has no dictionary to key through. While no
+     * translator is bound that costs nothing - the term keys through its resolved string, as
+     * every live-view SYMBOL term does today - so the compile records the gap and continues.
+     * Once a translator is bound the key type is already SYMBOL by the time this runs, so
+     * falling back is not available and the compile has to fail instead: a sink that wrote
+     * the raw id would produce a key in range for the dictionary, which nothing downstream
+     * would reject.
+     */
+    private void bindPartitionKeyTranslators(
+            LiveViewInstance instance,
+            TableToken baseToken,
+            LiveViewCompiledPlan plan
+    ) throws SqlException {
+        final LiveViewPartitionKeyClassifier classifier = plan.getWindowFactory().getLivePartitionKeyClassifier();
+        if (classifier == null || classifier.getSourceColumnCount() == 0) {
+            return;
+        }
+        final LiveViewSymbolIdRegistry registry = instance.ensurePartitionKeyTranslators();
+        final RecordMetadata baseScanMetadata = plan.getBaseScanMetadata();
+        for (int i = 0, n = classifier.getSourceColumnCount(); i < n; i++) {
+            final int windowInputColumnIndex = classifier.getSourceColumn(i);
+            final int scanColumnIndex = plan.traceWindowInputColumnToBaseScan(windowInputColumnIndex);
+            final int writerColumnIndex = scanColumnIndex < 0
+                    ? -1
+                    : baseColumnWriterIndex(baseToken, baseScanMetadata.getColumnName(scanColumnIndex));
+            if (scanColumnIndex < 0
+                    || writerColumnIndex < 0
+                    || !ColumnType.isSymbol(baseScanMetadata.getColumnType(scanColumnIndex))) {
+                if (classifier.isTranslationBound()) {
+                    throw SqlException.$(0, "live view partition key cannot be traced to a base SYMBOL column [column=")
+                            .put(plan.getWindowInputMetadata().getColumnName(windowInputColumnIndex))
+                            .put(']');
+                }
+                LOG.debug().$("live view partition key term has no base column to bind [view=")
+                        .$(instance.getLiveViewToken().getTableName())
+                        .$(", windowInputColumn=").$(windowInputColumnIndex).I$();
+                continue;
+            }
+            registry.bind(windowInputColumnIndex, scanColumnIndex, writerColumnIndex, baseToken.getTableId());
         }
     }
 
@@ -1772,6 +1847,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             MemoryTrackerWorkload.LIVE_VIEW_REFRESH
                     ));
                 }
+                // Stage 2 of the partition-key classification: the compiler admitted each
+                // term locally, and only now - with a plan that can trace a window-input
+                // column back to the base scan - can the source column behind it be named
+                // and bound to a dictionary. It runs before anything builds a map, because
+                // a slot that cannot be bound has to fail the compile rather than let a
+                // sink write an untranslated WAL-local id.
+                bindPartitionKeyTranslators(instance, baseToken, plan);
                 ensureAnchorFunction(instance, plan);
                 // Which plans bound this view's repair follows from the factory alone, so
                 // it settles here rather than at the first out-of-order row. That is what
@@ -2964,9 +3046,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                     final RecordToRowCopier copier = ensureCopier(instance, walWriter);
-                    try (RecordCursor pageCursor = emptyForwardRange
-                            ? EmptyTableRecordCursor.INSTANCE
-                            : pageFrameFactory.getCursorFromTimestamp(executionContext, scanLowTs)) {
+                    try (
+                            RecordCursor pageCursor = emptyForwardRange
+                                    ? EmptyTableRecordCursor.INSTANCE
+                                    : pageFrameFactory.getCursorFromTimestamp(executionContext, scanLowTs);
+                            QuietCloseable armed = armPartitionKeyTranslators(instance, pageCursor)
+                    ) {
                         RecordCursor source = pageCursor;
                         if (filter != null) {
                             filteringCursor.of(source, filter, executionContext);
@@ -3415,7 +3500,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         baseMetadata,
                         columnIndexes,
                         columnSizeShifts,
-                        dataInfo
+                        dataInfo,
+                        // The ordinary refresh path, and the only family that carries a dirty
+                        // band: the cursor arms every dictionary slot for this transaction's
+                        // own symbol space before a row reaches a partition-key sink.
+                        instance.getPartitionKeyTranslators()
                 );
                 walRecordCursor.of(walFrameCursor, baseMetadata);
 
@@ -5337,7 +5426,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // whichever transaction wrote that id last; without the diff a key
                         // would resolve to another commit's account. A timestamp-only walk
                         // reads no symbol and skips building the overlay.
-                        keyed ? dataInfo : null
+                        keyed ? dataInfo : null,
+                        // Deliberately unarmed. This walk retains the key's STRING value, not
+                        // an id, because a correction is decomposed before anything decides
+                        // whether its rows survive the bounds and the residual filter -
+                        // interning here would grow the durable dictionary with keys the
+                        // repair never replays. A translated sink reached from here would
+                        // find no armed slot and throw, which is the intended backstop.
+                        null
                 );
                 final PageFrame frame = walFrameCursor.next(0);
                 if (frame == null) {
@@ -6922,7 +7018,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 rangeFrameWidth = rangePlan.getMaxFrameWidth();
             }
             if (rowsPlan != null) {
-                rowsBoundDiscovery.of(rowsPlan, instance.getCompiledPlan(), reader);
+                rowsBoundDiscovery.of(
+                        rowsPlan,
+                        instance.getCompiledPlan(),
+                        reader,
+                        instance.getPartitionKeyTranslators()
+                );
                 rowsBoundSource = rowsBoundDiscovery;
             }
             // The segment bounds the repair from both sides without reading a base row, so
@@ -7342,12 +7443,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             .$(", replayLowTs=").$ts(replayLowTs)
                             .$(", anchorMaxTs=").$ts(anchorMaxTs).I$();
                 }
-                try (RecordCursor pageCursor = openOpenSegmentBaseCursor(
-                        pageFrameFactory,
-                        plan,
-                        replayLowTs,
-                        keyed
-                )) {
+                try (
+                        RecordCursor pageCursor = openOpenSegmentBaseCursor(
+                                pageFrameFactory,
+                                plan,
+                                replayLowTs,
+                                keyed
+                        );
+                        QuietCloseable armed = armPartitionKeyTranslators(instance, pageCursor)
+                ) {
                     RecordCursor source = pageCursor;
                     if (filter != null) {
                         filteringCursor.of(source, filter, executionContext);
@@ -8792,22 +8896,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 keyedRoute = false;
                             }
                         }
-                        try (RecordCursor pageCursor = keyedRoute
-                                // The keys the correction touched, followed through the base's
-                                // posting index, rather than every row of the range they landed
-                                // in. The merge above supplies the rest of the segment.
-                                ? pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
-                                executionContext,
-                                turnLowTs,
-                                scanHighTs,
-                                keyedReplay.getBaseKeyColumnIndex(),
-                                keyedReplay.getBaseSymbolKeys()
-                        )
-                                : pageFrameFactory.getCursorInTimestampRange(
-                                executionContext,
-                                turnLowTs,
-                                scanHighTs
-                        )) {
+                        try (
+                                RecordCursor pageCursor = keyedRoute
+                                        // The keys the correction touched, followed through the
+                                        // base's posting index, rather than every row of the range
+                                        // they landed in. The merge above supplies the rest of the
+                                        // segment.
+                                        ? pageFrameFactory.getCursorInTimestampRangeForwardIndexed(
+                                        executionContext,
+                                        turnLowTs,
+                                        scanHighTs,
+                                        keyedReplay.getBaseKeyColumnIndex(),
+                                        keyedReplay.getBaseSymbolKeys()
+                                )
+                                        : pageFrameFactory.getCursorInTimestampRange(
+                                        executionContext,
+                                        turnLowTs,
+                                        scanHighTs
+                                );
+                                QuietCloseable armed = armPartitionKeyTranslators(instance, pageCursor)
+                        ) {
                             RecordCursor source = pageCursor;
                             if (filter != null) {
                                 filteringCursor.of(source, filter, executionContext);
@@ -10037,7 +10145,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // which cullPartitions special-cases into a full scan. dataOffset counts rows
                 // of THIS cursor, and the bound plus the pinned snapshot are the same on every
                 // turn, so the row numbering skipRows() resumes on is stable.
-                try (RecordCursor pageCursor = pageFrameFactory.getCursorFromTimestamp(executionContext, viewLowerBoundTimestamp)) {
+                try (
+                        RecordCursor pageCursor = pageFrameFactory.getCursorFromTimestamp(executionContext, viewLowerBoundTimestamp);
+                        QuietCloseable armed = armPartitionKeyTranslators(instance, pageCursor)
+                ) {
                     RecordCursor source = pageCursor;
                     if (filter != null) {
                         filteringCursor.of(source, filter, executionContext);
@@ -10682,11 +10793,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the replay resumes from. Stop at the ceiling - every corrupt boundary is
             // at or below it.
             final long scanLowTs = Math.max(viewLowerBoundTimestamp, predecessorMaxTs + 1);
-            try (RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
-                    executionContext,
-                    scanLowTs,
-                    corruptCeilingMaxTs
-            )) {
+            try (
+                    RecordCursor pageCursor = pageFrameFactory.getCursorInTimestampRange(
+                            executionContext,
+                            scanLowTs,
+                            corruptCeilingMaxTs
+                    );
+                    QuietCloseable armed = armPartitionKeyTranslators(instance, pageCursor)
+            ) {
                 RecordCursor source = pageCursor;
                 if (filter != null) {
                     filteringCursor.of(source, filter, executionContext);
@@ -14032,6 +14146,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         private PageFrameRecordCursorFactory pageFrameFactory;
         private LiveViewCheckpointRowsPlan plan;
         private TableReader reader;
+        private LiveViewSymbolIdRegistry symbolIdRegistry;
 
         @Override
         public void collectRowsOutputKeys(@NotNull LiveViewCheckpointOutputKeyDomain out) {
@@ -14053,6 +14168,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         pageFrameFactory,
                         executionContext,
                         filter,
+                        symbolIdRegistry,
                         viewLowerBoundTs,
                         outputLowTs,
                         changeLowTs,
@@ -14100,12 +14216,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return discovered;
         }
 
-        void of(LiveViewCheckpointRowsPlan plan, LiveViewCompiledPlan compiledPlan, TableReader reader) {
+        void of(
+                LiveViewCheckpointRowsPlan plan,
+                LiveViewCompiledPlan compiledPlan,
+                TableReader reader,
+                @Nullable LiveViewSymbolIdRegistry symbolIdRegistry
+        ) {
             this.discovered = false;
             this.plan = plan;
             this.reader = reader;
             this.filter = compiledPlan.getFilter();
             this.pageFrameFactory = compiledPlan.getPageFrameFactory();
+            this.symbolIdRegistry = symbolIdRegistry;
         }
     }
 

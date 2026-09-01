@@ -411,6 +411,13 @@ public class LiveViewInstance implements QuietCloseable {
     // freeCachedRefreshState(). Null when the view has no anchored window; a limit of 0
     // (the default) accounts but never throws. Mutated only under the refresh latch.
     private MemoryTracker memoryTracker;
+    // The view's LV-private symbol-id dictionaries, one per distinct base SYMBOL column its
+    // PARTITION BY terms key by, or null for a view whose terms key none. Deliberately NOT
+    // freed by freeCompiledArtifacts(): the ids are durable, they name strings rather than
+    // base ids, and a base-schema recompile rebinds the same slots to the same columns. It
+    // dies with the cached refresh state and BEFORE memoryTracker, which its dictionaries
+    // charge. Mutated only under the refresh latch.
+    private LiveViewSymbolIdRegistry partitionKeyTranslators;
     // Restart-restore single-shot flag. The refresh worker flips it true on
     // the first cycle after CREATE / restart, regardless of whether a usable
     // timeline root was found - one attempt is the contract, no retries. Mutated only
@@ -1000,6 +1007,23 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Returns this view's LV-private symbol-id dictionaries, creating them on first use.
+     * <p>
+     * Call it only after {@link #setMemoryTracker}: the registry binds the tracker its
+     * dictionaries charge at construction, and rebinding a live dictionary would have to free
+     * its blocks under whichever tracker charged them. The registry then outlives every
+     * compiled factory the view goes through, which is what keeps an id stable across a
+     * base-schema recompile.
+     */
+    public @NotNull LiveViewSymbolIdRegistry ensurePartitionKeyTranslators() {
+        if (partitionKeyTranslators == null) {
+            partitionKeyTranslators = new LiveViewSymbolIdRegistry(getLiveViewToken());
+            partitionKeyTranslators.setMemoryTracker(memoryTracker);
+        }
+        return partitionKeyTranslators;
+    }
+
+    /**
      * Companion to {@link #startCheckpoint(SqlExecutionCircuitBreaker)}. Clears the freeze gate so
      * the refresh worker resumes on its next turn and wakes any thread blocked
      * in {@link #waitForUnfrozen()}. Idempotent.
@@ -1511,6 +1535,15 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public @Nullable MemoryTracker getMemoryTracker() {
         return memoryTracker;
+    }
+
+    /**
+     * @return this view's LV-private symbol-id dictionaries, or null while no partition term
+     * keys through one. Null is the answer for every view whose PARTITION BY holds no direct
+     * base SYMBOL term, and for every view at all until a compile binds the registry.
+     */
+    public @Nullable LiveViewSymbolIdRegistry getPartitionKeyTranslators() {
+        return partitionKeyTranslators;
     }
 
     public long getO3BoundaryReplayRows() {
@@ -2837,6 +2870,10 @@ public class LiveViewInstance implements QuietCloseable {
     private void freeCachedRefreshState() {
         inMemoryTier = Misc.free(inMemoryTier);
         freeCompiledArtifacts();
+        // Between the artifacts and the tracker on purpose: the dictionaries charge the
+        // tracker, so they have to release before it closes, and they outlive a recompile,
+        // so freeCompiledArtifacts() must not be the thing that takes them.
+        partitionKeyTranslators = Misc.free(partitionKeyTranslators);
         memoryTracker = Misc.free(memoryTracker);
     }
 

@@ -27,6 +27,7 @@ package io.questdb.std;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.Reopenable;
 import io.questdb.std.str.DirectString;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Off-heap symbol dictionary backing int keys with UTF-16 byte payloads.
@@ -66,6 +67,10 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     private ValueToKeyMap explicitValueToKey;
     private final int memoryTag;
     private final DirectString reusableView = new DirectString();
+    // Per-workload native memory tracker, bound by the owner at workload start. Null when
+    // only global accounting applies, in which case every Unsafe.{malloc,realloc,free} call
+    // below degrades to the global-only overload.
+    private @Nullable MemoryTracker memoryTracker;
     private long bufCapacity;
     private long bufPtr;
     private long bufSize;
@@ -77,7 +82,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         this.initialBufCapacity = Math.max(64L, initialBufCapacity);
         this.initialMapCapacity = Math.max(8, initialMapCapacity);
         this.memoryTag = memoryTag;
-        this.bufPtr = Unsafe.malloc(this.initialBufCapacity, memoryTag);
+        this.bufPtr = Unsafe.malloc(this.initialBufCapacity, memoryTag, memoryTracker);
         this.bufCapacity = this.initialBufCapacity;
         this.bufSize = 0L;
         try {
@@ -92,7 +97,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             // The keyToOffset allocation can throw (OOM) after the primary buffer
             // was malloc'd. A ctor that throws leaves no reachable instance to
             // close(), so free the buffer here or bufPtr leaks.
-            Unsafe.free(bufPtr, bufCapacity, memoryTag);
+            Unsafe.free(bufPtr, bufCapacity, memoryTag, memoryTracker);
             bufPtr = 0;
             bufCapacity = 0;
             throw th;
@@ -124,11 +129,16 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             valueToKey = null;
         }
         if (bufPtr != 0) {
-            Unsafe.free(bufPtr, bufCapacity, memoryTag);
+            Unsafe.free(bufPtr, bufCapacity, memoryTag, memoryTracker);
             bufPtr = 0;
             bufCapacity = 0;
             bufSize = 0;
         }
+        // The blocks are gone, so the tracker that charged them carries no debt for this map.
+        // Dropping the reference keeps a later free - one that runs after a pooled tracker was
+        // recycled by another workload - on the global counter, where it cannot corrupt someone
+        // else's total. See DirectIntIntHashMap.close(), which does the same for its directory.
+        memoryTracker = null;
     }
 
     /**
@@ -161,6 +171,30 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
      */
     public long getExplicitRebuildScannedEntries() {
         return explicitRebuildScannedEntries;
+    }
+
+    /**
+     * Bytes the forward {@code key -> value} half currently holds: the payload buffer
+     * plus the key-to-offset directory. This is the half a durable format has to write
+     * out; {@link #getReverseMemoryBytes()} is the accelerator that can be rebuilt.
+     */
+    public long getForwardMemoryBytes() {
+        return bufCapacity + 8L * keyToOffset.capacity();
+    }
+
+    /**
+     * Bytes the reverse {@code value -> key} indexes currently hold. Zero until a lookup
+     * builds one, which is why it is reported apart from the forward half.
+     */
+    public long getReverseMemoryBytes() {
+        long bytes = 0;
+        if (valueToKey != null) {
+            bytes += (long) ValueToKeyMap.SLOT_BYTES * valueToKey.capacity();
+        }
+        if (explicitValueToKey != null) {
+            bytes += (long) ValueToKeyMap.SLOT_BYTES * explicitValueToKey.capacity();
+        }
+        return bytes;
     }
 
     /**
@@ -251,7 +285,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     @Override
     public void reopen() {
         if (bufPtr == 0) {
-            bufPtr = Unsafe.malloc(initialBufCapacity, memoryTag);
+            bufPtr = Unsafe.malloc(initialBufCapacity, memoryTag, memoryTracker);
             bufCapacity = initialBufCapacity;
             bufSize = 0;
         }
@@ -262,6 +296,28 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         if (valueToKey != null) {
             valueToKey.reopen();
         }
+    }
+
+    /**
+     * Binds the per-workload {@link MemoryTracker} every subsequent allocation charges. A
+     * {@code null} tracker degrades the map to global-only accounting.
+     * <p>
+     * Rebinding releases the live blocks first: a block has to be freed under the tracker
+     * that charged it, or the two counters drift apart and the per-workload limit stops
+     * holding. Rebinding therefore also DISCARDS the map's contents, so callers bind at
+     * workload start, while the map is still empty.
+     */
+    public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+        if (tracker == memoryTracker) {
+            return;
+        }
+        close();
+        memoryTracker = tracker;
+        // close() dropped the directory's own reference along with its block, so re-bind it
+        // before reopen() allocates again - otherwise the directory charges the global
+        // counter while this buffer charges the tracker, and the two never agree.
+        keyToOffset.setMemoryTracker(tracker);
+        reopen();
     }
 
     public int size() {
@@ -359,7 +415,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         if (newCap > Integer.MAX_VALUE) {
             throw CairoException.nonCritical().put("direct symbol map exceeds 2GiB");
         }
-        bufPtr = Unsafe.realloc(bufPtr, bufCapacity, newCap, memoryTag);
+        bufPtr = Unsafe.realloc(bufPtr, bufCapacity, newCap, memoryTag, memoryTracker);
         bufCapacity = newCap;
     }
 
@@ -405,8 +461,12 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             this.mask = capacity - 1L;
             this.free = (int) (capacity * LOAD_FACTOR);
             this.memoryTagLocal = memoryTag;
-            this.slotsPtr = Unsafe.malloc((long) SLOT_BYTES * capacity, memoryTag);
+            this.slotsPtr = Unsafe.malloc((long) SLOT_BYTES * capacity, memoryTag, memoryTracker);
             zero(slotsPtr, capacity);
+        }
+
+        public int capacity() {
+            return capacity;
         }
 
         public void clear() {
@@ -417,7 +477,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         @Override
         public void close() {
             if (slotsPtr != 0) {
-                Unsafe.free(slotsPtr, (long) SLOT_BYTES * capacity, memoryTagLocal);
+                Unsafe.free(slotsPtr, (long) SLOT_BYTES * capacity, memoryTagLocal, memoryTracker);
                 slotsPtr = 0;
                 capacity = 0;
                 free = 0;
@@ -505,7 +565,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
                 capacity = initialCapacity;
                 mask = capacity - 1L;
                 free = (int) (capacity * LOAD_FACTOR);
-                slotsPtr = Unsafe.malloc((long) SLOT_BYTES * capacity, memoryTagLocal);
+                slotsPtr = Unsafe.malloc((long) SLOT_BYTES * capacity, memoryTagLocal, memoryTracker);
                 zero(slotsPtr, capacity);
             }
         }
@@ -558,7 +618,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
             if (newCapacity < 0) {
                 throw CairoException.nonCritical().put("direct symbol map reverse index capacity overflow");
             }
-            long newSlotsPtr = Unsafe.malloc((long) SLOT_BYTES * newCapacity, memoryTagLocal);
+            long newSlotsPtr = Unsafe.malloc((long) SLOT_BYTES * newCapacity, memoryTagLocal, memoryTracker);
             zero(newSlotsPtr, newCapacity);
             long newMask = newCapacity - 1L;
 
@@ -578,7 +638,7 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
                 Unsafe.getUnsafe().putInt(dst + 4, symbolKey);
             }
 
-            Unsafe.free(oldSlotsPtr, (long) SLOT_BYTES * oldCapacity, memoryTagLocal);
+            Unsafe.free(oldSlotsPtr, (long) SLOT_BYTES * oldCapacity, memoryTagLocal, memoryTracker);
             slotsPtr = newSlotsPtr;
             capacity = newCapacity;
             mask = newMask;
