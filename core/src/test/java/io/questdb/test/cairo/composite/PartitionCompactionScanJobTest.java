@@ -761,4 +761,154 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             }
         }
     }
+
+    /**
+     * A column added AFTER a partition is already full carries a column top equal to that partition's row
+     * count. A REWRITE copies only the live rows into a fresh directory, so every top has to be
+     * republished against the new layout - here the live piece sits entirely ABOVE the old top, and the
+     * rewritten directory's top must therefore come out as 0.
+     */
+    @Test
+    public void testScanCompactsCompositePartitionRepublishesColumnTops() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+
+            execute("CREATE TABLE cx AS (" +
+                    "SELECT x::INT i, timestamp_sequence('2020-01-01', 60*1000000L) ts FROM long_sequence(240)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            // A later, plain day keeps 2020-01-01 out of the active slot, so the backfill below goes
+            // through the O3 composite path instead of an append.
+            execute("INSERT INTO cx SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+
+            // s arrives once 2020-01-01 already holds all 240 of its rows, so the partition records a
+            // column top of 240 for it.
+            execute("ALTER TABLE cx ADD COLUMN s VARCHAR");
+            drainWalQueue();
+
+            // The same 240 timestamps again, this time carrying s. DEDUP replaces every original row, so
+            // the partition's only live piece is the merged image parked at file row 240 - entirely above
+            // the column top the REWRITE below has to republish.
+            execute("INSERT INTO cx SELECT x::INT + 70000 i," +
+                    " timestamp_sequence('2020-01-01', 60*1000000L) ts," +
+                    " ('v' || x)::varchar s FROM long_sequence(240)");
+            drainWalQueue();
+
+            final TableToken cxToken = engine.verifyTableName("cx");
+            try (TableReader reader = engine.getReader(cxToken)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("2020-01-01 should be composite", tx.isPartitionComposite(0));
+                Assert.assertEquals(240, tx.getPartitionSize(0));
+                Assert.assertTrue("the live piece should sit above the column top",
+                        reader.getGeometry().getPieceRowOffset(0, 0) >= 240);
+            }
+
+            assertQuery("SELECT count() c FROM cx WHERE ts IN '2020-01-01' AND s IS NOT NULL")
+                    .noRandomAccess().expectSize().returns("c\n240\n");
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(cxToken)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("2020-01-01 is idle, should have been compacted", tx.isPartitionComposite(0));
+                Assert.assertEquals("compaction must not change the row count", 240, tx.getPartitionSize(0));
+            }
+
+            // No row lost its value, and none of them shifted onto a neighbour's.
+            assertQuery("SELECT count() c FROM cx WHERE ts IN '2020-01-01' AND s IS NOT NULL")
+                    .noRandomAccess().expectSize().returns("c\n240\n");
+            assertQuery("SELECT count() c FROM cx WHERE ts IN '2020-01-01'" +
+                    " AND s <> ('v' || (i - 70000))::varchar")
+                    .noRandomAccess().expectSize().returns("c\n0\n");
+        });
+    }
+
+    /**
+     * The multi-piece counterpart of {@link #testScanCompactsCompositePartitionRepublishesColumnTops}. A
+     * REWRITE copies one piece at a time into the same target frame, so each piece after the first has to
+     * see the top the previous pieces left, not the source directory's own. The partition below crosses
+     * that top part way through the copy, where re-resolving it from the source skews every remaining
+     * piece by the difference.
+     */
+    @Test
+    public void testScanCompactsMultiPieceCompositePartitionRepublishesColumnTops() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+
+            execute("CREATE TABLE cx AS (" +
+                    "SELECT x::INT i, timestamp_sequence('2020-01-01', 60*1000000L) ts FROM long_sequence(1440)" +
+                    ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day keeps 2020-01-01 out of the active slot.
+            execute("INSERT INTO cx SELECT x::INT + 900000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+
+            // s arrives once 2020-01-01 holds all 1440 of its rows, so it records a column top of 1440.
+            execute("ALTER TABLE cx ADD COLUMN s VARCHAR");
+            drainWalQueue();
+
+            // Three separate backfills, each its own commit and its own sub-range of the day, so the
+            // partition ends up with several pieces. Together they add 900 rows - enough that the copy
+            // below crosses the 1440-row top part way through, which is what the stale re-resolve needs
+            // to go wrong.
+            for (int b = 0; b < 3; b++) {
+                execute("INSERT INTO cx SELECT x::INT + " + (200000 + b * 100000) + " i," +
+                        " timestamp_sequence('2020-01-01T0" + (2 + b * 3) + ":00:07', 5*1000000L) ts," +
+                        " ('v' || (x + " + (200000 + b * 100000) + "))::varchar s FROM long_sequence(300)");
+                drainWalQueue();
+            }
+
+            final TableToken cxToken = engine.verifyTableName("cx");
+            try (TableReader reader = engine.getReader(cxToken)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("2020-01-01 should be composite", tx.isPartitionComposite(0));
+                Assert.assertTrue("expected several pieces, got " + reader.getGeometry().getPieceCount(0),
+                        reader.getGeometry().getPieceCount(0) > 2);
+                Assert.assertEquals(2340, tx.getPartitionSize(0));
+            }
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(cxToken)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("2020-01-01 is idle, should have been compacted", tx.isPartitionComposite(0));
+                Assert.assertEquals("compaction must not change the row count", 2340, tx.getPartitionSize(0));
+            }
+
+            // The 1440 original rows predate s and stay null; the 900 backfilled ones keep their own
+            // value, none of them shifted onto a neighbour's.
+            assertQuery("SELECT count() c FROM cx WHERE ts IN '2020-01-01' AND s IS NULL")
+                    .noRandomAccess().expectSize().returns("c\n1440\n");
+            assertQuery("SELECT count() c FROM cx WHERE ts IN '2020-01-01'" +
+                    " AND s IS NOT NULL AND s <> ('v' || i)::varchar")
+                    .noRandomAccess().expectSize().returns("c\n0\n");
+        });
+    }
 }

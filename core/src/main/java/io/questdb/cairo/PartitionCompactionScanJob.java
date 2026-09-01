@@ -178,6 +178,9 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         other.put(TableUtils.COMPACTING_DIR_MARKER).put(writerTxn);
 
         final CompositePartitionSwapCommand command = new CompositePartitionSwapCommand();
+        // Strictly before the build: of() resets the command, the recorder included, so arming it here
+        // instead of after the copy is what keeps the tops the build is about to record.
+        command.of(tableToken, tableToken.getTableId(), partitionTimestamp, srcNameTxn, writerTxn, liveRows);
         final ColumnTopRecorder columnTops = command.getColumnTops();
         Frame targetFrame = null;
         boolean built = false;
@@ -213,7 +216,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
         }
 
-        command.of(tableToken, tableToken.getTableId(), partitionTimestamp, srcNameTxn, writerTxn, liveRows);
         return command;
     }
 

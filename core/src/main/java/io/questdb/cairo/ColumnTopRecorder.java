@@ -59,6 +59,6 @@ public class ColumnTopRecorder implements ColumnTopSink {
 
     @Override
     public void setColumnTop(int columnIndex, long columnTop) {
-        entries.add(columnIndex, columnTop);
+        entries.add((long) columnIndex, columnTop);
     }
 }

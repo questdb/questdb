@@ -264,16 +264,17 @@ public class FrameImpl implements Frame {
         if (!canWrite) {
             throw CairoException.critical(0).put("cannot save column top, partition frame is read-only [path=").put(partitionPath).put(']');
         }
+        // Tracked internally whether or not there is an external sink: createColumn reads this list back
+        // for the NEXT piece written to this frame, and only a tracked value stops it re-resolving the
+        // source directory's own - by then stale - top from crv (see createColumn). Never regresses a
+        // column's tracked top - only up or unchanged, matching how a column's top can only ever advance
+        // while this frame is written to (addTop grows it; once real bytes land below it, it is fixed for
+        // good) - so a stale, smaller read can never overwrite a piece that already advanced it further.
+        final int columnIndex = frameColumn.getColumnIndex();
+        final long columnTop = Math.max(frameColumn.getColumnTop(), columnTops.getQuick(columnIndex));
+        columnTops.setQuick(columnIndex, columnTop);
         if (columnTopSink != null) {
-            columnTopSink.setColumnTop(frameColumn.getColumnIndex(), frameColumn.getColumnTop());
-        } else {
-            // No external sink: track internally instead, for publishColumnTops to push later. Never
-            // regresses a column's tracked top - only up or unchanged, matching how a column's top can
-            // only ever advance while this frame is written to (addTop grows it; once real bytes land
-            // below it, it is fixed for good) - so a stale, smaller read can never overwrite a piece
-            // that already advanced it further.
-            int columnIndex = frameColumn.getColumnIndex();
-            columnTops.setQuick(columnIndex, Math.max(frameColumn.getColumnTop(), columnTops.getQuick(columnIndex)));
+            columnTopSink.setColumnTop(columnIndex, columnTop);
         }
     }
 
