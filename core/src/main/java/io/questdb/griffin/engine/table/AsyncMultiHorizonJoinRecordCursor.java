@@ -281,7 +281,6 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     }
 
     private void throwPostAggregationException() {
-        // Precedence: the query's own breaker, then the worker's error, then the bare flag.
         circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
         if (postAggregationCircuitBreaker.hasError()) {
             throw postAggregationCircuitBreaker.buildError();
