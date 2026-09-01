@@ -94,9 +94,12 @@ public class HeapRowCursorFactory implements RowCursorFactory {
         final int activeCursors = cursorFactoriesIdx[0];
         for (int i = 0; i < activeCursors; i++) {
             cursors.extendAndSet(i, cursorFactories.getQuick(i).getCursor(pageFrame, pageFrameMemory));
-        }
-        if (isRowCursorCounterEnabled) {
-            testRowCursorsOpened.addAndGet(activeCursors);
+            // Count each open individually, not activeCursors once: the counter has to observe the
+            // loop bound, not restate it, or a regression that opened cursorFactories.size() cursors
+            // (the stale-key seeks this bound exists to avoid) would still report activeCursors.
+            if (isRowCursorCounterEnabled) {
+                testRowCursorsOpened.incrementAndGet();
+            }
         }
         cursor.of(cursors, activeCursors);
         return cursor;

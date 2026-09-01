@@ -13021,39 +13021,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return null;
         }
 
-        // 1) split the filter into top-level AND conjuncts
-        final ObjList<ExpressionNode> conjuncts = new ObjList<>();
-        collectAndConjuncts(intrinsicModel.filter, conjuncts);
-
-        // 2) find the first qualifying conjunct on an indexed symbol column: a positive pattern, or a
-        //    negation (NOT LIKE / NOT ILIKE / !~) whose POSITIVE equivalent we compile as the provider.
-        int patternIdx = -1;
-        boolean isNegated = false;
-        ExpressionNode positiveNode = null; // the node compiled as the provider (matched keys)
-        for (int i = 0, n = conjuncts.size(); i < n; i++) {
-            if (isPatternOnIndexedSymbol(conjuncts.getQuick(i), queryMeta, reader, columnIndexes)) {
-                patternIdx = i;
-                positiveNode = conjuncts.getQuick(i);
-                isNegated = false;
-                break;
-            }
-            final ExpressionNode p = negatedPatternPositiveNode(conjuncts.getQuick(i), queryMeta, reader, columnIndexes);
-            if (p != null) {
-                patternIdx = i;
-                positiveNode = p;
-                isNegated = true;
-                break;
-            }
-        }
-        if (patternIdx < 0) {
-            return null; // nothing compiled yet, nothing to free
-        }
-
-        // The ORIGINAL conjunct at patternIdx is excluded when building the residual (step 5 below skips i==patternIdx);
-        // the POSITIVE node is compiled as the provider. For both polarities positiveNode.lhs is the symbol-column literal.
-        final int keyColumnIndex = queryMeta.getColumnIndexQuiet(positiveNode.lhs.token);
-        final ExpressionNode providerExpression = deepClone(expressionNodePool, positiveNode);
-
+        // dfcFactory ownership: on ANY throw this method frees dfcFactory exactly once, and the caller
+        // nulls its own reference on catch so the outer cleanup never re-frees it. The prologue below
+        // (collectAndConjuncts, the conjunct scan, deepClone -- all node-pool allocations that can throw
+        // OOM/SOE) must therefore sit INSIDE the same try; otherwise a prologue throw would strand
+        // dfcFactory past the caller's null-out. A return-null inside the try leaves dfcFactory alone,
+        // which is correct: a normal return hands ownership back to the caller.
         AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter patternFilter = null;
         Function providerFunction = null;
         Function residualFilter = null;
@@ -13062,6 +13035,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         RecordCursorFactory indexDelegate = null;
         RecordCursorFactory scanDelegate = null;
         try {
+            // 1) split the filter into top-level AND conjuncts
+            final ObjList<ExpressionNode> conjuncts = new ObjList<>();
+            collectAndConjuncts(intrinsicModel.filter, conjuncts);
+
+            // 2) find the first qualifying conjunct on an indexed symbol column: a positive pattern, or a
+            //    negation (NOT LIKE / NOT ILIKE / !~) whose POSITIVE equivalent we compile as the provider.
+            int patternIdx = -1;
+            boolean isNegated = false;
+            ExpressionNode positiveNode = null; // the node compiled as the provider (matched keys)
+            for (int i = 0, n = conjuncts.size(); i < n; i++) {
+                if (isPatternOnIndexedSymbol(conjuncts.getQuick(i), queryMeta, reader, columnIndexes)) {
+                    patternIdx = i;
+                    positiveNode = conjuncts.getQuick(i);
+                    isNegated = false;
+                    break;
+                }
+                final ExpressionNode p = negatedPatternPositiveNode(conjuncts.getQuick(i), queryMeta, reader, columnIndexes);
+                if (p != null) {
+                    patternIdx = i;
+                    positiveNode = p;
+                    isNegated = true;
+                    break;
+                }
+            }
+            if (patternIdx < 0) {
+                return null; // nothing compiled yet, nothing to free
+            }
+
+            // The ORIGINAL conjunct at patternIdx is excluded when building the residual (step 5 below skips i==patternIdx);
+            // the POSITIVE node is compiled as the provider. For both polarities positiveNode.lhs is the symbol-column literal.
+            final int keyColumnIndex = queryMeta.getColumnIndexQuiet(positiveNode.lhs.token);
+            final ExpressionNode providerExpression = deepClone(expressionNodePool, positiveNode);
+
             // Every adaptive route can open a multi-key symbol delegate, and none of those delegates can
             // scan backward globally. A negative limit must therefore use the ordinary async filter path,
             // which pushes the absolute row count into a backward page-frame scan. Runtime limits have an
