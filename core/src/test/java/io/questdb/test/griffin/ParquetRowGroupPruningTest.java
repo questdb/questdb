@@ -1949,6 +1949,26 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHasParquetPartitionsFlagAfterInsertedPartitionConvertedToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES (2, '2024-01-02T00:00:00.000000Z')");
+
+            final TableToken tableToken = engine.verifyTableName("x");
+            try (TableReader reader = engine.getReader(tableToken)) {
+                Assert.assertFalse(reader.hasParquetPartitions());
+
+                execute("INSERT INTO x VALUES (1, '2024-01-01T00:00:00.000000Z')");
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts = '2024-01-01'");
+                Assert.assertFalse(reader.hasParquetPartitions());
+
+                Assert.assertTrue(reader.reload());
+                Assert.assertTrue(reader.hasParquetPartitions());
+            }
+        });
+    }
+
+    @Test
     public void testHasParquetPartitionsFlagAfterTruncate() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
