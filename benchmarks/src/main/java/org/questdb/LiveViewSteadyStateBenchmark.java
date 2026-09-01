@@ -148,6 +148,35 @@ import java.util.Locale;
  * whole row set either way. The base column MUST be indexed ({@code --index=true}) or no
  * segment is priced and none takes the route.
  * <p>
+ * <b>The partition key.</b> {@code --key-type} picks the key column's type and
+ * {@code --key-columns=2} makes the key composite, adding a second column
+ * {@code region_id} of the same type to both the base and the window's
+ * {@code PARTITION BY}. {@code --key2-cardinality} bounds that column's value set, so the
+ * run's joint key cardinality is the account cardinality times it - the header line
+ * reports {@code jointKeys} rather than leaving it to be inferred. A composite key stays
+ * on {@code OrderedMap} whatever its component types are, so what it measures is the
+ * per-row cost of writing and hashing a second key component, not a map-implementation
+ * change. Only {@code account_id} carries the base index, so a composite run prices no
+ * keyed scan; read it against a single-key run of the same cardinality.
+ * <p>
+ * A SYMBOL key resolves per row and writes a variable-length UTF-16 key into every map
+ * that names it; an INT key of the same value set writes four fixed-width bytes. That
+ * pair is the standing in-build bracket for what an LV-private integer key domain would
+ * be worth: {@code --key-type=symbol} is what ships and {@code --key-type=int} is the
+ * upper bound, since it keys the same 4 bytes without paying for a translation.
+ * {@code --partition-key-mode} is where the switch between the two key domains lands once
+ * a sink can emit a translated id; it accepts only {@code legacy} today.
+ * <p>
+ * <b>The selective shape.</b> {@code --residual-percent} puts a residual filter on the
+ * view, admitting roughly that share of base rows. The generator gives every row a
+ * brand-new account by default, so a commit's {@code SymbolMapDiff} stays as wide as the
+ * commit while the view keys only the rows the filter admits. That gap is what a key
+ * domain built eagerly from the diff would pay for and a lazily interned one would not,
+ * and the closing {@code # residual} line reports it beside the anchor map's own row
+ * count. The filter reads {@code amount}, which {@code --null-percent} makes NULL for a
+ * share of the rows - a NULL fails the predicate, so the two knobs compose and the
+ * admitted share is the product rather than either one.
+ * <p>
  * Build and run:
  * <pre>
  * mvn -pl benchmarks -am package -o -DskipTests -Dmaven.test.skip=true
@@ -171,16 +200,41 @@ import java.util.Locale;
  *     --seed=200000 --batch=5500 --batches=200 --checkpoint-rows=1000000 \
  *     --anchor-period=daily:Europe/Berlin --account-window=20000000 \
  *     --ts-step-us=909 --o3-percent=2 --o3-commit-percent=50 --o3-from-batch=50
+ *
+ * # a composite key at 100K accounts by 16 regions, beside its INT control
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx12g \
+ *     -cp benchmarks/target/benchmarks.jar \
+ *     org.questdb.LiveViewSteadyStateBenchmark \
+ *     --seed=1000000 --batch=200000 --batches=10 --checkpoint-rows=200000 \
+ *     --recycle-accounts=100000 --key-columns=2 --key2-cardinality=16 --key-type=symbol
+ *
+ * # the selective shape: every commit's symbol diff is 200K wide, the view keys 1% of it
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx12g \
+ *     -cp benchmarks/target/benchmarks.jar \
+ *     org.questdb.LiveViewSteadyStateBenchmark \
+ *     --seed=1000000 --batch=200000 --batches=10 --checkpoint-rows=200000 \
+ *     --residual-percent=1
  * </pre>
  */
 public class LiveViewSteadyStateBenchmark {
 
+    private static final String ACCOUNT_SYMBOL_PREFIX = "acct-";
+    // The generated amount is (rowIndex % AMOUNT_STEPS - 1000) * 0.01, so it walks
+    // [-10.00, 10.00] in AMOUNT_STEPS equal steps and a threshold on it admits a share of
+    // the stream that is exactly computable - which is what lets the residual filter keep
+    // an exact row-count oracle rather than a tolerance.
+    private static final long AMOUNT_STEPS = 2001;
     // The two must agree: DAILY_ANCHOR_TIME goes into the DDL, and the account window
     // slides on bucket boundaries computed from the offset.
     private static final long DAILY_ANCHOR_OFFSET_MICROS = 12L * Micros.HOUR_MICROS;
     private static final String DAILY_ANCHOR_PERIOD = "daily";
     private static final String DAILY_ANCHOR_TIME = "12:00";
     private static final int MAX_SUM_COLUMNS = 24;
+    private static final String REGION_SYMBOL_PREFIX = "rgn-";
+    // The residual predicate is a function of rowIndex % AMOUNT_STEPS and rowIndex % 100,
+    // so the admitted set repeats every lcm of the two. Counting one period exactly is what
+    // makes the oracle O(1) in the row count rather than O(n).
+    private static final long RESIDUAL_PERIOD = 200_100L;
     private static final int RESTART_PROBE_ROWS = 1_000;
     private static final long START_TS = 1_785_496_035_000_000L;
     // The default spacing of the generated stream. --ts-step-us widens it, which is what
@@ -208,6 +262,20 @@ public class LiveViewSteadyStateBenchmark {
         int compactThreshold = -1; // -1 = leave the configuration default alone
         String shape = Shape.TARGET.name;
         String keyType = "symbol";
+        // 1 = PARTITION BY account_id, 2 = PARTITION BY account_id, region_id. A composite
+        // key does not change the map implementation - MapFactory only picks an unordered
+        // one for a single key column - so what a second component moves is the per-row
+        // key write and hash, and the per-key bytes every map that names it stores.
+        int keyColumns = 1;
+        // How many distinct values region_id cycles through, and so the multiplier the
+        // account cardinality gets. Small enough by default that a composite run is a
+        // second component on the same key domain rather than a different workload.
+        long key2Cardinality = 32;
+        // Which key domain the view's partition maps and its checkpoint are keyed on.
+        String partitionKeyMode = PartitionKeyMode.LEGACY.name;
+        // The share of base rows the view's residual filter admits. 100 leaves the view
+        // unfiltered, which is what every reading before this knob existed measured.
+        int residualPercent = 100;
         int nullPercent = 0;
         int sumColumns = 0; // extra one-component sum(qN) projections, for the width sweep
         int commitsPerBatch = 1;
@@ -297,6 +365,14 @@ public class LiveViewSteadyStateBenchmark {
                 shape = arg.substring(8);
             } else if (arg.startsWith("--key-type=")) {
                 keyType = arg.substring(11);
+            } else if (arg.startsWith("--key-columns=")) {
+                keyColumns = Integer.parseInt(arg.substring("--key-columns=".length()));
+            } else if (arg.startsWith("--key2-cardinality=")) {
+                key2Cardinality = Long.parseLong(arg.substring("--key2-cardinality=".length()));
+            } else if (arg.startsWith("--partition-key-mode=")) {
+                partitionKeyMode = arg.substring("--partition-key-mode=".length());
+            } else if (arg.startsWith("--residual-percent=")) {
+                residualPercent = Integer.parseInt(arg.substring("--residual-percent=".length()));
             } else if (arg.startsWith("--null-percent=")) {
                 nullPercent = Integer.parseInt(arg.substring(15));
             } else if (arg.startsWith("--sum-columns=")) {
@@ -351,6 +427,16 @@ public class LiveViewSteadyStateBenchmark {
         }
         final Shape selectShape = Shape.of(shape);
         final KeyType partitionKeyType = KeyType.of(keyType);
+        PartitionKeyMode.of(partitionKeyMode).reject();
+        if (keyColumns < 1 || keyColumns > 2) {
+            throw new IllegalArgumentException("--key-columns must be 1 or 2: " + keyColumns);
+        }
+        if (key2Cardinality < 1) {
+            throw new IllegalArgumentException("--key2-cardinality must be positive: " + key2Cardinality);
+        }
+        if (residualPercent < 1 || residualPercent > 100) {
+            throw new IllegalArgumentException("--residual-percent must be within [1, 100]: " + residualPercent);
+        }
         if (nullPercent < 0 || nullPercent > 100) {
             throw new IllegalArgumentException("--null-percent must be within [0, 100]: " + nullPercent);
         }
@@ -454,7 +540,16 @@ public class LiveViewSteadyStateBenchmark {
         final long equalTsEveryN = equalTsPercent > 0 ? Math.max(2, Math.round(100 / equalTsPercent)) : 0;
         final int commitRows = batchRows / commitsPerBatch;
         final RowShape rowShape = new RowShape(recycleAccounts, accountWindow, anchorPeriodMicros, anchorOffsetMicros,
-                partitionKeyType, nullPercent, sumColumns, tsStepMicros, hotKeyEveryN, equalTsEveryN);
+                partitionKeyType, nullPercent, sumColumns, tsStepMicros, hotKeyEveryN, equalTsEveryN,
+                keyColumns, key2Cardinality);
+        // The PARTITION BY list, and the projection the view carries it in. Every site that
+        // names the key reads this one string, so the base DDL, the anchored window, a
+        // bounded window beside it and the base's dedup keys can never name different keys.
+        final String partitionKeys = keyColumns > 1 ? "account_id, region_id" : "account_id";
+        // The residual filter, as a threshold on the generated amount. Null when the run is
+        // unfiltered, which is the shape every reading before this knob existed measured.
+        final long amountThresholdUnits = residualThresholdUnits(residualPercent);
+        final String residualPredicate = residualPercent < 100 ? residualPredicate(amountThresholdUnits) : null;
 
         final Path dbRoot = Files.createTempDirectory("lv-steady-");
         CairoEngine engine = null;
@@ -566,7 +661,8 @@ public class LiveViewSteadyStateBenchmark {
                     "# seed=%d batch=%d batches=%d checkpointRows=%d checkpointPurgeInterval=%d "
                             + "checkpointCompactionInterval=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
                             + "anchorPeriod=%s anchorZone=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
-                            + "compactStalePercent=%d shape=%s keyType=%s nullPercent=%d sumColumns=%d "
+                            + "compactStalePercent=%d shape=%s keyType=%s keyColumns=%d key2Cardinality=%d "
+                            + "jointKeys=%d partitionKeyMode=%s residualPercent=%d nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d o3Depths=%s o3CommitPercent=%d "
                             + "hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
@@ -581,7 +677,10 @@ public class LiveViewSteadyStateBenchmark {
                     accountWindow, rowsPerBucket, totalRows / rowsPerBucket,
                     configuration.getLiveViewPartitionCompactThreshold(),
                     configuration.getLiveViewPartitionCompactStalePercent(),
-                    selectShape.name, partitionKeyType.name, nullPercent, sumColumns,
+                    selectShape.name, partitionKeyType.name, keyColumns, keyColumns > 1 ? key2Cardinality : 1,
+                    jointKeys(distinctAccounts(totalRows, rowsPerBucket, recycleAccounts, accountWindow),
+                            keyColumns, key2Cardinality, totalRows),
+                    partitionKeyMode, residualPercent, nullPercent, sumColumns,
                     commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / tsStepMicros,
                     o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros,
                     o3DepthLadder == null ? "none" : o3DepthLadder.describe(), o3CommitPercent,
@@ -609,14 +708,19 @@ public class LiveViewSteadyStateBenchmark {
             final long distinctAccounts = distinctAccounts(totalRows, rowsPerBucket, recycleAccounts, accountWindow);
             final String capacity = isSymbolPreSized ? " capacity " + symbolCapacity(distinctAccounts) : "";
             final String indexClause = isIndexed ? " index capacity 4" : "";
+            final String key2Capacity = isSymbolPreSized ? " capacity " + symbolCapacity(key2Cardinality) : "";
+            // region_id carries no index of its own: the keyed scan follows one column's
+            // posting lists, so indexing the second key component would price a route a
+            // composite key cannot take and leave the run measuring an index nothing reads.
             engine.execute(
                     "create table payments ("
                             + "created_at timestamp, "
                             + "account_id " + partitionKeyType.columnDdl(capacity, indexClause) + ", "
+                            + (keyColumns > 1 ? "region_id " + partitionKeyType.columnDdl(key2Capacity, "") + ", " : "")
                             + "amount double"
                             + sumColumnDdl(sumColumns)
                             + ") timestamp(created_at) partition by hour wal"
-                            + (isBaseDeduped ? " dedup upsert keys(created_at, account_id)" : ""),
+                            + (isBaseDeduped ? " dedup upsert keys(created_at, " + partitionKeys + ")" : ""),
                     sqlCtx
             );
             engine.execute(insertSql(rowShape, 1, seedRows, 0, 0, 1, false), sqlCtx);
@@ -625,12 +729,13 @@ public class LiveViewSteadyStateBenchmark {
             engine.execute(
                     "create live view " + VIEW_NAME + " "
                             + "flush every 5s start from beginning as "
-                            + "select created_at, account_id, "
+                            + "select created_at, " + partitionKeys + ", "
                             + selectShape.projections(sumColumns)
                             + " from payments "
-                            + "window w as (partition by account_id order by created_at "
+                            + (residualPredicate != null ? "where " + residualPredicate + " " : "")
+                            + "window w as (partition by " + partitionKeys + " order by created_at "
                             + anchorClause(anchorPeriod, anchorZone) + ")"
-                            + selectShape.extraWindows(),
+                            + selectShape.extraWindows(partitionKeys),
                     sqlCtx
             );
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(VIEW_NAME);
@@ -757,7 +862,11 @@ public class LiveViewSteadyStateBenchmark {
                     final boolean isCheckpointWritten = instance.getLastCheckpointWrittenUs() != checkpointWrittenUsBefore;
                     final double checkpointMs = isCheckpointWritten ? instance.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
 
-                    final long expected = firstRow - 1 + batchRows;
+                    // What the view must hold: every row the generator has produced, less
+                    // the ones the residual filter rejects. An unfiltered run admits all of
+                    // them, so the oracle is exactly what it was before the filter existed.
+                    final long expected = admittedRows(
+                            firstRow - 1 + batchRows, residualPercent, amountThresholdUnits, nullPercent);
                     final long lvRowsNow = instance.getLvRowsTotal();
                     if (lvRowsNow != expected) {
                         throw new IllegalStateException("row mismatch: expected " + expected
@@ -944,6 +1053,28 @@ public class LiveViewSteadyStateBenchmark {
                             job.openSegmentArithmeticRowPositionCountForTest()
                     );
                 }
+                if (residualPredicate != null) {
+                    // What the selective shape actually cost. Every generated row carries a
+                    // brand-new account by default, so a commit's SymbolMapDiff is as wide
+                    // as the commit while the view keys only the rows the filter admits.
+                    // generated minus admitted is the part of the diff no view row ever
+                    // keys - what a key domain built eagerly from the diff would carry and
+                    // a lazily interned one would not - and map_rows is what the view
+                    // actually keyed, which is the admitted set less whatever the frontier
+                    // sweep has taken back.
+                    final long generatedRows = firstRow - 1;
+                    final long admitted = admittedRows(
+                            generatedRows, residualPercent, amountThresholdUnits, nullPercent);
+                    System.out.printf(
+                            Locale.ROOT,
+                            "# residual predicate=%s generated_rows=%d admitted_rows=%d admitted=%.3f%% map_rows=%d%n",
+                            residualPredicate,
+                            generatedRows,
+                            admitted,
+                            100.0 * admitted / generatedRows,
+                            anchorMapSize(instance)
+                    );
+                }
                 // The write side of the run, which is the term fix 3 turns on. A strictly
                 // forward run appends, so amplification is 1 and the apply is a rounding
                 // error beside the refresh. A repair whose replacement range reaches a
@@ -964,7 +1095,8 @@ public class LiveViewSteadyStateBenchmark {
                     // the view resume at all - with nothing to process it would not
                     // restore - and its own refresh cost is negligible beside a
                     // multi-million key restore.
-                    final long stateRows = firstRow - 1;
+                    final long stateRows = admittedRows(
+                            firstRow - 1, residualPercent, amountThresholdUnits, nullPercent);
                     engine.getLiveViewRegistry().clear();
                     engine.buildViewGraphs();
                     engine.execute(insertSql(rowShape, firstRow, RESTART_PROBE_ROWS, 0, 0, 1, false), sqlCtx);
@@ -986,7 +1118,8 @@ public class LiveViewSteadyStateBenchmark {
                         // incremental reseal apart from one that dropped state.
                         final boolean isCheckpointWritten = restarted.getLastCheckpointWrittenUs() != checkpointWrittenUsBefore;
                         final double checkpointMs = isCheckpointWritten ? restarted.getHeadCheckpointWriteMicros() / 1e3 : 0.0;
-                        final long expected = stateRows + RESTART_PROBE_ROWS;
+                        final long expected = admittedRows(
+                                firstRow - 1 + RESTART_PROBE_ROWS, residualPercent, amountThresholdUnits, nullPercent);
                         if (restarted.getLvRowsTotal() != expected) {
                             throw new IllegalStateException(
                                     "restore row mismatch: expected " + expected + ", got " + restarted.getLvRowsTotal());
@@ -1008,7 +1141,7 @@ public class LiveViewSteadyStateBenchmark {
                     }
                 }
 
-                reportFootprint(engine, dbRoot, partitionKeyType == KeyType.SYMBOL);
+                reportFootprint(engine, dbRoot, partitionKeyType == KeyType.SYMBOL, keyColumns);
             }
         } finally {
             engine = Misc.free(engine);
@@ -1087,6 +1220,76 @@ public class LiveViewSteadyStateBenchmark {
         }
     }
 
+    /**
+     * How many of the first {@code throughRow} generated rows the view's residual filter
+     * admits - the exact row count the live view must hold, and so the oracle every batch
+     * checks itself against.
+     * <p>
+     * The predicate reads {@code amount}, which is a function of {@code rowIndex} modulo
+     * {@link #AMOUNT_STEPS} and, where {@code --null-percent} is set, of {@code rowIndex}
+     * modulo 100. Both cycle, so the admitted set repeats every {@link #RESIDUAL_PERIOD}
+     * rows and one period counted exactly answers any row count. That keeps the oracle
+     * exact where a share-of-rows estimate would drift, and cheap where a walk of the whole
+     * stream would cost more than the batch it checks.
+     * <p>
+     * An unfiltered run admits every row, {@code --null-percent} included: a NULL amount
+     * fails a threshold but nothing tests it, so the two knobs only compose once a filter
+     * is present.
+     */
+    private static long admittedRows(long throughRow, int residualPercent, long amountThresholdUnits, int nullPercent) {
+        if (residualPercent >= 100) {
+            return throughRow;
+        }
+        final long periods = throughRow / RESIDUAL_PERIOD;
+        final long remainder = throughRow % RESIDUAL_PERIOD;
+        long perPeriod = 0;
+        long head = 0;
+        for (long row = 1; row <= RESIDUAL_PERIOD; row++) {
+            if (isRowAdmitted(row, amountThresholdUnits, nullPercent)) {
+                perPeriod++;
+                if (row <= remainder) {
+                    head++;
+                }
+            }
+        }
+        return periods * perPeriod + head;
+    }
+
+    /**
+     * Whether the generated row at {@code rowIndex} passes the residual predicate, in the
+     * same terms {@link #insertSql} writes it: a NULL amount fails, and everything else is
+     * compared in hundredths so the oracle never repeats the generator's floating-point
+     * arithmetic.
+     */
+    private static boolean isRowAdmitted(long rowIndex, long amountThresholdUnits, int nullPercent) {
+        if (nullPercent > 0 && rowIndex % 100 < nullPercent) {
+            return false;
+        }
+        return rowIndex % AMOUNT_STEPS - 1000 >= amountThresholdUnits;
+    }
+
+    /**
+     * The residual filter itself, as a threshold on the generated amount.
+     * <p>
+     * The threshold sits half a step below the lowest admitted amount rather than on it, so
+     * the comparison never turns on whether {@code 981 * 0.01} and the literal {@code 9.81}
+     * are the same double. Half a step is fifteen orders of magnitude of margin over the
+     * error it guards against, and it moves the admitted set by nothing.
+     */
+    private static String residualPredicate(long amountThresholdUnits) {
+        return String.format(Locale.ROOT, "amount > %.3f", (amountThresholdUnits - 0.5) / 100.0);
+    }
+
+    /**
+     * The lowest amount, in hundredths, the residual filter admits. The generated amount
+     * walks {@code [-1000, 1000]} hundredths in {@link #AMOUNT_STEPS} steps, so admitting
+     * the top {@code residualPercent} of them puts the threshold this far up the range.
+     */
+    private static long residualThresholdUnits(int residualPercent) {
+        final long admitted = Math.max(1, Math.round(AMOUNT_STEPS * residualPercent / 100.0));
+        return AMOUNT_STEPS - admitted - 1000;
+    }
+
     private static long compactedPartitionCount(LiveViewInstance instance) {
         final LiveViewWindow window = instance.getAnchorWindow();
         return window == null ? 0 : window.getCompactedPartitionCount();
@@ -1112,6 +1315,18 @@ public class LiveViewSteadyStateBenchmark {
             return accountWindow + (totalRows / rowsPerBucket + 1) * Math.max(1, accountWindow / 2);
         }
         return recycleAccounts > 0 ? recycleAccounts : totalRows;
+    }
+
+    /**
+     * How many distinct partition keys the run builds, which is what the window's maps and
+     * a per-key durable dictionary are both sized by. A composite key multiplies the
+     * account cardinality by the second column's, bounded by the rows that exist to carry
+     * them - with a brand-new account per row the accounts alone already number the stream,
+     * and a second component adds key width rather than key count.
+     */
+    private static long jointKeys(long distinctAccounts, int keyColumns, long key2Cardinality, long totalRows) {
+        final long keys = keyColumns > 1 ? distinctAccounts * key2Cardinality : distinctAccounts;
+        return keys < 0 || keys > totalRows ? totalRows : keys;
     }
 
     /**
@@ -1336,10 +1551,15 @@ public class LiveViewSteadyStateBenchmark {
      * includes the window state and WAL symbol maps; the on-disk numbers separate
      * the view's own symbol dictionary from its column data.
      * <p>
+     * A composite key's second dictionary is reported on its own rather than folded into
+     * the first: the two columns have independent value sets and independent capacities, so
+     * one number would hide which of them a cardinality knob moved.
+     * <p>
      * Heap is read after a best-effort collection, which is advisory rather than
      * exact. Run with a fixed -Xmx and compare two builds on the same host.
      */
-    private static void reportFootprint(CairoEngine engine, Path dbRoot, boolean isSymbolKey) throws IOException {
+    private static void reportFootprint(CairoEngine engine, Path dbRoot, boolean isSymbolKey, int keyColumns)
+            throws IOException {
         for (int i = 0; i < 4; i++) {
             System.gc();
             try {
@@ -1366,11 +1586,12 @@ public class LiveViewSteadyStateBenchmark {
         }
         System.out.printf(
                 Locale.ROOT,
-                "# footprint heap_mb=%.1f offheap_mb=%.1f view_symbol_mb=%.1f view_total_mb=%.1f "
-                        + "view_symbol_capacity=%d view_symbol_cached=%s%n",
+                "# footprint heap_mb=%.1f offheap_mb=%.1f view_symbol_mb=%.1f view_key2_symbol_mb=%.1f "
+                        + "view_total_mb=%.1f view_symbol_capacity=%d view_symbol_cached=%s%n",
                 heapBytes / (1024.0 * 1024.0),
                 Unsafe.getMemUsed() / (1024.0 * 1024.0),
                 isSymbolKey ? dirBytes(viewPath, "account_id.") / (1024.0 * 1024.0) : 0.0,
+                isSymbolKey && keyColumns > 1 ? dirBytes(viewPath, "region_id.") / (1024.0 * 1024.0) : 0.0,
                 dirBytes(viewPath, null) / (1024.0 * 1024.0),
                 symbolCapacity,
                 isSymbolCached
@@ -1520,7 +1741,10 @@ public class LiveViewSteadyStateBenchmark {
                   + rowIndex + " - 1 else " + rowIndex + " end)"
                 : rowIndex;
         final String acct = shape.accountExpression(twinIndex);
-        final String amountExpr = "(" + rowIndex + " % 2001 - 1000) * 0.01";
+        // The second key component takes the same ordinal the account does, so an
+        // equal-timestamp twin repeats the whole composite key rather than half of it.
+        final String region = shape.keyColumns > 1 ? shape.regionExpression(twinIndex) : null;
+        final String amountExpr = "(" + rowIndex + " % " + AMOUNT_STEPS + " - 1000) * 0.01";
         // A NULL amount is what separates the two counters a fused group might otherwise
         // look equivalent on: sum(amount) skips the row and count(account_id) does not.
         final String nullableAmountExpr = shape.nullPercent > 0
@@ -1549,8 +1773,11 @@ public class LiveViewSteadyStateBenchmark {
                 : position;
         final StringBuilder sql = new StringBuilder("insert into payments ")
                 .append("select (").append(timestamp).append(")::timestamp, ")
-                .append(acct).append(", ")
-                .append(nullableAmountExpr);
+                .append(acct).append(", ");
+        if (region != null) {
+            sql.append(region).append(", ");
+        }
+        sql.append(nullableAmountExpr);
         for (int i = 1; i <= shape.sumColumns; i++) {
             sql.append(", (").append(rowIndex).append(" % ").append(2000 + i).append(") * 0.01");
         }
@@ -1780,6 +2007,8 @@ public class LiveViewSteadyStateBenchmark {
         private final long anchorPeriodMicros;
         private final long equalTsEveryN;
         private final long hotKeyEveryN;
+        private final long key2Cardinality;
+        private final int keyColumns;
         private final KeyType keyType;
         private final int nullPercent;
         private final int recycleAccounts;
@@ -1796,7 +2025,9 @@ public class LiveViewSteadyStateBenchmark {
                 int sumColumns,
                 long tsStepMicros,
                 long hotKeyEveryN,
-                long equalTsEveryN
+                long equalTsEveryN,
+                int keyColumns,
+                long key2Cardinality
         ) {
             this.recycleAccounts = recycleAccounts;
             this.accountWindow = accountWindow;
@@ -1808,6 +2039,22 @@ public class LiveViewSteadyStateBenchmark {
             this.tsStepMicros = tsStepMicros;
             this.hotKeyEveryN = hotKeyEveryN;
             this.equalTsEveryN = equalTsEveryN;
+            this.keyColumns = keyColumns;
+            this.key2Cardinality = key2Cardinality;
+        }
+
+        /**
+         * How many rows the generator takes to sweep the account space once. A rolling
+         * window and a round-robin both cycle their accounts on a fixed period; a run whose
+         * every row carries a brand-new account never repeats one, so its cycle is a single
+         * row and the second key advances per row - which is the right answer there, since
+         * distinct accounts already make every row's composite key distinct.
+         */
+        private long accountCycle() {
+            if (accountWindow > 0) {
+                return accountWindow;
+            }
+            return recycleAccounts > 0 ? recycleAccounts : 1;
         }
 
         /**
@@ -1843,7 +2090,36 @@ public class LiveViewSteadyStateBenchmark {
             final String hotOrNot = hotKeyEveryN > 0
                     ? "(case when " + rowIndex + " % " + hotKeyEveryN + " = 0 then 0 else " + accountId + " end)"
                     : accountId;
-            return keyType.accountExpression(hotOrNot);
+            return keyType.keyExpression(ACCOUNT_SYMBOL_PREFIX, hotOrNot);
+        }
+
+        /**
+         * The second key component of a composite key, cycling through
+         * {@code --key2-cardinality} values. It is bounded where the account is not, so the
+         * run's joint cardinality is the account cardinality times it rather than a second
+         * unbounded domain.
+         * <p>
+         * <b>It advances once per full sweep of the account space, not per row.</b> A plain
+         * {@code rowIndex % k} would be worthless as a second key: an account picked as
+         * {@code rowIndex % A} already determines {@code rowIndex % k} whenever {@code k}
+         * divides {@code A}, which the useful cardinalities all do - {@code --recycle-accounts=1000}
+         * with {@code --key2-cardinality=8} would then build 1000 composite keys rather than
+         * 8000, and the run would report a composite key while measuring a single one.
+         * Dividing by the account cycle first breaks that: an account meets every region as
+         * the stream sweeps its space again, which is also the shape a real second key has -
+         * accounts by instrument, customers by region.
+         * <p>
+         * {@code --hot-key-percent} folds it onto value zero on the same rows it folds the
+         * account onto zero, so a hot key stays one composite key rather than becoming a
+         * family of them - a hot posting list is what the knob exists to build, and a
+         * second component varying freely across it would build several cold ones instead.
+         */
+        private String regionExpression(String rowIndex) {
+            final String regionId = "((" + rowIndex + " / " + accountCycle() + ") % " + key2Cardinality + ")";
+            final String hotOrNot = hotKeyEveryN > 0
+                    ? "(case when " + rowIndex + " % " + hotKeyEveryN + " = 0 then 0 else " + regionId + " end)"
+                    : regionId;
+            return keyType.keyExpression(REGION_SYMBOL_PREFIX, hotOrNot);
         }
     }
 
@@ -1858,6 +2134,19 @@ public class LiveViewSteadyStateBenchmark {
      * 16-byte accumulator joins it; a LONG key was already past the limit at 18 before
      * fusing, and a SYMBOL key was never eligible. The INT control is therefore the only
      * run that can show the transition, and it is why it exists.
+     * <p>
+     * It is also the upper bound on what an LV-private integer key domain would be worth.
+     * A SYMBOL partition key is rewritten to STRING before it reaches any map, so it
+     * resolves per row and writes a variable-length UTF-16 key; an INT key over the same
+     * value set writes four fixed-width bytes and can reach the narrow map. The INT run
+     * therefore prices the key shape a private id would produce without paying for the
+     * translation that would produce it, and the SYMBOL run prices what ships. Neither is
+     * the measurement itself - see {@link PartitionKeyMode}.
+     * <p>
+     * A composite key is the same choice applied twice: {@code --key-columns=2} gives both
+     * components this type, so an {@code [INT, INT]} run is the control for a
+     * {@code [SYMBOL, SYMBOL]} one. Neither reaches the narrow map, because
+     * {@code MapFactory} picks an unordered implementation only for a single key column.
      */
     private enum KeyType {
         INT("int"),
@@ -1879,16 +2168,62 @@ public class LiveViewSteadyStateBenchmark {
             throw new IllegalArgumentException("--key-type must be one of symbol, int, long: " + name);
         }
 
-        String accountExpression(String accountId) {
+        String keyExpression(String symbolPrefix, String keyId) {
             return switch (this) {
-                case SYMBOL -> "'acct-' || " + accountId + "::string";
-                case INT -> accountId + "::int";
-                case LONG -> accountId + "::long";
+                case SYMBOL -> "'" + symbolPrefix + "' || " + keyId + "::string";
+                case INT -> keyId + "::int";
+                case LONG -> keyId + "::long";
             };
         }
 
         String columnDdl(String capacity, String indexClause) {
             return this == SYMBOL ? "symbol" + capacity + " nocache" + indexClause : name;
+        }
+    }
+
+    /**
+     * Which key domain the view's runtime partition maps and its persisted checkpoint keys
+     * are written in.
+     * <p>
+     * {@code legacy} is what ships: a direct base SYMBOL partition term is rewritten to
+     * STRING at every site that keys on it, because a WAL symbol int is transaction-local
+     * and cannot be persisted. {@code private} is the LV-private integer key domain the
+     * optimization plan builds, and it is where a comparison between the two belongs -
+     * in one build, against a control that ran on the same host in the same run, rather
+     * than across branches.
+     * <p>
+     * Nothing can emit a translated id yet, so {@code private} is refused rather than
+     * silently measured. Until the sink exists, {@code --key-type=int} is the standing
+     * upper bound: it keys the same fixed-width four bytes and pays for no translation, so
+     * it brackets the prize from above while {@code --key-type=symbol} brackets it from
+     * below.
+     */
+    private enum PartitionKeyMode {
+        LEGACY("legacy"),
+        PRIVATE_ID("private");
+
+        private final String name;
+
+        PartitionKeyMode(String name) {
+            this.name = name;
+        }
+
+        static PartitionKeyMode of(String name) {
+            for (PartitionKeyMode mode : values()) {
+                if (mode.name.equals(name)) {
+                    return mode;
+                }
+            }
+            throw new IllegalArgumentException("--partition-key-mode must be one of legacy, private: " + name);
+        }
+
+        void reject() {
+            if (this == PRIVATE_ID) {
+                throw new IllegalArgumentException(
+                        "--partition-key-mode=private has nothing to switch to: no sink can emit a translated "
+                                + "symbol id yet. Use --key-type=int for the upper bound on what one would be worth"
+                );
+            }
         }
     }
 
@@ -1955,9 +2290,10 @@ public class LiveViewSteadyStateBenchmark {
             throw new IllegalArgumentException("unknown --shape: " + name);
         }
 
-        String extraWindows() {
+        String extraWindows(String partitionKeys) {
             return this == MIXED
-                    ? ", r as (partition by account_id order by created_at rows between 63 preceding and current row)"
+                    ? ", r as (partition by " + partitionKeys
+                      + " order by created_at rows between 63 preceding and current row)"
                     : "";
         }
 
