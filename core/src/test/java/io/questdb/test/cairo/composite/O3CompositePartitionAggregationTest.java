@@ -32,7 +32,6 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.test.AbstractCairoTest;
-import io.questdb.test.cairo.o3.O3CompositePartitionTest;
 import org.junit.Assert;
 import org.junit.Test;
 

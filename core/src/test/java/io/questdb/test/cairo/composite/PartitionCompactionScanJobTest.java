@@ -226,6 +226,105 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * TWO idle composite partitions, both larger than the table's small last partition, both compacted by
+     * a single sweep, with the writer taken fresh from the pool so
+     * {@code TableWriter.restorePostingIndexersToLastPartition} finds no open active partition to rebind
+     * the posting indexers to after each REWRITE's reseal.
+     * <p>
+     * That stale binding is real here (the restore does bail out), so this pins the shape in which it
+     * could do damage: whatever the next partition's swap commits must not disturb the chain the previous
+     * REWRITE just rebuilt. A seeded {@code DedupInsertFuzzTest} run on the pre-{@code
+     * CompositePartitionSwapCommand} compaction job hit exactly that - the job's own trailing {@code
+     * commit()} ran {@code updateIndexes}, refreshing the stale-bound indexer with the LAST partition's
+     * row range and truncating the rebuilt chain at that row count, so index-backed scans silently lost
+     * every row above it. The non-blocking swap commits through {@code
+     * commitTxWriterAndPublishPendingPostingSealPurges} instead and never reaches {@code updateIndexes},
+     * which is why this test passes with or without the zero-row guards in {@code SymbolColumnIndexer} and
+     * {@code TableWriter.updateIndexesSlow} - it is coverage for the shape, not a regression test that
+     * fails when those guards are removed.
+     */
+    @Test
+    public void testScanCompactingTwoCompositePartitionsKeepsBothPostingIndexesIntact() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+
+            // Two big days, each 5760 rows - both far larger than the 50-row last partition whose row
+            // count the stale refresh clamps a rebuilt chain to.
+            final String dayOneBase = "SELECT x::INT i, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760)";
+            final String dayTwoBase = "SELECT x::INT + 10000 i, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('2020-01-02', 15*1000000L) ts FROM long_sequence(5760)";
+            // A later, tiny, plain day - keeps both days above out of the active slot so their backfills
+            // go through the O3 composite path.
+            final String dayPlain = "SELECT x::INT + 90000 i, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('2020-01-05', 60*1000000L) ts FROM long_sequence(50)";
+            // One backfill per big day, cutting each into pieces.
+            final String dayOneBackfill = "SELECT x::INT + 70000 i, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)";
+            final String dayTwoBackfill = "SELECT x::INT + 80000 i, ('sym' || (x % 7))::symbol sym_posting," +
+                    " timestamp_sequence('2020-01-02T04:00:07', 5*1000000L) ts FROM long_sequence(200)";
+
+            execute("CREATE TABLE cx AS (" + dayOneBase + "), index(sym_posting TYPE POSTING)" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cx " + dayTwoBase);
+            execute("INSERT INTO cx " + dayPlain);
+            drainWalQueue();
+            execute("INSERT INTO cx " + dayOneBackfill);
+            execute("INSERT INTO cx " + dayTwoBackfill);
+            drainWalQueue();
+
+            final TableToken cxToken = engine.verifyTableName("cx");
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertTrue("2020-01-01 should be composite", cxTx.isPartitionComposite(0));
+                Assert.assertTrue("2020-01-02 should be composite", cxTx.isPartitionComposite(1));
+            }
+
+            // Drop the writer so the sweep below takes a fresh one from the pool, with no open active
+            // partition - the state in which restorePostingIndexersToLastPartition cannot rebind.
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader cxReader = engine.getReader(cxToken)) {
+                final TxReader cxTx = cxReader.getTxFile();
+                Assert.assertFalse("2020-01-01 is idle, should have been REWRITE-compacted", cxTx.isPartitionComposite(0));
+                Assert.assertFalse("2020-01-02 is idle, should have been REWRITE-compacted", cxTx.isPartitionComposite(1));
+            }
+
+            execute("CREATE TABLE cx_oracle AS (SELECT i, sym_posting, ts FROM (" +
+                    dayOneBase + " UNION ALL " + dayTwoBase + " UNION ALL " + dayPlain +
+                    " UNION ALL " + dayOneBackfill + " UNION ALL " + dayTwoBackfill +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+            // The indexed scan must return exactly what the unindexed oracle holds. A truncated chain
+            // shows up here as missing rows from whichever partition the refresh clamped.
+            for (int k = 0; k < 7; k++) {
+                final String value = "sym" + k;
+                TestUtils.assertSqlCursors(
+                        engine, sqlExecutionContext,
+                        "SELECT i, sym_posting::varchar sym_posting, ts FROM cx_oracle" +
+                                " WHERE sym_posting = '" + value + "' ORDER BY ts, i",
+                        "SELECT i, sym_posting::varchar sym_posting, ts FROM cx" +
+                                " WHERE sym_posting = '" + value + "' ORDER BY ts, i",
+                        LOG
+                );
+            }
+        });
+    }
+
+    /**
      * Same fixture shape as {@link #testScanCompactsIdleCompositePartitionButLeavesRecentAndPlainAlone}, but
      * the composite partition also carries a BITMAP-indexed symbol column and a POSTING-indexed one.
      * {@link TableWriter#compactPartitionNoCommit(int)} - the job's one dispatch path for a composite
