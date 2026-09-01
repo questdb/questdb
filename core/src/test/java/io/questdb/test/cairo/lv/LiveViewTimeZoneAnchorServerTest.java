@@ -495,30 +495,6 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
         });
     }
 
-    /**
-     * The zone-anchored view driven end to end across both of Europe/Berlin's 2026 daylight
-     * saving transitions, which is the shape no other case here reaches: every fixture in this
-     * package that names a zone puts its rows in January, where a civil day is 24 hours wide
-     * and a UTC-grid computation and a zone-grid one agree row for row.
-     * <p>
-     * Two claims, and they answer different failures:
-     * <ul>
-     *     <li><b>The rows.</b> {@link #ZONED_TRACE} is hand-computed from the zone's own rules
-     *     and pins a 23-hour civil day and a 25-hour one read end to end; {@link #PLAIN_TRACE}
-     *     is the same account off the no-zone control and disagrees at 19 of its 23 rows, so
-     *     neither trace can be produced on the other's grid. {@code assertMatchesRecompute}
-     *     then holds the whole view - every account, corrections included - against a from-base
-     *     recompute over the same floor. A repair that bounded itself on the UTC grid rather
-     *     than the zone's would start above the head of a civil day and drop the state that
-     *     head carries, and the counts here are what catches it.</li>
-     *     <li><b>The route.</b> Correct rows alone do not prove the anchor did anything: the
-     *     conservative fallback - no plan, no segment bound, a rebuild from the view's own
-     *     boundary - produces exactly the same rows, only slower. So the preflight gate, the
-     *     settled disposition and the denial are read beside them, which is what separates a
-     *     localized repair over a transition day from a fallback that never consulted the zone
-     *     at all.</li>
-     * </ul>
-     */
     @Test
     public void testTheZoneAnchoredViewSurvivesBothDaylightSavingTransitions() throws Exception {
         assertMemoryLeak(() -> {
@@ -593,70 +569,6 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
         });
     }
 
-    /**
-     * The same two transitions driven end to end on a NON-MIDNIGHT zoned anchor, which is
-     * the only anchor shape whose segment self-checks refuse - and so the only one that
-     * reaches the union-range fallback behind them.
-     * <p>
-     * {@code ANCHOR DAILY '02:30' 'Europe/Berlin'} names a wall time the zone deletes on the
-     * spring-forward day and repeats on the fall-back day, and the runtime's own
-     * {@code timestamp_floor_utc} is not monotone through either. Two consequences, and both
-     * are in the data below:
-     * <ul>
-     *     <li><b>A row below its own segment start.</b> Berlin jumps from 02:00 to 03:00 at
-     *     2026-03-29T01:00Z, so the row landing on that instant reads 03:00 local, floors to
-     *     the 02:30 that never happened, and carries an anchor of 2026-03-29T01:30Z - half an
-     *     hour ABOVE itself. {@code LiveViewCheckpointAnchorPlan.getSegmentStart} refuses that
-     *     start rather than reporting it, because a repair floored at it would recompute the
-     *     segment without the row.</li>
-     *     <li><b>A segment with a start and no end.</b> 02:30 local happens twice on
-     *     2026-10-25, and the repeated hour winds local time back INTO the day below it:
-     *     rows at [2026-10-25T01:00Z, 2026-10-25T01:30Z) read 02:00..02:29 CET and floor
-     *     onto 2026-10-24's own 02:30, above the end the arithmetic names for it. So
-     *     {@code getSegmentEndExclusive} refuses the end of the segment that opens at
-     *     2026-10-24T00:30Z as well as the one that opens at the first of the two 02:30s.</li>
-     * </ul>
-     * A refusal makes {@code LiveViewCheckpointSegmentChangeSet.addRow} give up on the whole
-     * decomposition, and the repair falls back to the union range it took before segments
-     * existed. That chain has three links, each with a unit test of its own; what has never
-     * been driven is the conjunction, on a view that actually refreshes and repairs.
-     * <p>
-     * So the corrections trickle into the middle of the gap day - deep below the frontier,
-     * which is what forces the decomposition to place them in a closed segment and to consult
-     * the plan for its bounds - and the readings are the two hand-computed traces plus
-     * {@code assertMatchesRecompute}. The traces are computed off the zone's rules rather than
-     * off a second copy of the server's arithmetic, and the recompute holds every account,
-     * corrections included, against a from-base window over the same floor. Between them they
-     * are what catches a repair that dropped the 01:00Z row or counted a correction twice: the
-     * fallback delivers the same rows the decomposition would, only over a wider range, so
-     * nothing but the rows can tell a working fallback from a broken one.
-     * <p>
-     * Three trickles run, one per verdict the plan can return, and
-     * {@link #assertSegmentBounds(String, boolean, boolean)} reads that verdict off the plan
-     * before each of them rather than assuming it:
-     * <ul>
-     *     <li>{@link #NON_MIDNIGHT_GAP_DAY_HOUR} - a segment with no start;</li>
-     *     <li>{@link #NON_MIDNIGHT_SPLIT_DAY_HOUR} - a segment with no end, the one the
-     *     fall-back splits;</li>
-     *     <li>{@link #NON_MIDNIGHT_ORDINARY_HOUR} - a segment carrying both bounds, which
-     *     has to settle on a localized rebuild.</li>
-     * </ul>
-     * The third is the control, and it is why the first two prove anything: it says the
-     * refusals are scoped to the transitions rather than being this view declining to
-     * decompose at all, which would leave the other two trickles standing on nothing. It
-     * corrects 2026-03-30, the day directly above the gap - close enough to the transition
-     * to make the point, far enough for both bounds to hold.
-     * <p>
-     * The control's segment is chosen off the plan's verdict rather than off the calendar,
-     * and the premise assertion is what keeps it that way. A route verdict a live server
-     * reports depends on which repair route ran, and every route but the localized one is
-     * reachable for a segment the plan refuses - so pointing the control at a refused
-     * segment does not fail, it flakes. That happened: the control sat on 2026-10-24 while
-     * that segment carried both bounds, and the fall-back split check that later took its
-     * end away turned the assertion into a race on whether the checkpoint ladder held a root
-     * below the correction. Reading the bounds first turns the next such change into a
-     * failure that names the bound it moved.
-     */
     @Test
     public void testANonMidnightZoneAnchorSurvivesBothDaylightSavingTransitions() throws Exception {
         anchorTime = NON_MIDNIGHT_ANCHOR_TIME;

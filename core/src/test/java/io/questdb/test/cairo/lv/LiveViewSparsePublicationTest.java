@@ -1075,31 +1075,6 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         });
     }
 
-    /**
-     * The forward path's price for the identity, pinned as a differential rather than as a
-     * benchmark. The keyed arm's table carries {@code (created_at, account_id)}, so every one
-     * of its forward commits goes out at {@code WAL_DEDUP_MODE_NO_DEDUP}, which
-     * {@code WalTxnDetails} turns into {@code FORCE_FULL_COMMIT} - one transaction per applied
-     * block, and no WAL lag. The plain arm stamps neither. This case holds that the difference
-     * costs the keyed arm nothing on the forward path: the same applies, and the same rows
-     * physically written.
-     * <p>
-     * It holds because the refresh worker applies each live-view WAL block inline right after
-     * committing it, so only one transaction is ever pending, and
-     * {@code WalTxnDetails.readObservableTxnMeta} already stamps a sole pending transaction
-     * {@code LAST_ROW_COMMIT} - which {@code getCommitToTimestamp} reports as
-     * {@code FORCE_FULL_COMMIT} whatever the dedup mode. Both arms therefore take the full-commit
-     * path that the identity is charged with forcing. If a future change ever leaves live-view
-     * transactions pending in batches, the plain arm starts absorbing them into its WAL lag and
-     * this case fails on {@code plainApplies} rather than reporting the regression as a
-     * performance number nobody runs.
-     * <p>
-     * The applies are counted as the view table's own {@code _txn} transactions, not as the WAL
-     * lag row count: the fast-lag publish drains the lag inside the same apply call, so a lag
-     * counter sampled between commits reads zero whether the lag ran or not, and would pass
-     * vacuously. One table transaction per live-view WAL transaction is the same statement in
-     * an observable form.
-     */
     @Test
     public void testTheIdentityCostsTheForwardPathNoExtraApplyAndNoExtraWrittenRow() throws Exception {
         assertMemoryLeak(() -> {

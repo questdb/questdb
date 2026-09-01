@@ -94,12 +94,6 @@ public class LiveViewCheckpointFixedStateContractTest extends AbstractLiveViewTe
     private static final int SUM_STATE_BYTES = Double.BYTES + Long.BYTES;
     private static final int WELFORD_STATE_BYTES = 2 * Double.BYTES + Long.BYTES;
 
-    /**
-     * The customer shape the fused root is aimed at - an anchored window carrying an
-     * unbounded cumulative sum and count per account - declares its widths, and every
-     * state image the seal writes for it is exactly that wide, across the first seal
-     * and every incremental one after it.
-     */
     @Test
     public void testAnchoredAccumulatorsDeclareTheWidthTheirImagesActuallyHave() throws Exception {
         // One logical boundary per commit, so each commit below is its own seal and

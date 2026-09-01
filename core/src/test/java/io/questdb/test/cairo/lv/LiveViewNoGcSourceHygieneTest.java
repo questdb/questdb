@@ -308,13 +308,6 @@ public class LiveViewNoGcSourceHygieneTest {
         Assert.assertFalse(code.contains("fencedLiveViewCommit"));
     }
 
-    /**
-     * Self-coverage for the specialized commit fence check. The first block feeds it shapes a
-     * behaviour-preserving refactor produces - a renamed lock local, renamed parameters, a
-     * {@code this.} qualifier, extra call sites - and each must stay green. The second block
-     * breaks the property itself and each must go red, so the tolerance above buys nothing at
-     * the expense of the hazard the check exists for.
-     */
     @Test
     public void testSpecializedCommitFenceSelfCoverage() {
         final String fencedBody = """
@@ -504,12 +497,6 @@ public class LiveViewNoGcSourceHygieneTest {
                 """));
     }
 
-    /**
-     * Every publication entry point runs on retained shells. The bodies below name
-     * what they use and construct nothing: a seal, a repair splice, a compaction, a
-     * truncate and a sweep each allocate no store, reader, writer, page reference,
-     * id list, timeline entry, result or path of their own.
-     */
     @Test
     public void testPublicationEntryPointsConstructNothing() throws IOException {
         final Path sourceRoot = findSourceRoot();

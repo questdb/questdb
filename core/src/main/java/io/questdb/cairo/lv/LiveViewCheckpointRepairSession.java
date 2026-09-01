@@ -32,6 +32,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -91,6 +92,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private final LiveViewCheckpointOutputUniqueness outputUniqueness = new LiveViewCheckpointOutputUniqueness();
     private final LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay();
     private final LiveViewCheckpointSealCarryover sealCarryover = new LiveViewCheckpointSealCarryover();
+    private final LongList keyedBoundaryPositions = new LongList();
     private final LiveViewRefreshJob owner;
     private final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
     // Where the multi-segment loop that started this repair had got to, for a repair that
@@ -109,6 +111,10 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private long durableRowsBelowFloor;
     private long durableRowsReplaced;
     private ObjList<WindowFunction> functions;
+    private long keyedInsertedRowDelta;
+    private LiveViewCheckpointKeyedReplay keyedReplay;
+    private boolean isColdKeyedReplayRoute;
+    private boolean isKeyedReplayRoute;
     // Whether this repair has a durable LiveViewCheckpointRepairMarker on disk that the
     // turn finishing it owes a clear. It lives here rather than in the executing turn
     // because it outlives one: a repair that parks on its budget leaves the marker
@@ -199,7 +205,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         // still holds it and only a restart reclaims what it kept. discard() is in the
         // chain for the same reason: a descriptor left on disk reads as a crashed repair
         // to the next startup sweep.
-        Throwable failure = Misc.freeBestEffort(null, capture);
+        Throwable failure = Misc.freeBestEffort(null, keyedReplay);
+        keyedReplay = null;
+        failure = Misc.freeBestEffort(failure, capture);
         capture = null;
         failure = Misc.freeBestEffort(failure, walWriter);
         walWriter = null;
@@ -217,6 +225,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         // the wipe left it owing, which is the safe direction.
         failure = Misc.freeBestEffort(failure, sealCarryover);
         boundaries.clear();
+        keyedBoundaryPositions.clear();
         segmentLoop.clear();
         outputUniqueness.clear();
         isRepairMarkerLive = false;
@@ -345,6 +354,31 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
 
     public LiveViewCheckpointScratchOverlay getOverlay() {
         return overlay;
+    }
+
+    public LongList getKeyedBoundaryPositions() {
+        return keyedBoundaryPositions;
+    }
+
+    public long getKeyedInsertedRowDelta() {
+        return keyedInsertedRowDelta;
+    }
+
+    public LiveViewCheckpointKeyedReplay getKeyedReplay() {
+        return keyedReplay;
+    }
+
+    public boolean isColdKeyedReplayRoute() {
+        return isColdKeyedReplayRoute;
+    }
+
+    public boolean isKeyedReplayRoute() {
+        return isKeyedReplayRoute;
+    }
+
+    public void ownKeyedReplay(@NotNull LiveViewCheckpointKeyedReplay keyedReplay) {
+        assert this.keyedReplay == null || this.keyedReplay == keyedReplay;
+        this.keyedReplay = keyedReplay;
     }
 
     /**
@@ -482,6 +516,21 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public void of(@NotNull LiveViewCheckpointRepairPlan plan) {
         this.plan.copyFrom(plan);
+    }
+
+    public void prepareKeyedReplay(
+            boolean isKeyedReplayRoute,
+            boolean isColdKeyedReplayRoute,
+            long keyedInsertedRowDelta,
+            @Nullable LongList keyedBoundaryPositions
+    ) {
+        this.isKeyedReplayRoute = isKeyedReplayRoute;
+        this.isColdKeyedReplayRoute = isColdKeyedReplayRoute;
+        this.keyedInsertedRowDelta = keyedInsertedRowDelta;
+        this.keyedBoundaryPositions.clear();
+        if (keyedBoundaryPositions != null) {
+            this.keyedBoundaryPositions.addAll(keyedBoundaryPositions);
+        }
     }
 
     /**

@@ -333,6 +333,11 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         return true;
     }
 
+    public void closeStoredRows() {
+        Misc.free(storedRowCursor);
+        releaseMergeState();
+    }
+
     public void clear() {
         releaseMergeState();
         armed = false;
@@ -351,6 +356,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
 
     @Override
     public void close() {
+        closeStoredRows();
         clear();
         Misc.free(keyBuffer);
     }

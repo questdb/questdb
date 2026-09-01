@@ -105,11 +105,6 @@ public class LiveViewCheckpointPublicationAllocationTest extends AbstractCairoTe
         assertSealAllocationIsBounded(1_000);
     }
 
-    /**
-     * The same seal shape twice over: the second measurement must not cost more
-     * than the first, which is what separates "warmed up" from "leaking a little
-     * per call".
-     */
     @Test
     public void testSealAllocationDoesNotGrowWithSealCount() throws Exception {
         assertMemoryLeak(() -> {

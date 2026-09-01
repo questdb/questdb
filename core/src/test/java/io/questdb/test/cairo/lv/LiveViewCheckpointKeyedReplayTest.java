@@ -174,11 +174,14 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         // it" would copy the null key's stale rows forward beside the replay's corrected
         // ones and double the day.
         armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
         assertMemoryLeak(() -> {
             createView(seedEightAccountsOverThreeDays() + ", " + seedNullAccountOverThreeDays());
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(5, 1, "acct-1"), job);
+                final LiveViewInstance instance = viewInstance();
+                final long resumesBefore = instance.getCheckpointRepairResumes();
                 final long rowsBefore = count("select count() from lv");
 
                 commit(nullCorrection(), job);
@@ -187,6 +190,10 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                         "a correction on the null key must be repaired by key like any other",
                         1,
                         job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertTrue(
+                        "the null-key merge state must survive a replay-budget park",
+                        instance.getCheckpointRepairResumes() > resumesBefore
                 );
                 Assert.assertEquals(
                         "the named accounts' rows are the ones copied forward - the null key's are replayed",
@@ -207,12 +214,11 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
     @Test
     public void testASegmentBehindAParkedOneIsStillRepairedByItsKeys() throws Exception {
-        // The two default-on routes have to compose. A keyed replay never parks, so the
-        // segment a loop parks on is always one the cost model turned down - and the
-        // segments queued behind it are the ones most likely to be keyed. The key domain
-        // is collected by the change-set decomposition into scratch that belongs to the
-        // turn that classified it, so a loop carrying only its timestamps hands the
-        // resuming turn nothing to arm from and every segment behind the park reads whole.
+        // The two routes have to compose. The first segment is priced whole and parks;
+        // the segment queued behind it is priced keyed. The key domain is collected by
+        // the change-set decomposition into scratch that belongs to the classifying turn,
+        // so a loop carrying only timestamps would hand the resuming turn nothing to arm
+        // from and the queued segment would read whole.
         //
         // The shape is the reported one: an eight-account correction on the older day,
         // which the cost model prices whole and which a one-row replay budget parks, and a
@@ -296,6 +302,75 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(2, job.segmentRepairCountForTest());
                 Assert.assertEquals(rowsBefore + 3, count("select count() from lv"));
                 assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testAKeyedRepairParksOnItsReplayBudget() throws Exception {
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+                final LiveViewInstance instance = viewInstance();
+                final long resumesBefore = instance.getCheckpointRepairResumes();
+
+                commit(correction("acct-1"), job);
+
+                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
+                Assert.assertTrue(
+                        "a closed-segment keyed repair must honor the configured replay budget",
+                        instance.getCheckpointRepairResumes() > resumesBefore
+                );
+                assertViewMatchesRecompute();
+            }
+        });
+    }
+
+    @Test
+    public void testTwoParkedKeyedRepairsOwnAndReleaseIndependentReplayState() throws Exception {
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            execute("create live view lv2 flush every 100ms start from beginning as "
+                    + "select created_at, account_id, sum(amount) over w as cumulative_sum "
+                    + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");
+            final LiveViewInstance first = viewInstance();
+            final LiveViewInstance second = engine.getLiveViewRegistry().getViewInstance("lv2");
+            Assert.assertNotNull("live view 'lv2' must be registered", second);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                commit(row(5, 1, "acct-1"), job);
+
+                execute("insert into tx values " + correction("acct-1"));
+                drainWalQueue();
+                Assert.assertTrue(job.processNotificationsForTest());
+
+                Assert.assertNotNull("the first keyed repair must be parked", first.getSuspendedRepair());
+                Assert.assertNotNull("the second keyed repair must be parked", second.getSuspendedRepair());
+                Assert.assertNotNull(first.getSuspendedRepair().getKeyedReplay());
+                Assert.assertNotNull(second.getSuspendedRepair().getKeyedReplay());
+                Assert.assertNotSame(
+                        "parked views must not share worker-global keyed replay state",
+                        first.getSuspendedRepair().getKeyedReplay(),
+                        second.getSuspendedRepair().getKeyedReplay()
+                );
+            }
+
+            Assert.assertNull("worker close must discard the first parked repair", first.getSuspendedRepair());
+            Assert.assertNull("worker close must discard the second parked repair", second.getSuspendedRepair());
+            Assert.assertEquals("worker close must release parked readers", 0, engine.getBusyReaderCount());
+            Assert.assertEquals("worker close must release parked writers", 0, engine.getBusyWriterCount());
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                assertViewMatchesRecompute("lv2");
             }
         });
     }
@@ -539,6 +614,10 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     private void assertViewMatchesRecompute() throws Exception {
+        assertViewMatchesRecompute("lv");
+    }
+
+    private void assertViewMatchesRecompute(String viewName) throws Exception {
         final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
         final String recompute = "select created_at, account_id, "
                 + "sum(amount) over (partition by account_id, bucket order by created_at "
@@ -548,11 +627,11 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 engine,
                 sqlExecutionContext,
                 "(" + recompute + ") order by 2, 1",
-                "(lv) order by 2, 1",
+                "(" + viewName + ") order by 2, 1",
                 LOG,
                 true
         );
-        assertNoRefreshFaults("lv");
+        assertNoRefreshFaults(viewName);
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {

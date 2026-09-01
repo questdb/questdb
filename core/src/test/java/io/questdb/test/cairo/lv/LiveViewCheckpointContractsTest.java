@@ -131,11 +131,6 @@ public class LiveViewCheckpointContractsTest {
         Assert.assertNotNull(HighBoundTag.valueOf("EOF"));
     }
 
-    /**
-     * The inline budgets are format constants, not tuning. Widening either one
-     * changes which live views compile to which durable layout, so it has to be a
-     * deliberate edit here rather than a number someone raised to make a state fit.
-     */
     @Test
     public void testInlineStateBudgetsAreFrozen() {
         Assert.assertEquals(64, LiveViewCheckpointContracts.MAX_INLINE_COMPONENT_STATE_BYTES);

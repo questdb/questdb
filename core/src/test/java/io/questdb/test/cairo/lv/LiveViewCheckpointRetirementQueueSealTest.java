@@ -103,11 +103,6 @@ public class LiveViewCheckpointRetirementQueueSealTest extends AbstractCairoTest
         }
     }
 
-    /**
-     * The cold path: the first publication over a directory that holds no queue
-     * yet must not open the file at all, because {@code read} gates its open on
-     * {@code exists}.
-     */
     @Test
     public void testFirstSealOpensNoRetirementQueue() throws Exception {
         final QueueOpenCounter ff = new QueueOpenCounter();
@@ -133,11 +128,6 @@ public class LiveViewCheckpointRetirementQueueSealTest extends AbstractCairoTest
         });
     }
 
-    /**
-     * The rebuild path: a queue whose checksum no longer matches is rebuilt from
-     * the freshly published segment directory. The caller's read is the one that
-     * condemns it, so the seal still opens the file once, not twice.
-     */
     @Test
     public void testSealOverACorruptQueueOpensItOnce() throws Exception {
         final QueueOpenCounter ff = new QueueOpenCounter();
@@ -181,10 +171,6 @@ public class LiveViewCheckpointRetirementQueueSealTest extends AbstractCairoTest
         });
     }
 
-    /**
-     * The steady path, and the one the seal pays on every cadence: a present,
-     * current queue must cost one open.
-     */
     @Test
     public void testSteadySealOpensTheRetirementQueueOnce() throws Exception {
         final QueueOpenCounter ff = new QueueOpenCounter();
@@ -230,11 +216,6 @@ public class LiveViewCheckpointRetirementQueueSealTest extends AbstractCairoTest
         });
     }
 
-    /**
-     * Both the steady and the rebuild path in one directory, so a single case
-     * pins that the caller's read alone drives both branches of the merge's
-     * seed decision.
-     */
     @Test
     public void testSteadyAndRebuiltSealsEachOpenTheQueueOnce() throws Exception {
         final QueueOpenCounter ff = new QueueOpenCounter();

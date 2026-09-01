@@ -137,31 +137,6 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         setCurrentMicros(0);
     }
 
-    /**
-     * A repair over a NON-MONOTONE anchor has to leave the view holding what a fresh view
-     * carrying the same definition over the same base builds forward. The oracle here is a
-     * second LIVE VIEW rather than a batch window, so it answers under the view's own
-     * semantics and no reading of the clause can excuse a difference.
-     * <p>
-     * {@code ANCHOR DAILY '02:30' 'Europe/Berlin'} floors 2026-10-25T01:00Z back onto
-     * {@code D = 2026-10-24T00:30Z}, the anchor the rows below 2026-10-25T00:30Z carry -
-     * the fall-back repeats 02:30 local, and the instants between the two 02:30s read
-     * 02:00..02:29 CET, below the day's own anchor. See
-     * {@link #testANonMonotoneZoneAnchorResetsPerRunNotPerBucket()} for the full sequence.
-     * <p>
-     * This fixture leaves the intervening {@code [00:30Z, 01:00Z)} window EMPTY, so every
-     * row the view holds carries {@code D} and the four of them are one run under the reset
-     * predicate - the forward pass numbers them 1, 2, 3, 4. The late row at
-     * {@code 2026-10-24T21:00Z} then lands inside that same run, and the repair must
-     * renumber all of it.
-     * <p>
-     * The bound the repair takes comes from
-     * {@code LiveViewCheckpointAnchorPlan.getSegmentEndExclusive}, and that is a BUCKET
-     * boundary: it advances the local grid by one period and converts back, which lands on
-     * {@code 2026-10-25T00:30Z} whether or not any row sits there. Before the end-side
-     * non-monotone refusal this class of shape had, that bound cut the run in half and left
-     * the {@code 01:00Z} and {@code 01:29Z} rows holding their pre-correction 2 and 3.
-     */
     @Test
     public void testANonMonotoneZoneAnchorRepairMatchesAFreshView() throws Exception {
         assertMemoryLeak(() -> {
@@ -240,54 +215,6 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
         });
     }
 
-    /**
-     * The reset predicate over a NON-MONOTONE anchor, which is the only shape where
-     * "one maximal run of rows sharing an anchor value" and "one bucket per anchor value"
-     * are different partitions of the same rows.
-     * <p>
-     * {@code ANCHOR DAILY '02:30' 'Europe/Berlin'} desugars to {@code timestamp_floor_utc},
-     * and Berlin repeats 02:30 local on 2026-10-25. The runtime anchor therefore runs
-     * <b>backwards</b> in the middle of that day, which the first assertion below reads
-     * straight off the desugared function:
-     * <ul>
-     *     <li>{@code 2026-10-25T00:29:59Z} is 02:29 CEST, below the day's own 02:30, so it
-     *     floors to the PREVIOUS civil day - {@code D = 2026-10-24T00:30Z}.</li>
-     *     <li>{@code 00:30Z} is 02:30 CEST exactly and opens {@code E1 = 2026-10-25T00:30Z}.</li>
-     *     <li>{@code 01:00Z} is the transition instant: Berlin falls back to CET and the row
-     *     reads 02:00 local, which is below 02:30 again, so it floors back to {@code D} -
-     *     nearly a full day BELOW the anchor of the row before it.</li>
-     *     <li>{@code 01:30Z} is 02:30 CET, the second 02:30 local of the day, and opens
-     *     {@code E2 = 2026-10-25T01:30Z}.</li>
-     * </ul>
-     * So the anchor sequence over ascending timestamps is {@code D, D, E1, E1, D, D, E2, E2}.
-     * <p>
-     * {@code LiveViewWindow.processRow} resets on any CHANGE of the anchor value, not on an
-     * increase, so it opens a second, independent {@code D} run at {@code 01:00Z}. That is the
-     * defined semantics of the clause - see the class javadoc of {@code LiveViewWindow}, whose
-     * per-row flow resets "if the anchor changed" - and it is the only semantics a streaming
-     * refresh that reads each base row once can implement. The alternative reading, one bucket
-     * per anchor VALUE, would have the {@code 01:00Z} row continue the run that ended nearly a
-     * day earlier, which needs the whole day resident.
-     * <p>
-     * The two readings are pinned side by side here: the third assertion is the same query
-     * written as a batch window over {@code PARTITION BY sym, <the same floor>}, which is the
-     * recompute oracle every monotone-anchor test in this package uses, and it reports 3 and 4
-     * where the view reports 1 and 2. That oracle is exact only while the anchor is monotone,
-     * and this case is the boundary of its validity rather than a defect in either side.
-     * <p>
-     * The last two phases are the claim that does bind the runtime: whatever the view answers
-     * on the forward path, an out-of-order correction must not change any other row's answer.
-     * One correction lands inside {@code E1} and one inside the FIRST {@code D} run. Both runs
-     * here are bounded by rows carrying a different anchor, so each correction may move only
-     * its own run and the {@code 01:00Z} row's count stays 1 across both.
-     * <p>
-     * That is a statement about these rows, not about the repair's bound. The bound
-     * {@code LiveViewCheckpointAnchorPlan} computes is a BUCKET boundary rather than the next
-     * run's start, and the two coincide here only because this fixture carries rows at
-     * {@code 00:30Z} and {@code 00:59Z}. Empty that window and the bound cuts a run in half -
-     * see {@link #testANonMonotoneZoneAnchorRepairMatchesAFreshView()}, which is that shape and
-     * the reason the plan now refuses a finite end for it.
-     */
     @Test
     public void testANonMonotoneZoneAnchorResetsPerRunNotPerBucket() throws Exception {
         assertMemoryLeak(() -> {

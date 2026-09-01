@@ -191,17 +191,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
-    /**
-     * The cadence stamp the anchor keeps is what every window function's own dirty set
-     * now rides on, so a repeat row must cost the residual functions no key serialization
-     * and no probe of their own either. What the assertions read is each function's set
-     * rather than the anchor's - {@link #createUnfusedView} is what makes those sets the
-     * live ones, because a fused group takes its key domain from the anchor entry instead.
-     * <p>
-     * The restart is the half that matters: a set that skipped a key its rows moved still
-     * answers correctly out of memory, and only the root the next incremental seal
-     * publishes shows the omission.
-     */
     @Test
     public void testARepeatedKeyEntersEveryFunctionDirtySetOncePerCadence() throws Exception {
         // Four rows per boundary, as in testARepeatedKeyEntersTheDirtySetOncePerCadence, so
@@ -243,15 +232,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
-    /**
-     * The one row inside a cadence that moves a function's state the most - the anchor
-     * cross, which resets the accumulator to the new bucket - is also a row whose key was
-     * already named earlier in that cadence, so it makes no mark of its own. The mark the
-     * cadence's first row made has to still stand for it.
-     * <p>
-     * The restart is what holds it: the durable image has to be the post-cross
-     * accumulator, and a key the seal never froze would come back as the pre-cross one.
-     */
     @Test
     public void testAnAnchorCrossAfterTheCadenceMarkStillNamesTheKey() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
@@ -297,14 +277,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
-    /**
-     * Eviction and revival inside one cadence, read off the residual function's own dirty
-     * set rather than the anchor's. The sweep takes the key out of the anchor map, so the
-     * revived row arrives as a new partition and raises the cadence flag again - which is
-     * what turns the eviction marker the sweep left in the function's set back into an
-     * upsert. A flag that stayed down would leave the seal emitting a removal for a key
-     * the runtime holds.
-     */
     @Test
     public void testASweptResidualKeyRevivedInOneCadenceIsNamedAgain() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
@@ -352,12 +324,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
-    /**
-     * {@link #testTheCadenceCounterWrappingStillNamesEveryTouchedKey} over the residual
-     * functions. The turn is the one arm that can leave a stamp matching a cadence no
-     * dirty set holds, and the stamp now gates F + 1 sets rather than the anchor's alone,
-     * so a missed re-raise takes every one of them out at once.
-     */
     @Test
     public void testTheCadenceCounterWrappingStillNamesEveryFunctionKey() throws Exception {
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 4);
@@ -395,18 +361,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
-    /**
-     * The stamp is the whole of the flag's memory, so what happens between the anchor's
-     * own mark and the last function's is the case the ordering exists for: a function
-     * allocates its dirty set on first use through the per-view tracker, and that
-     * allocation throws on a breach of the refresh memory limit.
-     * <p>
-     * A stamp written ahead of the loop would have the retry read the row as marked,
-     * leaving the function that threw naming one key fewer than its rows moved - a set the
-     * seal cannot tell from a complete one. Driving {@link LiveViewWindow#processRow}
-     * directly is what puts a throw exactly there; a compiled view has no supported way to
-     * fail one function's mark and not the other's.
-     */
     @Test
     public void testAFailedFunctionMarkLeavesTheCadenceStampUnwritten() throws Exception {
         assertMemoryLeak(() -> {
@@ -455,25 +409,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
-    /**
-     * The stamp is a value slot, and a value slot is only what the last writer left in it.
-     * A key that arrives new lands on whatever heap bytes its entry's offset held before -
-     * OrderedMap.clear() rewinds the append pointer and zeroes the offsets, and leaves the
-     * heap it wrote the entries into exactly as it found it - so the creating row has to
-     * put the slot somewhere no cadence matches before anything that can throw runs.
-     * <p>
-     * Leave it, and the retry after a failed mark reads those bytes rather than
-     * {@code isNew()}: they say "already dirty in this cadence", the flag comes back
-     * false, and the function that threw finishes the cadence never having named the key.
-     * The seal that follows freezes the keys the dirty sets name and leaves the root's
-     * stale image of that one standing.
-     * <p>
-     * The head-miss replay ({@code LiveViewRefreshJob.clearWindowState}) is what empties
-     * the anchor map over a live heap here, and the cadence counter is a SHORT, so it
-     * comes back around to a value the abandoned bytes still carry -
-     * {@link LiveViewWindow#setCheckpointDirtyEpoch(short)} stands in for the 32766 seals
-     * that turn it over.
-     */
     @Test
     public void testARetryFindsANewKeyUnmarkedWhenItsStampSlotHeldTheLiveCadence() throws Exception {
         assertMemoryLeak(() -> {
@@ -553,19 +488,6 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
         });
     }
 
-    /**
-     * The window's own dirty mark is the first thing after {@code createValue()} that can
-     * throw: it builds the dirty set lazily under the per-view tracker, so a breach of
-     * cairo.live.view.refresh.memory.limit.bytes raises on that allocation with the anchor
-     * entry already published. Both flag slots have to stand by then, or the entry the
-     * retry finds keeps whatever the heap region carried - a tombstone byte that has
-     * {@code snapshot()} skip a live partition and then refuse the payload whose count it
-     * no longer matches, and a stamp that has the retry read the key as marked.
-     * <p>
-     * This is what separates seeding the slots ahead of the mark from seeding them beside
-     * the reset that follows it. The map arrives pre-poisoned for the same reason the case
-     * above poisons one: a fresh mapping reads as zero and would pass either way.
-     */
     @Test
     public void testAThrownWindowMarkLeavesNoStaleFlagOnTheKeyItCreated() throws Exception {
         assertMemoryLeak(() -> {
