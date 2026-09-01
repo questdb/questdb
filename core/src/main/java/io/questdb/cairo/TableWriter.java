@@ -13683,12 +13683,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
+        // Do not remove a composite partition REWRITE's staging directory - PartitionCompactionScanJob
+        // builds one off a reader snapshot and swapCompactedCompositePartition renames or deletes it,
+        // so one standing here is work in flight, not a stray. Its name carries a writer txn after the
+        // marker rather than a partition name txn, which is why it must be skipped before the parse
+        // below rather than left to fail it.
         int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, pathSize, pUtf8NameZ, type, utf8Sink);
         if (checkedType != Files.DT_UNKNOWN &&
                 !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
                 !CairoKeywords.isSeq(pUtf8NameZ) &&
+                !Utf8s.containsAscii(utf8Sink, COMPACTING_DIR_MARKER) &&
                 !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
         ) {
             try {
