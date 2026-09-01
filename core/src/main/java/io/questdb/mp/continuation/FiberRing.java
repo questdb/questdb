@@ -45,6 +45,7 @@ final class FiberRing {
         if (initialCapacity < 1 || initialCapacity > MAX_CAPACITY) {
             throw new IllegalArgumentException("initialCapacity is out of range [value=" + initialCapacity + ']');
         }
+
         queue = ConcurrentQueue.createConcurrentObjectQueue(
                 Numbers.ceilPow2(Math.min(MAX_EAGER_CAPACITY, Math.max(MIN_CAPACITY, initialCapacity)))
         );
