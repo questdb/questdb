@@ -127,7 +127,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private int lastSymbolCount = -1;
         private StaticSymbolTable lastSymbolTable;
         private long lastSymbolTableGeneration = StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION;
-        private boolean stateInherited;
+        private boolean isStateInherited;
 
         public MatchStaticSymbolTableConstPatternFunction(SymbolFunction symbolFun, Matcher matcher) {
             this.symbolFun = symbolFun;
@@ -164,8 +164,8 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
-                stateInherited = false;
+            if (isStateInherited) {
+                isStateInherited = false;
             } else {
                 final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
                 assert symbolTable != null;
@@ -200,7 +200,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 target.symbolKeys.clear();
                 target.symbolKeys.addAll(symbolKeys);
                 target.initialized = initialized;
-                target.stateInherited = true;
+                target.isStateInherited = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
@@ -221,7 +221,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
         private StaticSymbolTable lastSymbolTable;
         private long lastSymbolTableGeneration = StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION;
         private Matcher matcher;
-        private boolean stateInherited;
+        private boolean isStateInherited;
 
         public MatchStaticSymbolTableRuntimeConstPatternFunction(SymbolFunction symbolFun, Function pattern, int patternPosition) {
             this.symbolFun = symbolFun;
@@ -261,24 +261,24 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
             // own source doubles as the last-value memo: recompile only when the text changed, and a
             // changed text forces the key set rebuild below no matter what the dictionary says.
             final CharSequence regex = pattern.getStrA(null);
-            final boolean patternChanged;
+            final boolean isPatternChanged;
             if (regex == null) {
-                patternChanged = matcher != null;
+                isPatternChanged = matcher != null;
                 matcher = null;
             } else if (matcher == null || !Chars.equals(matcher.pattern().pattern(), regex)) {
                 matcher = RegexUtils.createMatcher(pattern, patternPosition);
-                patternChanged = true;
+                isPatternChanged = true;
             } else {
-                patternChanged = false;
+                isPatternChanged = false;
             }
-            if (stateInherited) {
-                stateInherited = false;
+            if (isStateInherited) {
+                isStateInherited = false;
             } else {
                 final StaticSymbolTable symbolTable = symbolFun.getStaticSymbolTable();
                 assert symbolTable != null;
                 final int symbolCount = symbolTable.getSymbolCount();
                 final long symbolTableGeneration = symbolTable.getSymbolTableGeneration();
-                if (patternChanged
+                if (isPatternChanged
                         || symbolTableGeneration == StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION
                         || symbolTable != lastSymbolTable
                         || symbolCount != lastSymbolCount
@@ -315,7 +315,7 @@ public class MatchSymbolFunctionFactory implements FunctionFactory {
                 target.symbolKeys.clear();
                 target.symbolKeys.addAll(symbolKeys);
                 target.initialized = initialized;
-                target.stateInherited = true;
+                target.isStateInherited = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }

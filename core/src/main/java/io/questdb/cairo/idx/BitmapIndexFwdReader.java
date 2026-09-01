@@ -58,6 +58,9 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
     private final ObjList<Cursor> freeCursors = new ObjList<>();
     private final ObjList<NullCursor> freeNullCursors = new ObjList<>();
     private final RangeCountSeeker rangeCountSeeker = new RangeCountSeeker();
+    // What the most recent countMatchesInRange() call spent, in block hops. Exhaustion charges the
+    // whole budget the call was given. Same single-owner discipline as the seeker instance itself.
+    private int lastRangeCountBlockHops;
 
     public BitmapIndexFwdReader(
             CairoConfiguration configuration,
@@ -117,6 +120,7 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
      * hop budget ran out
      */
     public long countMatchesInRange(int key, long minValue, long maxValue, int maxBlockHops) {
+        lastRangeCountBlockHops = 0;
         if (key < 0 || minValue > maxValue) {
             return 0;
         }
@@ -180,9 +184,11 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 maxBlockHops
         );
         if (hopsBelowMin == BitmapIndexUtils.BLOCK_HOP_BUDGET_EXHAUSTED) {
+            lastRangeCountBlockHops = maxBlockHops;
             countBlockHops(maxBlockHops);
             return AbstractPostingIndexReader.ESTIMATE_REJECT;
         }
+        lastRangeCountBlockHops = hopsBelowMin;
         countBlockHops(hopsBelowMin);
         final long countBelowMin = rangeCountSeeker.count;
         final int hopsAtOrBelowMax = BitmapIndexUtils.seekValueBlockRTL(
@@ -195,15 +201,27 @@ public class BitmapIndexFwdReader extends AbstractBitmapIndexReader {
                 maxBlockHops - hopsBelowMin
         );
         if (hopsAtOrBelowMax == BitmapIndexUtils.BLOCK_HOP_BUDGET_EXHAUSTED) {
+            lastRangeCountBlockHops = maxBlockHops;
             countBlockHops(maxBlockHops - hopsBelowMin);
             return AbstractPostingIndexReader.ESTIMATE_REJECT;
         }
+        lastRangeCountBlockHops = hopsBelowMin + hopsAtOrBelowMax;
         countBlockHops(hopsAtOrBelowMax);
         final long countAtOrBelowMax = rangeCountSeeker.count;
         // seekValueBlockLTR reports the whole value count when the posting list runs past the mapped
         // extent of the value file, which is its way of saying it found nothing at or above
         // minValue; the cursor degrades to empty in the same case, so clamp instead of going negative.
         return total + Math.max(0, countAtOrBelowMax - countBelowMin);
+    }
+
+    /**
+     * How many block hops the most recent {@link #countMatchesInRange(int, long, long, int)} call
+     * spent, including a call that exhausted its budget, which charges the whole budget it was
+     * given. A caller sharing one hop budget across many counts subtracts this after each call.
+     * Single-owner discipline applies, exactly as for the count itself.
+     */
+    public int getLastRangeCountBlockHops() {
+        return lastRangeCountBlockHops;
     }
 
     @Override

@@ -226,8 +226,15 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     private final FilteredRecordCursor indexRouteFilterCursor;
     private final int indexReaderColumnIndex;
     private final boolean isNegated;
-    // Applied on two independent axes - frames walked, and key probes within one frame. See the
-    // class javadoc for the measurements behind the frame cap.
+    // Applied on three axes - frames walked, key probes within one frame, and one bitmap
+    // block-hop budget shared across the WHOLE estimate. The first two are per-frame by design:
+    // they bound cheap, constant-cost work (index reader opens, key entry reads), and resetting
+    // them per frame cannot multiply into more than frames x keys such probes. Block hops are the
+    // expensive axis - each is a random read into the mapped value file, and one clipped range on
+    // a hot key can spend the whole per-call cap - so their budget must NOT reset per frame or per
+    // key: with all three factors below their individual caps, a fresh hop budget per (frame, key)
+    // pair multiplies to frames x keys x hops reads per open, which measured ~19x slower than the
+    // scan it was deciding against. See the class javadoc for the measurements behind the frame cap.
     private final int maxEstimateProbes;
     // Which of the two admission thresholds applies. The route the estimate admits is fixed at
     // construction, not per open: a covering delegate always wins the selective branch, and without
@@ -659,6 +666,14 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         long selectedRows = 0;
         int frames = 0;
         int traversedIndexEntries = 0;
+        // One block-hop budget for the whole open, shared across every (frame, key) count below.
+        // Admission cost is thereby O(threshold) block reads per open regardless of how many frames
+        // and keys the caps admit; a shape that exhausts it rejects to the scan - which is also the
+        // right routing, because the execution cursor pays the same per-pair seeks the counts pay
+        // (Cursor.of() walks the same chains), so an unaffordable estimate predicts an unaffordable
+        // index route. Counts that cover a key's whole chain in a frame spend zero hops (both seeks
+        // break on the first block), so full-range shapes never touch this budget.
+        int remainingBlockHops = maxEstimateProbes;
         PartitionFrame frame;
         while ((frame = frameCursor.next()) != null) {
             if (isEstimatorCounterEnabled) {
@@ -679,9 +694,10 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 selectedRows += rowHiExclusive - rowLo;
                 maxIndexRows = Math.max(1, selectedRows / maxRowShareDivisor);
             }
-            // Reset per frame: the key cap bounds what one frame may cost, and the frame cap above
-            // bounds how many frames may cost that. Spending one counter across both multiplies the
-            // two axes together, which is what let partition count alone exhaust the budget.
+            // Reset per frame, deliberately - unlike remainingBlockHops above. This counter bounds
+            // cheap constant-cost key probes; sharing it across frames would let partition count
+            // alone exhaust it and reject shapes whose probes are all trivial. The expensive axis,
+            // block hops, has the opposite need and is bounded estimate-wide.
             int keyProbes = 0;
             for (int i = 0, n = effectiveKeys.size(); i < n; i++) {
                 if (++keyProbes > maxEstimateProbes) {
@@ -708,9 +724,11 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                     // index entries up to the whole maxIndexRows budget before rejecting the route.
                     // Those seeks hop a linked chain, so a frame narrowed to the middle of a hot
                     // key's posting list makes them cross the whole chain -- cost that grows with the
-                    // partition while the frame stays put. The probe budget caps the hops, and a key
-                    // that runs it out rejects the route below rather than paying the crossing.
-                    count = bitmap.countMatchesInRange(indexKey, rowLo, callerHiInclusive, maxEstimateProbes);
+                    // partition while the frame stays put. The shared budget caps the hops across
+                    // the whole estimate, and a key that runs it out rejects the route below rather
+                    // than paying the crossing.
+                    count = bitmap.countMatchesInRange(indexKey, rowLo, callerHiInclusive, remainingBlockHops);
+                    remainingBlockHops -= bitmap.getLastRangeCountBlockHops();
                 } else if (reader instanceof IndexFwdNullReader nullReader) {
                     count = nullReader.estimateMatches(indexKey, rowLo, callerHiInclusive);
                 }

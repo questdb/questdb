@@ -1555,6 +1555,103 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
+    // One hop budget must bound the WHOLE estimate: with a fresh per-(frame, key) budget, frames,
+    // keys and chain depth each below their individual caps still multiplied into frames x keys x
+    // hops block reads per open -- 1,216 on this shape, ~250k on 64 frames x 64 keys x 61 hops --
+    // all spent before admitting a route whose execution would pay the same seeks again.
+    @Test
+    public void testEstimatorSharesBlockHopBudgetAcrossFramesAndKeys() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD, "100");
+        assertMemoryLeak(() -> {
+            // 8 daily partitions. Per day: 8 hot keys 'm0'..'m7' x 5_120 rows each (about 20 value
+            // blocks per posting chain at the default block capacity of 256) early in the day, then
+            // a tail second holding 100 'zz' and 5_000 'qq' rows, plus 50 rare 'r1' rows.
+            execute("CREATE TABLE th (sym SYMBOL INDEX, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            for (int d = 0; d < 8; d++) {
+                final long base = d * 86_400_000_000L;
+                execute("INSERT INTO th SELECT 'm' || (x % 8), x, timestamp_sequence(" + base + ", 1_000) FROM long_sequence(40_960)");
+                execute("INSERT INTO th SELECT 'zz', x, timestamp_sequence(" + (base + 86_340_000_000L) + ", 1_000) FROM long_sequence(100)");
+                execute("INSERT INTO th SELECT 'qq', x, timestamp_sequence(" + (base + 86_340_100_000L) + ", 100) FROM long_sequence(5_000)");
+                execute("INSERT INTO th SELECT 'r1', x, timestamp_sequence(" + (base + 3_600_000_000L) + ", 1_000) FROM long_sequence(50)");
+            }
+
+            // One 1s window at 23:59:00 of each day: 8 clipped frames, none holding an 'm%' row, so
+            // every (frame, m-key) count must cross ~19 blocks of chain below the window. 64 pairs
+            // want ~1_216 hops; the shared budget allows at most 100 before rejecting to the scan.
+            final String tail = " AND ts IN '1970-01-01T23:59:00.000000Z;1s;1d;8'";
+            final String broadClipped = "SELECT sym, v FROM th WHERE sym LIKE 'm%'" + tail + " ORDER BY v";
+            final String cheapClipped = "SELECT sym, v FROM th WHERE sym LIKE 'z%'" + tail + " ORDER BY v";
+            final String fullRange = "SELECT sym, v FROM th WHERE sym LIKE 'r%' ORDER BY v";
+
+            AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+            SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            BitmapIndexFwdReader.resetTestCounters();
+            AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = true;
+            BitmapIndexFwdReader.isBlockHopCounterEnabled = true;
+            try {
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(th) */ sym, v FROM th WHERE sym LIKE 'm%'" + tail + " ORDER BY v"),
+                        select(broadClipped)
+                );
+                Assert.assertTrue(
+                        "the estimate must have run",
+                        AdaptiveSymbolPatternRecordCursorFactory.testEstimatorFramesWalked.get() > 0
+                );
+                Assert.assertTrue(
+                        "one shared budget of 100 must bound the whole open, got "
+                                + BitmapIndexFwdReader.testRangeCountBlockHops.get(),
+                        BitmapIndexFwdReader.testRangeCountBlockHops.get() <= 100
+                );
+                Assert.assertTrue(
+                        "an estimate the budget cannot afford must reject to the scan",
+                        SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.get() > 0
+                );
+                Assert.assertEquals(
+                        "the index route must not fire after budget exhaustion",
+                        0,
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get()
+                );
+
+                // The budget must not reject clipped shapes whose counts are cheap: 'z%' probes one
+                // key whose chain fits one block, so all 8 frames together spend ~0 hops and match
+                // 100 of 5_150 selected rows per frame -- well inside the admitted share.
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(th) */ sym, v FROM th WHERE sym LIKE 'z%'" + tail + " ORDER BY v"),
+                        select(cheapClipped)
+                );
+                Assert.assertTrue(
+                        "a cheap clipped shape must keep the index route",
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+                );
+
+                // Nor full-range selective shapes: whole-chain counts spend zero hops, so the shared
+                // budget stays untouched however many partitions the walk visits.
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+                BitmapIndexFwdReader.resetTestCounters();
+                TestUtils.assertEquals(
+                        select("SELECT /*+ no_symbol_pattern_index(th) */ sym, v FROM th WHERE sym LIKE 'r%' ORDER BY v"),
+                        select(fullRange)
+                );
+                Assert.assertTrue(
+                        "a selective full-range pattern must keep the index route",
+                        SymbolPatternIndexRecordCursorFactory.testIndexInvocations.get() > 0
+                );
+                Assert.assertEquals(
+                        "full-range counts must not spend block hops",
+                        0,
+                        BitmapIndexFwdReader.testRangeCountBlockHops.get()
+                );
+            } finally {
+                BitmapIndexFwdReader.isBlockHopCounterEnabled = false;
+                BitmapIndexFwdReader.resetTestCounters();
+                AdaptiveSymbolPatternRecordCursorFactory.isEstimatorCounterEnabled = false;
+                AdaptiveSymbolPatternRecordCursorFactory.resetTestCounters();
+                SymbolPatternIndexRecordCursorFactory.resetTestCounters();
+            }
+        });
+    }
+
     // Probe work must scale with the selected range, not the key's complete posting list.
     @Test
     public void testEstimatorBoundsBitmapBlockHops() throws Exception {
