@@ -105,6 +105,7 @@ import io.questdb.test.cairo.Overrides;
 import io.questdb.test.cairo.TableModel;
 import io.questdb.test.griffin.engine.join.AsOfJoinTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.CompositePartitionRandomiser;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -149,6 +150,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     protected static String inputRoot = null;
     protected static String inputWorkRoot = null;
     protected static IOURingFacade ioURingFacade = IOURingFacadeImpl.INSTANCE;
+    protected static boolean isCompositePartitionRandomisationEnabled;
     protected static MessageBus messageBus;
     protected static QuestDBTestNode node1;
     protected static ObjList<QuestDBTestNode> nodes = new ObjList<>();
@@ -425,6 +427,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
     public void setUp() {
         super.setUp();
         SharedRandom.RANDOM.set(new Rnd());
+        isCompositePartitionRandomisationEnabled = false;
         engine.getViewStateStore().clear();
         forEachNode(QuestDBTestNode::setUpCairo);
         engine.resetNameRegistryMemory();
@@ -811,16 +814,40 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
+    /**
+     * Gives every WAL table this test creates a genuine composite partition, with no change
+     * to the table's logical content - see {@link CompositePartitionRandomiser}. Also turns
+     * on the two settings the round-trip needs: WAL tables, because REPLACE RANGE only
+     * exists on that path, and merge-append, because that is what leaves a cut range as
+     * pieces rather than a whole-partition rewrite. Call it from {@code setUp()}, after
+     * {@code super.setUp()}.
+     */
+    protected static void enableCompositePartitionRandomisation() {
+        isCompositePartitionRandomisationEnabled = true;
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+    }
+
+    /** Flips a 50% coin over {@link #enableCompositePartitionRandomisation()}. */
+    protected static void enableCompositePartitionRandomisation(Rnd rnd) {
+        if (rnd.nextBoolean()) {
+            enableCompositePartitionRandomisation();
+        }
+    }
+
     protected static void execute(CharSequence sqlText) throws SqlException {
         engine.execute(sqlText, sqlExecutionContext);
+        randomiseCompositePartitions(sqlExecutionContext, sqlText);
     }
 
     protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
         engine.execute(sqlText, sqlExecutionContext);
+        randomiseCompositePartitions(sqlExecutionContext, sqlText);
     }
 
     protected static void execute(CharSequence sqlText, SqlExecutionContext sqlExecutionContext, @Nullable SCSequence eventSubSeq) throws SqlException {
         engine.execute(sqlText, sqlExecutionContext, eventSubSeq);
+        randomiseCompositePartitions(sqlExecutionContext, sqlText);
     }
 
     protected static void execute(SqlCompiler compiler, CharSequence ddl) throws SqlException {
@@ -829,6 +856,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
 
     protected static void execute(SqlCompiler compiler, CharSequence sqlText, SqlExecutionContext sqlExecutionContext) throws SqlException {
         CairoEngine.execute(compiler, sqlText, sqlExecutionContext, null);
+        randomiseCompositePartitions(sqlExecutionContext, sqlText);
     }
 
     protected static void execute(CharSequence ddlSql, SqlExecutionContext sqlExecutionContext, boolean fullFatJoins) throws SqlException {
@@ -920,6 +948,12 @@ public abstract class AbstractCairoTest extends AbstractTest {
             } finally {
                 compiler.setFullFatJoins(false);
             }
+        }
+    }
+
+    protected static void randomiseCompositePartitions(SqlExecutionContext executionContext, CharSequence sqlText) {
+        if (isCompositePartitionRandomisationEnabled) {
+            CompositePartitionRandomiser.apply(engine, executionContext, sqlText);
         }
     }
 

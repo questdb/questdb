@@ -114,6 +114,7 @@ public class MatViewTest extends AbstractCairoTest {
             setProperty(PropertyKey.CAIRO_MAT_VIEW_ROWS_PER_QUERY_ESTIMATE, rowsPerQuery);
         }
         setProperty(PropertyKey.CAIRO_INACTIVE_READER_MAX_OPEN_PARTITIONS, 1);
+        enableCompositePartitionRandomisation(generateRandom(LOG));
     }
 
     @Test

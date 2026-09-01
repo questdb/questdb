@@ -41,6 +41,7 @@ import org.junit.Test;
 
 public class HorizonJoinTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(HorizonJoinTest.class);
+    private final boolean isCompositePartitionEnabled;
     private final TestTimestampType leftTableTimestampType;
     private final boolean parallelHorizonJoinEnabled;
     private final TestTimestampType rightTableTimestampType;
@@ -50,6 +51,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
         this.leftTableTimestampType = TestUtils.getTimestampType(rnd);
         this.rightTableTimestampType = TestUtils.getTimestampType(rnd);
         this.parallelHorizonJoinEnabled = rnd.nextBoolean();
+        this.isCompositePartitionEnabled = rnd.nextBoolean();
     }
 
     @Override
@@ -57,6 +59,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(parallelHorizonJoinEnabled));
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+        if (isCompositePartitionEnabled) {
+            enableCompositePartitionRandomisation();
+        }
     }
 
     @Test

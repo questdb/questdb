@@ -80,6 +80,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         includePrevailing = rnd.nextBoolean();
         leftConvertParquet = rnd.nextBoolean();
         rightConvertParquet = rnd.nextBoolean();
+        enableCompositePartitionRandomisation(rnd);
     }
 
     @Test
