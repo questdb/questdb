@@ -3572,20 +3572,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // this top to zero, including absent (-1), partial and
                     // full-top (>= partitionSize) source states.
                     assert columnTop == -1 || columnTop > 0;
-                    // A REBUILD of a COVERING index reads the covered columns' tops and name-txns
-                    // through the by-timestamp accessors (configureCoveringIfNeeded), i.e. at cellKey
-                    // 0. Refuse loudly for a composite cell rather than seal an index built from the
-                    // wrong cell's covered data -- the same call this file already refuses for a
-                    // covering POSTING reseal on a composite parquet partition.
-                    if (isRoutedComposite()) {
-                        final IntList covering = metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
-                        if (covering != null && covering.size() > 0) {
-                            throw CairoException.critical(0)
-                                    .put("composite partitioning does not yet support rebuilding a COVERING index during a parquet rewrite [table=")
-                                    .put(tableToken.getTableName())
-                                    .put(", column=").put(metadata.getColumnName(columnIndex)).put(']');
-                        }
-                    }
                     parquetRewriteColumnIndexes.add(columnIndex);
                 }
             }
@@ -8082,6 +8068,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void cleanupMaterialisedCoveredColumnTempFiles(
             IntList coveringColumnIndices,
             long partitionTimestamp,
+            // COMPOSITE: the cell whose temp files are removed -- the name txn they were written under
+            // comes from `_cv` at (timestamp, cellKey, column). 0 for a plain table.
+            int cellKey,
             int plen
     ) {
         for (int slot = 0, n = coveringColumnIndices.size(); slot < n; slot++) {
@@ -8091,7 +8080,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             final int columnType = metadata.getColumnType(tableColIdx);
             final CharSequence colName = metadata.getColumnName(tableColIdx);
-            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, tableColIdx);
             ff.removeQuiet(dFile(path.trimTo(plen), colName, colNameTxn));
             if (ColumnType.isVarSize(columnType)) {
                 ff.removeQuiet(iFile(path.trimTo(plen), colName, colNameTxn));
@@ -8527,6 +8516,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolColumnIndexer indexer,
             IntList coveringColumnIndices,
             long partitionTimestamp,
+            // COMPOSITE: the cell whose covered columns are being inlined; `_cv` is keyed by
+            // (timestamp, cellKey, column). 0 for a plain table.
+            int cellKey,
             ObjList<MemoryMARW> covMmaps,
             boolean normalizeColumnTops
     ) {
@@ -8556,11 +8548,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
             coveringAddrs.setQuick(slot, dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
             coveringAuxAddrs.setQuick(slot, auxMem != null && auxMem.isOpen() ? auxMem.addressOf(0) : 0);
-            coveringTops.add(normalizeColumnTops ? 0 : columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringTops.add(normalizeColumnTops ? 0 : columnVersionWriter.getColumnTopQuick(partitionTimestamp, cellKey, covCol));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covCol);
             coveringTypes.add(covType);
-            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
+            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, covCol));
         }
         indexer.configureCovering(
                 coveringAddrs, coveringAuxAddrs, coveringTops, coveringShifts,
@@ -8575,10 +8567,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
-        configureCoveringIfNeeded(indexer.getWriter(), columnIndex, partitionTimestamp);
+        configureCoveringIfNeeded(indexer.getWriter(), columnIndex, partitionTimestamp, 0);
+    }
+
+    private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp, int cellKey) {
+        configureCoveringIfNeeded(indexer.getWriter(), columnIndex, partitionTimestamp, cellKey);
     }
 
     private void configureCoveringIfNeeded(IndexWriter indexer, int columnIndex, long partitionTimestamp) {
+        configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp, 0);
+    }
+
+    /**
+     * Cell-scoped covering configuration. A covered column's top and name txn live in `_cv`, which is
+     * keyed by (timestamp, cellKey, column) -- so a cellKey-0 read hands the indexer ANOTHER cell's
+     * covered data to inline, and the sealed index answers with values that belong to a sibling.
+     * {@code cellKey == 0} is what every plain-table caller passes, byte-identical to before.
+     */
+    private void configureCoveringIfNeeded(IndexWriter indexer, int columnIndex, long partitionTimestamp, int cellKey) {
         TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
         IntList coveringCols = colMeta.getCoveringColumnIndices();
         if (coveringCols == null || coveringCols.size() == 0) {
@@ -8604,8 +8610,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             int covType = metadata.getColumnType(covCol);
             coveringNames.add(metadata.getColumnName(covCol));
-            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
-            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, covCol));
+            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, cellKey, covCol));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covCol);
             coveringTypes.add(covType);
@@ -11133,7 +11139,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 if (hasCovering) {
                     includedCoveredCount = prepareCoveredColumnMmaps(
-                            coveringColumnIndices, timestamp, plen,
+                            coveringColumnIndices, timestamp, cellKey, plen,
                             parquetMetadata, partitionSize, covSlotMeta, covMmaps,
                             normalizeColumnTops);
                 }
@@ -11188,7 +11194,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Wire up covered column addresses for the seal path.
                 if (hasCovering) {
                     configureCoveringFromMmaps(
-                            indexer, coveringColumnIndices, timestamp,
+                            indexer, coveringColumnIndices, timestamp, cellKey,
                             covMmaps, normalizeColumnTops);
                 }
 
@@ -11201,7 +11207,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 Misc.freeObjListIfCloseable(covMmaps);
                 if (hasCovering) {
                     cleanupMaterialisedCoveredColumnTempFiles(
-                            coveringColumnIndices, timestamp, plen);
+                            coveringColumnIndices, timestamp, cellKey, plen);
                 }
             }
         }
@@ -13253,6 +13259,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int prepareCoveredColumnMmaps(
             IntList coveringColumnIndices,
             long partitionTimestamp,
+            // COMPOSITE: the cell whose covered columns are materialized; `_cv` is keyed by
+            // (timestamp, cellKey, column). 0 for a plain table.
+            int cellKey,
             int plen,
             ParquetMetaFileReader parquetMetadata,
             long partitionSize,
@@ -13274,7 +13283,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 covMmaps.add(null);
                 continue;
             }
-            final long coveredColTop = columnVersionWriter.getColumnTop(partitionTimestamp, tableColIdx);
+            final long coveredColTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, tableColIdx);
             if (!normalizeColumnTops && coveredColTop >= partitionSize) {
                 covSlotMeta.add(-1L);
                 covSlotMeta.add(0L);
@@ -13300,7 +13309,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int decodeType = ParquetColumnTypeConverter.chooseDecodeType(parquetColType, columnType);
             final boolean isVarSize = ColumnType.isVarSize(columnType);
             final CharSequence colName = metadata.getColumnName(tableColIdx);
-            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, tableColIdx);
 
             // Fixed-size data: total bytes are exact (rowCount * entrySize),
             // so the scratch file is pre-sized exactly and never extends.
