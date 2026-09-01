@@ -349,6 +349,15 @@ public:
     }
 };
 
+// int32_not is the scalar backend's boolean NOT (bin_not), not a bitwise complement. Every operand it
+// can receive is a truth value in {0, 1}: a comparison zeroes its destination and writes it with
+// setcc, and a BOOLEAN column holds one byte of 0 or 1. The row gate drops a row whose final value is
+// zero and keeps every other one (compiler.cpp: test mask, mask; jz next_row - cbz on aarch64), so
+// NOT has to map 1 -> 0 and 0 -> 1. A bitwise complement would map 1 -> -2, which is non-zero, i.e.
+// still true, and a NOT filter would select every row. This test used to assert ~x - a contract the
+// function never had and the backend cannot use - so it failed on master; and had the implementation
+// been the complement it asserted, it would have passed while the filter returned wrong rows.
+
 class Test_Int32Not : public TestCase
 {
 public:
@@ -381,7 +390,7 @@ public:
         int32_t expectRet = 0;
 
         resultRet = func(0);
-        expectRet = ~0;
+        expectRet = 1;
 
         result.assign_format("ret={%d}", resultRet);
         expect.assign_format("ret={%d}", expectRet);
@@ -389,15 +398,7 @@ public:
             return false;
 
         resultRet = func(1);
-        expectRet = ~1;
-
-        result.assign_format("ret={%d}", resultRet);
-        expect.assign_format("ret={%d}", expectRet);
-        if (resultRet != expectRet)
-            return false;
-
-        resultRet = func(42);
-        expectRet = ~42;
+        expectRet = 0;
 
         result.assign_format("ret={%d}", resultRet);
         expect.assign_format("ret={%d}", expectRet);
@@ -2313,6 +2314,143 @@ public:
     }
 };
 
+class Test_WideLaneInt32GuardPageLoad : public TestCase
+{
+public:
+    Test_WideLaneInt32GuardPageLoad() : TestCase("WideLaneInt32GuardPageLoad") {}
+
+    static void add(TestApp &app) { app.add(new Test_WideLaneInt32GuardPageLoad()); }
+
+    void compile(BaseCompiler &c) override
+    {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        auto *func = cc.add_func(FuncSignature::build<void, void **, int32_t *>(CallConvId::kCDecl));
+        x86::Gp data_ptr = cc.new_gp64("data_ptr");
+        x86::Gp output_ptr = cc.new_gp64("output_ptr");
+        func->set_arg(0, data_ptr);
+        func->set_arg(1, output_ptr);
+        x86::Gp unused_ptr = cc.new_gp64("unused_ptr");
+        x86::Gp input_index = cc.new_gp64("input_index");
+        cc.xor_(unused_ptr, unused_ptr);
+        cc.xor_(input_index, input_index);
+        ColumnAddressCache cache;
+        auto value = questdb::avx2::read_mem(
+                cc, data_type_t::i32, 0, data_ptr, unused_ptr, input_index, true, cache
+        );
+        cc.vmovdqu(x86::xmmword_ptr(output_ptr), value.vec().xmm());
+        cc.end_func();
+    }
+
+    bool run(void *_func, String &result, String &expect) override
+    {
+        typedef void (*Func)(void **, int32_t *);
+        Func func = ptr_as_func<Func>(_func);
+        int32_t output[4] = {};
+        const int32_t expected[4] = {-7, 0, 42, INT32_MAX};
+        // Place the four ints at the very end of a mapped page and leave the next page unmapped, so a
+        // 32-byte YMM load of a 16-byte i32 column faults instead of quietly reading whatever follows.
+        // A plain array would leave the over-read mapped and the test would pass on a broken load.
+#ifndef _WIN32
+        const long page_size = sysconf(_SC_PAGESIZE);
+        if (page_size <= 0)
+            return false;
+        void *mapping = mmap(nullptr, 2 * static_cast<size_t>(page_size), PROT_READ | PROT_WRITE,
+                             MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (mapping == MAP_FAILED)
+            return false;
+        auto *input = reinterpret_cast<int32_t *>(
+                static_cast<char *>(mapping) + page_size - sizeof(expected)
+        );
+        memcpy(input, expected, sizeof(expected));
+        if (mprotect(static_cast<char *>(mapping) + page_size, page_size, PROT_NONE) != 0)
+        {
+            munmap(mapping, 2 * static_cast<size_t>(page_size));
+            return false;
+        }
+        void *columns[] = {input};
+        func(columns, output);
+        munmap(mapping, 2 * static_cast<size_t>(page_size));
+#else
+        SYSTEM_INFO system_info;
+        GetSystemInfo(&system_info);
+        const size_t page_size = system_info.dwPageSize;
+        if (page_size < sizeof(expected))
+            return false;
+        void *mapping = VirtualAlloc(nullptr, 2 * page_size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+        if (mapping == nullptr)
+            return false;
+        auto *input = reinterpret_cast<int32_t *>(
+                static_cast<char *>(mapping) + page_size - sizeof(expected)
+        );
+        memcpy(input, expected, sizeof(expected));
+        DWORD old_protect = 0;
+        if (VirtualProtect(static_cast<char *>(mapping) + page_size, page_size, PAGE_NOACCESS, &old_protect) == 0)
+        {
+            VirtualFree(mapping, 0, MEM_RELEASE);
+            return false;
+        }
+        void *columns[] = {input};
+        func(columns, output);
+        VirtualFree(mapping, 0, MEM_RELEASE);
+#endif
+        result.assign_format("ret=[{%d}, {%d}, {%d}, {%d}]", output[0], output[1], output[2], output[3]);
+        expect.assign_format("ret=[{%d}, {%d}, {%d}, {%d}]", expected[0], expected[1], expected[2], expected[3]);
+        return memcmp(output, expected, sizeof(expected)) == 0;
+    }
+};
+
+class Test_ConstantCacheYmmIntegerTypeIdentity : public TestCase
+{
+public:
+    Test_ConstantCacheYmmIntegerTypeIdentity() : TestCase("ConstantCacheYmmIntegerTypeIdentity") {}
+
+    static void add(TestApp &app) { app.add(new Test_ConstantCacheYmmIntegerTypeIdentity()); }
+
+    void compile(BaseCompiler &c) override
+    {
+        auto &cc = dynamic_cast<x86::Compiler &>(c);
+        auto *func = cc.add_func(FuncSignature::build<void, int32_t *, int64_t *>(CallConvId::kCDecl));
+        x86::Gp i32_output = cc.new_gp64("i32_output");
+        x86::Gp i64_output = cc.new_gp64("i64_output");
+        func->set_arg(0, i32_output);
+        func->set_arg(1, i64_output);
+
+        instruction_t instructions[2] = {};
+        instructions[0].opcode = opcodes::Imm;
+        instructions[0].options = static_cast<int32_t>(data_type_t::i32);
+        instructions[0].ipayload.lo = 1;
+        instructions[1].opcode = opcodes::Imm;
+        instructions[1].options = static_cast<int32_t>(data_type_t::i64);
+        instructions[1].ipayload.lo = 1;
+
+        ConstantCacheYmm cache;
+        questdb::avx2::preload_constants_ymm(cc, instructions, 2, cache);
+        auto i32_value = questdb::avx2::read_imm(cc, instructions[0], cache);
+        auto i64_value = questdb::avx2::read_imm(cc, instructions[1], cache);
+        cc.vmovdqu(x86::xmmword_ptr(i32_output), i32_value.vec().xmm());
+        cc.vmovdqu(x86::ymmword_ptr(i64_output), i64_value.vec());
+        cc.end_func();
+    }
+
+    bool run(void *_func, String &result, String &expect) override
+    {
+        typedef void (*Func)(int32_t *, int64_t *);
+        Func func = ptr_as_func<Func>(_func);
+        int32_t i32_output[4] = {};
+        int64_t i64_output[4] = {};
+        func(i32_output, i64_output);
+
+        result.assign_format("ret=[{%d}, {%lld}]", i32_output[0], i64_output[0]);
+        expect.assign_format("ret=[{1}, {1}]");
+        for (int i = 0; i < 4; ++i)
+        {
+            if (i32_output[i] != 1 || i64_output[i] != 1)
+                return false;
+        }
+        return true;
+    }
+};
+
 void compiler_add_x86_tests(TestApp &app)
 {
     app.addT<Test_StringHeaderGuardPage>();
@@ -2345,6 +2483,8 @@ void compiler_add_x86_tests(TestApp &app)
     app.addT<Test_Int32EqNull>();
     app.addT<Test_Compress256>();
     app.addT<Test_Compress256Ints>();
+    app.addT<Test_WideLaneInt32GuardPageLoad>();
+    app.addT<Test_ConstantCacheYmmIntegerTypeIdentity>();
 }
 
 int main(int argc, char *argv[])

@@ -81,6 +81,7 @@ public final class TimerShards {
     @TestOnly
     @Nullable
     private volatile Runnable joinThreadsHook;
+    private boolean isShutdownComplete;
     private volatile boolean running;
 
     @SuppressWarnings("unchecked")
@@ -151,15 +152,29 @@ public final class TimerShards {
      * RUNNING so that parked continuations have a carrier to remount on.
      */
     public synchronized void shutdown() {
-        if (!running) {
-            joinThreadsQuietly();
+        if (isShutdownComplete) {
             return;
         }
-        running = false;
-        for (int i = 0, n = shards.length; i < n; i++) {
-            shards[i].offer(PoisonSentinel.INSTANCE);
+        requestShutdown();
+        joinThreads();
+        drainShards();
+        isShutdownComplete = true;
+    }
+
+    public synchronized boolean shutdown(long deadlineNanos) {
+        if (isShutdownComplete) {
+            return true;
         }
-        joinThreadsQuietly();
+        requestShutdown();
+        if (!joinThreads(deadlineNanos)) {
+            return false;
+        }
+        drainShards();
+        isShutdownComplete = true;
+        return true;
+    }
+
+    private void drainShards() {
         // Snapshot via toArray (which sees the full heap, including unexpired
         // entries) then clear. We need every entry regardless of deadline.
         for (int i = 0, n = shards.length; i < n; i++) {
@@ -177,6 +192,16 @@ public final class TimerShards {
                     log.critical().$("error during timer shard shutdown drain [error=").$(t).I$();
                 }
             }
+        }
+    }
+
+    private void requestShutdown() {
+        if (!running) {
+            return;
+        }
+        running = false;
+        for (int i = 0, n = shards.length; i < n; i++) {
+            shards[i].offer(PoisonSentinel.INSTANCE);
         }
     }
 
@@ -209,6 +234,66 @@ public final class TimerShards {
             threads[i] = t;
             t.start();
         }
+    }
+
+    private void joinThreads() {
+        final Runnable hook = joinThreadsHook;
+        if (hook != null) {
+            hook.run();
+        }
+        boolean isInterrupted = false;
+        for (int i = 0; i < threads.length; i++) {
+            final Thread thread = threads[i];
+            if (thread == null) {
+                continue;
+            }
+            while (thread.isAlive()) {
+                try {
+                    thread.join();
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            threads[i] = null;
+        }
+        if (isInterrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    private boolean joinThreads(long deadlineNanos) {
+        final Runnable hook = joinThreadsHook;
+        if (hook != null) {
+            hook.run();
+        }
+        boolean isInterrupted = false;
+        boolean isComplete = true;
+        for (int i = 0; i < threads.length; i++) {
+            final Thread thread = threads[i];
+            if (thread == null) {
+                continue;
+            }
+            while (thread.isAlive()) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    hasTimedOutThread = true;
+                    isComplete = false;
+                    break;
+                }
+                try {
+                    thread.join(remainingNanos / 1_000_000L, (int) (remainingNanos % 1_000_000L));
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+            if (!thread.isAlive()) {
+                threads[i] = null;
+            }
+        }
+        if (isInterrupted) {
+            Thread.currentThread().interrupt();
+        }
+        return isComplete;
     }
 
     private synchronized void joinThreadsQuietly() {
