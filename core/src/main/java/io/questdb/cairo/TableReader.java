@@ -113,6 +113,8 @@ public class TableReader implements Closeable, SymbolTableSource {
     private CompositeDictionaries compositeDicts;
     // reused across keyOfDimensionValue() calls to avoid an allocation per TRUNCATE-dimension lookup
     private final StringSink compositeDimSink = new StringSink();
+    /// Render target for the cell segment handed to a parquet decoder bind; the decoder copies it.
+    private final StringSink decoderCellSink = new StringSink();
     private boolean hasActiveColumns;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
@@ -390,8 +392,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         long parquetSize = getParquetFileSize(partitionIndex);
         if (decoder.getParquetMetaAddr() != parquetMetaAddr || decoder.getParquetMetaSize() != parquetMetaSize) {
             final long timestamp = getPartitionTimestamp(partitionIndex);
+            // COMPOSITE: the bind carries the cell as well as the timestamp. A decoder that resolves
+            // the partition's bytes remotely (the enterprise cold path) keys them by (day, cell), and
+            // a day's N cells share the timestamp -- without the segment they would all read cell 0's
+            // object, or none. A plain table binds a null segment and is byte-identical.
+            // Its own sink, and one the callee must COPY from: renderCellSegment reenters the shared
+            // thread-local sink (see formatNativePartitionDirName), and this instance is reused across
+            // binds.
+            decoderCellSink.clear();
+            final CharSequence cellSegment = resolveCellSegmentOrNullIfDormant(partitionIndex, decoderCellSink);
             decoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize,
-                    tableToken, partitionBy, timestampType, timestamp,
+                    tableToken, partitionBy, timestampType, timestamp, cellSegment,
                     MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         return decoder;
