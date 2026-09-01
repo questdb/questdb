@@ -246,11 +246,14 @@ public class FiberAffinitySchedulingTest {
             final FiberRuntime runtime = pool.getFiberRuntime();
             final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
             final CountDownLatch directLaunchReturned = new CountDownLatch(1);
+            final CountDownLatch releaseWorkerZero = new CountDownLatch(1);
+            final CountDownLatch releaseWorkerOne = new CountDownLatch(1);
             final CountDownLatch resumed = new CountDownLatch(1);
-            final CountDownLatch workerZeroObservedWake = new CountDownLatch(1);
-            final CountDownLatch workerOneObservedWake = new CountDownLatch(1);
+            final CountDownLatch workerZeroBlocked = new CountDownLatch(1);
+            final CountDownLatch workerOneBlocked = new CountDownLatch(1);
             final AtomicBoolean isDirectLaunchPending = new AtomicBoolean(true);
-            final AtomicBoolean isWakeObservationArmed = new AtomicBoolean();
+            final AtomicBoolean isWorkerZeroBlockArmed = new AtomicBoolean();
+            final AtomicBoolean isWorkerOneBlockArmed = new AtomicBoolean();
             final AtomicInteger firstMountWorkerId = new AtomicInteger(FiberRuntime.NO_WORKER);
             final AtomicInteger resumedMountWorkerId = new AtomicInteger(FiberRuntime.NO_WORKER);
             final AtomicReference<Fiber> mountedFiber = new AtomicReference<>();
@@ -318,38 +321,60 @@ public class FiberAffinitySchedulingTest {
                     }
                     directLaunchReturned.countDown();
                 }
-                if (isWakeObservationArmed.get()) {
-                    workerZeroObservedWake.countDown();
+                if (isWorkerZeroBlockArmed.compareAndSet(true, false)) {
+                    workerZeroBlocked.countDown();
+                    awaitRelease(releaseWorkerZero, jobError);
                 }
                 return false;
             });
             pool.assign(1, workerContext -> {
-                if (isWakeObservationArmed.get()) {
-                    workerOneObservedWake.countDown();
+                if (isWorkerOneBlockArmed.compareAndSet(true, false)) {
+                    workerOneBlocked.countDown();
+                    awaitRelease(releaseWorkerOne, jobError);
                 }
                 return false;
             });
             pool.start();
             Fiber recycled = null;
+            boolean isWorkerZeroReadyRegisteredByTest = false;
+            boolean isWorkerOneReadyRegisteredByTest = false;
             try {
                 Assert.assertTrue(directLaunchReturned.await(AWAIT_SECONDS, TimeUnit.SECONDS));
                 rethrow(jobError);
                 awaitWaitQueueSize(waitQueue, 1);
-                awaitReadyCount(pool, 2);
+                isWorkerZeroBlockArmed.set(true);
+                isWorkerOneBlockArmed.set(true);
+                final long blockDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
+                while ((workerZeroBlocked.getCount() != 0 || workerOneBlocked.getCount() != 0)
+                        && System.nanoTime() < blockDeadline) {
+                    pool.wakeAllForTesting();
+                    Os.pause();
+                }
+                Assert.assertEquals("Worker 0 did not reach the test-owned block", 0L, workerZeroBlocked.getCount());
+                Assert.assertEquals("Worker 1 did not reach the test-owned block", 0L, workerOneBlocked.getCount());
+                rethrow(jobError);
+                Assert.assertTrue(pool.registerReadyWorkerForTesting(0));
+                isWorkerZeroReadyRegisteredByTest = true;
+                Assert.assertTrue(pool.registerReadyWorkerForTesting(1));
+                isWorkerOneReadyRegisteredByTest = true;
                 Assert.assertEquals(0, firstMountWorkerId.get());
-                Assert.assertTrue(pool.isWorkerReadyForTesting(0));
-                Assert.assertTrue(pool.isWorkerReadyForTesting(1));
                 // Cursor points at the peer: a preference-blind claim would take Worker one.
                 pool.setWakeCursorForTesting(1);
 
-                isWakeObservationArmed.set(true);
                 waitQueue.fire(1, false);
-                Assert.assertTrue(workerZeroObservedWake.await(AWAIT_SECONDS, TimeUnit.SECONDS));
+                Assert.assertFalse(
+                        "last mounter was not claimed",
+                        pool.isWorkerReadyForTesting(0)
+                );
                 Assert.assertTrue(
-                        "generic peer was woken instead of the last mounter",
+                        "generic peer was claimed instead of the last mounter",
                         pool.isWorkerReadyForTesting(1)
                 );
-                Assert.assertEquals(1, workerOneObservedWake.getCount());
+                pool.unregisterReadyWorkerForTesting(0);
+                isWorkerZeroReadyRegisteredByTest = false;
+                pool.unregisterReadyWorkerForTesting(1);
+                isWorkerOneReadyRegisteredByTest = false;
+                releaseWorkerZero.countDown();
                 Assert.assertTrue(resumed.await(AWAIT_SECONDS, TimeUnit.SECONDS));
                 rethrow(jobError);
                 Assert.assertEquals(0, resumedMountWorkerId.get());
@@ -360,6 +385,14 @@ public class FiberAffinitySchedulingTest {
                 Assert.assertSame(mountedFiber.get(), recycled);
                 Assert.assertEquals(FiberRuntime.NO_WORKER, recycled.getLastMountWorkerIdForTesting());
             } finally {
+                if (isWorkerZeroReadyRegisteredByTest) {
+                    pool.unregisterReadyWorkerForTesting(0);
+                }
+                if (isWorkerOneReadyRegisteredByTest) {
+                    pool.unregisterReadyWorkerForTesting(1);
+                }
+                releaseWorkerZero.countDown();
+                releaseWorkerOne.countDown();
                 if (recycled != null) {
                     runtime.releaseReservedFiber(recycled, recycled.getReservationEpoch());
                 }
@@ -1289,6 +1322,26 @@ public class FiberAffinitySchedulingTest {
         Assert.assertEquals(expected, runtime.getOutstandingTaskCount());
     }
 
+    private static void awaitRelease(CountDownLatch release, AtomicReference<Throwable> error) {
+        boolean isInterrupted = false;
+        while (release.getCount() != 0) {
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                error.compareAndSet(null, e);
+                isInterrupted = true;
+            } catch (Throwable th) {
+                error.compareAndSet(null, th);
+                while (release.getCount() != 0) {
+                    Os.pause();
+                }
+            }
+        }
+        if (isInterrupted) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
     private static void awaitAtLeast(AtomicInteger value, int expected) {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
         while (value.get() < expected && System.nanoTime() < deadline) {
@@ -1300,13 +1353,14 @@ public class FiberAffinitySchedulingTest {
 
     private static void awaitReadyCount(WorkerPool pool, int expected) {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
-        while (!areWorkersReady(pool, expected) && System.nanoTime() < deadline) {
+        while (System.nanoTime() < deadline) {
+            if (areWorkersReady(pool, expected)) {
+                return;
+            }
             Os.pause();
         }
-        Assert.assertEquals(expected, pool.getReadyWorkerCountForTesting());
-        for (int workerId = 0; workerId < expected; workerId++) {
-            Assert.assertTrue(pool.isWorkerReadyForTesting(workerId));
-        }
+        Assert.fail("workers did not become ready [expected=" + expected
+                + ", ready=" + pool.getReadyWorkerCountForTesting() + ']');
     }
 
     private static void awaitWaitQueueSize(FiberWalWaitQueue queue, int expected) {
