@@ -477,68 +477,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
 
         assert format == PartitionFormat.NATIVE;
         reenterParquetDecoder = null;
-        reenterPageFrameRowLimit = calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
+        reenterPageFrameRowLimit = NativeFrameBoundaries.calculatePageFrameRowLimit(lo, hi, pageFrameMinRows, pageFrameMaxRows, sharedQueryWorkerCount);
         return computeNativeFrame(lo, hi);
-    }
-
-    static long calculatePageFrameRowLimit(
-            long partitionLo,
-            long partitionHi,
-            long pageFrameMinRows,
-            long pageFrameMaxRows,
-            int sharedQueryWorkerCount
-    ) {
-        final int workerCount = Math.max(sharedQueryWorkerCount, 1);
-        long rowsPerFrame = Math.min(pageFrameMaxRows, Math.max(pageFrameMinRows, (partitionHi - partitionLo) / workerCount));
-        final long lastFrameSize = (partitionHi - partitionLo) % rowsPerFrame;
-        if (lastFrameSize > 0 && lastFrameSize < pageFrameMinRows) {
-            // Adjust the limit, so that we don't have tiny trailing frames.
-            final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
-            rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
-        }
-        return rowsPerFrame;
-    }
-
-    /**
-     * Populates column tops for a partition from column version metadata.
-     * A column top value indicates the first row where the column has data;
-     * rows before the top are NULL. Columns that don't exist in this
-     * partition get top = partitionRowCount (all-null).
-     *
-     * @param columnTops          output list, cleared and populated with one entry per column
-     * @param tableReader         table reader (used for reader metadata)
-     * @param columnVersionReader column version reader
-     * @param columnIndexes       query-to-reader column index mapping
-     * @param columnCount         number of columns
-     * @param partitionTimestamp  partition timestamp
-     * @param partitionRowCount   partition row count
-     */
-    static void populateColumnTops(
-            LongList columnTops,
-            TableReader tableReader,
-            ColumnVersionReader columnVersionReader,
-            IntList columnIndexes,
-            int columnCount,
-            long partitionTimestamp,
-            long partitionRowCount
-    ) {
-        // Use reader metadata (not factory metadata) for writer index lookup,
-        // because factory metadata (e.g. SelectedRecordCursorFactory) may not
-        // implement getWriterIndex().
-        final RecordMetadata readerMetadata = tableReader.getMetadata();
-        columnTops.clear();
-        for (int i = 0; i < columnCount; i++) {
-            final int readerColumnIndex = columnIndexes.getQuick(i);
-            final int writerIndex = readerMetadata.getWriterIndex(readerColumnIndex);
-            final int recordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
-            if (recordIndex > -1) {
-                columnTops.add(columnVersionReader.getColumnTopByIndex(recordIndex));
-            } else if (columnVersionReader.getColumnTopPartitionTimestamp(writerIndex) <= partitionTimestamp) {
-                columnTops.add(0); // column exists from start, no top
-            } else {
-                columnTops.add(partitionRowCount); // column doesn't exist — all-null
-            }
-        }
     }
 
     private class TableReaderPageFrame implements PageFrame {

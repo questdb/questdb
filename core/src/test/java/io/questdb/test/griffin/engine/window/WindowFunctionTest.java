@@ -154,6 +154,7 @@ public class WindowFunctionTest extends AbstractCairoTest {
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHED_LIGHT_ENABLED, Boolean.toString(this.isCacheLightWindowEnabled));
         super.setUp();
+        enableCompositePartitionRandomisation(generateRandom(LOG));
     }
 
     @Test
