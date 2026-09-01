@@ -356,6 +356,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final FindVisitor collectOrphanCellDirs = this::collectOrphanCellDirs;
+    /// Live composite days recorded by the non-attached walk, scanned for orphaned cell directories
+    /// AFTER it finishes -- nesting the two walks shared `path`/`utf8Sink` and corrupted the outer one.
+    private final LongList compositeLiveDays = new LongList();
+    private final Utf8StringSink orphanNameSink = new Utf8StringSink();
     /// Scratch for the orphaned-cell scan: the cell segment, its live directory name, and the name
     /// txns of the directories that belong to that cell but are not its live version.
     private final StringSink orphanCellSink = new StringSink();
@@ -602,6 +606,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private byte parquetRewriteIndexerType = IndexType.NONE;
     private RowGroupBuffers parquetRewriteRowGroupBuffers;
     private CharSequence orphanScanLiveDir;
+    private Path orphanScanPath;
     private CharSequence orphanScanSegment;
     private long partitionTimestampHi;
     private boolean performRecovery;
@@ -18959,7 +18964,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void removeNonAttachedPartitions() {
         LOG.debug().$("purging non attached partitions [path=").$substr(pathRootSize, path.$()).I$();
         try {
+            compositeLiveDays.clear();
             ff.iterateDir(path.$(), removePartitionDirsNotAttached);
+            // AFTER the walk, never inside it: see the note at the recording site.
+            for (int i = 0, n = compositeLiveDays.size(); i < n; i++) {
+                queueOrphanedCellDirs(compositeLiveDays.getQuick(i));
+            }
+            compositeLiveDays.clear();
             processPartitionRemoveCandidates();
         } finally {
             path.trimTo(pathSize);
@@ -19017,11 +19028,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         partitionRemoveCandidates.add(dirTimestamp, txn, 0);
                     } else {
                         // The day is live, so the day-level question is answered -- but a cell's own
-                        // <cell>.<nameTxn> lives one level deeper than this walk, and a partition
-                        // install that died between its file moves and the day's single _txn commit
-                        // leaves exactly those. Nothing else discovers them: MEASURED as five
-                        // directories surviving a two-cell day, through a writer reopen.
-                        queueOrphanedCellDirs(dirTimestamp);
+                        // <cell>.<nameTxn> lives one level deeper than this walk. RECORD the day and
+                        // scan it after this walk finishes: iterating a subdirectory from inside this
+                        // callback shares `path` and `utf8Sink` with the walk that is running, and
+                        // clobbering them mid-iteration made the outer loop parse a corrupted name and
+                        // queue LIVE directories for removal -- a JVM crash in the O3 merge, two
+                        // commits later. Nested iterateDir over shared scratch is the bug, not the idea.
+                        compositeLiveDays.add(dirTimestamp);
                     }
                 } else if (txn != txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp, -2)) {
                     partitionRemoveCandidates.add(dirTimestamp, txn, 0);
@@ -19048,7 +19061,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * removes partition directories; the conservative direction is the correct one.
      */
     private void queueOrphanedCellDirs(long dayTimestamp) {
-        final int dayPathLen = path.size();
+        // Its OWN path and name sink, never the writer's `path`/`utf8Sink`: this runs between walks
+        // that use both, and the last version shared them.
+        final Path dayPath = Path.getThreadLocal(configuration.getDbRoot());
+        dayPath.concat(tableToken.getDirName());
+        TableUtils.setSinkForNativePartition(dayPath.slash(), timestampType, partitionBy, dayTimestamp, -1L);
+        orphanScanPath = dayPath;
         try {
             for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
                 if (txWriter.getPartitionTimestampByIndex(i) != dayTimestamp) {
@@ -19066,17 +19084,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 orphanCandidateDirs.clear();
                 orphanScanSegment = orphanCellSink;
                 orphanScanLiveDir = orphanLiveDirSink;
-                ff.iterateDir(path.$(), collectOrphanCellDirs);
+                ff.iterateDir(dayPath.$(), collectOrphanCellDirs);
                 for (int c = 0, cn = orphanCandidateDirs.size(); c < cn; c++) {
                     partitionRemoveCandidates.add(dayTimestamp, orphanCandidateDirs.getQuick(c), cellKey);
                 }
-                path.trimTo(dayPathLen);
             }
         } finally {
             orphanScanSegment = null;
             orphanScanLiveDir = null;
+            orphanScanPath = null;
             orphanCandidateDirs.clear();
-            path.trimTo(dayPathLen);
         }
     }
 
@@ -19085,9 +19102,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * directory that belongs to the cell being scanned but is not its live version.
      */
     private void collectOrphanCellDirs(long pUtf8NameZ, int type) {
-        final int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, path.size(), pUtf8NameZ, type, utf8Sink);
+        final Path dayPath = orphanScanPath;
+        if (dayPath == null) {
+            return;
+        }
+        final int checkedType = ff.typeDirOrSoftLinkDirNoDots(dayPath, dayPath.size(), pUtf8NameZ, type, orphanNameSink);
         if (checkedType == Files.DT_UNKNOWN || CairoKeywords.isDetachedDirMarker(pUtf8NameZ)
-                || Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())) {
+                || Utf8s.endsWithAscii(orphanNameSink, configuration.getAttachPartitionSuffix())) {
             return;
         }
         final CharSequence segment = orphanScanSegment;
@@ -19095,7 +19116,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (segment == null || liveDir == null) {
             return;
         }
-        final CharSequence name = utf8Sink.asAsciiCharSequence();
+        final CharSequence name = orphanNameSink.asAsciiCharSequence();
         if (Chars.equals(name, liveDir)) {
             return; // the live version, by name
         }
