@@ -154,6 +154,92 @@ public class LiveViewValidationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRejectSymbolOrderByInLiveViewWindow() throws Exception {
+        // rank()/dense_rank() keep a chain prefix of the previous row's ORDER BY values in their
+        // partition map, and freezeCheckpointState persists those slots verbatim - the raw ints
+        // recordValueSink copied out of the window's input record. Under a live view that record is
+        // the WAL segment page-frame cursor, whose symbol ints are transaction-local: WAL local ids
+        // restart on every commit, so a persisted symbol id names a different string after the next
+        // one. SYMBOL is fixed-width at 4 bytes, so isAllTypesFixedWidth - the only shape test
+        // supportsCheckpointState applies to the chain - does not turn it away.
+        //
+        // Nothing wrong is published today, and this test is the reason why: four independent
+        // CREATE-time gates keep a live view's window ORDER BY on the base table's designated
+        // timestamp, so the chain prefix can only ever hold a TIMESTAMP. They are spread across
+        // SqlParser and CairoEngine and none of them names the rank chain, so a relaxation of any
+        // one of them would land the wrong-ranks bug with nothing in between. Pin all four here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, osym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // 1. A ranking function needs an anchored WINDOW, which means a named one - so no inline
+            //    OVER (...) can carry a symbol ORDER BY. The explicit frames are the point: a
+            //    PARTITION-BY-keyed window over the DEFAULT frame is turned away earlier, by the
+            //    bare-unbounded rule, so only a non-default frame reaches this gate and leaves it
+            //    load-bearing. A bounded one first, since it is the case no other gate claims.
+            assertUnanchoredRankingRejected(
+                    "SELECT ts, sym, rank() OVER (PARTITION BY sym ORDER BY osym ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS r FROM base",
+                    "rank"
+            );
+            assertUnanchoredRankingRejected(
+                    "SELECT ts, sym, dense_rank() OVER (PARTITION BY sym ORDER BY osym ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS r FROM base",
+                    "dense_rank"
+            );
+            // UNBOUNDED PRECEDING would also fail the unbounded-frame-start gate, and the two
+            // rejects share most of their wording, so match on the half only the ranking one
+            // carries - otherwise this case would pass while proving nothing about gate 1.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, rank() OVER (PARTITION BY sym ORDER BY osym ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS r FROM base",
+                    "cannot use rank() without an anchored WINDOW"
+            );
+            // An unpartitioned symbol ORDER BY compiles to RankFunction, which keeps no partition
+            // map and no chain prefix at all - but it is rejected here first, so the shape never
+            // has to be reasoned about downstream.
+            assertUnanchoredRankingRejected(
+                    "SELECT ts, sym, rank() OVER (ORDER BY osym) AS r FROM base",
+                    "rank"
+            );
+
+            // 2. Every named WINDOW must ORDER BY the designated timestamp, so the anchored form
+            //    gate 1 forces cannot name a symbol either. Both the direct definition and the
+            //    inheriting one, since WINDOW w2 AS (w ORDER BY osym) re-declares the ORDER BY.
+            assertSymbolWindowOrderByRejected(
+                    "SELECT ts, sym, rank() OVER w AS r FROM base " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY osym ANCHOR EXPRESSION timestamp_floor('1d', ts))"
+            );
+            assertSymbolWindowOrderByRejected(
+                    "SELECT ts, sym, rank() OVER w2 AS r FROM base " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts)), " +
+                            "w2 AS (w ORDER BY osym)"
+            );
+
+            // 3. Gate 2 matches the ORDER BY token against the designated timestamp's NAME, so the
+            //    remaining way in is to alias a symbol onto that name. The projection rule closes
+            //    it: the designated timestamp has to be projected as a plain column.
+            assertLiveViewShapeRejected(
+                    "SELECT osym AS ts, sym, rank() OVER w AS r FROM base " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))",
+                    "live view select must project the base table's designated timestamp 'ts' as a plain column"
+            );
+
+            // 4. And a subquery cannot rename the columns before the window sees them, because the
+            //    base table has to sit directly in the FROM clause.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, rank() OVER w AS r FROM (SELECT ts, sym, osym FROM base) " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY osym ANCHOR EXPRESSION timestamp_floor('1d', ts))",
+                    "live view requires a single base table in FROM clause"
+            );
+
+            // Positive control: the shape the gates do admit. Its chain prefix is the designated
+            // timestamp, which means the same thing in every transaction, so it checkpoints - the
+            // reject must not widen to it.
+            execute("CREATE LIVE VIEW lv_ts FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, rank() OVER w AS r FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            execute("DROP LIVE VIEW lv_ts");
+        });
+    }
+
+    @Test
     public void testRejectUnanchoredRanking() throws Exception {
         // The finite-influence scope cut: the ranking functions
         // row_number/rank/dense_rank have no finite forward influence boundary
@@ -1289,6 +1375,21 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "position " + pos + " must point at '" + offendingToken + "' in: " + fullSql,
                     pos >= 0 && fullSql.startsWith(offendingToken, pos)
+            );
+        }
+    }
+
+    private void assertSymbolWindowOrderByRejected(String selectSql) throws Exception {
+        try {
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql);
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected named-window ORDER BY reject for: " + selectSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
+                    Chars.contains(e.getFlyweightMessage(), "live view named WINDOW must ORDER BY ts")
             );
         }
     }
