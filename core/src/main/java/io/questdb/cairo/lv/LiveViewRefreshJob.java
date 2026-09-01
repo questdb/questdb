@@ -1949,6 +1949,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     spec.windowName,
                     projectedMeta,
                     spec.partitionColumnNames,
+                    // The anchor map's keys are compared against the window functions' own,
+                    // so it keys each term the way the compile that built them decided to
+                    // rather than the way this metadata's types read.
+                    wf.getLivePartitionKeyClassifier(),
                     fn,
                     anchoredFunctions,
                     isAnchorMonotoneWithBaseOrder(anchorNode, projectedMeta),

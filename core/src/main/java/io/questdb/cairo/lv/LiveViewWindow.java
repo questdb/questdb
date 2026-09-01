@@ -48,7 +48,6 @@ import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.window.WindowFunction;
-import io.questdb.std.BitSet;
 import io.questdb.std.BoolList;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
@@ -508,6 +507,12 @@ public class LiveViewWindow implements QuietCloseable {
      * {@code LiveViewCheckpointFunctionCompiler.anchorPlan}) of where this anchor's
      * segments begin and end, or null when the anchor has no fixed boundary. It carries
      * no runtime behavior; a localized out-of-order repair reads it to bound its work.
+     * <p>
+     * {@code partitionKeyClassifier} is how the compile that produced {@code
+     * projectedMetadata} decided to key each SYMBOL partition term, read off the compiled
+     * factory. Its slots are column indexes in that same metadata. Null means nothing
+     * translates, which keys every SYMBOL term through its resolved string - the shape
+     * every live view has today.
      */
     public static LiveViewWindow build(
             @NotNull CairoConfiguration configuration,
@@ -515,6 +520,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull String windowName,
             @NotNull RecordMetadata projectedMetadata,
             @NotNull ObjList<String> partitionColumnNames,
+            @Nullable LiveViewPartitionKeyClassifier partitionKeyClassifier,
             @NotNull Function anchorExpression,
             @NotNull ObjList<WindowFunction> functions,
             boolean isAnchorMonotone,
@@ -532,15 +538,23 @@ public class LiveViewWindow implements QuietCloseable {
         // FULL source metadata's types (the sink looks up types by source index,
         // not by filter slot). The map's key types — separately — must match
         // the filtered subset.
-        // SYMBOL partition columns route through writeSymbolAsString so the
-        // map key holds the resolved string rather than the segment-local
-        // symbol index. WAL segments assign different local indices to the
-        // same string, so a raw-int key would collide across incremental
-        // refresh cycles whose rows come from different WAL segments. The map
-        // key type for those columns becomes STRING to match the sink's writes.
+        // A SYMBOL partition column routes through writeSymbolAsString so the map
+        // key holds the resolved string rather than the segment-local symbol
+        // index. WAL segments assign different local indices to the same string,
+        // so a raw-int key would collide across incremental refresh cycles whose
+        // rows come from different WAL segments. The map key type for those
+        // columns becomes STRING to match the sink's writes.
+        //
+        // The name lookup below locates the column; it does not decide how the
+        // column keys. That was decided at compile time, by the classifier every
+        // other site that keys the same term also went through, and this map's
+        // keys are compared against theirs - the frontier sweep rebuilds a
+        // function's map through the anchor's key sink. A projected name is the
+        // wrong identity to settle it on anyway: it names a column in the view's
+        // output rather than the source column a dictionary is bound to.
         ListColumnFilter columnFilter = new ListColumnFilter();
         ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
-        BitSet writeSymbolAsString = null;
+        LiveViewPartitionKeyBinding keyBinding = new LiveViewPartitionKeyBinding(partitionKeyClassifier, mapKeyTypes);
         for (int i = 0; i < n; i++) {
             String name = partitionColumnNames.getQuick(i);
             int idx = projectedMetadata.getColumnIndexQuiet(name);
@@ -549,22 +563,16 @@ public class LiveViewWindow implements QuietCloseable {
                         .put("partition column not found in projected metadata [column=").put(name).put(']');
             }
             columnFilter.add(idx + 1);
-            int columnType = projectedMetadata.getColumnType(idx);
-            if (ColumnType.isSymbol(columnType)) {
-                if (writeSymbolAsString == null) {
-                    writeSymbolAsString = new BitSet();
-                }
-                writeSymbolAsString.set(idx);
-                mapKeyTypes.add(ColumnType.STRING);
-            } else {
-                mapKeyTypes.add(columnType);
-            }
+            // projectedMetadata is the window input metadata, which is the space the
+            // classifier's slots are column indexes in, so idx addresses both the sink's
+            // source column and the term's source dictionary.
+            keyBinding.addBoundTerm(idx, idx, projectedMetadata.getColumnType(idx));
         }
         ArrayColumnTypes sourceColumnTypes = new ArrayColumnTypes();
         for (int i = 0, m = projectedMetadata.getColumnCount(); i < m; i++) {
             sourceColumnTypes.add(projectedMetadata.getColumnType(i));
         }
-        RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, sourceColumnTypes, columnFilter, writeSymbolAsString);
+        RecordSink sink = keyBinding.compileKeySink(configuration, asm, sourceColumnTypes, columnFilter);
         // Built before the anchor map so a failure here cannot strand a tracked
         // allocation: the map has no owner until the constructor below takes it.
         RecordSink anchorKeySink = createAnchorKeySink(configuration, asm, mapKeyTypes, AnchorMapValueTypes.INSTANCE);

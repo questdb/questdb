@@ -31,6 +31,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
+import io.questdb.cairo.lv.LiveViewPartitionKeyClassifier;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -75,6 +76,11 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // live-view compile or when nothing in it can join a fused group. Holds only
     // non-owning references into this factory's own functions, so it needs no cleanup.
     private final LiveViewWindowStatePlan checkpointWindowStatePlan;
+    // How this compile decided to key every live-view SYMBOL partition term, and the
+    // inventory of source columns those terms key by. Null for non-live-view compiles.
+    // Holds no resources: it is the compiler's decision, kept so the refresh job can read
+    // it instead of making its own.
+    private final LiveViewPartitionKeyClassifier livePartitionKeyClassifier;
     // One entry per window Map group this factory's functions form: the components the
     // group's map value would be made of, and the outputs that read them. Null when the
     // factory is a live-view compile, or when no group forms that removes anything. Holds
@@ -100,7 +106,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions
     ) {
-        this(base, metadata, functions, null, null, null, null, null, null, null);
+        this(base, metadata, functions, null, null, null, null, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -109,7 +115,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions
     ) {
-        this(base, metadata, functions, anchorableWindowFunctions, null, null, null, null, null, null);
+        this(base, metadata, functions, anchorableWindowFunctions, null, null, null, null, null, null, null);
     }
 
     public WindowRecordCursorFactory(
@@ -117,6 +123,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
             GenericRecordMetadata metadata,
             ObjList<Function> functions,
             ObjList<WindowFunction> anchorableWindowFunctions,
+            LiveViewPartitionKeyClassifier livePartitionKeyClassifier,
             LiveViewCheckpointKeyProjector checkpointKeyProjector,
             LiveViewCheckpointRangePlan checkpointRangePlan,
             LiveViewCheckpointRowsPlan checkpointRowsPlan,
@@ -128,6 +135,7 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
         this.base = base;
         this.functions = functions;
         this.anchorableWindowFunctions = anchorableWindowFunctions;
+        this.livePartitionKeyClassifier = livePartitionKeyClassifier;
         this.checkpointKeyProjector = checkpointKeyProjector;
         this.checkpointRangePlan = checkpointRangePlan;
         this.checkpointRowsPlan = checkpointRowsPlan;
@@ -180,6 +188,20 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
      */
     public @Nullable LiveViewCheckpointKeyProjector getCheckpointKeyProjector() {
         return checkpointKeyProjector;
+    }
+
+    /**
+     * Returns the classifier that decided how this compile keys every live-view SYMBOL
+     * partition term, or null for an ordinary query. The refresh job hands it to
+     * {@code LiveViewWindow.build} so the anchor map keys each term the way the window
+     * functions' own maps do - the two are compared row for row by the frontier sweep, so
+     * a term the anchor resolved differently would not be a slower view but a wrong one.
+     * <p>
+     * Its slots are column indexes in this factory's base metadata, which is the window
+     * input metadata every site classifying for this view shares.
+     */
+    public @Nullable LiveViewPartitionKeyClassifier getLivePartitionKeyClassifier() {
+        return livePartitionKeyClassifier;
     }
 
     /**

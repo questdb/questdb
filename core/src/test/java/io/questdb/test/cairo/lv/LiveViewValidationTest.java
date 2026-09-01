@@ -28,8 +28,14 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -236,6 +242,71 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                     "SELECT ts, sym, rank() OVER w AS r FROM base " +
                     "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
             execute("DROP LIVE VIEW lv_ts");
+        });
+    }
+
+    /**
+     * The cached-window branch of {@code SqlCodeGenerator.generateSelectWindow} refuses a
+     * live-view compile outright, rather than building a key sink no live view can reach.
+     * <p>
+     * It builds one against {@code chainMetadata}, which the branch assembles so that every
+     * column the factory must return sits at the front - so a PARTITION BY term's column
+     * index means a different column there than it does in the streaming branch. A key
+     * bound through that index would name whatever base column shares the term's chain
+     * ordinal: both SYMBOL, both resolvable, and the view would key its rows through the
+     * wrong column's dictionary with nothing downstream able to tell. The branch is dead for
+     * a live view either way - both cached factories are rejected once compiled - so the
+     * reject moves ahead of the build and the hazard stays unreachable rather than dormant.
+     * <p>
+     * Pinned here rather than through CREATE because CREATE cannot tell the two gates apart:
+     * both report the same message, deliberately.
+     */
+    @Test
+    public void testRejectCachedWindowAtCompileTime() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, sym2 SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // lead() needs two passes, which is what routes the compile into the cached
+            // branch. Two SYMBOL partition terms, so a chain-index binding would have a
+            // second SYMBOL column to land on.
+            final String selectSql = "SELECT ts, sym, lead(x) OVER (PARTITION BY sym, sym2 ORDER BY ts) AS l FROM base";
+
+            // Control: an ordinary compile still runs the branch and returns its factory, so
+            // the reject below is about the live-view compile and not about the query shape.
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, selectSql, sqlExecutionContext)) {
+                RecordCursorFactory node = factory;
+                while (node instanceof QueryProgress) {
+                    node = node.getBaseFactory();
+                }
+                Assert.assertTrue(
+                        "expected a cached window factory, got " + node.getClass().getSimpleName(),
+                        node instanceof CachedWindowRecordCursorFactory
+                                || node instanceof CachedWindowLightRecordCursorFactory
+                );
+            }
+
+            sqlExecutionContext.setLiveViewCompile(true);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                //noinspection resource
+                select(compiler, selectSql, sqlExecutionContext);
+                Assert.fail("expected the code generator to reject a cached-window live-view compile");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), LiveViewCompiledPlan.CACHED_WINDOW_REJECT_MESSAGE)
+                );
+            } finally {
+                sqlExecutionContext.setLiveViewCompile(false);
+            }
+
+            // And CREATE keeps reporting what it always did, whichever of the two gates got
+            // there first. Spelled through an anchored named WINDOW because the bare
+            // unbounded window above is turned away by the parser long before either gate.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, cume_dist() OVER w AS c FROM base "
+                            + "WINDOW w AS (PARTITION BY sym, sym2 ORDER BY ts ANCHOR DAILY '00:00')",
+                    LiveViewCompiledPlan.CACHED_WINDOW_REJECT_MESSAGE
+            );
         });
     }
 

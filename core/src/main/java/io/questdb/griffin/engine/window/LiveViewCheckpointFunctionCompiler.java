@@ -44,6 +44,8 @@ import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRangePlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
+import io.questdb.cairo.lv.LiveViewPartitionKeyBinding;
+import io.questdb.cairo.lv.LiveViewPartitionKeyClassifier;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -57,7 +59,6 @@ import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.WindowExpression;
-import io.questdb.std.BitSet;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -506,6 +507,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull ObjList<QueryColumn> columns,
             @NotNull RecordMetadata baseMetadata,
             @Nullable LiveViewCheckpointKeyProjector sharedProjector,
+            @NotNull LiveViewPartitionKeyClassifier partitionKeyClassifier,
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
             @NotNull FunctionParser functionParser,
@@ -567,6 +569,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                     partitionBy,
                     firstRows.getPartitionSignature(),
                     baseMetadata,
+                    partitionKeyClassifier,
                     configuration,
                     asm,
                     functionParser,
@@ -623,6 +626,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull ObjList<ExpressionNode> partitionBy,
             @NotNull CharSequence partitionSignature,
             @NotNull RecordMetadata baseMetadata,
+            @NotNull LiveViewPartitionKeyClassifier partitionKeyClassifier,
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
             @NotNull FunctionParser functionParser,
@@ -637,11 +641,11 @@ public final class LiveViewCheckpointFunctionCompiler {
         final ListColumnFilter keyColumnFilter = new ListColumnFilter(partitionBy.size());
         final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
         // The second projector's shape: what the view's window functions key their own
-        // maps by, which is this list with every SYMBOL resolved to a STRING. Left null
-        // while no key column is a SYMBOL, because the two projectors are then the same
-        // one and generating a second sink would buy nothing.
-        ArrayColumnTypes checkpointKeyColumnTypes = null;
-        BitSet writeSymbolAsString = null;
+        // maps by, which is this list with every SYMBOL term written the way the shared
+        // classifier says. Only its key types are read while the two shapes agree, which
+        // is why it is built even when nothing is rewritten.
+        final LiveViewPartitionKeyBinding checkpointKeyBinding =
+                new LiveViewPartitionKeyBinding(partitionKeyClassifier, new ArrayColumnTypes());
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
             final ExpressionNode node = partitionBy.getQuick(i);
             final int columnIndex = node.type == ExpressionNode.LITERAL
@@ -655,6 +659,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                         partitionBy,
                         partitionSignature,
                         baseMetadata,
+                        partitionKeyClassifier,
                         configuration,
                         asm,
                         functionParser,
@@ -665,37 +670,28 @@ public final class LiveViewCheckpointFunctionCompiler {
             partitionByColumnIndexes.add(columnIndex);
             keyColumnFilter.add(columnIndex + 1);
             keyColumnTypes.add(columnType);
-            if (ColumnType.isSymbol(columnType)) {
-                if (checkpointKeyColumnTypes == null) {
-                    checkpointKeyColumnTypes = new ArrayColumnTypes();
-                    for (int j = 0; j < i; j++) {
-                        checkpointKeyColumnTypes.add(keyColumnTypes.getColumnType(j));
-                    }
-                    writeSymbolAsString = new BitSet();
-                }
-                writeSymbolAsString.set(columnIndex);
-                checkpointKeyColumnTypes.add(ColumnType.STRING);
-            } else if (checkpointKeyColumnTypes != null) {
-                checkpointKeyColumnTypes.add(columnType);
-            }
+            // The sink reads a page-frame record, so its column space is the base
+            // metadata's and the term's own index is the one both vectors are keyed by.
+            checkpointKeyBinding.addClassifiedTerm(columnIndex, columnIndex, columnType);
         }
-        // No writeSymbolAsString is set, so a SYMBOL key column is projected as its
-        // table-local integer. That is stable for one reader's lifetime, which is exactly
-        // the scope one repair plans and replays in.
+        // No writeSymbolAsString and no translator slot, so a SYMBOL key column is projected
+        // as its table-local integer. That is stable for one reader's lifetime, which is
+        // exactly the scope one repair plans and replays in. This sink stays reader-local
+        // whatever the classifier decides for the checkpoint one below.
         final RecordSink keySink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter);
-        // The checkpoint projector does set it, because the key it writes has to compare
-        // equal to the one a window function's partition map already holds, and those
-        // maps key a SYMBOL partition column by its resolved string. A projector with no
-        // SYMBOL key column needs no second sink at all.
-        final RecordSink checkpointKeySink = writeSymbolAsString == null
-                ? keySink
-                : RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter, writeSymbolAsString);
+        // The checkpoint sink writes the key a window function's partition map already
+        // holds instead, which for a SYMBOL column is the resolved string or, once a
+        // dictionary backs it, the view's private id. A projector whose key needs neither
+        // needs no second sink at all.
+        final RecordSink checkpointKeySink = checkpointKeyBinding.isKeyRewritten()
+                ? checkpointKeyBinding.compileKeySink(configuration, asm, baseMetadata, keyColumnFilter)
+                : keySink;
         return new LiveViewCheckpointKeyProjector(
                 partitionByColumnIndexes,
                 null,
                 keyColumnTypes,
                 keySink,
-                checkpointKeyColumnTypes != null ? checkpointKeyColumnTypes : keyColumnTypes,
+                checkpointKeyBinding.isKeyRewritten() ? checkpointKeyBinding.getKeyColumnTypes() : keyColumnTypes,
                 checkpointKeySink,
                 partitionSignature,
                 baseMetadata
@@ -718,6 +714,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             @NotNull ObjList<Function> functions,
             @NotNull ObjList<QueryColumn> columns,
             @NotNull RecordMetadata baseMetadata,
+            @NotNull LiveViewPartitionKeyClassifier partitionKeyClassifier,
             @NotNull CairoConfiguration configuration,
             @NotNull BytecodeAssembler asm,
             @NotNull FunctionParser functionParser,
@@ -746,7 +743,7 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (signature == null) {
             return null;
         }
-        return keyProjector(partitionBy, signature, baseMetadata, configuration, asm, functionParser, executionContext);
+        return keyProjector(partitionBy, signature, baseMetadata, partitionKeyClassifier, configuration, asm, functionParser, executionContext);
     }
 
     /**
@@ -846,6 +843,62 @@ public final class LiveViewCheckpointFunctionCompiler {
             }
         }
         return builder.build();
+    }
+
+    /**
+     * Reports a live view whose window functions and whose checkpoint key projector do not
+     * key one PARTITION BY the same way.
+     * <p>
+     * Both come from the same {@link LiveViewPartitionKeyClassifier}, and both classify the
+     * same terms against the same window input metadata, so they cannot disagree - which is
+     * exactly why nothing compared them before and why comparing them now costs a compile
+     * one pass over a handful of types. What it buys is the day one of the two classifiers
+     * stops going through the shared one. The two key images are compared row for row by
+     * the checkpoint row bounds and by every keyed repair, and an id or a string one side
+     * writes and the other does not read is in range for the map that holds it: the view
+     * would answer queries with the wrong rows rather than fail.
+     * <p>
+     * Only functions that name the projector's own partition signature are compared. A view
+     * whose functions do not all share one signature has no shared identity to disagree
+     * with - {@code sharedKeyProjector} has already returned null for it.
+     */
+    public static void validatePartitionKeyAgreement(
+            @NotNull ObjList<Function> functions,
+            @NotNull ObjList<QueryColumn> columns,
+            @Nullable LiveViewCheckpointKeyProjector projector
+    ) throws SqlException {
+        if (projector == null) {
+            return;
+        }
+        final ColumnTypes projected = projector.getCheckpointKeyColumnTypes();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            if (!(functions.getQuick(i) instanceof WindowFunction windowFunction)) {
+                continue;
+            }
+            final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
+            if (dependency == null
+                    || !Chars.equals(projector.getPartitionSignature(), dependency.getPartitionSignature())) {
+                continue;
+            }
+            final ColumnTypes keyed = windowFunction.getCheckpointKeyColumnTypes();
+            if (keyed == null) {
+                continue;
+            }
+            final int position = columns.getQuick(i).getAst().position;
+            if (keyed.getColumnCount() != projected.getColumnCount()) {
+                throw SqlException.$(position, "live view partition key width disagrees with the checkpoint key [function=")
+                        .put(keyed.getColumnCount()).put(", checkpoint=").put(projected.getColumnCount()).put(']');
+            }
+            for (int j = 0, m = projected.getColumnCount(); j < m; j++) {
+                if (keyed.getColumnType(j) != projected.getColumnType(j)) {
+                    throw SqlException.$(position, "live view partition key type disagrees with the checkpoint key [column=")
+                            .put(j)
+                            .put(", function=").put(ColumnType.nameOf(keyed.getColumnType(j)))
+                            .put(", checkpoint=").put(ColumnType.nameOf(projected.getColumnType(j)))
+                            .put(']');
+                }
+            }
+        }
     }
 
     /**
@@ -1052,6 +1105,7 @@ public final class LiveViewCheckpointFunctionCompiler {
             ObjList<ExpressionNode> partitionBy,
             CharSequence partitionSignature,
             RecordMetadata baseMetadata,
+            @NotNull LiveViewPartitionKeyClassifier partitionKeyClassifier,
             CairoConfiguration configuration,
             BytecodeAssembler asm,
             FunctionParser functionParser,
@@ -1060,6 +1114,12 @@ public final class LiveViewCheckpointFunctionCompiler {
         ObjList<Function> keyFunctions = new ObjList<>(partitionBy.size());
         try {
             final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
+            // Per term, not per key: one expression among the terms puts every term on a key
+            // function, but it does not make the direct SYMBOL terms beside it expressions.
+            // Classifying the whole key by its worst term is what would put this projector's
+            // identity in a different shape from the window maps it has to compare against.
+            final LiveViewPartitionKeyBinding keyBinding =
+                    new LiveViewPartitionKeyBinding(partitionKeyClassifier, keyColumnTypes);
             for (int i = 0, n = partitionBy.size(); i < n; i++) {
                 final Function function = functionParser.parseFunction(partitionBy.getQuick(i), baseMetadata, executionContext);
                 keyFunctions.add(function);
@@ -1069,16 +1129,16 @@ public final class LiveViewCheckpointFunctionCompiler {
                     // one row's predecessors against another row's key.
                     return null;
                 }
-                final int type = function.getType();
-                keyColumnTypes.add(ColumnType.isSymbol(type) ? ColumnType.STRING : type);
+                // The sink reads the compiled functions rather than the record, so its column
+                // space is the key's own ordinals.
+                keyBinding.addClassifiedTerm(i, function, baseMetadata);
             }
-            final RecordSink keySink = RecordSinkFactory.getInstance(
+            final RecordSink keySink = keyBinding.compileKeySink(
                     configuration,
                     asm,
                     baseMetadata,
                     new ListColumnFilter(),
-                    keyFunctions,
-                    null
+                    keyFunctions
             );
             final LiveViewCheckpointKeyProjector projector = new LiveViewCheckpointKeyProjector(
                     null,

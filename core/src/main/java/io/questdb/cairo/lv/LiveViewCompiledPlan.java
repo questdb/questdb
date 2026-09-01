@@ -87,6 +87,14 @@ import org.jetbrains.annotations.Nullable;
  * treated as the filter.
  */
 public final class LiveViewCompiledPlan {
+    /**
+     * The reject a view whose window functions need caching or multi-pass evaluation gets.
+     * Shared with {@code SqlCodeGenerator}, which reports it before it builds the cached
+     * factory this class would turn away: one message, whichever of the two fires first.
+     */
+    public static final String CACHED_WINDOW_REJECT_MESSAGE =
+            "live view select may only use window functions that support incremental refresh; "
+                    + "this query requires caching or multi-pass evaluation";
     private final RecordCursorFactory filterFactory;
     // The three optional nodes are kept for traceOutputColumnToBaseScan, which walks their
     // functions and cross index. Driving the refresh chain goes through the cursors below
@@ -419,8 +427,7 @@ public final class LiveViewCompiledPlan {
      */
     private static void rejectCachedWindow(RecordCursorFactory node, int position) throws SqlException {
         if (node instanceof CachedWindowRecordCursorFactory || node instanceof CachedWindowLightRecordCursorFactory) {
-            throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
-                    "this query requires caching or multi-pass evaluation");
+            throw SqlException.$(position, CACHED_WINDOW_REJECT_MESSAGE);
         }
     }
 
