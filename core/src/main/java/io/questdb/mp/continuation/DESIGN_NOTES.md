@@ -313,5 +313,7 @@ before reuse.
 
 ## Related notes
 
+- `AFFINITY_SCHEDULING.md` explains local/global run queues, resume affinity, Worker
+  wake-up, and orphan-shard recovery.
 - `CARRIER_LOCAL.md` explains carrier-keyed state across fiber migration.
 - `DELAY_HEAP.md` explains the timer heap and its continuation-safety rules.
