@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.regex;
 
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.regex.AbstractLikeSymbolFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -60,6 +61,108 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
                     println(factory, cursor);
                     Assert.assertNotEquals(-1, sink.toString().indexOf('h'));
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableCaseEquivalentRebindReusesSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sym SYMBOL)");
+            execute("INSERT INTO x VALUES ('alpha'), ('Apex'), ('beta')");
+
+            try {
+                for (int mode = 0; mode < 2; mode++) {
+                    final boolean isParallelFilterEnabled = mode == 0;
+                    sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+                    try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ILIKE $1")) {
+                        AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                        AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                        try {
+                            bindVariableService.setStr(0, "A%");
+                            drain(factory);
+                            Assert.assertEquals(1, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                            bindVariableService.setStr(0, "a%");
+                            drain(factory);
+                            Assert.assertEquals(
+                                    "a case-equivalent ILIKE rebind must reuse the matched keys [parallel="
+                                            + isParallelFilterEnabled + ']',
+                                    1,
+                                    AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                            );
+
+                            drain(factory);
+                            Assert.assertEquals(
+                                    "an unchanged lower-case ILIKE bind must reuse the matched keys [parallel="
+                                            + isParallelFilterEnabled + ']',
+                                    1,
+                                    AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                            );
+
+                            bindVariableService.setStr(0, null);
+                            drain(factory);
+                            bindVariableService.setStr(0, "");
+                            drain(factory);
+                            Assert.assertEquals(1, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                            bindVariableService.setStr(0, "a%");
+                            drain(factory);
+                            Assert.assertEquals(2, AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get());
+
+                            execute("INSERT INTO x VALUES ('" + (isParallelFilterEnabled ? "amber" : "atlas") + "')");
+                            drain(factory);
+                            Assert.assertEquals(
+                                    "a changed dictionary must invalidate case-insensitive matched keys [parallel="
+                                            + isParallelFilterEnabled + ']',
+                                    3,
+                                    AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                            );
+                        } finally {
+                            AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
+            }
+        });
+    }
+
+    @Test
+    public void testBindVariableUpperCaseRetainedFactoryReusesSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT rnd_symbol(20_000, 8, 12, 0) sym FROM long_sequence(20_000))");
+
+            bindVariableService.setStr(0, "A%");
+            try {
+                for (int mode = 0; mode < 2; mode++) {
+                    final boolean isParallelFilterEnabled = mode == 0;
+                    sqlExecutionContext.setParallelFilterEnabled(isParallelFilterEnabled);
+                    try (RecordCursorFactory factory = select("SELECT sym FROM x WHERE sym ILIKE $1")) {
+                        AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.set(0);
+                        AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = true;
+                        try {
+                            for (int i = 0; i < 3; i++) {
+                                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                                    while (cursor.hasNext()) {
+                                        // drain the cursor
+                                    }
+                                }
+                            }
+                            Assert.assertEquals(
+                                    "an unchanged upper-case ILIKE bind and dictionary must reuse the matched keys [parallel="
+                                            + isParallelFilterEnabled + ']',
+                                    1,
+                                    AbstractLikeSymbolFunctionFactory.testSymbolKeyScans.get()
+                            );
+                        } finally {
+                            AbstractLikeSymbolFunctionFactory.isSymbolKeyScanCounterEnabled = false;
+                        }
+                    }
+                }
+            } finally {
+                sqlExecutionContext.setParallelFilterEnabled(true);
             }
         });
     }
@@ -423,6 +526,14 @@ public class ILikeSymbolFunctionFactoryTest extends AbstractCairoTest {
             assertLike("s\nфубар\n", "select * from x where s ilike '%баР'");
             assertLike("s\nфу\nфубар\n", "select * from x where s ilike '%У%'");
         });
+    }
+
+    private void drain(RecordCursorFactory factory) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            while (cursor.hasNext()) {
+                // drain the cursor
+            }
+        }
     }
 
     private void assertLike(String expected, String query) throws Exception {
