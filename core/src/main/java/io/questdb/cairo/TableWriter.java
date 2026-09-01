@@ -3519,14 +3519,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long newPartitionNameTxn,
             long newParquetFileSize
     ) {
+        linkOrRebuildPartitionIndexFilesAfterParquetRewrite(partitionTimestamp, 0, oldPartitionNameTxn, newPartitionNameTxn, newParquetFileSize);
+    }
+
+    /**
+     * Cell-scoped {@link #linkOrRebuildPartitionIndexFilesAfterParquetRewrite(long, long, long, long)},
+     * for a caller re-encoding ONE cell of a composite day. Both directories carry the cell segment,
+     * and the column top and column name-txn are read at (timestamp, cellKey, column) -- the
+     * by-timestamp form answers for cellKey 0, so it would decide "link" vs "rebuild" from cell 0's
+     * tops and link a sibling's index files under cell 0's name txn. {@code cellKey == 0} on a plain
+     * table renders and links exactly as the form above.
+     */
+    public void linkOrRebuildPartitionIndexFilesAfterParquetRewrite(
+            long partitionTimestamp,
+            int cellKey,
+            long oldPartitionNameTxn,
+            long newPartitionNameTxn,
+            long newParquetFileSize
+    ) {
         if (parquetRewriteColumnIndexes == null) {
             parquetRewriteColumnIndexes = new IntList();
         } else {
             parquetRewriteColumnIndexes.clear();
         }
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
+        final StringSink cellSegment = Misc.getThreadLocalSink();
+        renderCellSegment(cellSegment, cellKey);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn, cellSegment);
         final int srcDirLen = path.size();
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn, cellSegment);
         final int dstDirLen = other.size();
         try {
             for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
@@ -3534,13 +3554,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
                     continue;
                 }
-                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
                 if (columnTop == 0) {
                     linkColumnIndexFiles(
                             srcDirLen,
                             dstDirLen,
                             metadata.getColumnName(columnIndex),
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
+                            getColumnNameTxn(partitionTimestamp, cellKey, columnIndex),
                             indexType,
                             partitionTimestamp,
                             oldPartitionNameTxn
@@ -3551,6 +3571,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // this top to zero, including absent (-1), partial and
                     // full-top (>= partitionSize) source states.
                     assert columnTop == -1 || columnTop > 0;
+                    // A REBUILD of a COVERING index reads the covered columns' tops and name-txns
+                    // through the by-timestamp accessors (configureCoveringIfNeeded), i.e. at cellKey
+                    // 0. Refuse loudly for a composite cell rather than seal an index built from the
+                    // wrong cell's covered data -- the same call this file already refuses for a
+                    // covering POSTING reseal on a composite parquet partition.
+                    if (isRoutedComposite()) {
+                        final IntList covering = metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
+                        if (covering != null && covering.size() > 0) {
+                            throw CairoException.critical(0)
+                                    .put("composite partitioning does not yet support rebuilding a COVERING index during a parquet rewrite [table=")
+                                    .put(tableToken.getTableName())
+                                    .put(", column=").put(metadata.getColumnName(columnIndex)).put(']');
+                        }
+                    }
                     parquetRewriteColumnIndexes.add(columnIndex);
                 }
             }
@@ -3558,6 +3592,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (parquetRewriteColumnIndexes.size() > 0) {
                 rebuildParquetRewriteIndexes(
                         partitionTimestamp,
+                        cellKey,
                         newPartitionNameTxn,
                         newParquetFileSize,
                         dstDirLen,
@@ -3792,7 +3827,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void normalizeColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount) {
-        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, true);
+        normalizeColumnTopsAfterParquetRewrite(partitionTimestamp, 0, partitionRowCount);
+    }
+
+    /**
+     * Cell-scoped {@link #normalizeColumnTopsAfterParquetRewrite(long, long)}: the rewritten parquet
+     * materializes every current-schema column for ONE cell, so only that cell's tops are zeroed.
+     */
+    public void normalizeColumnTopsAfterParquetRewrite(long partitionTimestamp, int cellKey, long partitionRowCount) {
+        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, cellKey, partitionRowCount, true);
         if (columnVersionWriter.hasChanges()) {
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -10990,6 +11033,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             byte indexType,
             int plen,
             long timestamp,
+            // COMPOSITE: the cell this index belongs to. Only the column-top read and the covering
+            // configuration below need it -- the partition directory is the caller's `path`, already
+            // positioned at the cell. 0 for a plain table.
+            int cellKey,
             RowGroupBuffers rowGroupBuffers,
             boolean allowDestructiveRecovery,
             boolean normalizeColumnTops,
@@ -11013,7 +11060,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // branch returns early on ff.exists, never resetting it).
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, allowDestructiveRecovery);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
-        final long columnTop = normalizeColumnTops ? 0 : columnVersionWriter.getColumnTop(timestamp, columnIndex);
+        final long columnTop = normalizeColumnTops ? 0 : columnVersionWriter.getColumnTop(timestamp, cellKey, columnIndex);
 
         // Invariant: on a parquet partition the indexed SYMBOL's columnTop is
         // one of three values. 0 (column has data from row 0):
@@ -11181,6 +11228,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexType,
                     plen,
                     timestamp,
+                    // ADD INDEX over a parquet partition is refused for composite tables (see the DDL
+                    // gates), so this caller only ever sees cellKey 0.
+                    0,
                     rowGroupBuffers,
                     true,
                     false,
@@ -16147,6 +16197,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 metadata.getColumnIndexType(colIdx),
                                 plen,
                                 partitionTimestamp,
+                                0,
                                 rowGroupBuffers,
                                 false,
                                 false,
@@ -18338,6 +18389,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void rebuildParquetRewriteIndexes(
             long partitionTimestamp,
+            int cellKey,
             long partitionNameTxn,
             long parquetFileSize,
             int partitionDirLen,
@@ -18345,12 +18397,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         long parquetAddr = 0;
         long parquetSize = 0;
+        final StringSink cellSegment = Misc.getThreadLocalSink();
+        renderCellSegment(cellSegment, cellKey);
         setPathForNativePartition(
                 path.trimTo(pathSize),
                 timestampType,
                 partitionBy,
                 partitionTimestamp,
-                partitionNameTxn
+                partitionNameTxn,
+                cellSegment
         );
         assert path.size() == partitionDirLen;
         try {
@@ -18376,11 +18431,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             parquetRewriteIndexer,
                             metadata.getColumnName(columnIndex),
                             columnIndex,
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
+                            getColumnNameTxn(partitionTimestamp, cellKey, columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
                             indexType,
                             partitionDirLen,
                             partitionTimestamp,
+                            cellKey,
                             parquetRewriteRowGroupBuffers,
                             true,
                             true,

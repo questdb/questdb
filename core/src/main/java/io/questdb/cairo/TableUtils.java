@@ -2331,6 +2331,37 @@ public final class TableUtils {
             ParquetConversionContext conversionContext,
             long seqTxn
     ) {
+        // No cellSegment => no cell => cellKey 0. The PLAIN-table entry point; a composite table
+        // always goes through the cell-carrying form below.
+        return produceParquetFromParquetWithConversions(path, other, pathSize, partitionTimestamp, partitionNameTxn,
+                sourceParquetFileSize, candidateParquetFileName, candidateParquetMetaFileName, metadata,
+                columnVersionReader, symbolTableProvider, configuration, conversionContext, seqTxn, null, 0);
+    }
+
+    /**
+     * Cell-aware counterpart, for re-encoding ONE cell of a composite day. {@code cellSegment} places
+     * the source and the two candidate files inside that cell's directory; {@code cellKey} keys the
+     * column tops the materializer reads (`_cv` is keyed by (timestamp, cellKey, column)). A null
+     * segment with cellKey 0 is byte-identical to the form above.
+     */
+    public static long produceParquetFromParquetWithConversions(
+            Path path,
+            Path other,
+            int pathSize,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long sourceParquetFileSize,
+            CharSequence candidateParquetFileName,
+            CharSequence candidateParquetMetaFileName,
+            TableMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            SymbolTableProvider symbolTableProvider,
+            CairoConfiguration configuration,
+            ParquetConversionContext conversionContext,
+            long seqTxn,
+            @Nullable CharSequence cellSegment,
+            int cellKey
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
         final int timestampType = metadata.getTimestampType();
@@ -2360,7 +2391,7 @@ public final class TableUtils {
         final PartitionUpdater partitionUpdater = conversionContext.getPartitionUpdater();
 
         try {
-            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             final int partitionDirLen = path.size();
             path.concat(PARQUET_METADATA_FILE_NAME).$();
             parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
@@ -2380,7 +2411,7 @@ public final class TableUtils {
             mappedParquetSize = sourceParquetSize;
             decoder.of(parquetMetaReader, parquetAddr, sourceParquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
 
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             other.concat(candidateParquetFileName).$();
             ff.removeQuiet(other.$());
             writerFd = openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
@@ -2456,6 +2487,7 @@ public final class TableUtils {
                         metadata,
                         columnVersionReader,
                         partitionTimestamp,
+                        cellKey,
                         tableToParquetIdx,
                         symbolTableProvider
                 );
@@ -2467,7 +2499,7 @@ public final class TableUtils {
         } catch (Throwable th) {
             // Close Rust-owned descriptors before removing candidates, especially on Windows.
             conversionContext.releaseResources();
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             final int partitionDirLen = other.size();
             other.concat(candidateParquetFileName);
             ff.removeQuiet(other.$());

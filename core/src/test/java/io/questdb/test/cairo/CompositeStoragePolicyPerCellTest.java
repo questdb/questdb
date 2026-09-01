@@ -28,6 +28,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxWriter;
 import io.questdb.std.FilesFacade;
@@ -356,6 +357,79 @@ public class CompositeStoragePolicyPerCellTest extends AbstractCompositeTwinTest
         final TableToken tt = engine.verifyTableName(table);
         path.of(configuration.getDbRoot()).concat(tt);
         TableUtils.setPathForNativePartition(path, w.getTimestampType(), PartitionBy.DAY, dayTs, nameTxn, segment);
+    }
+
+    /**
+     * {@code normalizeColumnTopsAfterParquetRewrite(ts, cellKey, rowCount)} -- the `_cv` half of the
+     * per-cell parquet rewrite. A rewritten parquet materializes every current-schema column for ONE
+     * cell, so only that cell's tops may be zeroed.
+     * <p>
+     * NON-VACUITY: the two cells are given DIFFERENT tops for the added column (only cell E1 gets a
+     * row after the ADD COLUMN), and the SECOND cell is normalized. A by-timestamp implementation
+     * zeroes cell 0's top -- so asserting "the named cell is zero AND the sibling is unchanged" is
+     * what distinguishes them; asserting only the first half passes either way.
+     */
+    @Test
+    public void testColumnTopNormalizationTouchesOnlyTheNamedCell() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch WAL");
+            execute("INSERT INTO c VALUES ('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0',3.0)");
+            drainWalQueue();
+            // A column added after the day exists gives every existing cell a top; writing it into
+            // ONE cell of that day is what makes the two cells' tops differ.
+            execute("ALTER TABLE c ADD COLUMN extra LONG");
+            execute("INSERT INTO c VALUES ('2023-01-01T03:00:00.000000Z','E1',4.0,7)");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            final long day1;
+            final int firstCell;
+            final int targetCell;
+            final int extraIdx;
+            try (TableWriter w = getWriter("c")) {
+                final TxWriter tx = w.getTxWriter();
+                day1 = tx.getPartitionTimestampByIndex(0);
+                final IntList cells = cellsOfDay(w, day1);
+                Assert.assertEquals("the day must have two cells or the per-cell claim is untestable",
+                        2, cells.size());
+                firstCell = cells.getQuick(0);
+                targetCell = cells.getQuick(1);
+                extraIdx = w.getMetadata().getColumnIndex("extra");
+            }
+
+            final long firstTopBefore = columnTopOf("c", day1, firstCell, extraIdx);
+            final long targetTopBefore = columnTopOf("c", day1, targetCell, extraIdx);
+            Assert.assertTrue("the two cells must start with DIFFERENT tops, else the test is vacuous"
+                            + " [first=" + firstTopBefore + ", target=" + targetTopBefore + "]",
+                    firstTopBefore != targetTopBefore);
+            Assert.assertTrue("the cell being normalized must start with a non-zero top", targetTopBefore != 0);
+
+            try (TableWriter w = getWriter("c")) {
+                w.normalizeColumnTopsAfterParquetRewrite(day1, targetCell,
+                        w.getTxWriter().getPartitionSize(w.getPartitionIndexByTimestamp(day1, targetCell)));
+                // The real caller commits `_txn` right after, which is what publishes the new `_cv`
+                // version; without it a fresh reader still resolves the previous one.
+                w.bumpPartitionTableVersion();
+                w.commit();
+            }
+
+            Assert.assertEquals("the named cell's top must be zeroed",
+                    0, columnTopOf("c", day1, targetCell, extraIdx));
+            Assert.assertEquals("the sibling cell's top must be untouched -- a by-timestamp normalize zeroes it",
+                    firstTopBefore, columnTopOf("c", day1, firstCell, extraIdx));
+        });
+    }
+
+    /**
+     * One cell's stored column top, read back through a fresh reader.
+     */
+    private long columnTopOf(String table, long dayTs, int cellKey, int columnIndex) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(table))) {
+            return reader.getColumnVersionReader().getColumnTop(dayTs, cellKey, columnIndex);
+        }
     }
 
     private IntList cellsOfDay(TableWriter w, long dayTs) {
