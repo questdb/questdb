@@ -61,10 +61,10 @@ public class Worker extends Thread {
     private final String poolName;
     private final long sleepMs;
     private final long sleepThreshold;
+    private final WorkerWakeController wakeController;
     private final Job.WorkerContext workerContext;
     private final int workerId;
     private final long yieldThreshold;
-    private final WorkerWakeController wakeController;
     private int jobStartIndex;
 
     public Worker(

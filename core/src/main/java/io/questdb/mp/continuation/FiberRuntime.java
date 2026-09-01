@@ -72,16 +72,16 @@ public final class FiberRuntime {
     private final LongAdder orphanedEntryRecoveryCount = new LongAdder();
     private final LongAdder orphanedShardTransitionCount = new LongAdder();
     private final long[] orphanedWords;
+    private final AtomicInteger outstandingTaskCount = new AtomicInteger();
     private final ObjList<OwnerContext> ownerContexts;
     private final int ownerWorkerCount;
-    private final AtomicInteger outstandingTaskCount = new AtomicInteger();
     private final ObjList<FiberRuntimeQuiesceListener> quiesceListeners = new ObjList<>();
     private final FiberRunQueue runQueue;
     private final LongAdder saturationCount = new LongAdder();
     private final ObjList<Shard> shards;
     private final LongAdder stolenSelectionCount = new LongAdder();
-    private final FiberWakeSink wakeSink;
     private final LongAdder wakeClaimCount = new LongAdder();
+    private final FiberWakeSink wakeSink;
     private volatile @Nullable Runnable afterProcessForTesting;
     private volatile @Nullable Runnable afterReservationReleaseForTesting;
     private volatile Configuration configuration;
@@ -486,6 +486,14 @@ public final class FiberRuntime {
         return finalizerCount.get();
     }
 
+    public long getGlobalPublicationCount() {
+        return globalPublicationCount.sum();
+    }
+
+    public long getGlobalSelectionCount() {
+        return globalSelectionCount.sum();
+    }
+
     public long getInlineSuspendViolationCount() {
         return inlineSuspendViolationCount.sum();
     }
@@ -496,6 +504,18 @@ public final class FiberRuntime {
 
     public int getLiveFiberCount() {
         return fiberPool.getLiveCount();
+    }
+
+    public long getLocalFallbackPublicationCount() {
+        return localFallbackPublicationCount.sum();
+    }
+
+    public long getLocalPublicationCount() {
+        return localPublicationCount.sum();
+    }
+
+    public long getLocalSelectionCount() {
+        return localSelectionCount.sum();
     }
 
     public int getMaxLiveFiberCount() {
@@ -512,26 +532,6 @@ public final class FiberRuntime {
 
     public long getMountCount() {
         return mountCount.sum();
-    }
-
-    public long getGlobalPublicationCount() {
-        return globalPublicationCount.sum();
-    }
-
-    public long getGlobalSelectionCount() {
-        return globalSelectionCount.sum();
-    }
-
-    public long getLocalFallbackPublicationCount() {
-        return localFallbackPublicationCount.sum();
-    }
-
-    public long getLocalPublicationCount() {
-        return localPublicationCount.sum();
-    }
-
-    public long getLocalSelectionCount() {
-        return localSelectionCount.sum();
     }
 
     public int getMountedCount() {
@@ -609,11 +609,6 @@ public final class FiberRuntime {
     }
 
     @TestOnly
-    public int getOwnerWorkerCountForTesting() {
-        return ownerWorkerCount;
-    }
-
-    @TestOnly
     public int getRunQueueCapacity() {
         return runQueue.capacity();
     }
@@ -621,11 +616,6 @@ public final class FiberRuntime {
     @TestOnly
     public void initializeLocalPositionForTesting(int workerId, long position) {
         getShardForTesting(workerId).localQueue.initializeEmptyPositionForTesting(position);
-    }
-
-    @TestOnly
-    public boolean isPoolBoundForTesting() {
-        return bindingRole == BindingRole.POOL_BOUND;
     }
 
     @TestOnly
