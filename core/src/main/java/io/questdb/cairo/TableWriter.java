@@ -355,6 +355,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TxnScoreboard txnScoreboard;
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    private final FindVisitor collectOrphanCellDirs = this::collectOrphanCellDirs;
+    /// Scratch for the orphaned-cell scan: the cell segment, its live directory name, and the name
+    /// txns of the directories that belong to that cell but are not its live version.
+    private final StringSink orphanCellSink = new StringSink();
+    private final LongList orphanCandidateDirs = new LongList();
+    private final StringSink orphanLiveDirSink = new StringSink();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -595,6 +601,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private SymbolColumnIndexer parquetRewriteIndexer;
     private byte parquetRewriteIndexerType = IndexType.NONE;
     private RowGroupBuffers parquetRewriteRowGroupBuffers;
+    private CharSequence orphanScanLiveDir;
+    private CharSequence orphanScanSegment;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -19007,6 +19015,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (composite) {
                     if (!txWriter.hasAnyAttachedPartitionForTimestamp(dirTimestamp)) {
                         partitionRemoveCandidates.add(dirTimestamp, txn, 0);
+                    } else {
+                        // The day is live, so the day-level question is answered -- but a cell's own
+                        // <cell>.<nameTxn> lives one level deeper than this walk, and a partition
+                        // install that died between its file moves and the day's single _txn commit
+                        // leaves exactly those. Nothing else discovers them: MEASURED as five
+                        // directories surviving a two-cell day, through a writer reopen.
+                        queueOrphanedCellDirs(dirTimestamp);
                     }
                 } else if (txn != txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp, -2)) {
                     partitionRemoveCandidates.add(dirTimestamp, txn, 0);
@@ -19019,6 +19034,88 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.error().$("invalid partition directory inside table folder: ").$(path).$();
             }
         }
+    }
+
+
+    /**
+     * Queues the day's {@code <cell>.<nameTxn>} directories that {@code _txn} does not point at.
+     * <p>
+     * Identification runs the SAFE way round: each ATTACHED record of the day renders its own segment
+     * and live directory name, and a directory is queued only when it belongs to one of those cells and
+     * carries a different name txn. A live directory therefore cannot be queued -- its name is the one
+     * being compared against -- and a directory whose segment matches no attached cell is left alone,
+     * because it cannot be resolved to a cellKey and guessing here deletes data. This is the code that
+     * removes partition directories; the conservative direction is the correct one.
+     */
+    private void queueOrphanedCellDirs(long dayTimestamp) {
+        final int dayPathLen = path.size();
+        try {
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.getPartitionTimestampByIndex(i) != dayTimestamp) {
+                    continue;
+                }
+                final int cellKey = txWriter.getPartitionCellKey(i);
+                final long liveNameTxn = txWriter.getPartitionNameTxn(i);
+                orphanCellSink.clear();
+                renderCellSegment(orphanCellSink, cellKey);
+                orphanLiveDirSink.clear();
+                orphanLiveDirSink.put(orphanCellSink);
+                if (liveNameTxn > -1) {
+                    orphanLiveDirSink.put('.').put(liveNameTxn);
+                }
+                orphanCandidateDirs.clear();
+                orphanScanSegment = orphanCellSink;
+                orphanScanLiveDir = orphanLiveDirSink;
+                ff.iterateDir(path.$(), collectOrphanCellDirs);
+                for (int c = 0, cn = orphanCandidateDirs.size(); c < cn; c++) {
+                    partitionRemoveCandidates.add(dayTimestamp, orphanCandidateDirs.getQuick(c), cellKey);
+                }
+                path.trimTo(dayPathLen);
+            }
+        } finally {
+            orphanScanSegment = null;
+            orphanScanLiveDir = null;
+            orphanCandidateDirs.clear();
+            path.trimTo(dayPathLen);
+        }
+    }
+
+    /**
+     * One entry of a day container, during {@link #queueOrphanedCellDirs}: collects the name txn of a
+     * directory that belongs to the cell being scanned but is not its live version.
+     */
+    private void collectOrphanCellDirs(long pUtf8NameZ, int type) {
+        final int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, path.size(), pUtf8NameZ, type, utf8Sink);
+        if (checkedType == Files.DT_UNKNOWN || CairoKeywords.isDetachedDirMarker(pUtf8NameZ)
+                || Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())) {
+            return;
+        }
+        final CharSequence segment = orphanScanSegment;
+        final CharSequence liveDir = orphanScanLiveDir;
+        if (segment == null || liveDir == null) {
+            return;
+        }
+        final CharSequence name = utf8Sink.asAsciiCharSequence();
+        if (Chars.equals(name, liveDir)) {
+            return; // the live version, by name
+        }
+        // "<segment>.<txn>" and nothing else: a bare "<segment>" with no suffix IS the sentinel-named
+        // live form, and is only reachable here when the live name txn is not -1 -- still an orphan.
+        if (!Chars.startsWith(name, segment)) {
+            return;
+        }
+        long txn = -1;
+        if (name.length() > segment.length()) {
+            if (name.charAt(segment.length()) != '.') {
+                return; // a different cell whose segment merely shares this prefix
+            }
+            try {
+                txn = Numbers.parseLong(name, segment.length() + 1, name.length());
+            } catch (NumericException e) {
+                return;
+            }
+        }
+        orphanCandidateDirs.add(txn);
     }
 
     private void removeSymbolMapFilesQuiet(CharSequence name, long columnNameTxn) {
