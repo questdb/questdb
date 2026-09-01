@@ -265,6 +265,7 @@ public class LiveViewTimeZoneAnchorServerTest extends AbstractBootstrapTest {
             2026-10-25T22:30:00.000000Z\t2
             2026-10-26T00:30:00.000000Z\t3
             """;
+
     static {
         // The day below the spring-forward, the 23-hour day itself, and the day above it. The
         // two rows at 23:00Z and 23:30Z are the head a UTC-grid segment start would drop, and
