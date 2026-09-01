@@ -248,8 +248,8 @@ final class ConcurrentQueueSegment<T> {
      */
     void ensureFrozenForEnqueues() {
         if (!frozenForEnqueues) {
-            frozenForEnqueues = true;
             TAIL.addAndGet(headAndTail, freezeOffset);
+            frozenForEnqueues = true;
         }
     }
 
