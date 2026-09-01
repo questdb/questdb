@@ -3590,6 +3590,30 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullRefreshRequestForMissingStateIsLoggedAtInfo() throws Exception {
+        final LogCapture capture = new LogCapture();
+        assertMemoryLeak(capture, () -> {
+            final TableToken missingViewToken = new TableToken(
+                    "missing_view",
+                    "missing_view~1",
+                    null,
+                    1,
+                    TableToken.Type.MAT_VIEW,
+                    true,
+                    false,
+                    false,
+                    false
+            );
+
+            capture.start();
+            engine.getMatViewStateStore().enqueueFullRefresh(missingViewToken);
+            capture.drain();
+            capture.assertLoggedRE(" I .*MatViewStateStoreImpl materialized view state not found, request dropped "
+                    + "\\[view=missing_view~1, op=full_refresh\\]");
+        });
+    }
+
+    @Test
     public void testHugeSampleByInterval() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -7604,6 +7628,36 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshJobYieldsAfterBoundedBatchForDroppedBase() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base_price (ts timestamp) timestamp(ts) partition by DAY WAL");
+            final TableToken staleBaseToken = engine.getTableTokenIfExists("base_price");
+            Assert.assertNotNull(staleBaseToken);
+            execute("drop table base_price");
+            drainQueues();
+
+            final int queued = 100;
+            final MatViewStateStore stateStore = engine.getMatViewStateStore();
+            for (int i = 0; i < queued; i++) {
+                stateStore.enqueueInvalidateDependentViews(staleBaseToken, "test invalidation");
+            }
+
+            final AtomicInteger dequeued = new AtomicInteger();
+            try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 1)) {
+                // Keep the time budget out of the assertion so only the 32-task bound can end this pass.
+                refreshJob.setMaxRunDurationForTesting(TimeUnit.DAYS.toNanos(1));
+                refreshJob.setOnRefreshTaskDequeuedForTesting(dequeued::incrementAndGet);
+
+                Assert.assertTrue(refreshJob.run());
+                Assert.assertEquals(32, dequeued.get());
+
+                drainMatViewQueue(refreshJob);
+                Assert.assertEquals(queued, dequeued.get());
+            }
+        });
+    }
+
+    @Test
     public void testRefreshJobYieldsAfterTimeBudget() throws Exception {
         // The task count bound alone would let MAX_TASKS_PER_RUN slow refreshes run back to back before
         // yielding -- half an hour at the ~60s per refresh #7576 measured. The elapsed-time budget is
@@ -9001,18 +9055,16 @@ public class MatViewTest extends AbstractCairoTest {
                 capture.assertOnlyOnce("materialized view has not refreshed across 3 timer firings");
                 capture.assertNotLogged("materialized view timer is scheduling refreshes again");
 
-                // A fourth missed firing must not repeat the line.
-                currentMicros += Micros.MINUTE_MICROS;
-                drainMatViewTimerQueue(timerJob);
-                capture.drain();
-                capture.assertOnlyOnce("materialized view has not refreshed across 3 timer firings");
-
-                // The backlog clears, so the next firing schedules a refresh again and says so.
+                // The backlog clears immediately after the third miss, so the next firing must
+                // report recovery at the exact threshold.
                 drainQueues();
                 currentMicros += Micros.MINUTE_MICROS;
                 drainMatViewTimerQueue(timerJob);
                 capture.drain();
-                capture.assertOnlyOnce("materialized view timer is scheduling refreshes again");
+                capture.assertOnlyOnce(
+                        "materialized view timer is scheduling refreshes again \\[.*missedFirings=3\\]"
+                );
+                capture.assertOnlyOnce("materialized view has not refreshed across 3 timer firings");
 
                 // Let that refresh complete. A later successful firing must not report recovery
                 // again: the first successful firing reset the missed-firing stretch.
@@ -9021,6 +9073,16 @@ public class MatViewTest extends AbstractCairoTest {
                 drainMatViewTimerQueue(timerJob);
                 capture.drain();
                 capture.assertOnlyOnce("materialized view timer is scheduling refreshes again");
+
+                // The last firing left a new refresh pending. Isolate its log records and advance
+                // through a fourth miss to prove the backlog warning remains edge-triggered.
+                capture.start();
+                for (int i = 0; i < 4; i++) {
+                    currentMicros += Micros.MINUTE_MICROS;
+                    drainMatViewTimerQueue(timerJob);
+                }
+                capture.drain();
+                capture.assertOnlyOnce("materialized view has not refreshed across 3 timer firings");
             } finally {
                 capture.stop();
             }
