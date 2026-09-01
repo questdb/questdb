@@ -41,6 +41,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.FSSTNative;
+import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
@@ -74,6 +75,7 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
@@ -84,6 +86,8 @@ import org.junit.Test;
 import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicIntegerArray;
+import java.util.concurrent.atomic.AtomicLongArray;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
@@ -1926,6 +1930,58 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAlterTableAddIndexIncludesDroppedAndReaddedColumnPredatingKeyColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_np_readd (
+                        ts TIMESTAMP,
+                        tag VARCHAR,
+                        keep INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Generation one of tag. Longer than 9 bytes, so it really lands in
+            // tag.d rather than being inlined into the aux entry.
+            execute("INSERT INTO t_np_readd VALUES ('2024-01-01T00:00:00', 'GEN-ONE-VALUE', 1)");
+
+            execute("ALTER TABLE t_np_readd DROP COLUMN tag");
+            execute("ALTER TABLE t_np_readd ADD COLUMN tag VARCHAR");
+
+            // Generation two. tag now carries a column top of 1 on this partition,
+            // so row 0 stays NULL even though the null prefix covers it.
+            execute("""
+                    INSERT INTO t_np_readd (ts, keep, tag) VALUES
+                    ('2024-01-01T01:00:00', 2, 'GEN-TWO-ROW-ONE'),
+                    ('2024-01-01T02:00:00', 3, 'GEN-TWO-ROW-TWO')
+                    """);
+
+            execute("ALTER TABLE t_np_readd ADD COLUMN sym2 SYMBOL");
+            execute("""
+                    INSERT INTO t_np_readd (ts, keep, tag, sym2) VALUES
+                    ('2024-01-01T03:00:00', 4, 'GEN-TWO-ROW-THREE', 'A'),
+                    ('2024-01-01T04:00:00', 5, 'GEN-TWO-ROW-FOUR', 'B')
+                    """);
+
+            execute("ALTER TABLE t_np_readd ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (tag, keep)");
+            engine.releaseAllWriters();
+
+            // Rows 0..2 are below sym2's column top and match sym2 = null. Row 0
+            // predates tag's re-added generation, so its tag is genuinely NULL;
+            // rows 1..2 must show generation two's values, never generation one's.
+            assertQuery("SELECT sym2, keep, tag FROM t_np_readd WHERE sym2 = null ORDER BY ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\tkeep\ttag
+                            \t1\t
+                            \t2\tGEN-TWO-ROW-ONE
+                            \t3\tGEN-TWO-ROW-TWO
+                            """);
+        });
+    }
+
+    @Test
     public void testAlterTableAddIndexIncludesArrayColumnPredatingKeyColumnTop() throws Exception {
         // Same scenario as testAlterTableAddIndexIncludesColumnPredatingKeyColumnTop,
         // but for an ARRAY INCLUDE column. ARRAY's raw column format differs from
@@ -1970,6 +2026,292 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             sym2\ttag
                             \t[1.0,2.0]
                             \t[3.0]
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexIncludesFixedWidthColumnsPredatingKeyColumnTop() throws Exception {
+        // Same null-prefix shape as
+        // testAlterTableAddIndexIncludesColumnPredatingKeyColumnTop, but for the
+        // whole fixed-width INCLUDE family. Every one of these types reaches the raw
+        // .d file through the same primitive, NullCursor.resolveRawFixedAddr(), so a
+        // single table pins them all: row 0 holds each type's own NULL sentinel and
+        // row 1 holds a real value, both below the indexed column's top.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_np_fixed (
+                        ts TIMESTAMP,
+                        v_bool BOOLEAN,
+                        v_byte BYTE,
+                        v_short SHORT,
+                        v_char CHAR,
+                        v_int INT,
+                        v_long LONG,
+                        v_float FLOAT,
+                        v_date DATE,
+                        v_ts TIMESTAMP,
+                        v_uuid UUID,
+                        v_ipv4 IPv4,
+                        v_l256 LONG256,
+                        v_d64 DECIMAL(18, 3),
+                        v_d128 DECIMAL(38, 10),
+                        v_sym SYMBOL
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2 rows before sym2 exists. BOOLEAN has no NULL, so row 0 uses false.
+            execute("""
+                    INSERT INTO t_np_fixed VALUES
+                    ('2024-01-01T00:00:00', false, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+                     NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+                    ('2024-01-01T01:00:00', true, 7, 700, 'x', 70_000, 700_000, 1.5,
+                     '2024-06-01T00:00:00.000Z', '2024-06-02T03:04:05.000000Z',
+                     '11111111-1111-1111-1111-111111111111', '1.2.3.4',
+                     cast('0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef' as LONG256),
+                     '12345.678'::DECIMAL(18, 3), '1234567890.1234567890'::DECIMAL(38, 10), 'S1')
+                    """);
+
+            execute("ALTER TABLE t_np_fixed ADD COLUMN sym2 SYMBOL");
+
+            // 2 rows after ADD COLUMN, sym2 populated -- these carry real postings.
+            execute("""
+                    INSERT INTO t_np_fixed VALUES
+                    ('2024-01-01T02:00:00', true, 8, 800, 'y', 80_000, 800_000, 2.5,
+                     '2024-07-01T00:00:00.000Z', '2024-07-02T03:04:05.000000Z',
+                     '22222222-2222-2222-2222-222222222222', '5.6.7.8',
+                     cast('0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890' as LONG256),
+                     '98765.432'::DECIMAL(18, 3), '9876543210.9876543210'::DECIMAL(38, 10), 'S2', 'A'),
+                    ('2024-01-01T03:00:00', false, 9, 900, 'z', 90_000, 900_000, 3.5,
+                     '2024-08-01T00:00:00.000Z', '2024-08-02T03:04:05.000000Z',
+                     '33333333-3333-3333-3333-333333333333', '9.10.11.12',
+                     cast('0x1111111111111111111111111111111111111111111111111111111111111111' as LONG256),
+                     '11111.111'::DECIMAL(18, 3), '1111111111.1111111111'::DECIMAL(38, 10), 'S3', 'B')
+                    """);
+
+            execute("""
+                    ALTER TABLE t_np_fixed ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (
+                        v_bool, v_byte, v_short, v_char, v_int, v_long, v_float, v_date,
+                        v_ts, v_uuid, v_ipv4, v_l256, v_d64, v_d128, v_sym
+                    )
+                    """);
+            engine.releaseAllWriters();
+
+            // Rows 0..1 are below sym2's column top, so they match sym2 = null through
+            // the synthetic null prefix and every value must come from the INCLUDE
+            // column's own .d file -- the NULL sentinels of row 0 included.
+            assertQuery("""
+                    SELECT sym2, v_bool, v_byte, v_short, v_char, v_int, v_long, v_float,
+                           v_date, v_ts, v_uuid, v_ipv4, v_l256, v_d64, v_d128, v_sym
+                    FROM t_np_fixed WHERE sym2 = null ORDER BY ts
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\tv_bool\tv_byte\tv_short\tv_char\tv_int\tv_long\tv_float\tv_date\tv_ts\tv_uuid\tv_ipv4\tv_l256\tv_d64\tv_d128\tv_sym
+                            \tfalse\t0\t0\t\tnull\tnull\tnull\t\t\t\t\t\t\t\t
+                            \ttrue\t7\t700\tx\t70000\t700000\t1.5\t2024-06-01T00:00:00.000Z\t2024-06-02T03:04:05.000000Z\t11111111-1111-1111-1111-111111111111\t1.2.3.4\t0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef\t12345.678\t1234567890.1234567890\tS1
+                            """);
+
+            // Independently corroborate the literals above -- notably the NULL
+            // sentinels of row 0, which differ per type -- against the same rows
+            // read WITHOUT the covering index.
+            assertSqlCursors(
+                    """
+                            SELECT sym2, v_bool, v_byte, v_short, v_char, v_int, v_long, v_float,
+                                   v_date, v_ts, v_uuid, v_ipv4, v_l256, v_d64, v_d128, v_sym
+                            FROM t_np_fixed WHERE sym2 = null ORDER BY ts
+                            """,
+                    """
+                            SELECT /*+ no_covering */ sym2, v_bool, v_byte, v_short, v_char, v_int, v_long, v_float,
+                                   v_date, v_ts, v_uuid, v_ipv4, v_l256, v_d64, v_d128, v_sym
+                            FROM t_np_fixed WHERE sym2 = null ORDER BY ts
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexIncludesMixedPredatingAndLaterColumns() throws Exception {
+        // A single index whose INCLUDE list MIXES columns that predate the indexed
+        // column with one that arrived after it, interleaved so that INCLUDE slot
+        // order differs from table column order. For a null-prefix row the two early
+        // columns must read their own .d files while the late column must stay NULL:
+        // NullCursor honours each INCLUDE column's OWN column top, not the indexed
+        // column's. Confusing a slot for a table index, or dropping the per-column
+        // top, surfaces the late column's later rows on the null-prefix rows.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_np_mixed (
+                        ts TIMESTAMP,
+                        early VARCHAR,
+                        early_num LONG
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2 rows before sym2 exists. Longer than 9 bytes so early.d is really read.
+            execute("""
+                    INSERT INTO t_np_mixed VALUES
+                    ('2024-01-01T00:00:00', 'EARLY-ROW-ONE', 11),
+                    ('2024-01-01T01:00:00', 'EARLY-ROW-TWO', 22)
+                    """);
+
+            execute("ALTER TABLE t_np_mixed ADD COLUMN sym2 SYMBOL");
+            execute("""
+                    INSERT INTO t_np_mixed VALUES
+                    ('2024-01-01T02:00:00', 'EARLY-ROW-THREE', 33, 'A'),
+                    ('2024-01-01T03:00:00', 'EARLY-ROW-FOUR', 44, 'B')
+                    """);
+
+            // late arrives after sym2, so its column top (4) sits ABOVE sym2's (2).
+            execute("ALTER TABLE t_np_mixed ADD COLUMN late VARCHAR");
+            execute("""
+                    INSERT INTO t_np_mixed VALUES
+                    ('2024-01-01T04:00:00', 'EARLY-ROW-FIVE', 55, 'A', 'LATE-ROW-FIVE'),
+                    ('2024-01-01T05:00:00', 'EARLY-ROW-SIX', 66, 'B', 'LATE-ROW-SIX')
+                    """);
+
+            execute("ALTER TABLE t_np_mixed ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (early, late, early_num)");
+            engine.releaseAllWriters();
+
+            // Rows 0..1 match sym2 = null. early and early_num are real there; late
+            // predates nothing -- it postdates both -- so it must read NULL.
+            assertQuery("SELECT sym2, early, late, early_num FROM t_np_mixed WHERE sym2 = null ORDER BY ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\tearly\tlate\tearly_num
+                            \tEARLY-ROW-ONE\t\t11
+                            \tEARLY-ROW-TWO\t\t22
+                            """);
+
+            // The real-posting rows for the same index must keep working: row 2 has no
+            // late value, row 4 does. This is the sidecar branch, not the null prefix,
+            // and it shares the INCLUDE slot numbering the assertion above pins.
+            assertQuery("SELECT sym2, early, late, early_num FROM t_np_mixed WHERE sym2 = 'A' ORDER BY ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\tearly\tlate\tearly_num
+                            A\tEARLY-ROW-THREE\t\t33
+                            A\tEARLY-ROW-FIVE\tLATE-ROW-FIVE\t55
+                            """);
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexIncludesStringAndBinaryColumnsPredatingKeyColumnTop() throws Exception {
+        // Same null-prefix shape as
+        // testAlterTableAddIndexIncludesColumnPredatingKeyColumnTop, but for STRING
+        // and BINARY. Both have their own hand-written raw decoders in NullCursor
+        // (readRawCoveredStr / readRawCoveredBin) that share nothing with VARCHAR's:
+        // STRING's aux entry is a bare 8-byte offset into a 4-byte length followed by
+        // UTF-16 code units, BINARY's is a bare 8-byte offset into an 8-byte length
+        // followed by raw bytes. Row 0 is NULL for both, row 1 carries a multi-byte
+        // STRING and an 8-byte BINARY.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_np_strbin (
+                        ts TIMESTAMP,
+                        v_str STRING,
+                        v_bin BINARY
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // rnd_bin(8, 8, 0) is deterministic: the test harness seeds its Rnd, and
+            // the bytes are written once, at INSERT time.
+            execute("""
+                    INSERT INTO t_np_strbin VALUES
+                    ('2024-01-01T00:00:00', NULL, NULL),
+                    ('2024-01-01T01:00:00', 'STR-ROW-TWO-é中文', rnd_bin(8, 8, 0))
+                    """);
+
+            execute("ALTER TABLE t_np_strbin ADD COLUMN sym2 SYMBOL");
+            execute("""
+                    INSERT INTO t_np_strbin VALUES
+                    ('2024-01-01T02:00:00', 'STR-ROW-THREE', rnd_bin(8, 8, 0), 'A'),
+                    ('2024-01-01T03:00:00', 'STR-ROW-FOUR', rnd_bin(8, 8, 0), 'B')
+                    """);
+
+            execute("ALTER TABLE t_np_strbin ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (v_str, v_bin)");
+            engine.releaseAllWriters();
+
+            // length(v_bin) drives getCoveredBinLen, projecting v_bin drives
+            // getCoveredBin -- two separate overrides over the same decoder.
+            assertQuery("SELECT sym2, v_str, length(v_bin) bin_len, v_bin FROM t_np_strbin WHERE sym2 = null ORDER BY ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\tv_str\tbin_len\tv_bin
+                            \t\t-1\t
+                            \tSTR-ROW-TWO-é中文\t8\t00000000 ee 41 1d 15 55 8a 17 fa
+                            """);
+
+            // LATEST ON takes the DIR_BACKWARD reader, whose readRawCoveredStr /
+            // readRawCoveredBin are a separate hand-copied pair.
+            assertQuery("SELECT sym2, v_str, length(v_bin) bin_len FROM t_np_strbin WHERE sym2 = null LATEST ON ts PARTITION BY sym2")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\tv_str\tbin_len
+                            \tSTR-ROW-TWO-é中文\t8
+                            """);
+
+            // Independently corroborate the literals above: the same rows read
+            // WITHOUT the covering index must produce byte-identical output.
+            assertSqlCursors(
+                    "SELECT sym2, v_str, length(v_bin) bin_len, v_bin FROM t_np_strbin WHERE sym2 = null ORDER BY ts",
+                    "SELECT /*+ no_covering */ sym2, v_str, length(v_bin) bin_len, v_bin FROM t_np_strbin WHERE sym2 = null ORDER BY ts"
+            );
+        });
+    }
+
+    @Test
+    public void testAlterTableAddIndexLastPartitionIncrementalSealKeepsIncludeValues() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_incr_seal (
+                        ts TIMESTAMP,
+                        sym SYMBOL,
+                        val LONG
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 300 distinct symbols up front, so symbol keys 0..299 span two 256-key
+            // strides. Keys are handed out in first-appearance order.
+            execute("""
+                    INSERT INTO t_incr_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:00', 1_000L), ('S' || x)::symbol, x
+                    FROM long_sequence(300)
+                    """);
+            // The bulk only ever uses S1..S100 (keys 0..99), so the second stride
+            // (keys 256..299) is sealed early and stays clean, while the first stride
+            // keeps taking rows and is dirty at the final, incremental seal.
+            execute("""
+                    INSERT INTO t_incr_seal
+                    SELECT timestamp_sequence('2024-01-01T00:00:01', 1_000L),
+                           ('S' || (x % 100 + 1))::symbol,
+                           300 + x
+                    FROM long_sequence(120_000)
+                    """);
+            execute("ALTER TABLE t_incr_seal ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            engine.releaseAllWriters();
+
+            // S1 is key 0, in the dirty stride. val is never NULL, so a single NULL in
+            // the covered scan is the bug; the sum pins every value, not just presence.
+            assertQuery("SELECT count() cnt, count(val) non_null, sum(val) total FROM t_incr_seal WHERE sym = 'S1'")
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            cnt\tnon_null\ttotal
+                            1201\t1201\t72420001
                             """);
         });
     }
@@ -12835,6 +13177,51 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByNullKeyIncludesColumnPredatingKeyColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_key_top_latest (
+                        ts TIMESTAMP,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // 2 rows before sym2 exists -- tag has real data here. VARCHAR inlines values
+            // of up to 9 bytes into the aux entry and leaves tag.d empty; these values are
+            // longer, so the raw null-prefix read really does map and read tag.d too.
+            execute("""
+                    INSERT INTO t_key_top_latest VALUES
+                    ('2024-01-01T00:00:00', 'TAG-BEFORE-KEY-ONE'),
+                    ('2024-01-01T01:00:00', 'TAG-BEFORE-KEY-TWO')
+                    """);
+
+            execute("ALTER TABLE t_key_top_latest ADD COLUMN sym2 SYMBOL");
+
+            // 2 rows after ADD COLUMN, sym2 populated -- these never match sym2 = null.
+            execute("""
+                    INSERT INTO t_key_top_latest VALUES
+                    ('2024-01-01T02:00:00', 'TAG-AFTER-KEY-ONE', 'A'),
+                    ('2024-01-01T03:00:00', 'TAG-AFTER-KEY-TWO', 'B')
+                    """);
+
+            execute("ALTER TABLE t_key_top_latest ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (tag)");
+            engine.releaseAllWriters();
+
+            // Only rows 0 and 1 match sym2 = null, both through the synthetic null prefix.
+            // The latest of the two is row 1, so tag must be the SECOND value: an ascending
+            // null-prefix walk would surface TAG-BEFORE-KEY-ONE instead, and a covered
+            // getter that fell through to the sidecar would surface an empty tag.
+            assertQuery("SELECT sym2, tag FROM t_key_top_latest WHERE sym2 = null LATEST ON ts PARTITION BY sym2")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym2\ttag
+                            \tTAG-BEFORE-KEY-TWO
+                            """);
+        });
+    }
+
+    @Test
     public void testLatestByNullValues() throws Exception {
         // LATEST BY with NULL values in various types
         assertMemoryLeak(() -> {
@@ -14028,6 +14415,55 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 assertNull(metadata.getColumnMetadata(symIdx).getCoveringColumnIndices());
             }
         });
+    }
+
+    @Test
+    public void testNullPrefixCoveredMmapFailureFreesEarlierMappingsBwd() throws Exception {
+        assertNullPrefixCoveredMmapFailureFreesMappings(
+                "SELECT sym2, tag FROM t_np_mmap WHERE sym2 = null LATEST ON ts PARTITION BY sym2"
+        );
+    }
+
+    @Test
+    public void testNullPrefixCoveredMmapFailureFreesEarlierMappingsFwd() throws Exception {
+        assertNullPrefixCoveredMmapFailureFreesMappings(
+                "SELECT sym2, tag FROM t_np_mmap WHERE sym2 = null ORDER BY ts"
+        );
+    }
+
+    @Test
+    public void testNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumnsBwd() throws Exception {
+        assertNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumns(IndexReader.DIR_BACKWARD);
+    }
+
+    @Test
+    public void testNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumnsFwd() throws Exception {
+        assertNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumns(IndexReader.DIR_FORWARD);
+    }
+
+    @Test
+    public void testNullPrefixQueryMapsOnlyRequiredCoveredColumnsBwd() throws Exception {
+        assertNullPrefixQueryMapsOnlyRequiredCoveredColumns(
+                "SELECT price FROM t_np_filter WHERE sym2 = null LATEST ON ts PARTITION BY sym2",
+                false,
+                """
+                        price
+                        20.0
+                        """
+        );
+    }
+
+    @Test
+    public void testNullPrefixQueryMapsOnlyRequiredCoveredColumnsFwd() throws Exception {
+        assertNullPrefixQueryMapsOnlyRequiredCoveredColumns(
+                "SELECT price FROM t_np_filter WHERE sym2 = null ORDER BY ts",
+                true,
+                """
+                        price
+                        10.0
+                        20.0
+                        """
+        );
     }
 
     @Test
@@ -18098,6 +18534,201 @@ public class CoveringIndexTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertNullPrefixCoveredMmapFailureFreesMappings(String query) throws Exception {
+        final AtomicBoolean isFailArmed = new AtomicBoolean(false);
+        final AtomicInteger failedMmapCount = new AtomicInteger(0);
+        final long[] targetFd = {-1};
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+                // MMAP_INDEX_READER is the tag openRawColumnFile uses; the plain
+                // table reader maps the same files under MMAP_TABLE_READER.
+                if (isFailArmed.get() && fd == targetFd[0] && memoryTag == MemoryTag.MMAP_INDEX_READER) {
+                    failedMmapCount.incrementAndGet();
+                    return FilesFacade.MAP_FAILED;
+                }
+                return super.mmap(fd, len, offset, flags, memoryTag);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                long fd = super.openRO(name);
+                if (isFailArmed.get() && fd > -1 && name != null && Utf8s.endsWithAscii(name, "tag.i")) {
+                    targetFd[0] = fd;
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("""
+                    CREATE TABLE t_np_mmap (
+                        ts TIMESTAMP,
+                        tag VARCHAR
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // VARCHAR inlines values of up to 9 bytes into the aux entry and
+            // leaves tag.d empty, which would skip the first mmap entirely.
+            // These values are longer, so tag.d really is mapped before the
+            // reader opens tag.i.
+            execute("""
+                    INSERT INTO t_np_mmap VALUES
+                    ('2024-01-01T00:00:00', 'HELLO-FROM-ROW-ONE'),
+                    ('2024-01-01T01:00:00', 'HELLO-FROM-ROW-TWO')
+                    """);
+            // sym2 arrives late, so it carries a column top and rows 0..1 match
+            // sym2 = null through the reader's synthetic null prefix.
+            execute("ALTER TABLE t_np_mmap ADD COLUMN sym2 SYMBOL");
+            execute("""
+                    INSERT INTO t_np_mmap VALUES
+                    ('2024-01-01T02:00:00', 'HELLO-FROM-ROW-THREE', 'A'),
+                    ('2024-01-01T03:00:00', 'HELLO-FROM-ROW-FOUR', 'B')
+                    """);
+            execute("ALTER TABLE t_np_mmap ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (tag)");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            isFailArmed.set(true);
+            try {
+                CairoException caught = null;
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final Record record = cursor.getRecord();
+                        while (cursor.hasNext()) {
+                            record.getVarcharA(1);
+                        }
+                    } catch (CairoException e) {
+                        caught = e;
+                    }
+                }
+                assertNotNull("expected a CairoException from the null-prefix aux mmap failure", caught);
+                TestUtils.assertContains(
+                        caught.getFlyweightMessage(),
+                        "could not mmap covering INCLUDE column for null-prefix read"
+                );
+                // openRawColumnFile closes the .d fd before opening .i, so a recycled fd
+                // number could make the .d mmap match targetFd. The first mmap would then
+                // fail, nothing would be orphaned, and this test would pass with the leak
+                // reintroduced. The message embeds the file path, so pin the aux file.
+                TestUtils.assertContains(caught.getFlyweightMessage(), "tag.i");
+            } finally {
+                isFailArmed.set(false);
+            }
+            assertEquals("the injected mmap failure must have fired exactly once", 1, failedMmapCount.get());
+        });
+    }
+
+    /**
+     * Drives one detached null-prefix cursor that declares a single cover column
+     * and asserts the reader maps only that column's file. Pins the
+     * {@code getDetachedCursor()} NullCursor branch, which the SQL paths above do
+     * not reach (the parallel covered-decode pipeline is the only production
+     * caller, and it decodes frames forward only).
+     */
+    private static void assertNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumns(int direction) throws Exception {
+        final CoveredColumnMapCounter counter = new CoveredColumnMapCounter("tag.d", "tag.i", "price.d", "qty.d");
+        ff = counter;
+        assertMemoryLeak(counter, () -> {
+            createNullPrefixCoveringTable();
+            try (TableReader reader = engine.getReader("t_np_filter")) {
+                // getIndexReader() seeds the reader's columnTop from the partition's
+                // open column state, so the partition has to be opened first;
+                // otherwise the index reader sees columnTop 0 and never takes the
+                // null-prefix branch at all.
+                reader.openPartition(0);
+                // Columns are ts(0), tag(1), price(2), qty(3), sym2(4), and
+                // INCLUDE (tag, price, qty) makes price cover column 1.
+                final IndexReader indexReader = reader.getIndexReader(0, 4, direction);
+                counter.isArmed.set(true);
+                try (RowCursor cursor = indexReader.getDetachedCursor(0, 0, Long.MAX_VALUE, new int[]{1})) {
+                    final CoveringRowCursor coveringCursor = (CoveringRowCursor) cursor;
+                    int seen = 0;
+                    while (coveringCursor.hasNext()) {
+                        final long row = coveringCursor.next();
+                        assertEquals(
+                                "null-prefix row " + row + " must read its own price",
+                                row == 0 ? 10.0 : 20.0,
+                                coveringCursor.getCoveredDouble(1),
+                                0.0
+                        );
+                        seen++;
+                    }
+                    assertEquals("both null-prefix rows must be served", 2, seen);
+                } finally {
+                    counter.isArmed.set(false);
+                }
+            }
+            assertRequiredCoveredColumnMappedAlone(counter);
+        });
+    }
+
+    private static void assertRequiredCoveredColumnMappedAlone(CoveredColumnMapCounter counter) {
+        assertTrue(
+                "the projected INCLUDE column must still be mapped for the null-prefix rows",
+                counter.countOf("price.d") > 0
+        );
+        assertEquals("tag is not projected, so tag.d must not be mapped", 0, counter.countOf("tag.d"));
+        assertEquals("tag is not projected, so tag.i must not be mapped", 0, counter.countOf("tag.i"));
+        assertEquals("qty is not projected, so qty.d must not be mapped", 0, counter.countOf("qty.d"));
+    }
+
+    /**
+     * Table whose indexed SYMBOL arrives after the first two rows, so those rows
+     * match {@code sym2 = null} through the reader's synthetic null prefix and the
+     * covered read for them comes from the INCLUDE columns' own .d/.i files.
+     */
+    private static void createNullPrefixCoveringTable() throws Exception {
+        execute("""
+                CREATE TABLE t_np_filter (
+                    ts TIMESTAMP,
+                    tag VARCHAR,
+                    price DOUBLE,
+                    qty LONG
+                ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                """);
+        // VARCHAR inlines values of up to 9 bytes into the aux entry and leaves
+        // tag.d empty, which would skip tag's data mmap even without the filter.
+        // These values are longer, so an unfiltered open really does map tag.d.
+        execute("""
+                INSERT INTO t_np_filter VALUES
+                ('2024-01-01T00:00:00', 'HELLO-FROM-ROW-ONE', 10.0, 1),
+                ('2024-01-01T01:00:00', 'HELLO-FROM-ROW-TWO', 20.0, 2)
+                """);
+        execute("ALTER TABLE t_np_filter ADD COLUMN sym2 SYMBOL");
+        execute("""
+                INSERT INTO t_np_filter VALUES
+                ('2024-01-01T02:00:00', 'HELLO-FROM-ROW-THREE', 30.0, 3, 'A'),
+                ('2024-01-01T03:00:00', 'HELLO-FROM-ROW-FOUR', 40.0, 4, 'B')
+                """);
+        execute("ALTER TABLE t_np_filter ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (tag, price, qty)");
+        engine.releaseAllWriters();
+        engine.releaseAllReaders();
+    }
+
+    /**
+     * Runs {@code query} -- which must read exactly one of the three INCLUDE
+     * columns over the reader's synthetic null prefix -- and asserts the reader
+     * mapped that column's file and none of the others. Counts mmap calls rather
+     * than wall-clock time, so the assertion is deterministic.
+     */
+    private void assertNullPrefixQueryMapsOnlyRequiredCoveredColumns(String query, boolean isSizeKnown, String expected) throws Exception {
+        final CoveredColumnMapCounter counter = new CoveredColumnMapCounter("tag.d", "tag.i", "price.d", "qty.d");
+        ff = counter;
+        assertMemoryLeak(counter, () -> {
+            createNullPrefixCoveringTable();
+            counter.isArmed.set(true);
+            try {
+                final QueryAssertion assertion = assertQuery(query).noLeakCheck().noRandomAccess();
+                if (isSizeKnown) {
+                    assertion.expectSize();
+                }
+                assertion.returns(expected);
+            } finally {
+                counter.isArmed.set(false);
+            }
+            assertRequiredCoveredColumnMappedAlone(counter);
+        });
+    }
+
     /**
      * Regression for the LIMIT -N over a covering index with a residual
      * filter. The covering factory used to ignore the requested scan order in
@@ -18309,5 +18940,70 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlanContaining("Async Filter");
         });
+    }
+
+    /**
+     * Counting {@link FilesFacade} that reports how many times each named column
+     * file was mmapped under {@link MemoryTag#MMAP_INDEX_READER} -- the tag
+     * PostingIndex*Reader's null-prefix raw-column open uses, and one the plain
+     * table reader (MMAP_TABLE_READER) never touches. openRO() maps the returned
+     * fd back to the file name; it first drops that fd from every other slot, so a
+     * recycled fd can never charge an mmap to the file that previously held it.
+     */
+    private static final class CoveredColumnMapCounter extends TestFilesFacadeImpl {
+        private final AtomicIntegerArray counts;
+        private final AtomicLongArray fds;
+        private final AtomicBoolean isArmed = new AtomicBoolean(false);
+        private final String[] names;
+
+        CoveredColumnMapCounter(String... names) {
+            this.names = names;
+            this.counts = new AtomicIntegerArray(names.length);
+            this.fds = new AtomicLongArray(names.length);
+            for (int i = 0; i < names.length; i++) {
+                this.fds.set(i, -1);
+            }
+        }
+
+        @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            if (isArmed.get() && memoryTag == MemoryTag.MMAP_INDEX_READER) {
+                for (int i = 0; i < names.length; i++) {
+                    if (fds.get(i) == fd) {
+                        counts.incrementAndGet(i);
+                        break;
+                    }
+                }
+            }
+            return super.mmap(fd, len, offset, flags, memoryTag);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            if (fd > -1 && name != null) {
+                for (int i = 0; i < names.length; i++) {
+                    if (fds.get(i) == fd) {
+                        fds.set(i, -1); // the OS recycled this fd for another file
+                    }
+                }
+                for (int i = 0; i < names.length; i++) {
+                    if (Utf8s.endsWithAscii(name, names[i])) {
+                        fds.set(i, fd);
+                        break;
+                    }
+                }
+            }
+            return fd;
+        }
+
+        int countOf(String name) {
+            for (int i = 0; i < names.length; i++) {
+                if (names[i].equals(name)) {
+                    return counts.get(i);
+                }
+            }
+            throw new IllegalArgumentException("untracked file: " + name);
+        }
     }
 }
