@@ -97,6 +97,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
     private boolean hasActiveColumns;
+    private boolean hasParquetPartitions;
     private ObjList<IndexReader> indexes;
     private int openPartitionCount;
     private LongList openPartitionInfo;
@@ -680,12 +681,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     public boolean hasParquetPartitions() {
-        for (int i = 0; i < partitionCount; i++) {
-            if (txFile.isPartitionParquet(i)) {
-                return true;
-            }
-        }
-        return false;
+        return hasParquetPartitions;
     }
 
     public boolean isActive() {
@@ -1256,12 +1252,14 @@ public class TableReader implements Closeable, SymbolTableSource {
     private @NotNull LongList initOpenPartitionInfo() {
         final LongList openPartitionInfo = new LongList(partitionCount * PARTITIONS_SLOT_SIZE);
         openPartitionInfo.setPos(partitionCount * PARTITIONS_SLOT_SIZE);
+        hasParquetPartitions = false;
         for (int i = 0; i < partitionCount; i++) {
             // ts, number of rows, txn, column version for each partition
             // it is compared to attachedPartitions within the txn file to determine if a partition needs to be reloaded or not
             final int baseOffset = i * PARTITIONS_SLOT_SIZE;
             final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
             final boolean isParquet = txFile.isPartitionParquet(i);
+            hasParquetPartitions |= isParquet;
             openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1); // -1 means it is not open
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
@@ -1687,6 +1685,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
                 for (; partitionIndex < txPartitionCount; partitionIndex++) {
                     insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+                    hasParquetPartitions |= txFile.isPartitionParquet(partitionIndex);
                 }
                 reloadSymbolMapCounts();
             }
@@ -1700,6 +1699,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         int txPartitionCount = txFile.getPartitionCount();
         int txPartitionIndex = partitionIndex;
         boolean changed = false;
+        boolean hasParquetPartitions = false;
         while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             final long txPartTs = txFile.getPartitionTimestampByIndex(txPartitionIndex);
@@ -1712,11 +1712,13 @@ public class TableReader implements Closeable, SymbolTableSource {
             } else if (openPartitionTimestamp > txPartTs) {
                 // Insert partition
                 insertPartition(partitionIndex, txPartTs);
+                hasParquetPartitions |= txFile.isPartitionParquet(txPartitionIndex);
                 changed = true;
                 txPartitionIndex++;
                 partitionIndex++;
             } else {
                 // Refresh partition
+                hasParquetPartitions |= txFile.isPartitionParquet(txPartitionIndex);
                 final long txPartitionSize = txFile.getPartitionSize(txPartitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
                 final long openPartitionSize = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE);
@@ -1774,8 +1776,11 @@ public class TableReader implements Closeable, SymbolTableSource {
         // inserts new partitions at the end
         for (; partitionIndex < txPartitionCount; partitionIndex++) {
             insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+            hasParquetPartitions |= txFile.isPartitionParquet(partitionIndex);
             changed = true;
         }
+
+        this.hasParquetPartitions = hasParquetPartitions;
 
         if (forceTruncate) {
             reloadAllSymbols();
