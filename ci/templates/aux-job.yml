@@ -94,6 +94,25 @@ jobs:
           shouldRun: and(succeeded(), eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true'))
       - bash: |
           set -eux
+          # The checkout task keeps no credentials (persistCredentials defaults to
+          # false), so this clone would reach github.com anonymously, and GitHub
+          # throttles anonymous git-over-HTTPS from the agents' shared egress IP
+          # with a 401 that git reports as
+          #   fatal: could not read Username for 'https://github.com'
+          # even though the submodule repos are public. `gh auth setup-git`
+          # registers gh as git's credential helper for github.com; gh reads the
+          # token from this step's environment, so the clone git runs for each submodule
+          # authenticates and no token is written to the agent.
+          #
+          # Azure leaves an undefined variable as its literal macro text, so drop
+          # GH_TOKEN when it is not token-shaped rather than handing gh a
+          # "$(GIT_GITHUB_TOKEN)" string to authenticate with.
+          [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
+          if [[ -n "${GH_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
+            gh auth setup-git --hostname github.com
+          else
+            echo "No usable token or no gh; cloning submodules anonymously"
+          fi
           # gcc is already present (the core and Rust builds need it); add cmake and nasm (the
           # x86-64 asmlib) only when missing, as the client native build does.
           if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
@@ -119,6 +138,8 @@ jobs:
           cmake --build build/jittest --target jittests --parallel "$(nproc)"
           ./target/classes/io/questdb/bin-local/jittests
         displayName: "Build and run native JIT tests (jittests)"
+        env:
+          GH_TOKEN: $(GIT_GITHUB_TOKEN)
         condition: and(succeeded(), eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true'))
       - bash: |
           set -ux
