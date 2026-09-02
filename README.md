@@ -42,12 +42,49 @@ Storage is tiered: a parallel write-ahead log, native columnar partitions for
 hot data, and Apache Parquet for cold history. Parquet, Apache Iceberg, and
 Apache Arrow keep the data open to any tool.
 
+## Get started
+
+Use [Docker](https://www.docker.com/) to start quickly:
+
+```bash
+docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
+```
+
+Or macOS users on Apple Silicon can use Homebrew:
+
+```bash
+brew install questdb
+brew services start questdb
+```
+
+```bash
+questdb start
+questdb stop
+```
+
+QuestDB bundles native libraries for Apple Silicon only. On an Intel Mac, use
+the Docker image above.
+
+For the full walkthrough, start with the
+[quick start guide](https://questdb.com/docs/getting-started/quick-start/).
+
+<p>&nbsp;</p>
+
+<div align="center">
+  <a href="https://demo.questdb.io/">
+    <img alt="QuestDB Web Console showing a live technical-analysis dashboard, schema explorer, and monitoring panel" src=".github/console.webp" width="900" />
+  </a>
+  <p><em>QuestDB Web Console - click to launch demo</em></p>
+</div>
+
+<p>&nbsp;</p>
+
 > **New in QuestDB 10.0:** the QuestDB Wire Protocol (QWP), one binary
 > columnar protocol for writes and for Arrow reads, plus native arrays and
 > live views in beta.
 > [Release notes](https://questdb.com/blog/questdb-10-release/).
 
-### Ingress and egress over QWP
+## Ingress and egress over QWP
 
 QWP is a binary columnar protocol over WebSocket. The same connection writes
 rows in and streams query results out as Apache Arrow.
@@ -64,20 +101,6 @@ On the way out, the first batch lands in milliseconds and client memory stays
 flat however large the result. The
 [QWP overview](https://questdb.com/blog/questdb-qwp-binary-wire-protocol/)
 covers the protocol design.
-
-> Ready to go? Jump to the
-> [Get started](#get-started) section.
-
-<p>&nbsp;</p>
-
-<div align="center">
-  <a href="https://demo.questdb.io/">
-    <img alt="QuestDB Web Console showing a live technical-analysis dashboard, schema explorer, and monitoring panel" src=".github/console.webp" width="900" />
-  </a>
-  <p><em>QuestDB Web Console - click to launch demo</em></p>
-</div>
-
-<p>&nbsp;</p>
 
 ## What QuestDB does
 
@@ -190,31 +213,7 @@ See the
   </a>
 </div>
 
-## Get started
-
-Use [Docker](https://www.docker.com/) to start quickly:
-
-```bash
-docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
-```
-
-Or macOS users on Apple Silicon can use Homebrew:
-
-```bash
-brew install questdb
-brew services start questdb
-```
-
-```bash
-questdb start
-questdb stop
-```
-
-QuestDB bundles native libraries for Apple Silicon only. On an Intel Mac, use
-the Docker image above.
-
-For the full walkthrough, start with the
-[quick start guide](https://questdb.com/docs/getting-started/quick-start/).
+## Connect and integrate
 
 ### First-party clients
 
@@ -286,7 +285,7 @@ Find our
 [capacity planning](https://questdb.com/docs/getting-started/capacity-planning/) to
 fine-tune QuestDB for production workloads.
 
-### QuestDB Enterprise
+## QuestDB Enterprise
 
 The QuestDB you already run, hardened for production. Enterprise adds:
 
