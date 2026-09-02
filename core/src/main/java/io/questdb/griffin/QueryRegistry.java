@@ -187,6 +187,42 @@ public class QueryRegistry {
     }
 
     /**
+     * Returns the Resource Group ID captured by the active execution lease, or SQL NULL when the
+     * owner is absent or the engine did not attach a Resource Group lease. The double lifecycle
+     * check prevents a pooled entry recycled concurrently for another query from leaking its
+     * identity into this query.
+     */
+    public long getResourceGroupId(long queryId) {
+        final Entry entry = registry.get(queryId);
+        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
+            return Numbers.LONG_NULL;
+        }
+        final QuietCloseable lease = entry.executionLease;
+        final long groupId = lease instanceof SqlExecutionLease sqlExecutionLease
+                ? sqlExecutionLease.getResourceGroupId()
+                : Numbers.LONG_NULL;
+        Unsafe.loadFence();
+        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? groupId : Numbers.LONG_NULL;
+    }
+
+    /**
+     * Returns the immutable Resource Group name captured by the active execution lease, or null
+     * when the owner is absent or the engine did not attach a Resource Group lease.
+     */
+    public @Nullable CharSequence getResourceGroupName(long queryId) {
+        final Entry entry = registry.get(queryId);
+        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
+            return null;
+        }
+        final QuietCloseable lease = entry.executionLease;
+        final CharSequence groupName = lease instanceof SqlExecutionLease sqlExecutionLease
+                ? sqlExecutionLease.getResourceGroupName()
+                : null;
+        Unsafe.loadFence();
+        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? groupName : null;
+    }
+
+    /**
      * Mounts an existing protocol owner for another executable segment.
      */
     public void mountOwner(long queryId, SqlExecutionContext executionContext) {
