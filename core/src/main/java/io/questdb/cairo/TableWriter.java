@@ -10517,6 +10517,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
+                            // The rewrite lands in a fresh txn-named directory, which has no _geometry
+                            // file of its own, so the old pointer cannot survive it. Clear before the
+                            // stamp: the stamp is a no-op while the partition still reads as composite.
+                            // A composite write republishes its own pointer after this, which is why
+                            // o3ConsumePartitionUpdateSink publishes it LAST.
+                            txWriter.setPartitionGeometryRef(partitionTimestamp, NO_GEOMETRY_REF);
                             // Native mutate: stamp the apply seqTxn; non-WAL stamps 0 (the cleared
                             // word) so a stale version cannot outlive the bytes it identifies.
                             txWriter.setPartitionSeqTxnByRawIndex(partitionIndexRaw, walApplySeqTxn > 0 ? walApplySeqTxn : 0);

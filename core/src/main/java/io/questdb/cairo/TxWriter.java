@@ -547,15 +547,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * reads back as the -1 "no version" sentinel.
      */
     public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+        if (isPartitionCompositeByRawIndex(indexRaw)) {
+            // A composite partition spends the offset-3 value field on its geometry pointer, so there is
+            // nowhere here to put a stamp; its seqTxn goes into the _geometry record instead. Leaving the
+            // pointer alone is what keeps an in-place rewrite - ALTER COLUMN TYPE, UPDATE - from losing a
+            // partition's piece layout. A caller that rewrites the partition into a NEW directory must
+            // clear the pointer itself, because the new directory has no _geometry file: see the native
+            // mutate branch of o3ConsumePartitionUpdateSink.
+            return;
+        }
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
-        // COMPOSITE goes with REMOTE, and for the same reason: a stamp says the partition's bytes just
-        // changed, and a geometry pointer describes the bytes that were there before. This is the clear
-        // the pre-composite code did through resetPartitionParquetGeneratedByRawIndex, which master
-        // replaced with this stamp - without it a partition rewritten into a fresh directory keeps a
-        // pointer into a _geometry file that directory does not have. A composite write republishes its
-        // own pointer after this, which is why o3ConsumePartitionUpdateSink publishes it LAST.
         long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
-                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT | PARTITION_COMPOSITE_FLAG);
+                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (seqTxn & PARTITION_VERSION_VALUE_MASK) | flags | valid);
     }

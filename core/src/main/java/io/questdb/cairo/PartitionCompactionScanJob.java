@@ -338,7 +338,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             final int partitionCount = txReader.getPartitionCount();
             for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
                 final boolean isComposite = txReader.isPartitionComposite(partitionIndex);
-                final long parquetFileSize = txReader.getPartitionParquetFileSize(partitionIndex);
+                // The offset-3 word is a parquet file size only for a parquet partition; on a native one
+                // it is a seqTxn stamp or a geometry pointer, and reading it as a size asserts. Ask the
+                // format first rather than inferring it from a non-positive size.
+                final long parquetFileSize = txReader.isPartitionParquet(partitionIndex)
+                        ? txReader.getPartitionParquetFileSize(partitionIndex)
+                        : -1L;
                 if (!isComposite && parquetFileSize <= 0) {
                     // Plain, single-piece native partition: no dead space, nothing to do, ever.
                     continue;

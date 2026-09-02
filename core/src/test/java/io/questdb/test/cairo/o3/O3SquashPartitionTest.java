@@ -982,6 +982,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1088,6 +1094,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1249,6 +1261,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
             }
         };
 
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(ff, () -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
@@ -1344,6 +1362,12 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
 
     @Test
     public void testSquashPartitionClearsRemoteAndStampsTarget() throws Exception {
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             Overrides overrides = node1.getConfigurationOverrides();
             overrides.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
