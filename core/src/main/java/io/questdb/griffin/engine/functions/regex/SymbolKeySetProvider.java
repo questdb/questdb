@@ -22,27 +22,18 @@
  *
  ******************************************************************************/
 
-package io.questdb.cairo.sql;
+package io.questdb.griffin.engine.functions.regex;
 
-public interface StaticSymbolTable extends SymbolTable, SymbolLookup {
+import io.questdb.std.IntList;
 
-    long NO_SYMBOL_TABLE_GENERATION = -1;
-
-    boolean containsNullValue();
-
-    /**
-     * Returns a stable generation for the key-to-value mapping. Implementations increment the
-     * generation whenever an existing key may resolve to a different value. Implementations that
-     * cannot provide this guarantee return {@link #NO_SYMBOL_TABLE_GENERATION}.
-     */
-    default long getSymbolTableGeneration() {
-        return NO_SYMBOL_TABLE_GENERATION;
-    }
-
-    int getSymbolCount();
-
-    @Override
-    default boolean supportsKeyValueAccess() {
-        return true;
-    }
+/**
+ * Implemented by static-symbol-table LIKE/ILIKE/regex boolean functions.
+ * Exposes the set of symbol keys (raw symbol-table indices, 0..count-1, sorted
+ * ascending, unique, NULL key excluded) whose symbol value matches the pattern.
+ * Valid only after {@code init(SymbolTableSource, SqlExecutionContext)} has run.
+ * Lets the query planner drive an index cursor from the match set instead of
+ * evaluating the pattern per row.
+ */
+public interface SymbolKeySetProvider {
+    IntList getMatchedSymbolKeys();
 }

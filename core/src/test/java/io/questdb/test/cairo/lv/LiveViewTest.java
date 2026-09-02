@@ -1932,6 +1932,133 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testRefreshWithPatternFilterOnIndexedSymbol() throws Exception {
+        // C2 regression, and the sharpest of the two shapes: here CREATE ACCEPTS the view and
+        // every refresh then throws.
+        //
+        // A LIKE/ILIKE/~ conjunct on an INDEXED symbol routes code generation into
+        // AdaptiveSymbolPatternRecordCursorFactory, which the live view refresh cannot drive:
+        // its scan leaf reads through a NonOwningPartitionFrameCursorFactory rather than a full
+        // partition scan, so the O3 replay's getCursorInTimestampRange() rejects it, and the
+        // forward WAL-segment path evaluates the factory's PreparedSymbolPatternFilter, whose
+        // matched-key provider only prepare() initializes - the refresh calls init(), so getBool
+        // trips its hasPreparedKeySet assert. Either fault burns the flush retry budget and
+        // leaves the view invalid.
+        //
+        // LiveViewCompiledPlan.of() used to reject the shape at CREATE, because the adaptive
+        // factory answered getFilter() == null and the decomposition bottomed out on a
+        // non-page-frame node. Once the factory started answering getFilter()/getBaseFactory()
+        // - the contract a parallel parent reads to steal its filter - the decomposition
+        // descended straight past it onto the scan delegate's page-frame leaf and CREATE passed.
+        //
+        // The trailing ORDER BY ts is what keeps the window streaming rather than cached: the
+        // order-by advice makes the index route use its heap row cursor, so the adaptive factory
+        // reports SCAN_DIRECTION_FORWARD and no sort is planned. Without it the planner emits a
+        // CachedWindowLight the live view rejects for an unrelated reason, which is the shape
+        // testRefreshWithPatternFilterOnIndexedSymbolCachedWindowShape covers.
+        //
+        // The gate now skips the symbol-pattern index for a live view compile, exactly as
+        // WhereClauseParser suppresses indexed-symbol key extraction there, so the planner emits
+        // the plain filter-over-full-scan shape the refresh path handles - the same shape the
+        // unindexed twin testRefreshWithPatternFilterOnSymbol already gets.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL INDEX, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            final String viewSql = "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn " +
+                    "FROM base WHERE sym LIKE 'a%' ORDER BY ts";
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + viewSql);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // In-order rows: the forward incremental path, which reads the raw WAL segment
+                // and applies the compiled plan's residual filter row by row.
+                execute("INSERT INTO base (sym, val, ts) VALUES " +
+                        "('aaa', 1, '2026-01-01T00:00:00.000000Z'), " +
+                        "('bbb', 2, '2026-01-01T00:01:00.000000Z'), " +
+                        "('abc', 3, '2026-01-01T00:03:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(2_000_000L);
+                // An out-of-order row routes the next cycle through the O3 replay, which scans
+                // the base with pageFrameFactory.getCursorInTimestampRange() - the call that
+                // rejects a non-full-scan leaf.
+                execute("INSERT INTO base (sym, val, ts) VALUES ('axx', 4, '2026-01-01T00:02:00.000000Z')");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+
+            // rn advances only for survivors, so a leaked or dropped row perturbs it too.
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    sym\tval\tts\trn
+                    aaa\t1\t2026-01-01T00:00:00.000000Z\t1
+                    axx\t4\t2026-01-01T00:02:00.000000Z\t2
+                    abc\t3\t2026-01-01T00:03:00.000000Z\t3
+                    """);
+            // Explicit: not a single excluded row slipped through.
+            assertQuery("SELECT count() FROM lv WHERE sym NOT LIKE 'a%'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+            // A refresh that threw would self-heal into a full recompute from the applied base,
+            // which a row-level oracle cannot tell apart from a clean run.
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+
+            // The mechanism behind all of the above: the live view compile must not plan the
+            // adaptive factory at all. EXPLAIN of a CREATE arms the same live-view compile flag
+            // the CREATE itself does, and creates nothing.
+            assertQuery("CREATE LIVE VIEW lv_plan FLUSH EVERY 1s START FROM NOW AS " + viewSql)
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("AdaptiveSymbolPattern", "SymbolPatternIndex");
+            // ... and the suppression reaches no further than that compile: an ordinary query
+            // over the same predicate on the same column still takes the index route.
+            assertQuery("SELECT sym, val FROM base WHERE sym LIKE 'a%' ORDER BY ts")
+                    .noLeakCheck()
+                    .assertsPlanContaining("AdaptiveSymbolPattern");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRefreshWithPatternFilterOnIndexedSymbolCachedWindowShape() throws Exception {
+        // C2 regression, second shape. Same fixture as
+        // testRefreshWithPatternFilterOnIndexedSymbol without the trailing ORDER BY ts: the
+        // index route then drains key by key, the adaptive factory reports SCAN_DIRECTION_OTHER,
+        // and the planner sorts for the window - so CREATE failed at the cached-window reject
+        // ("live view select may only use window functions that support incremental refresh")
+        // rather than at the filter decomposition. A loud reject rather than an invalidated
+        // view, but still a shape that works without the index and must work with it.
+        //
+        // Suppressing the symbol-pattern index under a live view compile removes both rejects at
+        // once: the plan is the plain filter-over-full-scan the unindexed twin already gets, so
+        // the window streams and the refresh drives it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL INDEX, val INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT sym, val, ts, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE sym LIKE 'a%'");
+            execute("INSERT INTO base (sym, val, ts) VALUES " +
+                    "('aaa', 1, '2026-01-01T00:00:00.000000Z'), " +
+                    "('bbb', 2, '2026-01-01T00:01:00.000000Z'), " +
+                    "('abc', 3, '2026-01-01T00:02:00.000000Z')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT sym, val, ts, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    sym\tval\tts\trn
+                    aaa\t1\t2026-01-01T00:00:00.000000Z\t1
+                    abc\t3\t2026-01-01T00:02:00.000000Z\t2
+                    """);
+            // A refresh that threw would self-heal into a full recompute from the applied base,
+            // which a row-level oracle cannot tell apart from a clean run.
+            assertNoRefreshFaults("lv");
+            assertQuery("SELECT count() FROM live_views() WHERE view_status <> 'active'").noLeakCheck().noRandomAccess().expectSize().returns("count\n0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testRefreshWithPatternFilterOnSymbol() throws Exception {
         // C2 regression. LIKE/ILIKE/~ on a SYMBOL column compiles to a residual filter that
         // pre-resolves its matching keys by enumerating 0..getSymbolCount()-1 at every filter
