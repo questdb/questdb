@@ -127,8 +127,8 @@ Where it runs:
 - aerospace and robotics: flight-test telemetry, fleet data, mission replay
 - energy and infrastructure: reactor, turbine, and grid telemetry at full
   resolution
-- [AI agents](https://questdb.com/agents/) that discover the schema, write the
-  SQL, and drive notebooks and dashboards
+- [AI coding agents](https://questdb.com/docs/getting-started/ai-coding-agents/),
+  through the agent skills and the MCP server
 
 A time-series engine takes care of what a general database leaves to you:
 out-of-order data, deduplication and exactly-once semantics, continuous
