@@ -121,8 +121,9 @@ Where it runs:
 
 - capital markets: tick data, order books, trades, pre-trade analysis and
   [post-trade analytics](https://questdb.com/docs/cookbook/sql/finance/post-trade-overview/),
-  with [finance functions](https://questdb.com/docs/query/functions/finance/)
-  and [order book analytics](https://questdb.com/docs/tutorials/order-book/)
+  with the [finance SQL cookbook](https://questdb.com/docs/cookbook/sql/finance/),
+  [finance functions](https://questdb.com/docs/query/functions/finance/) and
+  [order book analytics](https://questdb.com/docs/tutorials/order-book/)
 - aerospace and robotics: flight-test telemetry, fleet data, mission replay
 - energy and infrastructure: reactor, turbine, and grid telemetry at full
   resolution
