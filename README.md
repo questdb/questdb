@@ -181,11 +181,11 @@ the SQL, and build notebooks and live dashboards in the Web Console through the
 npx skills add questdb/skills
 ```
 
-See the [agents page](https://questdb.com/agents/) and the
+See the
 [coding agents guide](https://questdb.com/docs/getting-started/ai-coding-agents/).
 
 <div align="center">
-  <a href="https://questdb.com/agents/">
+  <a href="https://questdb.com/docs/getting-started/ai-coding-agents/">
     <img alt="AI coding agent streaming FX data into QuestDB and analyzing liquidity" src=".github/agents-demo.jpg" width="600"/>
   </a>
 </div>
