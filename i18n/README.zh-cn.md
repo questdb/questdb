@@ -85,9 +85,16 @@ QuestDB 尤其擅长处理：
 
 ### QuestDB 与其他数据库的性能比较
 
-在多项性能基准测试中，QuestDB 相比其他替代方案表现优异。
+TSBS 摄取基准测试：100,000 台主机，32 个 worker，运行于一台 AWS r8a.8xlarge（32 vCPU，256 GB 内存）。竞品于 2026 年 8 月测得，QuestDB 9.3.3 在同一实例上测得。
 
-如需深入了解内部机制与性能表现，请参阅以下技术博客：
+| 数据库 | 版本 | 摄取速率 |
+|---|---|---|
+| QuestDB | 9.3.3 | 每秒 859 万行 |
+| ClickHouse | 26.7.5.10 | 每秒 175 万行 |
+| TimescaleDB | 2.29.1 | 每秒 108 万行 |
+| InfluxDB | 1.12.4 | 每秒 54.1 万行 |
+
+完整对比（摄取与查询）：
 
 - [QuestDB vs InfluxDB](https://questdb.com/blog/influxdb-vs-questdb-comparison/)
 - [QuestDB vs InfluxDB 3](https://questdb.com/blog/influxdb3-core-benchmarks/)
@@ -96,11 +103,6 @@ QuestDB 尤其擅长处理：
 - [QuestDB vs kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 
 我们推荐您亲自运行基准测试以获得最直观的性能体验。
-
-<div align="center">
-  <img alt="TSBS 摄取速率对比图（100,000 台主机）：QuestDB 每秒 859 万行，ClickHouse 175 万行，TigerData 108 万行，InfluxDB 54.1 万行。" src="../.github/readme-benchmark.webp" width="600"/>
-  <p><em>TSBS 摄取基准测试：100,000 台主机，32 个 worker，运行于一台 AWS r8a.8xlarge（32 vCPU，256 GB 内存）。ClickHouse 26.7.5.10、TigerData（TimescaleDB 2.29.1）与 InfluxDB 1.12.4 于 2026 年 8 月测得，QuestDB 9.3.3 在同一实例上测得。</em></p>
-</div>
 
 ## AI 编程智能体
 
