@@ -79,6 +79,25 @@ steps:
 
   - bash: |
       set -eux
+      # The checkout task keeps no credentials (persistCredentials defaults to
+      # false), so this clone would reach github.com anonymously, and GitHub
+      # throttles anonymous git-over-HTTPS from the agents' shared egress IP
+      # with a 401 that git reports as
+      #   fatal: could not read Username for 'https://github.com'
+      # even though the submodule repos are public. `gh auth setup-git`
+      # registers gh as git's credential helper for github.com; gh reads the
+      # token from this step's environment, so the clone git runs for the submodule
+      # authenticates and no token is written to the agent.
+      #
+      # Azure leaves an undefined variable as its literal macro text, so drop
+      # GH_TOKEN when it is not token-shaped rather than handing gh a
+      # "$(GIT_GITHUB_TOKEN)" string to authenticate with.
+      [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
+      if [[ -n "${GH_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
+        gh auth setup-git --hostname github.com
+      else
+        echo "No usable token or no gh; cloning submodules anonymously"
+      fi
       export RUSTFLAGS="-C instrument-coverage -D warnings"
       export LLVM_PROFILE_FILE="$(Build.SourcesDirectory)/rust-lint-profraw/parquet2-%m.profraw"
       export PARQUET2_IGNORE_PYARROW_TESTS=1
@@ -86,6 +105,8 @@ steps:
       cd core/rust/parquet2
       cargo test --all-targets --no-fail-fast
     displayName: "parquet2: cargo test (coverage)"
+    env:
+      GH_TOKEN: $(GIT_GITHUB_TOKEN)
     condition: ${{ parameters.shouldRun }}
 
   - template: install-llvm.yml
