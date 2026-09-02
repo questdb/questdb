@@ -51,10 +51,24 @@ stages:
           name: hetzner-incus
         timeoutInMinutes: 60
         variables:
-          SOURCE_CODE_CHANGED: true
-          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+          - group: github-public-read
+          - name: SOURCE_CODE_CHANGED
+            value: true
+          - name: ARCHIVED_CRASH_LOG
+            value: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
         steps:
           - template: templates/checkout-source.yml
+          - bash: |
+              set -e
+              AUTH_HEADER=$(printf 'x-access-token:%s' "$GIT_GITHUB_TOKEN" | base64 | tr -d '\r\n')
+              env -u GIT_GITHUB_TOKEN \
+                GIT_CONFIG_COUNT=1 \
+                GIT_CONFIG_KEY_0=http.https://github.com/.extraheader \
+                GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $AUTH_HEADER" \
+                git submodule update --init --recursive java-questdb-client
+            displayName: "Checkout client submodules"
+            env:
+              GIT_GITHUB_TOKEN: $(GIT_GITHUB_TOKEN)
           - template: templates/use-hetzner-apt-mirrors.yml
           - bash: |
               sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
