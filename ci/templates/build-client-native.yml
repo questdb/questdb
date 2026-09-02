@@ -23,15 +23,15 @@ steps:
       set -eux
         # The checkout task keeps no credentials (persistCredentials defaults to
         # false), so this clone would reach github.com anonymously, and GitHub
-        # throttles anonymous git-over-HTTPS from the agents' shared egress IP with
-        # a 401 that git reports as
+        # throttles anonymous git-over-HTTPS from the agents' shared egress IP
+        # with a 401 that git reports as
         #   fatal: could not read Username for 'https://github.com'
-        # even though the submodule repos are public. `gh auth setup-git` registers
-        # gh as git's credential helper for github.com; gh then reads the token from
-        # this step's environment, so the clone git runs for each submodule
-        # authenticates and no token is ever written to the agent.
+        # even though the submodule repos are public. `gh auth setup-git`
+        # registers gh as git's credential helper for github.com; gh reads the
+        # token from this step's environment, so the clone git runs for each
+        # submodule authenticates and no token is written to the agent.
         #
-        # Azure leaves an undefined variable as the literal macro text, so drop
+        # Azure leaves an undefined variable as its literal macro text, so drop
         # anything that is not token-shaped rather than handing gh a "$(GH_TOKEN)"
         # string to authenticate with. Pipelines differ on which name they define.
         [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
@@ -70,15 +70,15 @@ steps:
       set -eux
         # The checkout task keeps no credentials (persistCredentials defaults to
         # false), so this clone would reach github.com anonymously, and GitHub
-        # throttles anonymous git-over-HTTPS from the agents' shared egress IP with
-        # a 401 that git reports as
+        # throttles anonymous git-over-HTTPS from the agents' shared egress IP
+        # with a 401 that git reports as
         #   fatal: could not read Username for 'https://github.com'
-        # even though the submodule repos are public. `gh auth setup-git` registers
-        # gh as git's credential helper for github.com; gh then reads the token from
-        # this step's environment, so the clone git runs for each submodule
-        # authenticates and no token is ever written to the agent.
+        # even though the submodule repos are public. `gh auth setup-git`
+        # registers gh as git's credential helper for github.com; gh reads the
+        # token from this step's environment, so the clone git runs for each
+        # submodule authenticates and no token is written to the agent.
         #
-        # Azure leaves an undefined variable as the literal macro text, so drop
+        # Azure leaves an undefined variable as its literal macro text, so drop
         # anything that is not token-shaped rather than handing gh a "$(GH_TOKEN)"
         # string to authenticate with. Pipelines differ on which name they define.
         [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
