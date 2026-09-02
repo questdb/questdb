@@ -7,10 +7,17 @@ steps:
       echo "questdb.client.version=$CLIENT_VERSION"
       if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
         echo "SNAPSHOT version detected, activating local-client profile"
-        git submodule update --init java-questdb-client
+        if command -v python3 >/dev/null 2>&1; then
+          PYTHON=python3
+        else
+          PYTHON=python
+        fi
+        "$PYTHON" ci/update_java_client_submodules.py --recursive
         echo "##vso[task.setvariable variable=CLIENT_PROFILE]-P local-client"
       else
         echo "Release version detected, using Maven Central"
         echo "##vso[task.setvariable variable=CLIENT_PROFILE]"
       fi
     displayName: "Detect local client profile"
+    env:
+      GIT_GITHUB_TOKEN: $(GIT_GITHUB_TOKEN)

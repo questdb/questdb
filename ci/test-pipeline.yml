@@ -11,13 +11,21 @@ pr:
   drafts: false
 
 variables:
-  QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
-  ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
-  DIFF_COVER_THRESHOLD_PCT: 50
-  excludeTests: ""
-  includeTests: "%regex[.*[^o].class]"
-  MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
+  - group: github-public-read
+  - name: QDB_LOG_W_FILE_LOCATION
+    value: "$(Build.BinariesDirectory)/tests.log"
+  - name: ARCHIVED_LOGS
+    value: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
+  - name: DIFF_COVER_THRESHOLD_PCT
+    value: 50
+  - name: excludeTests
+    value: ""
+  - name: includeTests
+    value: "%regex[.*[^o].class]"
+  - name: MAVEN_CACHE_FOLDER
+    value: $(HOME)/.m2/repository
+  - name: MAVEN_OPTS
+    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
   # Cache connect resilience. The self-hosted Reposilite cache is a single IP reached over
   # the Hetzner vSwitch; under the fleet's cold-build connection bursts a fraction of TCP
   # SYNs to it are dropped, and the failover-less mirror turns one black-holed connect into
@@ -31,13 +39,18 @@ variables:
   #     a retried connect re-attempts on a fresh source port instead of hanging out the build.
   # The cache-box fix (nginx front-end + enlarged upstream keepalive pool) reduces the drop
   # rate at the source; these client flags are the backstop for any residual lost SYN.
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
-  MAVEN_VERSION: "version"
-  MAVEN_VERSION_OPTION: "Default"
+  - name: MAVEN_RUN_OPTS
+    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
+  - name: MAVEN_VERSION
+    value: "version"
+  - name: MAVEN_VERSION_OPTION
+    value: "Default"
   # Full-reactor defaults for the self-hosted Linux jobs. The hosted mac/windows
   # jobs run on demand in test-hosted-pipeline.yml, not here.
-  TEST_REACTOR_ARGS: ""
-  WEB_CONSOLE_PROFILE: "-P build-web-console"
+  - name: TEST_REACTOR_ARGS
+    value: ""
+  - name: WEB_CONSOLE_PROFILE
+    value: "-P build-web-console"
 
 stages:
   - stage: CheckChanges

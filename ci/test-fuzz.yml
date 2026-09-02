@@ -11,23 +11,35 @@ schedules:
     always: true
 
 variables:
-  QDB_LOG_W_FILE_LOCATION: "$(Build.BinariesDirectory)/tests.log"
-  ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
-  excludeTests: ""
-  includeTests: "%regex[.*[^o].class]"
-  MAVEN_CACHE_FOLDER: $(HOME)/.m2/repository
-  MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m -XX:+UseParallelGC"
+  - group: github-public-read
+  - name: QDB_LOG_W_FILE_LOCATION
+    value: "$(Build.BinariesDirectory)/tests.log"
+  - name: ARCHIVED_LOGS
+    value: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).zip"
+  - name: excludeTests
+    value: ""
+  - name: includeTests
+    value: "%regex[.*[^o].class]"
+  - name: MAVEN_CACHE_FOLDER
+    value: $(HOME)/.m2/repository
+  - name: MAVEN_OPTS
+    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3072m -XX:+UseParallelGC"
   # Wagon retries a dropped connect to the single-IP cache (count + nonRetryableClasses,
   # which re-enables retry on ConnectException) instead of failing the build; the connect
   # timeout in maven-settings-hetzner.xml bounds each attempt. See test-pipeline.yml for the
   # full rationale.
-  MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
-  MAVEN_VERSION: "version"
-  MAVEN_VERSION_OPTION: "Default"
+  - name: MAVEN_RUN_OPTS
+    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
+  - name: MAVEN_VERSION
+    value: "version"
+  - name: MAVEN_VERSION_OPTION
+    value: "Default"
   # Full reactor (the fuzz regex spans core and compat), but no fuzz test serves the
   # web console, so skip its download.
-  TEST_REACTOR_ARGS: ""
-  WEB_CONSOLE_PROFILE: ""
+  - name: TEST_REACTOR_ARGS
+    value: ""
+  - name: WEB_CONSOLE_PROFILE
+    value: ""
 
 stages:
   - stage: HostedRunTestsBranches
