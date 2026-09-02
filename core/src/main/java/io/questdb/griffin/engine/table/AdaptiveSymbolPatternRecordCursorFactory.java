@@ -180,17 +180,6 @@ import java.util.concurrent.atomic.AtomicLong;
  * for a PARQUET partition), so that part grows sub-linearly with partition width.
  */
 public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCursorFactory {
-    // @TestOnly observability for the selectivity estimator's traversal fallback. The estimate runs
-    // on the caller's thread before the first row, so an index reader that cannot answer the count
-    // from metadata makes planning cost scale with the data instead of with the plan. Row counts
-    // alone cannot tell the two apart -- only a count of index entries the estimator itself read
-    // can. The frame counter answers the same kind of question one level up: a route rejected in
-    // O(1) off the partition count and one rejected after walking to the frame cap pick the same
-    // delegate, so only a count of frames the estimator pulled can tell them apart.
-    // A plain static boolean guards both: the JIT folds the always-false production branch away,
-    // and the tests that flip it drive their queries on the calling thread.
-    @TestOnly
-    public static boolean isEstimatorCounterEnabled = false;
     @TestOnly
     public static final AtomicLong testCoveringInvocations = new AtomicLong();
     @TestOnly
@@ -216,15 +205,26 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     // slower and at 20% ~1.6x slower -- so 1/20 admits the range where the index actually wins and
     // keeps a margin below the crossover.
     private static final int MAX_INDEX_ROUTE_ROW_SHARE_DIVISOR = 20;
+    // @TestOnly observability for the selectivity estimator's traversal fallback. The estimate runs
+    // on the caller's thread before the first row, so an index reader that cannot answer the count
+    // from metadata makes planning cost scale with the data instead of with the plan. Row counts
+    // alone cannot tell the two apart -- only a count of index entries the estimator itself read
+    // can. The frame counter answers the same kind of question one level up: a route rejected in
+    // O(1) off the partition count and one rejected after walking to the frame cap pick the same
+    // delegate, so only a count of frames the estimator pulled can tell them apart.
+    // A plain static boolean guards both: the JIT folds the always-false production branch away,
+    // and the tests that flip it drive their queries on the calling thread.
+    @TestOnly
+    public static boolean isEstimatorCounterEnabled = false;
     private final IntList columnIndexes;
     private final RecordCursorFactory coveringDelegate;
     private final PartitionFrameCursorFactory dfcFactory;
     private final IntList effectiveKeys;
     private final RecordCursorFactory indexDelegate;
+    private final int indexReaderColumnIndex;
     // Non-null only in self-filtering mode. Owns nothing: the filter belongs to the scan delegate and
     // the wrapped cursor belongs to the index delegate, so _close() must not free it.
     private final FilteredRecordCursor indexRouteFilterCursor;
-    private final int indexReaderColumnIndex;
     private final boolean isNegated;
     // Applied on three axes - frames walked, key probes within one frame, and one bitmap
     // block-hop budget shared across the WHOLE estimate. The first two are per-frame by design:
@@ -285,34 +285,43 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         this.symbolTableSourceMapper = new SymbolTableSourceMapper(columnIndexes);
     }
 
+    @TestOnly
+    public static void resetTestCounters() {
+        testCoveringInvocations.set(0);
+        testEstimatorFramesWalked.set(0);
+        testEstimatorIndexEntryReads.set(0);
+        testScanInvocations.set(0);
+    }
+
+    /**
+     * The scan delegate's own base - a bare page-frame factory - in self-filtering mode, and null in
+     * wrapped mode, which does not offer filter stealing. See {@link #supportsFilterStealing()}.
+     */
     @Override
-    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        // Wrapped mode only; supportsPageFrameCursor() reports false for the other one, where the scan
-        // delegate is an async filter with no frames to give.
-        assert indexRouteFilterCursor == null;
-        // The delegate this open selects requests the very same order, so the estimate opens its
-        // cursor with it and the hand-off below matches.
-        final boolean isSelective = prepareAndEstimate(executionContext, order);
-        try {
-            if (isSelective && coveringDelegate != null) {
-                if (SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled) {
-                    testCoveringInvocations.incrementAndGet();
-                }
-                return coveringDelegate.getPageFrameCursor(executionContext, order);
-            }
-            if (SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled) {
-                testScanInvocations.incrementAndGet();
-                if (!isSelective) {
-                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
-                }
-            }
-            return scanDelegate.getPageFrameCursor(executionContext, order);
-        } finally {
-            // A no-op once the delegate has taken the pinned cursor. It releases the reader when the
-            // delegate never asked for a cursor, when it asked for the opposite scan direction, or
-            // when the open threw before reaching the delegate.
-            sharedFrameFactory.releasePinnedCursor();
-        }
+    public RecordCursorFactory getBaseFactory() {
+        return indexRouteFilterCursor != null ? scanDelegate.getBaseFactory() : null;
+    }
+
+    @Override
+    public @Nullable ObjList<Function> getBindVarFunctions() {
+        return indexRouteFilterCursor != null ? scanDelegate.getBindVarFunctions() : null;
+    }
+
+    // The next three answer null today, whichever mode this factory is in: in wrapped mode the guard
+    // returns null, and in self-filtering mode the scan delegate is always the
+    // AsyncFilteredRecordCursorFactory built by tryGenerateSymbolPatternIndex, which overrides none of
+    // them and so falls through to the interface defaults. They stay because a stealing parent reads
+    // this whole group together with getFilter() - see SqlCodeGenerator's parallel-aggregate steal -
+    // so it is a contract unit that must keep delegating if the scan delegate ever stops being async.
+
+    @Override
+    public @Nullable MemoryCARW getBindVarMemory() {
+        return indexRouteFilterCursor != null ? scanDelegate.getBindVarMemory() : null;
+    }
+
+    @Override
+    public @Nullable CompiledFilter getCompiledFilter() {
+        return indexRouteFilterCursor != null ? scanDelegate.getCompiledFilter() : null;
     }
 
     @Override
@@ -353,40 +362,44 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         }
     }
 
-    /**
-     * The scan delegate's own base - a bare page-frame factory - in self-filtering mode, and null in
-     * wrapped mode, which does not offer filter stealing. See {@link #supportsFilterStealing()}.
-     */
-    @Override
-    public RecordCursorFactory getBaseFactory() {
-        return indexRouteFilterCursor != null ? scanDelegate.getBaseFactory() : null;
-    }
-
-    // The next three answer null today, whichever mode this factory is in: in wrapped mode the guard
-    // returns null, and in self-filtering mode the scan delegate is always the
-    // AsyncFilteredRecordCursorFactory built by tryGenerateSymbolPatternIndex, which overrides none of
-    // them and so falls through to the interface defaults. They stay because a stealing parent reads
-    // this whole group together with getFilter() - see SqlCodeGenerator's parallel-aggregate steal -
-    // so it is a contract unit that must keep delegating if the scan delegate ever stops being async.
-
-    @Override
-    public @Nullable ObjList<Function> getBindVarFunctions() {
-        return indexRouteFilterCursor != null ? scanDelegate.getBindVarFunctions() : null;
-    }
-
-    @Override
-    public @Nullable MemoryCARW getBindVarMemory() {
-        return indexRouteFilterCursor != null ? scanDelegate.getBindVarMemory() : null;
-    }
-
-    @Override
-    public @Nullable CompiledFilter getCompiledFilter() {
-        return indexRouteFilterCursor != null ? scanDelegate.getCompiledFilter() : null;
+    @TestOnly
+    public IntList getEffectiveKeysForTesting() {
+        return effectiveKeys;
     }
 
     @Override
     public @Nullable Function getFilter() {
         return indexRouteFilterCursor != null ? scanDelegate.getFilter() : null;
+    }
+
+    @Override
+    public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        // Wrapped mode only; supportsPageFrameCursor() reports false for the other one, where the scan
+        // delegate is an async filter with no frames to give.
+        assert indexRouteFilterCursor == null;
+        // The delegate this open selects requests the very same order, so the estimate opens its
+        // cursor with it and the hand-off below matches.
+        final boolean isSelective = prepareAndEstimate(executionContext, order);
+        try {
+            if (isSelective && coveringDelegate != null) {
+                if (SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled) {
+                    testCoveringInvocations.incrementAndGet();
+                }
+                return coveringDelegate.getPageFrameCursor(executionContext, order);
+            }
+            if (SymbolPatternIndexRecordCursorFactory.isRouteCounterEnabled) {
+                testScanInvocations.incrementAndGet();
+                if (!isSelective) {
+                    SymbolPatternIndexRecordCursorFactory.testFallbackInvocations.incrementAndGet();
+                }
+            }
+            return scanDelegate.getPageFrameCursor(executionContext, order);
+        } finally {
+            // A no-op once the delegate has taken the pinned cursor. It releases the reader when the
+            // delegate never asked for a cursor, when it asked for the opposite scan direction, or
+            // when the open threw before reaching the delegate.
+            sharedFrameFactory.releasePinnedCursor();
+        }
     }
 
     @Override
@@ -465,19 +478,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 && (coveringDelegate == null || coveringDelegate.recordCursorSupportsRandomAccess());
     }
 
-    @TestOnly
-    public IntList getEffectiveKeysForTesting() {
-        return effectiveKeys;
-    }
-
-    @TestOnly
-    public static void resetTestCounters() {
-        testCoveringInvocations.set(0);
-        testEstimatorFramesWalked.set(0);
-        testEstimatorIndexEntryReads.set(0);
-        testScanInvocations.set(0);
-    }
-
     @Override
     public boolean supportsFilterStealing() {
         // Self-filtering mode only, where this factory is the top-level operator and supplies no page
@@ -540,69 +540,39 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         return false;
     }
 
-    @Override
-    protected void _close() {
-        if (isFilterStolen) {
-            // halfClose() already freed everything this factory still owned and handed the scan
-            // delegate's base and the shared filter to the parent that stole them. Freeing again here
-            // would free the parent's own children.
-            return;
+    private boolean buildEffectiveKeys(SymbolTableSource symbolTableSource, boolean isProbeCapApplied) {
+        final IntList matched = patternFilter.getMatchedSymbolKeys();
+        effectiveKeys.clear();
+        if (!isNegated) {
+            if (isProbeCapApplied && matched.size() > maxEstimateProbes) {
+                return false;
+            }
+            effectiveKeys.addAll(matched);
+            return true;
         }
-        // Best-effort: in self-filtering mode the index and scan delegates own compiled filter
-        // functions, so a throw from the first close must not strand the rest. The pin release joins
-        // the chain rather than preceding it, so a cleanup failure there cannot strand the delegates.
-        // It is defensive only: both getCursor() and getPageFrameCursor() release the pin in a finally
-        // block, so no traced path reaches close() with one held.
-        Throwable failure = Misc.freeBestEffort(null, sharedFrameFactory.takePinnedCursor());
-        failure = Misc.freeBestEffort(failure, coveringDelegate);
-        failure = Misc.freeBestEffort(failure, indexDelegate);
-        failure = Misc.freeBestEffort(failure, scanDelegate);
-        failure = Misc.freeBestEffort(failure, dfcFactory);
-        CairoException.rethrowCleanupFailure(failure);
-    }
 
-    /**
-     * Opens one partition-frame cursor, builds the key set from its reader, costs the routes against
-     * it, and then PINS it for the delegate this open selects. The delegate takes that cursor - and
-     * therefore that reader transaction - out of {@link #sharedFrameFactory} instead of acquiring a
-     * second reader the pool would position at the latest transaction. The caller releases the pin in
-     * a finally block, which is a no-op once a delegate has taken it.
-     */
-    private boolean prepareAndEstimate(SqlExecutionContext executionContext, int order) throws SqlException {
-        final PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, order);
-        final boolean isSelective;
-        try {
-            isSelective = prepareKeysFor(frameCursor, executionContext, true) && estimate(frameCursor);
-        } catch (Throwable th) {
-            Misc.free(frameCursor);
-            throw th;
-        }
-        sharedFrameFactory.pinCursor(frameCursor, columnIndexes, order);
-        return isSelective;
-    }
-
-    /**
-     * Rebuilds the prepared filter's matched-key set and, while an index consumer remains,
-     * {@code effectiveKeys} from the symbol dictionary of {@code frameCursor}'s reader. Both key
-     * lists are only valid against the transaction they were read from: symbol keys are append-only,
-     * so a list built on an older transaction cannot point at the wrong symbol, but it has no key at
-     * all for a symbol a later commit introduced, and every row carrying that symbol would then be
-     * dropped.
-     *
-     * @return false when an estimate can reject a positive match set or negated complement from its
-     * cardinality without materializing it
-     */
-    private boolean prepareKeysFor(
-            PartitionFrameCursor frameCursor,
-            SqlExecutionContext executionContext,
-            boolean isProbeCapApplied
-    ) throws SqlException {
-        symbolTableSourceMapper.of(frameCursor);
-        patternFilter.prepare(symbolTableSourceMapper, executionContext);
-        if (isFilterStolen) {
+        final StaticSymbolTable symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(
+                patternFilter.getSymbolColumnIndex()
+        );
+        final boolean hasNull = symbolTable.containsNullValue();
+        final int matchedSize = matched.size();
+        final long effectiveKeyCount = (long) symbolTable.getSymbolCount() - matchedSize + (hasNull ? 1 : 0);
+        if (isProbeCapApplied && effectiveKeyCount > maxEstimateProbes) {
             return false;
         }
-        return buildEffectiveKeys(symbolTableSourceMapper, isProbeCapApplied);
+
+        int matchedIndex = 0;
+        for (int key = 0, symbolCount = symbolTable.getSymbolCount(); key < symbolCount; key++) {
+            if (matchedIndex < matchedSize && matched.getQuick(matchedIndex) == key) {
+                matchedIndex++;
+            } else {
+                effectiveKeys.add(key);
+            }
+        }
+        if (hasNull) {
+            effectiveKeys.add(SymbolTable.VALUE_IS_NULL);
+        }
+        return true;
     }
 
     private boolean estimate(PartitionFrameCursor frameCursor) {
@@ -771,39 +741,69 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         return true;
     }
 
-    private boolean buildEffectiveKeys(SymbolTableSource symbolTableSource, boolean isProbeCapApplied) {
-        final IntList matched = patternFilter.getMatchedSymbolKeys();
-        effectiveKeys.clear();
-        if (!isNegated) {
-            if (isProbeCapApplied && matched.size() > maxEstimateProbes) {
-                return false;
-            }
-            effectiveKeys.addAll(matched);
-            return true;
+    /**
+     * Opens one partition-frame cursor, builds the key set from its reader, costs the routes against
+     * it, and then PINS it for the delegate this open selects. The delegate takes that cursor - and
+     * therefore that reader transaction - out of {@link #sharedFrameFactory} instead of acquiring a
+     * second reader the pool would position at the latest transaction. The caller releases the pin in
+     * a finally block, which is a no-op once a delegate has taken it.
+     */
+    private boolean prepareAndEstimate(SqlExecutionContext executionContext, int order) throws SqlException {
+        final PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, order);
+        final boolean isSelective;
+        try {
+            isSelective = prepareKeysFor(frameCursor, executionContext, true) && estimate(frameCursor);
+        } catch (Throwable th) {
+            Misc.free(frameCursor);
+            throw th;
         }
+        sharedFrameFactory.pinCursor(frameCursor, columnIndexes, order);
+        return isSelective;
+    }
 
-        final StaticSymbolTable symbolTable = (StaticSymbolTable) symbolTableSource.getSymbolTable(
-                patternFilter.getSymbolColumnIndex()
-        );
-        final boolean hasNull = symbolTable.containsNullValue();
-        final int matchedSize = matched.size();
-        final long effectiveKeyCount = (long) symbolTable.getSymbolCount() - matchedSize + (hasNull ? 1 : 0);
-        if (isProbeCapApplied && effectiveKeyCount > maxEstimateProbes) {
+    /**
+     * Rebuilds the prepared filter's matched-key set and, while an index consumer remains,
+     * {@code effectiveKeys} from the symbol dictionary of {@code frameCursor}'s reader. Both key
+     * lists are only valid against the transaction they were read from: symbol keys are append-only,
+     * so a list built on an older transaction cannot point at the wrong symbol, but it has no key at
+     * all for a symbol a later commit introduced, and every row carrying that symbol would then be
+     * dropped.
+     *
+     * @return false when an estimate can reject a positive match set or negated complement from its
+     * cardinality without materializing it
+     */
+    private boolean prepareKeysFor(
+            PartitionFrameCursor frameCursor,
+            SqlExecutionContext executionContext,
+            boolean isProbeCapApplied
+    ) throws SqlException {
+        symbolTableSourceMapper.of(frameCursor);
+        patternFilter.prepare(symbolTableSourceMapper, executionContext);
+        if (isFilterStolen) {
             return false;
         }
+        return buildEffectiveKeys(symbolTableSourceMapper, isProbeCapApplied);
+    }
 
-        int matchedIndex = 0;
-        for (int key = 0, symbolCount = symbolTable.getSymbolCount(); key < symbolCount; key++) {
-            if (matchedIndex < matchedSize && matched.getQuick(matchedIndex) == key) {
-                matchedIndex++;
-            } else {
-                effectiveKeys.add(key);
-            }
+    @Override
+    protected void _close() {
+        if (isFilterStolen) {
+            // halfClose() already freed everything this factory still owned and handed the scan
+            // delegate's base and the shared filter to the parent that stole them. Freeing again here
+            // would free the parent's own children.
+            return;
         }
-        if (hasNull) {
-            effectiveKeys.add(SymbolTable.VALUE_IS_NULL);
-        }
-        return true;
+        // Best-effort: in self-filtering mode the index and scan delegates own compiled filter
+        // functions, so a throw from the first close must not strand the rest. The pin release joins
+        // the chain rather than preceding it, so a cleanup failure there cannot strand the delegates.
+        // It is defensive only: both getCursor() and getPageFrameCursor() release the pin in a finally
+        // block, so no traced path reaches close() with one held.
+        Throwable failure = Misc.freeBestEffort(null, sharedFrameFactory.takePinnedCursor());
+        failure = Misc.freeBestEffort(failure, coveringDelegate);
+        failure = Misc.freeBestEffort(failure, indexDelegate);
+        failure = Misc.freeBestEffort(failure, scanDelegate);
+        failure = Misc.freeBestEffort(failure, dfcFactory);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     /**
@@ -902,9 +902,9 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         @Override
         public void setPushdownFilterCondition(
                 long partitionTableVersion,
-                @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> conditions
+                @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
         ) {
-            delegate.setPushdownFilterCondition(partitionTableVersion, conditions);
+            delegate.setPushdownFilterCondition(partitionTableVersion, pushdownFilterConditions);
         }
 
         @Override
@@ -915,6 +915,18 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
         @Override
         public void toPlan(PlanSink sink) {
             delegate.toPlan(sink);
+        }
+
+        /**
+         * The scan direction {@code order} selects, resolving ORDER_ANY the way every
+         * {@link PartitionFrameCursorFactory} implementation resolves it: to the factory's own base
+         * order, ascending unless that base order is descending.
+         */
+        private int resolveDirection(int order) {
+            if (order == ORDER_ASC || order == ORDER_DESC) {
+                return order;
+            }
+            return delegate.getOrder() == ORDER_DESC ? ORDER_DESC : ORDER_ASC;
         }
 
         /**
@@ -951,27 +963,15 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             pinnedColumnIndexes = null;
             return pinned;
         }
-
-        /**
-         * The scan direction {@code order} selects, resolving ORDER_ANY the way every
-         * {@link PartitionFrameCursorFactory} implementation resolves it: to the factory's own base
-         * order, ascending unless that base order is descending.
-         */
-        private int resolveDirection(int order) {
-            if (order == ORDER_ASC || order == ORDER_DESC) {
-                return order;
-            }
-            return delegate.getOrder() == ORDER_DESC ? ORDER_DESC : ORDER_ASC;
-        }
     }
 
     public static final class PreparedSymbolPatternFilter extends BooleanFunction {
         private final boolean isNegated;
         private final SymbolKeySetProvider provider;
-        private final Function providerFunction;
         private final ExpressionNode providerExpression;
-        private final Function residualFilter;
+        private final Function providerFunction;
         private final ExpressionNode residualExpression;
+        private final Function residualFilter;
         private final int symbolColumnIndex;
         // Set by prepare(). getBool() asserts it, because isThreadSafe() rests on it - see that override.
         private boolean hasPreparedKeySet;
@@ -1042,15 +1042,15 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             return symbolColumnIndex;
         }
 
-        public boolean isNegated() {
-            return isNegated;
-        }
-
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             if (residualFilter != null) {
                 residualFilter.init(symbolTableSource, executionContext);
             }
+        }
+
+        public boolean isNegated() {
+            return isNegated;
         }
 
         @Override
