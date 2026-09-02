@@ -2301,7 +2301,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // so this is a no-op while frozen.
             // A partition with no .pci has no sidecars to warm: its covered values come
             // from the INCLUDE columns' own files via the null-prefix path, so sidecar
-            // availability says nothing about whether it can be served.
+            // availability says nothing about whether it can be served. The same holds
+            // for a partition that has a .pci but no published sidecar bytes -- e.g. one
+            // written entirely before the indexed column existed, where every row sits in
+            // the null prefix and the chain carries no entry at all.
             assert isCoversFromMetadata || allRequiredCoveredAvailable(requiredCoverColumns)
                     : "frozen reader missing a warm-opened sidecar for the requested cover columns";
             return;
@@ -2329,9 +2332,13 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     // -ea-only invariant check used by the frozen no-op path of openRequiredSidecars:
-    // every column a detached worker cursor requests must already have been opened and
-    // marked available by the single-threaded warm pass, so the frozen reader never needs
-    // to (and never may) rewrite the shared coveredAvailable[] from a worker thread.
+    // every column a detached worker cursor requests must already carry the availability
+    // the single-threaded warm pass gave it, so the frozen reader never needs to (and
+    // never may) rewrite the shared coveredAvailable[] from a worker thread. A column the
+    // writer has published no sidecar bytes for satisfies that too: ensureSidecarOpen()
+    // maps nothing for it, so the warm pass left it unavailable as well and the frozen
+    // no-op reproduces the warm state exactly. Such a column is served from the INCLUDE
+    // column's own files through the null-prefix path.
     private boolean allRequiredCoveredAvailable(int[] requiredCoverColumns) {
         if (requiredCoverColumns == null) {
             return true;
@@ -2340,11 +2347,17 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return false;
         }
         for (int c : requiredCoverColumns) {
-            if (c >= 0 && c < coverCount && !coveredAvailable[c]) {
+            if (c >= 0 && c < coverCount && !coveredAvailable[c] && hasPublishedSidecarBytes(c)) {
                 return false;
             }
         }
         return true;
+    }
+
+    // Whether the writer has published any sidecar bytes for cover column c, i.e. whether
+    // ensureSidecarOpen() has anything to map. Mirrors that method's own gate.
+    private boolean hasPublishedSidecarBytes(int c) {
+        return c < sidecarFileEndOffsets.size() && sidecarFileEndOffsets.getQuick(c) > 0;
     }
 
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
