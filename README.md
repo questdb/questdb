@@ -292,7 +292,6 @@ fine-tune QuestDB for production workloads.
 The QuestDB you already run, hardened for production. Enterprise adds:
 
 - high availability: replication, read replicas, automatic failover
-- multi-primary ingestion
 - multi-tier storage at petabyte scale: cold partitions tier automatically to
   Parquet on object storage and stay queryable in place
 - security and governance: role-based access control, TLS, SSO, audit logs
