@@ -38,16 +38,18 @@ memory-mapped, time-partitioned columns. Queries run across all cores with SIMD
 and JIT-compiled filters. There are no third-party dependencies on the data
 path.
 
-Storage is tiered: a parallel write-ahead log, native columnar partitions for
-hot data, and Apache Parquet for cold history. Parquet, Apache Iceberg, and
-Apache Arrow keep the data open to any tool.
+Storage is tiered: a parallel write-ahead log, native columnar partitions,
+and Apache Parquet. In open source you convert partitions to Parquet with
+`ALTER TABLE`, or create a table in Parquet directly. QuestDB Enterprise
+converts cold partitions automatically and tiers them to object storage.
+Parquet, Apache Iceberg, and Apache Arrow keep the data open to any tool.
 
 ## Get started
 
 Use [Docker](https://www.docker.com/) to start quickly:
 
 ```bash
-docker run -p 9000:9000 -p 9009:9009 -p 8812:8812 questdb/questdb
+docker run -p 9000:9000 -p 8812:8812 questdb/questdb
 ```
 
 Or macOS users on Apple Silicon can use Homebrew:
@@ -87,7 +89,9 @@ For the full walkthrough, start with the
 ## Ingress and egress over QWP
 
 QWP is a binary columnar protocol over WebSocket. The same connection writes
-rows in and streams query results out as Apache Arrow.
+rows in and streams query results back out as columns. The Python client
+returns those columns as Apache Arrow by default, and Rust and C/C++ can
+enable it with a flag.
 
 | QuestDB 10.0 | Measured | Source |
 |---|---|---|
@@ -109,35 +113,42 @@ One engine covers the full lifecycle of the data:
 - **Capture.** Ingest millions of ordered and out-of-order events per second
   without pre-aggregation. Deduplication and out-of-order correction are built
   in.
-- **Compute.** Transform, enrich, and aggregate events as they arrive with
-  materialized views, then publish the results in real time.
+- **Compute.** Transform, enrich, and aggregate events as they arrive.
+  [Materialized views](https://questdb.com/docs/concepts/materialized-views/)
+  aggregate by time slice, many rows in and one row out.
+  [Live views](https://questdb.com/docs/concepts/live-views/) run window
+  functions such as indicators, one row in and one row out, on an in-memory
+  tier.
 - **Query.** Run time-series SQL across live and historical data with
   predictable low latency.
-- **Retain.** Keep the complete record online across hot native storage and
-  Parquet cold storage, all through the same SQL.
+- **Retain.** Keep the complete record online in native storage and Parquet,
+  queried through the same SQL. Enterprise tiers cold partitions to object
+  storage automatically.
 
 The SQL is standard, extended where time series needs it: `SAMPLE BY`,
 `LATEST ON`, `ASOF JOIN`, `WINDOW JOIN`, `HORIZON JOIN`, materialized views,
-and n-dimensional arrays.
+live views, and n-dimensional arrays.
+
+Both queries run on the [live demo](https://demo.questdb.io/):
 
 ```sql
--- 15-minute OHLCV bars over the last day, from the live demo
-SELECT
-  timestamp,
+-- 15-minute OHLCV bars for EURUSD, today
+SELECT timestamp, symbol,
   first(price) AS open,
+  max(price) AS high,
+  min(price) AS low,
   last(price) AS close,
-  min(price),
-  max(price),
-  sum(amount) AS volume
-FROM trades
-WHERE symbol = 'BTC-USDT'
-  AND timestamp > dateadd('d', -1, now())
-SAMPLE BY 15m ALIGN TO CALENDAR;
+  sum(quantity) AS total_volume
+FROM fx_trades
+WHERE symbol = 'EURUSD'
+  AND timestamp IN '$today'
+SAMPLE BY 15m;
 
 -- Match each trade to the most recent quote by timestamp
-SELECT t.timestamp, t.symbol, t.price, q.bid, q.ask
-FROM trades t
-ASOF JOIN quotes q ON (symbol);
+SELECT t.timestamp, t.symbol, t.price, q.bid_price, q.ask_price
+FROM fx_trades t
+ASOF JOIN core_price q ON (symbol)
+WHERE t.timestamp IN '$today';
 ```
 
 Where it runs:
