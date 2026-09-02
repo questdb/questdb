@@ -187,42 +187,6 @@ public class QueryRegistry {
     }
 
     /**
-     * Returns the Resource Group ID captured by the active execution lease, or SQL NULL when the
-     * owner is absent or the engine did not attach a Resource Group lease. The double lifecycle
-     * check prevents a pooled entry recycled concurrently for another query from leaking its
-     * identity into this query.
-     */
-    public long getResourceGroupId(long queryId) {
-        final Entry entry = registry.get(queryId);
-        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
-            return Numbers.LONG_NULL;
-        }
-        final QuietCloseable lease = entry.executionLease;
-        final long groupId = lease instanceof SqlExecutionLease sqlExecutionLease
-                ? sqlExecutionLease.getResourceGroupId()
-                : Numbers.LONG_NULL;
-        Unsafe.loadFence();
-        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? groupId : Numbers.LONG_NULL;
-    }
-
-    /**
-     * Returns the immutable Resource Group name captured by the active execution lease, or null
-     * when the owner is absent or the engine did not attach a Resource Group lease.
-     */
-    public @Nullable CharSequence getResourceGroupName(long queryId) {
-        final Entry entry = registry.get(queryId);
-        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
-            return null;
-        }
-        final QuietCloseable lease = entry.executionLease;
-        final CharSequence groupName = lease instanceof SqlExecutionLease sqlExecutionLease
-                ? sqlExecutionLease.getResourceGroupName()
-                : null;
-        Unsafe.loadFence();
-        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? groupName : null;
-    }
-
-    /**
      * Mounts an existing protocol owner for another executable segment.
      */
     public void mountOwner(long queryId, SqlExecutionContext executionContext) {
@@ -355,13 +319,10 @@ public class QueryRegistry {
             try {
                 detached = registry.remove(queryId, e);
                 if (!detached) {
-                    cleanupFailure = appendCleanupFailure(
-                            cleanupFailure,
-                            new IllegalStateException("query registry could not detach retired entry [id=" + queryId + ']')
-                    );
+                    throw new IllegalStateException("query registry could not detach retired entry [id=" + queryId + ']');
                 }
             } catch (Throwable th) {
-                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+                cleanupFailure = th;
             }
             try {
                 clearStaleSignalBinding(e.previousCancelledBinding);
@@ -436,13 +397,7 @@ public class QueryRegistry {
         if (primary == null) {
             return failure;
         }
-        if (primary != failure) {
-            try {
-                primary.addSuppressed(failure);
-            } catch (Throwable ignored) {
-                // Preserve forward cleanup progress when suppression itself cannot allocate.
-            }
-        }
+        suppressCleanupFailure(primary, failure);
         return primary;
     }
 
@@ -451,6 +406,16 @@ public class QueryRegistry {
         if (flag instanceof FiberCancellationSignal signal
                 && signal.getGeneration() != binding.getGeneration(flag)) {
             binding.clear();
+        }
+    }
+
+    private static void suppressCleanupFailure(Throwable primary, Throwable failure) {
+        if (primary != failure) {
+            try {
+                primary.addSuppressed(failure);
+            } catch (Throwable ignored) {
+                // Preserve forward cleanup progress when suppression itself cannot allocate.
+            }
         }
     }
 
@@ -587,24 +552,24 @@ public class QueryRegistry {
             try {
                 detached = registry.remove(queryId, e) || registry.get(queryId) != e;
                 if (!detached) {
-                    appendCleanupFailure(
+                    suppressCleanupFailure(
                             th,
                             new IllegalStateException("query registry rollback could not detach entry [id=" + queryId + ']')
                     );
                 }
             } catch (Throwable cleanupFailure) {
-                appendCleanupFailure(th, cleanupFailure);
+                suppressCleanupFailure(th, cleanupFailure);
             }
             if (isCancellationBound) {
                 try {
                     clearStaleSignalBinding(e.previousCancelledBinding);
                 } catch (Throwable cleanupFailure) {
-                    appendCleanupFailure(th, cleanupFailure);
+                    suppressCleanupFailure(th, cleanupFailure);
                 }
                 try {
                     clearStaleSignalBinding(e.previousSimpleCancelledBinding);
                 } catch (Throwable cleanupFailure) {
-                    appendCleanupFailure(th, cleanupFailure);
+                    suppressCleanupFailure(th, cleanupFailure);
                 }
                 try {
                     executionContext.restoreCancelledFlag(
@@ -613,7 +578,7 @@ public class QueryRegistry {
                             e.previousSimpleCancelledBinding
                     );
                 } catch (Throwable cleanupFailure) {
-                    appendCleanupFailure(th, cleanupFailure);
+                    suppressCleanupFailure(th, cleanupFailure);
                 }
             }
             final MemoryTracker memoryTracker = e.memoryTracker;
@@ -625,12 +590,12 @@ public class QueryRegistry {
                         executionContext.setMemoryTracker(outerTracker);
                     }
                 } catch (Throwable cleanupFailure) {
-                    appendCleanupFailure(th, cleanupFailure);
+                    suppressCleanupFailure(th, cleanupFailure);
                 }
                 try {
                     memoryTracker.close();
                 } catch (Throwable cleanupFailure) {
-                    appendCleanupFailure(th, cleanupFailure);
+                    suppressCleanupFailure(th, cleanupFailure);
                 } finally {
                     e.memoryTracker = null;
                 }
@@ -640,7 +605,7 @@ public class QueryRegistry {
                 try {
                     executionLease.close();
                 } catch (Throwable cleanupFailure) {
-                    appendCleanupFailure(th, cleanupFailure);
+                    suppressCleanupFailure(th, cleanupFailure);
                 } finally {
                     e.executionLease = null;
                 }
@@ -649,19 +614,19 @@ public class QueryRegistry {
             try {
                 retired = e.retire(queryId);
             } catch (Throwable cleanupFailure) {
-                appendCleanupFailure(th, cleanupFailure);
+                suppressCleanupFailure(th, cleanupFailure);
             }
             if (detached && retired) {
                 try {
                     recycle(e);
                 } catch (Throwable cleanupFailure) {
-                    appendCleanupFailure(th, cleanupFailure);
+                    suppressCleanupFailure(th, cleanupFailure);
                 }
             } else if (!retired) {
                 try {
                     LOG.error().$("query lifecycle mismatch on register rollback [id=").$(queryId).I$();
                 } catch (Throwable cleanupFailure) {
-                    appendCleanupFailure(th, cleanupFailure);
+                    suppressCleanupFailure(th, cleanupFailure);
                 }
             }
             throw th;
