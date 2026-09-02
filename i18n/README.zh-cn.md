@@ -207,7 +207,7 @@ QuestDB 同时支持以下兼容协议，现有工具链无需改动即可接入
 ### 📚 查阅文档
 
 - [QuestDB 文档：](https://questdb.com/docs/)开始您的探索之旅
-- [产品路线图：](https://github.com/orgs/questdb/projects/1/views/5)了解未来版本规划
+- [产品路线图：](https://github.com/orgs/questdb/projects/15/views/4)了解未来版本规划
 - [教程：](https://questdb.com/tutorial/)通过步骤化教学掌握 QuestDB 的各种应用场景
 
 ### ❓ 获取支持

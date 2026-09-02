@@ -307,7 +307,7 @@ with [Bring Your Own Cloud](https://questdb.com/byoc/). See the
 ### 📚 Read the docs
 
 - [QuestDB documentation:](https://questdb.com/docs/) begin the journey
-- [Product roadmap:](https://github.com/orgs/questdb/projects/1/views/5) check
+- [Product roadmap:](https://github.com/orgs/questdb/projects/15/views/4) check
   out our plan for upcoming releases
 - [Tutorials:](https://questdb.com/tutorial/) learn what's possible with QuestDB,
   step by step
