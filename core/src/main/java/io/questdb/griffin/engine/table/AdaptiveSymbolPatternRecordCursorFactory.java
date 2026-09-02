@@ -904,7 +904,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 long partitionTableVersion,
                 @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
         ) {
-            delegate.setPushdownFilterCondition(partitionTableVersion,  pushdownFilterConditions);
+            delegate.setPushdownFilterCondition(partitionTableVersion, pushdownFilterConditions);
         }
 
         @Override
