@@ -162,7 +162,6 @@ For deep dives into internals and performance, see the following blog posts:
 - [QuestDB vs ClickHouse](https://questdb.com/blog/clickhouse-vs-questdb-comparison/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
 - [QuestDB vs kdb+](https://questdb.com/compare/questdb-vs-kdb/)
-- [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
 As always, we encourage you to run your own benchmarks.
 

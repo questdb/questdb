@@ -94,7 +94,6 @@ QuestDB 尤其擅长处理：
 - [QuestDB vs ClickHouse](https://questdb.com/blog/clickhouse-vs-questdb-comparison/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
 - [QuestDB vs kdb+](https://questdb.com/compare/questdb-vs-kdb/)
-- [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
 我们推荐您亲自运行基准测试以获得最直观的性能体验。
 
