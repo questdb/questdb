@@ -18,36 +18,3 @@ steps:
     fetchDepth: 1
     lfs: false
     submodules: false
-  - bash: |
-      set -eu
-      # The checkout task above leaves persistCredentials at its default (false),
-      # so Azure drops its own auth header from .git/config as soon as the task
-      # ends. Every later raw `git` call then reaches github.com anonymously --
-      # the submodule clones in detect-local-client.yml, build-client-native.yml
-      # and rust-test-and-lint.yml. GitHub throttles anonymous git-over-HTTPS
-      # from the agents' shared egress IP and answers 401, which git reports as
-      #   fatal: could not read Username for 'https://github.com'
-      # even though every submodule repo is public. Authenticate with the
-      # pipeline's GH_TOKEN so those clones draw the authenticated limit.
-      # Submodule clones inherit this repo-local config.
-      #
-      # A pipeline that defines no GH_TOKEN leaves the macro unexpanded; its
-      # parentheses fail this test. Probe anonymous access instead of assuming
-      # it works, so a throttled agent says so here rather than surfacing six
-      # steps later as an unexplained submodule clone failure.
-      if [[ ! ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]]; then
-        echo "No usable GH_TOKEN; trying github.com anonymously"
-        if git ls-remote --exit-code -h https://github.com/questdb/java-questdb-client.git >/dev/null 2>&1; then
-          echo "Anonymous access to github.com works"
-        else
-          echo "##vso[task.logissue type=warning]Anonymous github.com access failed and no GH_TOKEN is set; submodule clones will fail"
-        fi
-        exit 0
-      fi
-      git -C "$BUILD_SOURCESDIRECTORY" config --local \
-        "url.https://x-access-token:$GH_TOKEN@github.com/.insteadOf" \
-        "https://github.com/"
-      echo "git authenticated to github.com for this workspace"
-    displayName: "Authenticate git to github.com"
-    env:
-      GH_TOKEN: $(GH_TOKEN)
