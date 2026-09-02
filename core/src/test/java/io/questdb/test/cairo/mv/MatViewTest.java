@@ -7658,6 +7658,47 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshJobReportsNoWorkWhenLastTaskEmptiesQueue() throws Exception {
+        // run()'s return value must not depend on how long the last task of a pass ran. The batch
+        // bounds are tested before a task starts, so a pass whose final task overruns the time budget
+        // and leaves the queue empty reports no work left. Testing the budget after the task instead
+        // makes every slow refresh claim leftover work, which is what testSimpleCancelRefresh -- a
+        // refresh that a client cancels after seconds, with nothing queued behind it -- trips over.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "create table base_price (" +
+                            "sym varchar, price double, ts #TIMESTAMP" +
+                            ") timestamp(ts) partition by DAY WAL"
+            );
+            execute("create materialized view price_1h refresh immediate as " +
+                    "select sym, last(price) as price, ts from base_price sample by 1h");
+            execute("insert into base_price values('gbpusd', 1.320, '2024-09-10T12:01')");
+            drainQueues();
+
+            final TableToken viewToken = engine.getTableTokenIfExists("price_1h");
+            Assert.assertNotNull(viewToken);
+
+            // A single task, on a view that is already up to date, so the pass refreshes nothing and
+            // the return value is decided by the batch bound alone.
+            engine.getMatViewStateStore().enqueueIncrementalRefresh(viewToken);
+
+            final AtomicInteger dequeued = new AtomicInteger();
+            try (MatViewRefreshJob refreshJob = new MatViewRefreshJob(0, engine, 1)) {
+                // A zero budget is spent by the time the first task returns, whatever the task cost.
+                refreshJob.setMaxRunDurationForTesting(0);
+                refreshJob.setOnRefreshTaskDequeuedForTesting(dequeued::incrementAndGet);
+
+                Assert.assertFalse(
+                        "run() must not report work left to do after the task that emptied the queue,"
+                                + " however long that task ran",
+                        refreshJob.run()
+                );
+                Assert.assertEquals(1, dequeued.get());
+            }
+        });
+    }
+
+    @Test
     public void testRefreshJobYieldsAfterTimeBudget() throws Exception {
         // The task count bound alone would let MAX_TASKS_PER_RUN slow refreshes run back to back before
         // yielding -- half an hour at the ~60s per refresh #7576 measured. The elapsed-time budget is

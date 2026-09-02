@@ -281,7 +281,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test seam: runs once for each task removed from the refresh queue, before the task executes.
+     * Test seam: runs once for each task a pass takes on, before the task executes. A task the batch
+     * bound hands back to the queue does not fire it; the pass that executes the task does.
      * Tests use it to put a deterministic upper bound on self-republishing contender paths.
      * Persistent: fires on every pass until reset.
      */
@@ -2011,9 +2012,26 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // The budget is real elapsed time, not the configured clock: it is a scheduling-latency bound,
         // and tests that jump the configured clock by hours would otherwise yield after every task.
         final long deadlineNanos = System.nanoTime() + maxRunDurationNanos;
-        int remainingTasks = MAX_TASKS_PER_RUN;
+        int startedTasks = 0;
         boolean hasYielded = false;
         while (stateStore.tryDequeueRefreshTask(refreshTask)) {
+            // Test the bounds before a task starts rather than after it finishes. A bound that tripped
+            // on the queue's last task would report leftover work that does not exist, and run()'s
+            // return value would then depend on how long the final refresh happened to take -- a
+            // cancelled refresh that ran past the budget would claim the pass did work. The dequeue
+            // above already proved the queue non-empty, so hand the task back and say so. Always start
+            // one task per pass: a budget already spent on entry must not turn a pass into a
+            // dequeue-and-reenqueue that makes no progress.
+            //
+            // Handing the task back appends it to the queue tail. The queue already tolerates that --
+            // the suspend gate below, every tryLock-failure re-enqueue, and reenqueueFailedPendingTasks
+            // all append -- and a bounded batch still drains it, since each pass takes tasks from the
+            // head and defers at most one.
+            if (startedTasks > 0 && (startedTasks == MAX_TASKS_PER_RUN || System.nanoTime() - deadlineNanos >= 0)) {
+                stateStore.reenqueueRefreshTask(refreshTask);
+                hasYielded = true;
+                break;
+            }
             runRefreshTaskDequeuedSeamForTesting();
             // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
             // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
@@ -2026,40 +2044,38 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 stateStore.reenqueueRefreshTask(refreshTask);
                 break;
             }
-            // A dropped base table shortcuts the task rather than skipping the loop tail: the bound
-            // has to count it, otherwise a queue full of tasks for a dropped base table drains
+            // Count the task before the dropped-base shortcut below: a queue full of tasks for a
+            // dropped base table must exhaust the batch bound like any other, otherwise it drains
             // unbounded again.
-            if (!checkIfBaseTableDropped(refreshTask)) {
-                final int operation = refreshTask.operation;
-                switch (operation) {
-                    case MatViewRefreshTask.INCREMENTAL_REFRESH:
-                        refreshed |= incrementalRefresh(refreshTask);
-                        break;
-                    case MatViewRefreshTask.RANGE_REFRESH:
-                        refreshed |= rangeRefresh(refreshTask);
-                        break;
-                    case MatViewRefreshTask.FULL_REFRESH:
-                        refreshed |= fullRefresh(refreshTask);
-                        break;
-                    case MatViewRefreshTask.INVALIDATE:
-                        invalidate(refreshTask);
-                        break;
-                    case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
-                        updateRefreshIntervals(refreshTask);
-                        break;
-                    default:
-                        throw new RuntimeException("unexpected operation: " + operation);
-                }
+            startedTasks++;
+            if (checkIfBaseTableDropped(refreshTask)) {
+                continue;
             }
-            if (--remainingTasks == 0 || System.nanoTime() - deadlineNanos >= 0) {
-                hasYielded = true;
-                break;
+
+            final int operation = refreshTask.operation;
+            switch (operation) {
+                case MatViewRefreshTask.INCREMENTAL_REFRESH:
+                    refreshed |= incrementalRefresh(refreshTask);
+                    break;
+                case MatViewRefreshTask.RANGE_REFRESH:
+                    refreshed |= rangeRefresh(refreshTask);
+                    break;
+                case MatViewRefreshTask.FULL_REFRESH:
+                    refreshed |= fullRefresh(refreshTask);
+                    break;
+                case MatViewRefreshTask.INVALIDATE:
+                    invalidate(refreshTask);
+                    break;
+                case MatViewRefreshTask.UPDATE_REFRESH_INTERVALS:
+                    updateRefreshIntervals(refreshTask);
+                    break;
+                default:
+                    throw new RuntimeException("unexpected operation: " + operation);
             }
         }
-        // A yield leaves the queue possibly non-empty, so report that this pass did something even when
-        // the batch refreshed nothing: the return value is what stops the worker napping, and what
-        // drainMatViewQueue() loops on. The last batch of a run reports a false positive this way, and
-        // costs one more pass that finds the queue empty and returns false.
+        // A yield hands a task back to the queue, so report that this pass has work left even when the
+        // batch refreshed nothing: the return value is what stops the worker napping, and what
+        // drainMatViewQueue() loops on.
         return refreshed || hasYielded;
     }
 
