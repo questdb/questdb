@@ -21,28 +21,28 @@
 steps:
   - bash: |
       set -eux
-        # The checkout task keeps no credentials (persistCredentials defaults to
-        # false), so this clone would reach github.com anonymously, and GitHub
-        # throttles anonymous git-over-HTTPS from the agents' shared egress IP
-        # with a 401 that git reports as
-        #   fatal: could not read Username for 'https://github.com'
-        # even though the submodule repos are public. `gh auth setup-git`
-        # registers gh as git's credential helper for github.com; gh reads the
-        # token from this step's environment, so the clone git runs for each
-        # submodule authenticates and no token is written to the agent.
-        #
-        # Azure leaves an undefined variable as its literal macro text, so drop
-        # anything that is not token-shaped rather than handing gh a "$(GH_TOKEN)"
-        # string to authenticate with. Pipelines differ on which name they define.
-        [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
-        [[ ${GITHUB_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GITHUB_TOKEN
-        if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
-          gh auth setup-git --hostname github.com
-        else
-          echo "No usable token or no gh; cloning submodules anonymously"
-        fi
+      # The checkout task keeps no credentials (persistCredentials defaults to
+      # false), so this clone would reach github.com anonymously, and GitHub
+      # throttles anonymous git-over-HTTPS from the agents' shared egress IP
+      # with a 401 that git reports as
+      #   fatal: could not read Username for 'https://github.com'
+      # even though the submodule repos are public. `gh auth setup-git`
+      # registers gh as git's credential helper for github.com; gh reads the
+      # token from this step's environment, so the clone git runs for each
+      # submodule authenticates and no token is written to the agent.
+      #
+      # Azure leaves an undefined variable as its literal macro text, so drop
+      # anything that is not token-shaped rather than handing gh a "$(GH_TOKEN)"
+      # string to authenticate with. Pipelines differ on which name they define.
+      [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
+      [[ ${GITHUB_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GITHUB_TOKEN
+      if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
+        gh auth setup-git --hostname github.com
+      else
+        echo "No usable token or no gh; cloning submodules anonymously"
+      fi
       # zstd is a submodule of the client and is required by its CMake build.
-        git submodule update --init --recursive --depth 1 java-questdb-client
+      git submodule update --init --recursive --depth 1 java-questdb-client
       # gcc is already present (the core and Rust builds need it); add cmake and
       # nasm (the x86-64 asmlib) only when missing.
       if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
@@ -62,33 +62,33 @@ steps:
          "src/main/resources/io/questdb/client/bin/$plat/libquestdb.so"
     displayName: "Build client native library (local-client, Linux)"
     env:
-        GH_TOKEN: $(GH_TOKEN)
-        GITHUB_TOKEN: $(GITHUB_TOKEN)
+      GH_TOKEN: $(GH_TOKEN)
+      GITHUB_TOKEN: $(GITHUB_TOKEN)
     condition: and(contains(variables['CLIENT_PROFILE'], 'local-client'), eq(variables['os'], 'Linux'))
 
   - bash: |
       set -eux
-        # The checkout task keeps no credentials (persistCredentials defaults to
-        # false), so this clone would reach github.com anonymously, and GitHub
-        # throttles anonymous git-over-HTTPS from the agents' shared egress IP
-        # with a 401 that git reports as
-        #   fatal: could not read Username for 'https://github.com'
-        # even though the submodule repos are public. `gh auth setup-git`
-        # registers gh as git's credential helper for github.com; gh reads the
-        # token from this step's environment, so the clone git runs for each
-        # submodule authenticates and no token is written to the agent.
-        #
-        # Azure leaves an undefined variable as its literal macro text, so drop
-        # anything that is not token-shaped rather than handing gh a "$(GH_TOKEN)"
-        # string to authenticate with. Pipelines differ on which name they define.
-        [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
-        [[ ${GITHUB_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GITHUB_TOKEN
-        if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
-          gh auth setup-git --hostname github.com
-        else
-          echo "No usable token or no gh; cloning submodules anonymously"
-        fi
-        git submodule update --init --recursive --depth 1 java-questdb-client
+      # The checkout task keeps no credentials (persistCredentials defaults to
+      # false), so this clone would reach github.com anonymously, and GitHub
+      # throttles anonymous git-over-HTTPS from the agents' shared egress IP
+      # with a 401 that git reports as
+      #   fatal: could not read Username for 'https://github.com'
+      # even though the submodule repos are public. `gh auth setup-git`
+      # registers gh as git's credential helper for github.com; gh reads the
+      # token from this step's environment, so the clone git runs for each
+      # submodule authenticates and no token is written to the agent.
+      #
+      # Azure leaves an undefined variable as its literal macro text, so drop
+      # anything that is not token-shaped rather than handing gh a "$(GH_TOKEN)"
+      # string to authenticate with. Pipelines differ on which name they define.
+      [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
+      [[ ${GITHUB_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GITHUB_TOKEN
+      if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
+        gh auth setup-git --hostname github.com
+      else
+        echo "No usable token or no gh; cloning submodules anonymously"
+      fi
+      git submodule update --init --recursive --depth 1 java-questdb-client
       # macOS legs run on Apple Silicon (macOS-15-arm64 in hosted-jobs.yml); x86-64
       # (Intel) macOS is not a supported platform, so there is no x86-64 branch here.
       # steps.yml already asserts arm64; this is the second guard, so an image swap
@@ -109,27 +109,27 @@ steps:
          src/main/resources/io/questdb/client/bin/darwin-aarch64/libquestdb.dylib
     displayName: "Build client native library (local-client, macOS)"
     env:
-        GH_TOKEN: $(GH_TOKEN)
-        GITHUB_TOKEN: $(GITHUB_TOKEN)
+      GH_TOKEN: $(GH_TOKEN)
+      GITHUB_TOKEN: $(GITHUB_TOKEN)
     condition: and(contains(variables['CLIENT_PROFILE'], 'local-client'), eq(variables['os'], 'macOS'))
 
   - pwsh: |
       $ErrorActionPreference = "Stop"
-        # See the Linux step above: the clone is otherwise anonymous and GitHub
-        # answers 401 when it throttles the agents' shared egress IP. gh becomes
-        # git's credential helper for github.com and reads the token from this
-        # step's environment, so nothing is written to the agent. Azure leaves an
-        # undefined variable as its literal macro text, so clear anything that is
-        # not token-shaped instead of handing it to gh.
-        if ($env:GH_TOKEN -notmatch '^[A-Za-z0-9_-]+$') { $env:GH_TOKEN = $null }
-        if ($env:GITHUB_TOKEN -notmatch '^[A-Za-z0-9_-]+$') { $env:GITHUB_TOKEN = $null }
-        if (($env:GH_TOKEN -or $env:GITHUB_TOKEN) -and (Get-Command gh -ErrorAction SilentlyContinue)) {
-          gh auth setup-git --hostname github.com
-          if ($LASTEXITCODE -ne 0) { throw "gh auth setup-git failed" }
-        } else {
-          Write-Host "No usable token or no gh; cloning submodules anonymously"
-        }
-        git submodule update --init --recursive --depth 1 java-questdb-client
+      # See the Linux step above: the clone is otherwise anonymous and GitHub
+      # answers 401 when it throttles the agents' shared egress IP. gh becomes
+      # git's credential helper for github.com and reads the token from this
+      # step's environment, so nothing is written to the agent. Azure leaves an
+      # undefined variable as its literal macro text, so clear anything that is
+      # not token-shaped instead of handing it to gh.
+      if ($env:GH_TOKEN -notmatch '^[A-Za-z0-9_-]+$') { $env:GH_TOKEN = $null }
+      if ($env:GITHUB_TOKEN -notmatch '^[A-Za-z0-9_-]+$') { $env:GITHUB_TOKEN = $null }
+      if (($env:GH_TOKEN -or $env:GITHUB_TOKEN) -and (Get-Command gh -ErrorAction SilentlyContinue)) {
+        gh auth setup-git --hostname github.com
+        if ($LASTEXITCODE -ne 0) { throw "gh auth setup-git failed" }
+      } else {
+        Write-Host "No usable token or no gh; cloning submodules anonymously"
+      }
+      git submodule update --init --recursive --depth 1 java-questdb-client
       if ($LASTEXITCODE -ne 0) { throw "submodule update failed" }
       # The client distributes a mingw-built Windows .dll; reproduce that here.
       # Ninja avoids the MinGW-Makefiles "sh.exe found in PATH" failure and the
@@ -148,6 +148,6 @@ steps:
                 src/main/resources/io/questdb/client/bin/windows-x86-64/libquestdb.dll
     displayName: "Build client native library (local-client, Windows)"
     env:
-        GH_TOKEN: $(GH_TOKEN)
-        GITHUB_TOKEN: $(GITHUB_TOKEN)
+      GH_TOKEN: $(GH_TOKEN)
+      GITHUB_TOKEN: $(GITHUB_TOKEN)
     condition: and(contains(variables['CLIENT_PROFILE'], 'local-client'), eq(variables['os'], 'Windows'))
