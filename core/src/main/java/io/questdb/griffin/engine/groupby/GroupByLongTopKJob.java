@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.map.Map;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
@@ -59,7 +58,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
             long cursor,
             AsyncGroupByAtom stealingAtom
     ) {
-        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final AsyncGroupByAtom atom = task.getAtom();
@@ -88,7 +87,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
             }
         } catch (Throwable th) {
             LOG.error().$("long top K on shard failed [error=").$(th).I$();
-            circuitBreaker.cancel();
+            circuitBreaker.cancel(th);
         } finally {
             doneLatch.countDown();
         }
