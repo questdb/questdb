@@ -217,6 +217,10 @@ public class FiberMetricsTest {
                         sink.toString(),
                         "questdb_worker_pool_fiber_scheduler_publication_total{worker_pool=\"test\\\"pool\",route=\"global\"} 0\n"
                 );
+                TestUtils.assertContains(
+                        sink.toString(),
+                        "questdb_worker_pool_fiber_scheduler_selection_total{worker_pool=\"test\\\"pool\",source=\"global\"} 0\n"
+                );
 
                 metrics.unregister(runtime);
                 sink.clear();

@@ -743,7 +743,7 @@ public class WorkerPoolBootFailureTest {
         final Thread scraper = new Thread(() -> {
             scrapeStarted.countDown();
             try {
-                pool.updateWorkerMetrics(System.nanoTime());
+                pool.updateWorkerMetrics();
             } catch (Throwable t) {
                 scrapeError.set(t);
             } finally {
