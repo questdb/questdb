@@ -37,6 +37,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 
@@ -175,6 +176,8 @@ public final class PostingIndexUtils {
     public static final byte ENCODING_ADAPTIVE = 0;
     public static final byte ENCODING_DELTA = 1;
     public static final byte ENCODING_EF = 2;
+    @TestOnly
+    public static boolean isEfRankTrailerEnabled = true;
     public static final int GEN_DIR_ENTRY_SIZE = 44;
     public static final int GEN_DIR_OFFSET_FILE_OFFSET = 0;
     public static final int GEN_DIR_OFFSET_KEY_COUNT = 16;
@@ -327,11 +330,30 @@ public final class PostingIndexUtils {
     // loud "Unsupported Posting index version" on the older build. Once raised it
     // never goes back down for that file, because a superseded format-1 entry
     // stays reachable through the head prev pointer. Non-covering files stay at
-    // V2_FORMAT_VERSION, where both layouts are byte-identical and downgrading
-    // remains safe.
+    // V2_FORMAT_VERSION because their format-0 and format-1 .pk chain entries
+    // are byte-identical.
+    //
+    // That byte identity applies only to the .pk chain layout. Ranked EF writers
+    // append an EFR2 trailer to each selected .pv key blob: a 16-byte header plus
+    // one 8-byte rank-and-integrity checkpoint for each of
+    // ceil(highWordCount / 8) + 1 positions. Pre-EFR2 readers derive the EF
+    // prefix extent from its 17-byte header and ignore the trailer; current
+    // readers still decode old unranked EF blobs and use ranked metadata only
+    // after validating the trailer shape, exact blob extent, and checkpoint
+    // integrity. This establishes old/new reader read compatibility, but .pv
+    // blobs are not byte-identical and this does not provide a general downgrade
+    // guarantee.
     public static final int V3_FORMAT_VERSION = 3;
-    // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B
+    // EF header: sentinel(4B) + count(4B) + L(1B) + universe(8B) = 17B.
+    // Ranked writers append a trailer after the legacy-decodable prefix. Older readers derive
+    // the prefix extent from this header and ignore the trailer, preserving downgrade reads.
     static final int EF_HEADER_SIZE = 17;
+    private static final int EF_RANK_CHECKPOINT_ENTRY_SIZE = 2 * Integer.BYTES;
+    static final int EF_RANK_CHECKPOINT_SHIFT = 3;
+    private static final int EF_RANK_CHECKPOINT_WORDS = 1 << EF_RANK_CHECKPOINT_SHIFT;
+    private static final int EF_RANK_TRAILER_HEADER_SIZE = 16;
+    private static final int EF_RANK_TRAILER_MAGIC = 0x32465245; // "EFR2" in little-endian bytes
+    private static final int EF_RANK_TRAILER_VERSION = 2;
     private static final long PARSE_FAIL = Long.MIN_VALUE;
     /**
      * Tri-state sentinel returned by {@link #readSealTxnFromKeyFdTriState} to
@@ -375,8 +397,14 @@ public final class PostingIndexUtils {
      * Used to pre-allocate encode buffers.
      */
     public static long computeMaxEncodedSize(int count) {
-        // EF worst case: header + 8-byte-aligned low bits (L=63) + 8-byte-aligned high bits
-        long efMax = EF_HEADER_SIZE + efLowBytesAligned(count, 63) + (long) ((count + 63) / 64) * 8;
+        // EF worst case: header + 8-byte-aligned low bits (L=63) + high bits + ranked trailer.
+        // One checkpoint per 64 values is a conservative bound: the actual directory uses one
+        // checkpoint per eight high words (normally fewer than three high words per 64 values).
+        long efMax = EF_HEADER_SIZE
+                + efLowBytesAligned(count, 63)
+                + (long) ((count + 63) / 64) * Long.BYTES
+                + EF_RANK_TRAILER_HEADER_SIZE
+                + (long) (((count + 63) / 64) + 1) * EF_RANK_CHECKPOINT_ENTRY_SIZE;
         // Delta-FoR worst case (for reading old data):
         int blockCount = (count + BLOCK_CAPACITY - 1) / BLOCK_CAPACITY;
         long totalDeltas = count - blockCount;
@@ -479,6 +507,156 @@ public final class PostingIndexUtils {
         } finally {
             Unsafe.free(blockDeltasAddr, (long) BLOCK_CAPACITY * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
         }
+    }
+
+    /**
+     * Returns the byte extent of the legacy-decodable Elias-Fano prefix. Ranked metadata, when
+     * present, starts exactly at this offset. The caller must supply a valid EF header.
+     */
+    public static int efPrefixSize(long srcAddr) {
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
+        final long universe = Unsafe.getLong(srcAddr + 2L * Integer.BYTES + Byte.BYTES);
+        final long highWords = (count + (universe >>> bitsL) + 63) / 64;
+        final long size = EF_HEADER_SIZE + efLowBytesAligned(count, bitsL) + highWords * Long.BYTES;
+        if (size > Integer.MAX_VALUE) {
+            throw CairoException.critical(0).put("EF prefix too large");
+        }
+        return (int) size;
+    }
+
+    /**
+     * Returns the first EF ordinal whose value is at least {@code target}, or {@code -1} when
+     * {@code encodedSize} describes a legacy unranked blob (including a malformed/truncated
+     * trailer). Checkpoint lookup plus each high-vector seek scans at most eight words.
+     */
+    public static int efLowerBound(long srcAddr, int encodedSize, long target) {
+        final long trailer = efRankTrailerAddress(srcAddr, encodedSize);
+        if (trailer == 0) {
+            return -1;
+        }
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
+        final long universe = Unsafe.getLong(srcAddr + 2L * Integer.BYTES + Byte.BYTES);
+        if (target >= universe) {
+            return count;
+        }
+        final long high = target >>> bitsL;
+        final int start = efFirstOrdinalForHigh(srcAddr, trailer, bitsL, high);
+        final int end = efFirstOrdinalForHigh(srcAddr, trailer, bitsL, high + 1);
+        if (start < 0 || end < 0) {
+            return -1;
+        }
+        if (start >= end || bitsL == 0) {
+            return start;
+        }
+        final long lowMask = (1L << bitsL) - 1;
+        final long targetLow = target & lowMask;
+        final long lowStart = srcAddr + EF_HEADER_SIZE;
+        int lo = start;
+        int hi = end;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            final long low = readBitsWord(lowStart, (long) mid * bitsL, bitsL) & lowMask;
+            if (low < targetLow) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        return lo;
+    }
+
+    /**
+     * Selects a ranked EF ordinal with a checkpoint seek and at most eight high-word reads.
+     * Returns {@link Numbers#LONG_NULL} for legacy, malformed, truncated, or out-of-range input.
+     */
+    public static long efSelectRanked(long srcAddr, int encodedSize, int ordinal) {
+        final long trailer = efRankTrailerAddress(srcAddr, encodedSize);
+        if (trailer == 0) {
+            return Numbers.LONG_NULL;
+        }
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        if (ordinal < 0 || ordinal >= count) {
+            return Numbers.LONG_NULL;
+        }
+        final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
+        final int highWordCount = Unsafe.getInt(trailer + 8);
+        final int checkpointCount = Unsafe.getInt(trailer + 12);
+        final long checkpoints = trailer + EF_RANK_TRAILER_HEADER_SIZE;
+        int lo = 0;
+        int hi = checkpointCount;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            final int midRank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, mid);
+            if (midRank < 0) {
+                return Numbers.LONG_NULL;
+            }
+            if (midRank <= ordinal) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        final int checkpoint = lo - 1;
+        if (checkpoint < 0 || checkpoint >= checkpointCount - 1) {
+            return Numbers.LONG_NULL;
+        }
+        int rank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, checkpoint);
+        if (rank < 0) {
+            return Numbers.LONG_NULL;
+        }
+        final long highStart = srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL);
+        final int wordHi = Math.min(highWordCount, (checkpoint + 1) << EF_RANK_CHECKPOINT_SHIFT);
+        for (int wordIndex = checkpoint << EF_RANK_CHECKPOINT_SHIFT; wordIndex < wordHi; wordIndex++) {
+            long word = Unsafe.getLong(highStart + (long) wordIndex * Long.BYTES);
+            final int wordRank = Long.bitCount(word);
+            if (rank + wordRank <= ordinal) {
+                rank += wordRank;
+                continue;
+            }
+            int within = ordinal - rank;
+            while (within-- > 0) {
+                word &= word - 1;
+            }
+            final int bit = Long.numberOfTrailingZeros(word);
+            final long high = (long) wordIndex * 64 + bit - ordinal;
+            final long low = readBitsWord(srcAddr + EF_HEADER_SIZE, (long) ordinal * bitsL, bitsL)
+                    & ((1L << bitsL) - 1);
+            return (high << bitsL) | low;
+        }
+        return Numbers.LONG_NULL;
+    }
+
+    /**
+     * Returns the number of one bits before {@code highWordIndex} from a ranked trailer, or
+     * {@code -1} for legacy/unusable metadata. Used by reverse iteration without a lazy rank scan.
+     */
+    public static int efRankBeforeHighWord(long srcAddr, int encodedSize, int highWordIndex) {
+        final long trailer = efRankTrailerAddress(srcAddr, encodedSize);
+        if (trailer == 0) {
+            return -1;
+        }
+        final int highWordCount = Unsafe.getInt(trailer + 8);
+        if (highWordIndex < 0 || highWordIndex >= highWordCount) {
+            return -1;
+        }
+        final int checkpoint = highWordIndex >>> EF_RANK_CHECKPOINT_SHIFT;
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
+        int rank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, checkpoint);
+        if (rank < 0) {
+            return -1;
+        }
+        final long highStart = srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL);
+        for (int w = checkpoint << EF_RANK_CHECKPOINT_SHIFT; w < highWordIndex; w++) {
+            rank += Long.bitCount(Unsafe.getLong(highStart + (long) w * Long.BYTES));
+        }
+        return rank;
+    }
+
+    public static boolean hasEfRankTrailer(long srcAddr, int encodedSize) {
+        return efRankTrailerAddress(srcAddr, encodedSize) != 0;
     }
 
     /**
@@ -941,6 +1119,34 @@ public final class PostingIndexUtils {
             Unsafe.putLong(highStart + (currentWordIdx << 3), accumulator);
         }
         pos += highBytes;
+        if (!isEfRankTrailerEnabled) {
+            return (int) (pos - destAddr);
+        }
+
+        // Append cumulative one-bit ranks at a fixed high-word stride. The sentinel and every
+        // byte through the high vector remain byte-identical to legacy EF, so old readers stop
+        // at the same derived prefix extent and safely ignore this independently validated trailer.
+        final int checkpointCount = ((numHighWords + EF_RANK_CHECKPOINT_WORDS - 1) >>> EF_RANK_CHECKPOINT_SHIFT) + 1;
+        Unsafe.putInt(pos, EF_RANK_TRAILER_MAGIC);
+        Unsafe.putByte(pos + 4, (byte) EF_RANK_TRAILER_VERSION);
+        Unsafe.putByte(pos + 5, (byte) EF_RANK_CHECKPOINT_SHIFT);
+        Unsafe.putShort(pos + 6, (short) 0);
+        Unsafe.putInt(pos + 8, numHighWords);
+        Unsafe.putInt(pos + 12, checkpointCount);
+        final long checkpoints = pos + EF_RANK_TRAILER_HEADER_SIZE;
+        int rank = 0;
+        int word = 0;
+        for (int checkpoint = 0; checkpoint < checkpointCount; checkpoint++) {
+            final int wordLimit = Math.min(numHighWords, checkpoint << EF_RANK_CHECKPOINT_SHIFT);
+            while (word < wordLimit) {
+                rank += Long.bitCount(Unsafe.getLong(highStart + (long) word++ * Long.BYTES));
+            }
+            final long checkpointAddress = checkpoints + (long) checkpoint * EF_RANK_CHECKPOINT_ENTRY_SIZE;
+            Unsafe.putInt(checkpointAddress, rank);
+            Unsafe.putInt(checkpointAddress + Integer.BYTES,
+                    efCheckpointIntegrity(highStart, numHighWords, checkpoint, rank));
+        }
+        pos = checkpoints + (long) checkpointCount * EF_RANK_CHECKPOINT_ENTRY_SIZE;
 
         return (int) (pos - destAddr);
     }
@@ -1796,6 +2002,175 @@ public final class PostingIndexUtils {
         } catch (NumericException e) {
             return PARSE_FAIL;
         }
+    }
+
+    private static int efFirstOrdinalForHigh(long srcAddr, long trailer, int bitsL, long high) {
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        if (high <= 0) {
+            return 0;
+        }
+        final long universe = Unsafe.getLong(srcAddr + 2L * Integer.BYTES + Byte.BYTES);
+        final long zeroCount = universe >>> bitsL;
+        if (high > zeroCount) {
+            return count;
+        }
+        final long targetZero = high - 1;
+        final int highWordCount = Unsafe.getInt(trailer + 8);
+        final int checkpointCount = Unsafe.getInt(trailer + 12);
+        final long checkpoints = trailer + EF_RANK_TRAILER_HEADER_SIZE;
+        final long totalHighBits = count + zeroCount;
+
+        int lo = 0;
+        int hi = checkpointCount;
+        while (lo < hi) {
+            final int mid = (lo + hi) >>> 1;
+            final int midRank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, mid);
+            if (midRank < 0) {
+                return -1;
+            }
+            final long bitPosition = Math.min(totalHighBits, (long) mid * EF_RANK_CHECKPOINT_WORDS * 64);
+            final long zeros = bitPosition - midRank;
+            if (zeros <= targetZero) {
+                lo = mid + 1;
+            } else {
+                hi = mid;
+            }
+        }
+        final int checkpoint = lo - 1;
+        if (checkpoint < 0 || checkpoint >= checkpointCount - 1) {
+            return count;
+        }
+        int rank = efValidatedCheckpointRank(srcAddr, trailer, bitsL, checkpoint);
+        if (rank < 0) {
+            return -1;
+        }
+        long zerosBefore = Math.min(totalHighBits, (long) checkpoint * EF_RANK_CHECKPOINT_WORDS * 64) - rank;
+        final long highStart = srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL);
+        final int wordHi = Math.min(highWordCount, (checkpoint + 1) << EF_RANK_CHECKPOINT_SHIFT);
+        for (int wordIndex = checkpoint << EF_RANK_CHECKPOINT_SHIFT; wordIndex < wordHi; wordIndex++) {
+            final long word = Unsafe.getLong(highStart + (long) wordIndex * Long.BYTES);
+            final long wordStartBit = (long) wordIndex * 64;
+            final int validBits = (int) Math.min(64, totalHighBits - wordStartBit);
+            if (validBits <= 0) {
+                break;
+            }
+            final long validMask = validBits == 64 ? -1L : (1L << validBits) - 1;
+            long zeros = ~word & validMask;
+            final int wordZeroCount = Long.bitCount(zeros);
+            if (zerosBefore + wordZeroCount <= targetZero) {
+                zerosBefore += wordZeroCount;
+                rank += Long.bitCount(word & validMask);
+                continue;
+            }
+            int within = (int) (targetZero - zerosBefore);
+            while (within-- > 0) {
+                zeros &= zeros - 1;
+            }
+            final int bit = Long.numberOfTrailingZeros(zeros);
+            final long beforeMask = bit == 0 ? 0 : (bit == 64 ? -1L : (1L << bit) - 1);
+            return rank + Long.bitCount(word & beforeMask);
+        }
+        return count;
+    }
+
+    private static long efRankTrailerAddress(long srcAddr, int encodedSize) {
+        if (encodedSize < EF_HEADER_SIZE || Unsafe.getInt(srcAddr) != EF_FORMAT_SENTINEL) {
+            return 0;
+        }
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        final int bitsL = Unsafe.getByte(srcAddr + 2L * Integer.BYTES) & 0xFF;
+        final long universe = Unsafe.getLong(srcAddr + 2L * Integer.BYTES + Byte.BYTES);
+        if (count <= 0 || bitsL > 63 || universe <= 0) {
+            return 0;
+        }
+        final long highPart = universe >>> bitsL;
+        if (highPart > Long.MAX_VALUE - count - 63) {
+            return 0;
+        }
+        final long highWordCountLong = (count + highPart + 63) / 64;
+        if (highWordCountLong <= 0 || highWordCountLong > Integer.MAX_VALUE) {
+            return 0;
+        }
+        final long prefixSize = EF_HEADER_SIZE
+                + (long) efLowBytesAligned(count, bitsL)
+                + highWordCountLong * Long.BYTES;
+        if (prefixSize + EF_RANK_TRAILER_HEADER_SIZE > encodedSize) {
+            return 0;
+        }
+        final long trailer = srcAddr + prefixSize;
+        if (Unsafe.getInt(trailer) != EF_RANK_TRAILER_MAGIC
+                || (Unsafe.getByte(trailer + 4) & 0xFF) != EF_RANK_TRAILER_VERSION
+                || (Unsafe.getByte(trailer + 5) & 0xFF) != EF_RANK_CHECKPOINT_SHIFT
+                || Unsafe.getShort(trailer + 6) != 0
+                || Unsafe.getInt(trailer + 8) != (int) highWordCountLong) {
+            return 0;
+        }
+        final int checkpointCount = Unsafe.getInt(trailer + 12);
+        final int expectedCheckpointCount = (((int) highWordCountLong + EF_RANK_CHECKPOINT_WORDS - 1)
+                >>> EF_RANK_CHECKPOINT_SHIFT) + 1;
+        final long expectedSize = prefixSize
+                + EF_RANK_TRAILER_HEADER_SIZE
+                + (long) expectedCheckpointCount * EF_RANK_CHECKPOINT_ENTRY_SIZE;
+        if (checkpointCount != expectedCheckpointCount || expectedSize != encodedSize) {
+            return 0;
+        }
+        final long checkpoints = trailer + EF_RANK_TRAILER_HEADER_SIZE;
+        final long finalCheckpoint = checkpoints
+                + (long) (checkpointCount - 1) * EF_RANK_CHECKPOINT_ENTRY_SIZE;
+        if (Unsafe.getInt(checkpoints) != 0 || Unsafe.getInt(finalCheckpoint) != count) {
+            return 0;
+        }
+        return trailer;
+    }
+
+    /**
+     * Computes the integrity word for one absolute rank, its checkpoint index, and the fixed
+     * high-vector block that the rank addresses. The work is bounded by eight high-word reads.
+     */
+    private static int efCheckpointIntegrity(
+            long highStart,
+            int highWordCount,
+            int checkpoint,
+            int rank
+    ) {
+        long hash = 0x9E3779B97F4A7C15L
+                ^ Integer.toUnsignedLong(rank)
+                ^ ((long) checkpoint * 0xD6E8FEB86659FD93L);
+        final int wordLo = checkpoint << EF_RANK_CHECKPOINT_SHIFT;
+        final int wordHi = Math.min(highWordCount, wordLo + EF_RANK_CHECKPOINT_WORDS);
+        for (int word = wordLo; word < wordHi; word++) {
+            final long payload = Unsafe.getLong(highStart + (long) word * Long.BYTES);
+            hash ^= payload + 0x9E3779B97F4A7C15L + (hash << 6) + (hash >>> 2);
+        }
+        hash ^= hash >>> 33;
+        hash *= 0xFF51AFD7ED558CCDL;
+        hash ^= hash >>> 33;
+        hash *= 0xC4CEB9FE1A85EC53L;
+        hash ^= hash >>> 33;
+        return (int) (hash ^ (hash >>> 32));
+    }
+
+    /**
+     * Validates one consumed cumulative rank independently against its checkpoint index and fixed
+     * high-word block. No neighboring checkpoint, global scan, or allocation is involved.
+     */
+    private static int efValidatedCheckpointRank(long srcAddr, long trailer, int bitsL, int checkpoint) {
+        final int checkpointCount = Unsafe.getInt(trailer + 12);
+        if (checkpoint < 0 || checkpoint >= checkpointCount) {
+            return -1;
+        }
+        final long checkpointAddress = trailer
+                + EF_RANK_TRAILER_HEADER_SIZE
+                + (long) checkpoint * EF_RANK_CHECKPOINT_ENTRY_SIZE;
+        final int rank = Unsafe.getInt(checkpointAddress);
+        final int count = Unsafe.getInt(srcAddr + Integer.BYTES);
+        if (rank < 0 || rank > count || (checkpoint == 0 && rank != 0)) {
+            return -1;
+        }
+        final int highWordCount = Unsafe.getInt(trailer + 8);
+        final long highStart = srcAddr + EF_HEADER_SIZE + efLowBytesAligned(count, bitsL);
+        final int expectedIntegrity = efCheckpointIntegrity(highStart, highWordCount, checkpoint, rank);
+        return Unsafe.getInt(checkpointAddress + Integer.BYTES) == expectedIntegrity ? rank : -1;
     }
 
     /**

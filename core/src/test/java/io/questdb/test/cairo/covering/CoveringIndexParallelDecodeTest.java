@@ -33,6 +33,7 @@ import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.DataSource;
 import io.questdb.cairo.sql.PageFrame;
@@ -579,12 +580,12 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         final String coveredAgg = "SELECT sum(px) FROM %s WHERE sym = '" + hotKey + "'";
         final String residual = "SELECT sum(px) FROM %s WHERE sym = '" + hotKey + "' AND px > " + residualThreshold;
 
-        // --- 1) Build the data ONCE under a parallel engine, then close it so the
+        // First, build the data once under a parallel engine, then close it so the
         // BYPASS WAL tables are flushed to the shared db root for the timed configs
         // to reopen. (NOT under assertMemoryLeak -- this is a measurement.) ---
         buildPerfData(gen);
 
-        // --- 2) Routing confirmation: EXPLAIN both covered queries at the parallel
+        // Confirm routing by explaining both covered queries at the parallel
         // worker count and assert they run through the ASYNC group-by over the
         // covering index (so we are timing the parallel covered decode, not a
         // serial fallback). If not, SAY SO LOUDLY -- that is itself a finding. ---
@@ -594,7 +595,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
             routedAsync[1] = assertOrReportAsyncCovered(node, "residual", String.format(residual, "cov"));
         }
 
-        // --- 3) Time A / B / C for both query shapes. ---
+        // Time A / B / C for both query shapes.
         final long[] aAgg = timeConfig("covered_agg", "A) parallel cov", String.format(coveredAgg, "cov"), parallelWorkers, warmup, iters);
         final long[] bAgg = timeConfig("covered_agg", "B) serial   cov", String.format(coveredAgg, "cov"), 1, warmup, iters);
         final long[] cAgg = timeConfig("covered_agg", "C) parallel ref", String.format(coveredAgg, "ref"), parallelWorkers, warmup, iters);
@@ -603,7 +604,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         final long[] bRes = timeConfig("residual", "B) serial   cov", String.format(residual, "cov"), 1, warmup, iters);
         final long[] cRes = timeConfig("residual", "C) parallel ref", String.format(residual, "ref"), parallelWorkers, warmup, iters);
 
-        // --- 4) Report. ---
+        // Report the results.
         final StringBuilder rpt = new StringBuilder();
         rpt.append('\n');
         rpt.append("==================================================================================\n");
@@ -1367,6 +1368,78 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParallelCoveredDecodeSparseMultiGenMatchesReference() throws Exception {
+        // C1 regression (review): a single-key covered decode (sym = 'x') is produced metadata-only at
+        // frame production and DECODED ON THE ASYNC WORKERS over a SHARED, frozen posting reader. The
+        // sidecar prefix-sum memo it reads (SparseGenSidecarPrefixSum) must be PRIMED single-threaded
+        // before the freeze (AbstractPostingIndexReader.populateCacheForKey); otherwise the workers build
+        // it lazily from N threads over one shared reader -- a data race that silently corrupts covered
+        // values. This drives that exact path over UNSEALED sparse multi-gen partitions and compares
+        // covered decode to a non-indexed twin; a diagnostic during development confirmed baseOrdinal is
+        // reached on the frozen reduce workers here. The suite-wide deterministic guard against the race
+        // is the `assert !frozen` invariant in baseOrdinal (AbstractPostingIndexReader): if any covering
+        // query ever reaches a frozen worker with the memo unprimed, that assert fails loudly under -ea
+        // instead of racing. This test is the end-to-end covered-decode-under-workers exercise of it.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 256);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+                engine.execute("CREATE TABLE ref (ts TIMESTAMP, sym SYMBOL, px DOUBLE)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
+
+                // A SINGLE bulk INSERT under BYPASS WAL and, crucially, NO releaseAllWriters: the posting
+                // index stays UNSEALED, so each DAY partition's generation is SPARSE (its counts[] array has
+                // gaps) -- exactly the gen shape that drives loadSparseGenDirect -> baseOrdinal. A high-
+                // cardinality background (rnd_symbol over ~4000 keys) keeps every gen's active keys a sparse
+                // subset of the growing keyspace, and a known 'HOT' key sprinkled throughout means a single-
+                // key covered decode of it spans many sparse gens. Leaving the gens unsealed keeps the cheap
+                // metadata-only production path (populateCacheForKey) live instead of a traverse, so the memo
+                // is primed by exactly the code under test. ~7 DAY partitions (10s spacing over 60k rows).
+                engine.execute("INSERT INTO cov SELECT" +
+                        " dateadd('s', (x * 10)::int, '2024-01-01T00:00:00Z'::timestamp)," +
+                        " case when x % 20 = 0 then 'HOT' else rnd_symbol(4000, 4, 8, 0) end," +
+                        " x::double" +
+                        " FROM long_sequence(60000)", ctx);
+                engine.execute("INSERT INTO ref SELECT * FROM cov", ctx); // exact value twin
+                // Intentionally NO releaseAllWriters: sealing would collapse the sparse gens.
+
+                // Prove the covered aggregate actually routes through the ASYNC group-by over the
+                // covering index (i.e. covered px is decoded ON THE WORKERS over a frozen reader) --
+                // otherwise this test would silently exercise a serial path and not guard C1 at all.
+                final StringSink plan = new StringSink();
+                TestUtils.printSql(compiler, ctx, "EXPLAIN SELECT sum(px), count() FROM cov WHERE sym = 'HOT'", plan);
+                final String p = plan.toString();
+                assertTrue("covered agg must route async over the covering index; plan:\n" + p,
+                        (p.contains("Async Group By") || p.contains("Async JIT Group By")) && p.contains("CoveringIndex on: sym"));
+
+                // Covered VALUE decode of the HOT key on the frozen workers, across the sparse gens.
+                // The aggregate routes to the async group-by over the covering index; the projection
+                // takes the parallel record fast-path. Both decode px on the workers.
+                final java.util.concurrent.atomic.AtomicBoolean hasFrozenBaseOrdinal = new java.util.concurrent.atomic.AtomicBoolean();
+                AbstractPostingIndexReader.setFrozenBaseOrdinalObserverForTesting(() -> hasFrozenBaseOrdinal.set(true));
+                try {
+                    final String agg = "SELECT sum(px), count() FROM %s WHERE sym = 'HOT'";
+                    final String residual = "SELECT sum(px), count() FROM %s WHERE sym = 'HOT' AND px > 30000";
+                    final String proj = "SELECT ts, px FROM %s WHERE sym = 'HOT' AND px > 30000";
+                    final String fl = "SELECT first(px), last(px), count() FROM %s WHERE sym = 'HOT'";
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(agg, "ref"), String.format(agg, "cov"), LOG);
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(residual, "ref"), String.format(residual, "cov"), LOG);
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(proj, "ref"), String.format(proj, "cov"), LOG);
+                    TestUtils.assertSqlCursors(compiler, ctx, String.format(fl, "ref"), String.format(fl, "cov"), LOG);
+                } finally {
+                    AbstractPostingIndexReader.clearFrozenBaseOrdinalObserverForTesting();
+                }
+                assertTrue(
+                        "covered sparse decode must reach baseOrdinal on a frozen worker",
+                        hasFrozenBaseOrdinal.get()
+                );
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testParallelCoveredFirstLastArrayAcrossManyFrames() throws Exception {
         // Review finding #3: first()/last() over a covered ARRAY is the riskiest lifetime case --
         // the aggregate retains a RAW pointer into a covered decode buffer for the merge phase, so
@@ -2009,7 +2082,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         final long snapshotRows = countRows(compiler, sqlExecutionContext, "SELECT count() FROM cov WHERE sym = 'S0'");
                         assertTrue("baseline must have rows", snapshotRows > 0);
 
-                        // --- IN FLIGHT: hold a covering page-frame cursor open, commit
+                        // While in flight, hold a covering page-frame cursor open and commit
                         // new rows on a SECOND writer, then drain the held cursor. The
                         // held cursor's snapshot must NOT include the new rows. ---
                         final TableToken token = engine.getTableTokenIfExists("cov");
@@ -2047,7 +2120,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         assertEquals("in-flight covered query must see only the snapshot rows, not the rows committed mid-query",
                                 snapshotRows, inFlightRows);
 
-                        // --- AFTER COMMIT: a fresh covered query must see the new rows. ---
+                        // After commit, a fresh covered query must see the new rows.
                         final long afterRows = countRows(compiler, sqlExecutionContext, "SELECT count() FROM cov WHERE sym = 'S0'");
                         assertTrue("a covered query started AFTER the commit must see the new rows (reader unfrozen + reloaded): before="
                                         + snapshotRows + ", after=" + afterRows,
@@ -2201,7 +2274,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         }
     }
 
-    // ===================== Task 14 perf-harness helpers =========================
+    // Perf-harness helpers.
 
     /**
      * A self-contained engine + worker pool + execution context bound to a single
@@ -2312,8 +2385,6 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                 parallel.toString()
         );
     }
-
-    // ===================== Task 14 perf-harness helpers =========================
 
     // Recompute the verdict() booleans and ASSERT them, so the gated perf run fails on a
     // parallelism / scan-parity regression instead of only printing a verdict.
