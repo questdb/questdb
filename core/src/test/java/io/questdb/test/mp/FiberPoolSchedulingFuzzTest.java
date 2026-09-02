@@ -62,7 +62,6 @@ public class FiberPoolSchedulingFuzzTest {
     private static final long HALT_TIMEOUT_NANOS = 30_000_000_000L;
     private static final Log LOG = LogFactory.getLog(FiberPoolSchedulingFuzzTest.class);
     private static final int MAX_DRIVER_COUNT = 6;
-    private static final int MAX_KILL_ATTEMPTS = 10_000;
     private static final int MAX_LIVE_FIBER_LIMIT = 64;
     private static final int MAX_MOUNT_BUDGET = 16;
     private static final int MAX_TASK_COUNT = 64;
@@ -270,7 +269,6 @@ public class FiberPoolSchedulingFuzzTest {
         final AtomicBoolean isKillRequested = new AtomicBoolean();
         final CountDownLatch killFired = new CountDownLatch(1);
         final AtomicBoolean isKilledWithLocalWork = new AtomicBoolean();
-        final AtomicInteger killAttempts = new AtomicInteger();
         final CountDownLatch haltReady = new CountDownLatch(1);
         final AtomicLong opCount = new AtomicLong();
         final AtomicLong ownerNestedLaunchCount = new AtomicLong();
@@ -296,12 +294,11 @@ public class FiberPoolSchedulingFuzzTest {
                     for (int i = 0, n = tasks.size(); i < n; i++) {
                         tasks.getQuick(i).recordLaunch(runtime.launch(tasks.getQuick(i)));
                     }
+                    // Local work is best-effort; failure injection must not depend on task availability.
                     final boolean hasLocalWork = runtime.getLocalQueueDepthForTesting(killedWorkerId) > 0;
-                    if (hasLocalWork || killAttempts.incrementAndGet() > MAX_KILL_ATTEMPTS) {
-                        isKilledWithLocalWork.set(hasLocalWork);
-                        killFired.countDown();
-                        throw new InjectedWorkerFailure();
-                    }
+                    isKilledWithLocalWork.set(hasLocalWork);
+                    killFired.countDown();
+                    throw new InjectedWorkerFailure();
                 }
                 return false;
             });
