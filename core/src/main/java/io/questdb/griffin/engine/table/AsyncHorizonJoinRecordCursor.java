@@ -30,7 +30,6 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapRecordCursor;
 import io.questdb.cairo.map.ShardedMapCursor;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -43,6 +42,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -55,7 +55,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
     // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
     private final ObjList<Function> nonGroupByFunctions;
-    private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker;
+    private final PostAggregationCircuitBreaker postAggregationCircuitBreaker;
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
     private final VirtualRecord recordA;
@@ -85,7 +85,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             this.isOpen = true;
             this.slaveTimeFrameState = new ConcurrentTimeFrameState();
             this.messageBus = messageBus;
-            this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+            this.postAggregationCircuitBreaker = new PostAggregationCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;
             this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
             this.slaveFactory = slaveFactory;
@@ -183,10 +183,6 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         }
     }
 
-    private CairoException buildInterruptionException() {
-        return frameSequence.buildInterruptionException();
-    }
-
     private void buildMap() {
         // Consult the breaker before dispatching frames, so an empty base scan still observes cancellation.
         executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
@@ -210,7 +206,7 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
                     postAggregationStartedCounter
             );
             if (postAggregationCircuitBreaker.checkIfTripped()) {
-                throw buildInterruptionException();
+                throwPostAggregationException();
             }
             shardedCursor.of(shards);
             mapCursor = shardedCursor;
@@ -251,6 +247,14 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
             }
             isSlaveTimeFrameCacheBuilt = true;
         }
+    }
+
+    private void throwPostAggregationException() {
+        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        if (postAggregationCircuitBreaker.hasError()) {
+            throw postAggregationCircuitBreaker.buildError();
+        }
+        throw frameSequence.buildInterruptionException();
     }
 
     void of(UnorderedPageFrameSequence<AsyncHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {

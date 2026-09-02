@@ -40,6 +40,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 import io.questdb.griffin.engine.orderby.LongTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
@@ -1690,7 +1691,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                 );
                 try {
                     final MessageBus messageBus = engine.getMessageBus();
-                    final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                    final PostAggregationCircuitBreaker circuitBreaker = new PostAggregationCircuitBreaker(engine);
                     final AtomicInteger startedCounter = new AtomicInteger();
                     final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
                     doneLatch.reset();
@@ -2039,7 +2040,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     );
                     try {
                         final MessageBus messageBus = engine.getMessageBus();
-                        final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                        final PostAggregationCircuitBreaker circuitBreaker = new PostAggregationCircuitBreaker(engine);
                         final AtomicInteger startedCounter = new AtomicInteger();
                         final AtomicInteger doneCounter = new AtomicInteger();
                         final RuntimeException cleanupFailure = isLongTopK
@@ -2361,7 +2362,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     );
                     try {
                         final MessageBus messageBus = engine.getMessageBus();
-                        final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                        final PostAggregationCircuitBreaker circuitBreaker = new PostAggregationCircuitBreaker(engine);
                         circuitBreaker.cancel();
                         final AtomicInteger doneCounter = new AtomicInteger();
                         final AtomicInteger startedCounter = new AtomicInteger();
@@ -2487,7 +2488,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     );
                     try {
                         final MessageBus messageBus = engine.getMessageBus();
-                        final AtomicBooleanCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine);
+                        final PostAggregationCircuitBreaker circuitBreaker = new PostAggregationCircuitBreaker(engine);
                         circuitBreaker.cancel();
                         final AtomicInteger doneCounter = new AtomicInteger();
                         final AtomicInteger startedCounter = new AtomicInteger();

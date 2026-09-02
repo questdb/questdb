@@ -26,7 +26,6 @@ package io.questdb.griffin.engine.groupby;
 
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
@@ -62,7 +61,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             long cursor,
             GroupByShardingContext stealingCtx
     ) {
-        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final GroupByShardingContext ctx = task.getShardingContext();
@@ -83,7 +82,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
             GroupByShardingContext stealingCtx,
             @NotNull QueryParallelFiberDispatcher dispatcher
     ) {
-        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final GroupByShardingContext ctx = task.getShardingContext();
@@ -118,7 +117,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
 
     public static void runDetached(
             int carrierId,
-            AtomicBooleanCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             GroupByShardingContext ctx,
@@ -143,7 +142,7 @@ public class GroupByMergeShardJob extends AbstractQueueConsumerJob<GroupByMergeS
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
-                circuitBreaker.cancel();
+                circuitBreaker.cancel(th);
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }

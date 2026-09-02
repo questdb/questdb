@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.groupby;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.map.Map;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
@@ -66,7 +65,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
             long cursor,
             AsyncGroupByAtom stealingAtom
     ) {
-        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final AsyncGroupByAtom atom = task.getAtom();
@@ -101,7 +100,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
             AsyncGroupByAtom stealingAtom,
             @NotNull QueryParallelFiberDispatcher dispatcher
     ) {
-        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final AsyncGroupByAtom atom = task.getAtom();
@@ -150,7 +149,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
 
     public static void runDetached(
             int workerId,
-            AtomicBooleanCircuitBreaker circuitBreaker,
+            PostAggregationCircuitBreaker circuitBreaker,
             AtomicInteger startedCounter,
             CountDownLatchSPI doneLatch,
             AsyncGroupByAtom atom,
@@ -180,7 +179,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
-                circuitBreaker.cancel();
+                circuitBreaker.cancel(th);
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
