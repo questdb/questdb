@@ -44,18 +44,14 @@ and Apache Parquet. In open source you convert partitions to Parquet with
 converts cold partitions automatically and tiers them to object storage.
 Parquet, Apache Iceberg, and Apache Arrow keep the data open to any tool.
 
-<table align="center">
-  <tr>
-    <td align="center" width="25%"><h3>19M</h3><sub>rows/sec peak ingestion<br/>per instance</sub></td>
-    <td align="center" width="25%"><h3>220M</h3><sub>rows/sec streamed<br/>to Arrow</sub></td>
-    <td align="center" width="25%"><h3>2.3s</h3><sub>to stream<br/>500M rows</sub></td>
-    <td align="center" width="25%"><h3>32ms</h3><sub>first Arrow<br/>batch</sub></td>
-  </tr>
-</table>
+Measured on QuestDB 10.0 over QWP:
 
-<p align="center"><sub>QuestDB 10.0 over QWP. Sources:
-<a href="https://questdb.com/blog/qwp-vs-ilp-ingestion-benchmark/">QWP vs ILP ingestion benchmark</a> and
-<a href="https://questdb.com/blog/streaming-500-million-rows-into-apache-arrow/">Streaming 500 million rows into Arrow</a>.</sub></p>
+| | | Source |
+|---|---|---|
+| Peak ingestion per instance | 19M rows/sec | [QWP vs ILP ingestion benchmark](https://questdb.com/blog/qwp-vs-ilp-ingestion-benchmark/) |
+| Query results streamed to Arrow | 220M rows/sec | [Streaming 500 million rows into Arrow](https://questdb.com/blog/streaming-500-million-rows-into-apache-arrow/) |
+| 500M rows streamed | 2.3 s | same post |
+| First Arrow batch | 32 ms | same post |
 
 ## Get started
 
