@@ -24,8 +24,8 @@
 
 package io.questdb.cairo.sql.async;
 
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.table.GroupByShardingContext;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -41,7 +41,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 final class GroupByMergeShardFiberTask extends AbstractQueryParallelFiberTask {
     private static final Log LOG = LogFactory.getLog(GroupByMergeShardFiberTask.class);
     private RingQueue<GroupByMergeShardTask> batchQueue;
-    private AtomicBooleanCircuitBreaker circuitBreaker;
+    private PostAggregationCircuitBreaker circuitBreaker;
     private long cursor = -1;
     private CountDownLatchSPI doneLatch;
     private GroupByShardingContext shardingContext;
