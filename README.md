@@ -243,12 +243,13 @@ connect string. The first-party clients listed above speak it.
 QuestDB also speaks compatibility protocols, so existing tooling works
 unchanged:
 
-- [InfluxDB Line Protocol](https://questdb.com/docs/connect/compatibility/ilp/overview/)
-  for collectors and pipelines that already emit ILP, on port `9000`
 - [PostgreSQL Wire Protocol](https://questdb.com/docs/connect/compatibility/pgwire/overview/)
-  for Postgres drivers, BI tools, and ORMs, on port `8812`
-- [REST API](https://questdb.com/docs/connect/compatibility/rest-api/) for HTTP
-  scripting, cURL, and CSV import, on port `9000`
+  on port `8812`: run queries from any Postgres driver such as psycopg, JDBC
+  or pgx, and from BI tools and ORMs. Inserts work too, but slower than QWP.
+- [InfluxDB Line Protocol](https://questdb.com/docs/connect/compatibility/ilp/overview/)
+  on port `9000`, for collectors and pipelines that already emit ILP
+- [REST API](https://questdb.com/docs/connect/compatibility/rest-api/) on port
+  `9000`, for HTTP scripting, cURL, and CSV import
 
 For interactive use, the
 [Web Console](https://questdb.com/docs/getting-started/web-console/overview/)
