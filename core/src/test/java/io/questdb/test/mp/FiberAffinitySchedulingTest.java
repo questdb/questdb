@@ -42,6 +42,7 @@ import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -62,12 +63,11 @@ public class FiberAffinitySchedulingTest {
     public void testExternalPublicationRacesIdleRegistrationStress() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int roundCount = 10_000;
-            final long scheduleSeed = 0x51A7_E5E2_77C3_4D19L;
+            final Rnd rnd = TestUtils.generateRandom(null);
             final WorkerPool pool = new WorkerPool(fiberConfiguration("fiber-pre-ready-stress", 1));
             final FiberRuntime runtime = pool.getFiberRuntime();
             final AtomicInteger taskRunCount = new AtomicInteger();
             final AtomicReference<Throwable> taskError = new AtomicReference<>();
-            long schedule = scheduleSeed;
             pool.start();
             try {
                 for (int round = 0; round < roundCount; round++) {
@@ -90,13 +90,10 @@ public class FiberAffinitySchedulingTest {
                             }
                         }));
                         if (!triggerStarted.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
-                            Assert.fail("trigger did not run [seed=" + scheduleSeed + ", round=" + currentRound + ']');
+                            Assert.fail("trigger did not run [round=" + currentRound + ']');
                         }
 
-                        schedule ^= schedule << 13;
-                        schedule ^= schedule >>> 7;
-                        schedule ^= schedule << 17;
-                        final int pauseCount = (int) (schedule & 1_023);
+                        final int pauseCount = rnd.nextInt(1_024);
                         isTriggerReleased.set(true);
                         for (int i = 0; i < pauseCount; i++) {
                             Os.pause();
@@ -116,8 +113,7 @@ public class FiberAffinitySchedulingTest {
                             }
                         }));
                         if (!victimRan.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
-                            Assert.fail("victim made no progress [seed=" + scheduleSeed
-                                    + ", round=" + currentRound
+                            Assert.fail("victim made no progress [round=" + currentRound
                                     + ", pauses=" + pauseCount
                                     + ", ready=" + pool.getReadyWorkerCountForTesting()
                                     + ", queued=" + runtime.getQueuedCount() + ']');
@@ -246,11 +242,14 @@ public class FiberAffinitySchedulingTest {
             final FiberRuntime runtime = pool.getFiberRuntime();
             final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
             final CountDownLatch directLaunchReturned = new CountDownLatch(1);
+            final CountDownLatch releaseWorkerZero = new CountDownLatch(1);
+            final CountDownLatch releaseWorkerOne = new CountDownLatch(1);
             final CountDownLatch resumed = new CountDownLatch(1);
-            final CountDownLatch workerZeroObservedWake = new CountDownLatch(1);
-            final CountDownLatch workerOneObservedWake = new CountDownLatch(1);
+            final CountDownLatch workerZeroBlocked = new CountDownLatch(1);
+            final CountDownLatch workerOneBlocked = new CountDownLatch(1);
             final AtomicBoolean isDirectLaunchPending = new AtomicBoolean(true);
-            final AtomicBoolean isWakeObservationArmed = new AtomicBoolean();
+            final AtomicBoolean isWorkerZeroBlockArmed = new AtomicBoolean();
+            final AtomicBoolean isWorkerOneBlockArmed = new AtomicBoolean();
             final AtomicInteger firstMountWorkerId = new AtomicInteger(FiberRuntime.NO_WORKER);
             final AtomicInteger resumedMountWorkerId = new AtomicInteger(FiberRuntime.NO_WORKER);
             final AtomicReference<Fiber> mountedFiber = new AtomicReference<>();
@@ -318,38 +317,60 @@ public class FiberAffinitySchedulingTest {
                     }
                     directLaunchReturned.countDown();
                 }
-                if (isWakeObservationArmed.get()) {
-                    workerZeroObservedWake.countDown();
+                if (isWorkerZeroBlockArmed.compareAndSet(true, false)) {
+                    workerZeroBlocked.countDown();
+                    awaitRelease(releaseWorkerZero, jobError);
                 }
                 return false;
             });
             pool.assign(1, workerContext -> {
-                if (isWakeObservationArmed.get()) {
-                    workerOneObservedWake.countDown();
+                if (isWorkerOneBlockArmed.compareAndSet(true, false)) {
+                    workerOneBlocked.countDown();
+                    awaitRelease(releaseWorkerOne, jobError);
                 }
                 return false;
             });
             pool.start();
             Fiber recycled = null;
+            boolean isWorkerZeroReadyRegisteredByTest = false;
+            boolean isWorkerOneReadyRegisteredByTest = false;
             try {
                 Assert.assertTrue(directLaunchReturned.await(AWAIT_SECONDS, TimeUnit.SECONDS));
                 rethrow(jobError);
                 awaitWaitQueueSize(waitQueue, 1);
-                awaitReadyCount(pool, 2);
+                isWorkerZeroBlockArmed.set(true);
+                isWorkerOneBlockArmed.set(true);
+                final long blockDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
+                while ((workerZeroBlocked.getCount() != 0 || workerOneBlocked.getCount() != 0)
+                        && System.nanoTime() < blockDeadline) {
+                    pool.wakeAllForTesting();
+                    Os.pause();
+                }
+                Assert.assertEquals("Worker 0 did not reach the test-owned block", 0L, workerZeroBlocked.getCount());
+                Assert.assertEquals("Worker 1 did not reach the test-owned block", 0L, workerOneBlocked.getCount());
+                rethrow(jobError);
+                Assert.assertTrue(pool.registerReadyWorkerForTesting(0));
+                isWorkerZeroReadyRegisteredByTest = true;
+                Assert.assertTrue(pool.registerReadyWorkerForTesting(1));
+                isWorkerOneReadyRegisteredByTest = true;
                 Assert.assertEquals(0, firstMountWorkerId.get());
-                Assert.assertTrue(pool.isWorkerReadyForTesting(0));
-                Assert.assertTrue(pool.isWorkerReadyForTesting(1));
                 // Cursor points at the peer: a preference-blind claim would take Worker one.
                 pool.setWakeCursorForTesting(1);
 
-                isWakeObservationArmed.set(true);
                 waitQueue.fire(1, false);
-                Assert.assertTrue(workerZeroObservedWake.await(AWAIT_SECONDS, TimeUnit.SECONDS));
+                Assert.assertFalse(
+                        "last mounter was not claimed",
+                        pool.isWorkerReadyForTesting(0)
+                );
                 Assert.assertTrue(
-                        "generic peer was woken instead of the last mounter",
+                        "generic peer was claimed instead of the last mounter",
                         pool.isWorkerReadyForTesting(1)
                 );
-                Assert.assertEquals(1, workerOneObservedWake.getCount());
+                pool.unregisterReadyWorkerForTesting(0);
+                isWorkerZeroReadyRegisteredByTest = false;
+                pool.unregisterReadyWorkerForTesting(1);
+                isWorkerOneReadyRegisteredByTest = false;
+                releaseWorkerZero.countDown();
                 Assert.assertTrue(resumed.await(AWAIT_SECONDS, TimeUnit.SECONDS));
                 rethrow(jobError);
                 Assert.assertEquals(0, resumedMountWorkerId.get());
@@ -360,6 +381,14 @@ public class FiberAffinitySchedulingTest {
                 Assert.assertSame(mountedFiber.get(), recycled);
                 Assert.assertEquals(FiberRuntime.NO_WORKER, recycled.getLastMountWorkerIdForTesting());
             } finally {
+                if (isWorkerZeroReadyRegisteredByTest) {
+                    pool.unregisterReadyWorkerForTesting(0);
+                }
+                if (isWorkerOneReadyRegisteredByTest) {
+                    pool.unregisterReadyWorkerForTesting(1);
+                }
+                releaseWorkerZero.countDown();
+                releaseWorkerOne.countDown();
                 if (recycled != null) {
                     runtime.releaseReservedFiber(recycled, recycled.getReservationEpoch());
                 }
@@ -375,29 +404,32 @@ public class FiberAffinitySchedulingTest {
             final FiberRuntime runtime = new FiberRuntime(1, 1, 1, 0, new FiberWakeSink() {
                 @Override
                 public void wakeAll() {
-                    throw new AssertionError("injected wake-all failure");
+                    throw new IllegalStateException("injected wake-all failure");
                 }
 
                 @Override
                 public boolean wakeOne(int preferredWorkerId) {
                     wakeAttempts.incrementAndGet();
-                    throw new AssertionError("injected wake failure");
+                    throw new IllegalStateException("injected wake failure");
                 }
             });
             final AtomicBoolean hasRun = new AtomicBoolean();
-            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
-                @Override
-                protected boolean runStep() {
-                    hasRun.set(true);
-                    return true;
-                }
-            }));
-            Assert.assertEquals(1, wakeAttempts.get());
-            Assert.assertEquals(1, runtime.getQueuedCount());
-            Assert.assertEquals(1, runtime.drain(1));
-            Assert.assertTrue(hasRun.get());
-            Assert.assertEquals(0, runtime.getOutstandingTaskCount());
-            closeDetached(runtime);
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
+                    @Override
+                    protected boolean runStep() {
+                        hasRun.set(true);
+                        return true;
+                    }
+                }));
+                Assert.assertEquals(1, wakeAttempts.get());
+                Assert.assertEquals(1, runtime.getQueuedCount());
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(hasRun.get());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            } finally {
+                closeDetached(runtime);
+            }
         });
     }
 
@@ -453,9 +485,11 @@ public class FiberAffinitySchedulingTest {
                     localCommitted.countDown();
                     try {
                         Assert.assertTrue(releaseOwnerJob.await(AWAIT_SECONDS, TimeUnit.SECONDS));
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        throw new AssertionError(e);
+                    } catch (Throwable th) {
+                        if (th instanceof InterruptedException) {
+                            Thread.currentThread().interrupt();
+                        }
+                        jobError.compareAndSet(null, th);
                     }
                 }
                 return false;
@@ -488,6 +522,7 @@ public class FiberAffinitySchedulingTest {
                     pool.halt();
                 }
             }
+            rethrow(jobError);
             rethrow(haltFailure);
             Assert.assertEquals(FiberRuntimeState.CLOSED, runtime.state());
         });
@@ -638,6 +673,8 @@ public class FiberAffinitySchedulingTest {
         TestUtils.assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(fiberConfiguration("fiber-single-worker-resignal", 1));
             final FiberRuntime runtime = pool.getFiberRuntime();
+            final FiberMetrics metrics = new FiberMetrics();
+            metrics.register("test", runtime);
             final CountDownLatch done = new CountDownLatch(1);
             final AtomicBoolean isLaunched = new AtomicBoolean();
             final AtomicInteger firstMountWorkerId = new AtomicInteger(FiberRuntime.NO_WORKER);
@@ -705,6 +742,18 @@ public class FiberAffinitySchedulingTest {
                 Assert.assertEquals(0, runtime.getGlobalPublicationCount());
                 Assert.assertEquals(0, runtime.getGlobalSelectionCount());
                 Assert.assertEquals(0, runtime.getWakeClaimCount());
+
+                try (DirectUtf8Sink sink = new DirectUtf8Sink(2048)) {
+                    metrics.scrapeIntoPrometheus(sink);
+                    TestUtils.assertContains(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_scheduler_publication_total{worker_pool=\"test\",route=\"owner_local\"} 2\n"
+                    );
+                    TestUtils.assertContains(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_scheduler_selection_total{worker_pool=\"test\",source=\"owner_local\"} 2\n"
+                    );
+                }
             } finally {
                 pool.halt();
             }
@@ -714,6 +763,11 @@ public class FiberAffinitySchedulingTest {
     @Test
     public void testPeriodicGlobalProbeServicesExternalPublicationUnderContinuousLocalLoad() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
+            Assert.assertTrue(
+                    "global probe interval exceeds its supported maximum [interval="
+                            + FiberRuntime.getGlobalProbeIntervalForTesting() + ']',
+                    FiberRuntime.getGlobalProbeIntervalForTesting() <= 61
+            );
             final WorkerPool pool = new WorkerPool(fiberConfiguration("fiber-global-probe", 1));
             final FiberRuntime runtime = pool.getFiberRuntime();
             final CountDownLatch externalRan = new CountDownLatch(1);
@@ -776,7 +830,7 @@ public class FiberAffinitySchedulingTest {
                 Assert.assertTrue(
                         "periodic global probe exceeded its selection bound [localMounts="
                                 + externalObservedAt.get() + ']',
-                        externalObservedAt.get() <= FiberRuntime.getGlobalProbeIntervalForTesting() + 1L
+                        externalObservedAt.get() <= 62L
                 );
                 Assert.assertEquals(1, runtime.getGlobalPublicationCount());
                 Assert.assertEquals(1, runtime.getGlobalSelectionCount());
@@ -786,6 +840,99 @@ public class FiberAffinitySchedulingTest {
                 pool.halt();
             }
             rethrow(error);
+        });
+    }
+
+    @Test
+    public void testBusyWorkerWithEmptyLocalQueueServicesExternalPublication() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(fiberConfiguration("fiber-busy-job-global-check", 1));
+            final FiberRuntime runtime = pool.getFiberRuntime();
+            final CountDownLatch externalRan = new CountDownLatch(1);
+            final AtomicInteger jobRunCount = new AtomicInteger();
+            pool.assign(workerContext -> {
+                jobRunCount.incrementAndGet();
+                return true;
+            });
+            pool.start();
+            try {
+                awaitAtLeast(jobRunCount, 1_000);
+                Assert.assertEquals(0, pool.getReadyWorkerCountForTesting());
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
+                    @Override
+                    protected boolean runStep() {
+                        externalRan.countDown();
+                        return true;
+                    }
+                }));
+                Assert.assertTrue(
+                        "external publication starved on a busy Worker with an empty local queue [queued="
+                                + runtime.getQueuedCount() + ']',
+                        externalRan.await(AWAIT_SECONDS, TimeUnit.SECONDS)
+                );
+                Assert.assertEquals(1, runtime.getGlobalSelectionCount());
+                Assert.assertEquals(0, runtime.getWakeClaimCount());
+            } finally {
+                pool.halt();
+            }
+        });
+    }
+
+    @Test
+    public void testRecoveredOrphanDoesNotRepinPeerStealCursor() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(4, 4, 64, 4, FiberWakeSink.NO_OP);
+            runtime.initializeCarrier();
+            final FiberRuntime.OwnerContext owner0 = runtime.getOwnerContext(0);
+            final FiberRuntime.OwnerContext owner1 = runtime.getOwnerContext(1);
+            final FiberRuntime.OwnerContext owner2 = runtime.getOwnerContext(2);
+            final FiberRuntime.OwnerContext owner3 = runtime.getOwnerContext(3);
+            runtime.activateOwner(owner0);
+            runtime.activateOwner(owner1);
+            runtime.activateOwner(owner2);
+            runtime.activateOwner(owner3);
+            try {
+                final ResignalOnceTask orphanTask = new ResignalOnceTask(runtime);
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(orphanTask));
+                Assert.assertEquals(1, runtime.drainOwned(owner0, 1));
+                Assert.assertSame(LaunchResult.ALREADY_OWNED, orphanTask.resignalResult);
+                Assert.assertFalse(orphanTask.isDone());
+                Assert.assertEquals(1, runtime.getLocalQueueDepthForTesting(0));
+
+                runtime.onOwnerExit(owner0);
+                Assert.assertEquals(1, runtime.getOrphanedShardTransitionCount());
+                Assert.assertEquals(1, runtime.drainOwned(owner1, 1));
+                Assert.assertTrue(orphanTask.isDone());
+                Assert.assertEquals(0, runtime.getLocalQueueDepthForTesting(0));
+                Assert.assertEquals(1, runtime.getOrphanedEntryRecoveryCount());
+                Assert.assertEquals(1, runtime.getStolenSelectionCount());
+
+                final ResignalOnceTask peer2Task = new ResignalOnceTask(runtime);
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(peer2Task));
+                Assert.assertEquals(1, runtime.drainOwned(owner2, 1));
+                Assert.assertSame(LaunchResult.ALREADY_OWNED, peer2Task.resignalResult);
+                final ResignalOnceTask peer3Task = new ResignalOnceTask(runtime);
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(peer3Task));
+                Assert.assertEquals(1, runtime.drainOwned(owner3, 1));
+                Assert.assertSame(LaunchResult.ALREADY_OWNED, peer3Task.resignalResult);
+                Assert.assertFalse(peer2Task.isDone());
+                Assert.assertFalse(peer3Task.isDone());
+                Assert.assertEquals(1, runtime.getLocalQueueDepthForTesting(2));
+                Assert.assertEquals(1, runtime.getLocalQueueDepthForTesting(3));
+
+                int completed = 0;
+                for (int i = 0; i < 3; i++) {
+                    completed += runtime.drainOwned(owner1, 1);
+                }
+                Assert.assertEquals(2, completed);
+                Assert.assertTrue(peer2Task.isDone());
+                Assert.assertTrue(peer3Task.isDone());
+                Assert.assertEquals(0, runtime.getLocalQueueDepthForTesting(2));
+                Assert.assertEquals(0, runtime.getLocalQueueDepthForTesting(3));
+                Assert.assertEquals(3, runtime.getStolenSelectionCount());
+            } finally {
+                closeDetached(runtime);
+            }
         });
     }
 
@@ -858,6 +1005,14 @@ public class FiberAffinitySchedulingTest {
                             sink.toString(),
                             "questdb_worker_pool_fiber_orphan_recovery_total{worker_pool=\"test\"} 2\n"
                     );
+                    TestUtils.assertContains(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_scheduler_selection_total{worker_pool=\"test\",source=\"stolen_local\"} 2\n"
+                    );
+                    TestUtils.assertContains(
+                            sink.toString(),
+                            "questdb_worker_pool_fiber_wake_total{worker_pool=\"test\"} 1\n"
+                    );
 
                     metrics.clear();
                     sink.clear();
@@ -874,6 +1029,7 @@ public class FiberAffinitySchedulingTest {
             } finally {
                 pool.halt();
             }
+            Assert.assertEquals(1, runtime.getOrphanedShardTransitionCount());
         });
     }
 
@@ -892,25 +1048,37 @@ public class FiberAffinitySchedulingTest {
                     return true;
                 }
             });
+            final FiberMetrics metrics = new FiberMetrics();
+            metrics.register("test", runtime);
             final FiberRuntime.OwnerContext ownerContext = runtime.getOwnerContext(0);
             runtime.activateOwner(ownerContext);
-            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
-                @Override
-                protected boolean runStep() {
-                    return true;
-                }
-            }));
-            Assert.assertEquals(1, wakeAttempts.get());
-            Assert.assertEquals(1, runtime.getQueuedCount());
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(new FiberTask() {
+                    @Override
+                    protected boolean runStep() {
+                        return true;
+                    }
+                }));
+                Assert.assertEquals(1, wakeAttempts.get());
+                Assert.assertEquals(1, runtime.getQueuedCount());
 
-            // The first wake models a global commit whose claim selected the exiting owner.
-            // onOwnerExit() must re-signal still-visible global work so another ready Worker can take
-            // responsibility after producer revocation.
-            runtime.onOwnerExit(ownerContext);
-            Assert.assertEquals(2, wakeAttempts.get());
-            Assert.assertEquals(2, runtime.getWakeClaimCount());
-
-            closeDetached(runtime);
+                // The first wake models a global commit whose claim selected the exiting owner.
+                // onOwnerExit() must re-signal still-visible global work so another ready Worker can take
+                // responsibility after producer revocation.
+                runtime.onOwnerExit(ownerContext);
+                Assert.assertEquals(2, wakeAttempts.get());
+                Assert.assertEquals(2, runtime.getWakeClaimCount());
+                Assert.assertEquals(1, runtime.getOrphanedShardTransitionCount());
+            } finally {
+                closeDetached(runtime);
+            }
+            try (DirectUtf8Sink sink = new DirectUtf8Sink(2048)) {
+                metrics.scrapeIntoPrometheus(sink);
+                TestUtils.assertContains(
+                        sink.toString(),
+                        "questdb_worker_pool_fiber_wake_total{worker_pool=\"test\"} 2\n"
+                );
+            }
         });
     }
 
@@ -940,6 +1108,7 @@ public class FiberAffinitySchedulingTest {
                 awaitReadyCount(pool, 2);
                 Assert.assertTrue(pool.isWorkerReadyForTesting(0));
                 Assert.assertTrue(pool.isWorkerReadyForTesting(1));
+                pool.setWakeCursorForTesting(1);
                 isBlockArmed.set(true);
                 Assert.assertTrue(pool.wakeOneForTesting(0));
                 Assert.assertTrue(workerZeroBlocked.await(AWAIT_SECONDS, TimeUnit.SECONDS));
@@ -1081,13 +1250,13 @@ public class FiberAffinitySchedulingTest {
             pool.assign(workerContext -> {
                 if (isAttempted.compareAndSet(false, true)) {
                     try {
-                        pool.halt();
-                        unexpected.set(new AssertionError("Worker terminal halt was accepted"));
-                    } catch (IllegalStateException expected) {
+                        pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(1));
+                        unexpected.set(new AssertionError("bounded Worker terminal halt was accepted"));
+                    } catch (IllegalStateException boundedExpected) {
                         try {
-                            pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(1));
-                            unexpected.set(new AssertionError("bounded Worker terminal halt was accepted"));
-                        } catch (IllegalStateException boundedExpected) {
+                            pool.halt();
+                            unexpected.set(new AssertionError("Worker terminal halt was accepted"));
+                        } catch (IllegalStateException expected) {
                             rejected.countDown();
                         }
                     } catch (Throwable th) {
@@ -1127,10 +1296,15 @@ public class FiberAffinitySchedulingTest {
                 @Override
                 protected boolean runStep() {
                     try {
-                        pool.halt();
-                        haltFailure.set(new AssertionError("mounted Fiber terminal halt was accepted"));
-                    } catch (IllegalStateException expected) {
-                        haltFailure.set(expected);
+                        pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(1));
+                        haltFailure.set(new AssertionError("bounded mounted Fiber terminal halt was accepted"));
+                    } catch (IllegalStateException boundedExpected) {
+                        try {
+                            pool.halt();
+                            haltFailure.set(new AssertionError("mounted Fiber terminal halt was accepted"));
+                        } catch (IllegalStateException expected) {
+                            haltFailure.set(expected);
+                        }
                     }
                     return true;
                 }
@@ -1161,12 +1335,52 @@ public class FiberAffinitySchedulingTest {
         });
     }
 
+    private static final class ResignalOnceTask extends FiberTask {
+        private final FiberRuntime runtime;
+        private LaunchResult resignalResult;
+        private int runCount;
+
+        private ResignalOnceTask(FiberRuntime runtime) {
+            this.runtime = runtime;
+        }
+
+        @Override
+        protected void onParked() {
+            resignalResult = runtime.launch(this);
+        }
+
+        @Override
+        protected boolean runStep() {
+            return ++runCount == 2;
+        }
+    }
+
     private static void awaitOutstanding(FiberRuntime runtime, int expected) {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
         while (runtime.getOutstandingTaskCount() != expected && System.nanoTime() < deadline) {
             Os.pause();
         }
         Assert.assertEquals(expected, runtime.getOutstandingTaskCount());
+    }
+
+    private static void awaitRelease(CountDownLatch release, AtomicReference<Throwable> error) {
+        boolean isInterrupted = false;
+        while (release.getCount() != 0) {
+            try {
+                release.await();
+            } catch (InterruptedException e) {
+                error.compareAndSet(null, e);
+                isInterrupted = true;
+            } catch (Throwable th) {
+                error.compareAndSet(null, th);
+                while (release.getCount() != 0) {
+                    Os.pause();
+                }
+            }
+        }
+        if (isInterrupted) {
+            Thread.currentThread().interrupt();
+        }
     }
 
     private static void awaitAtLeast(AtomicInteger value, int expected) {
@@ -1180,13 +1394,14 @@ public class FiberAffinitySchedulingTest {
 
     private static void awaitReadyCount(WorkerPool pool, int expected) {
         final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS);
-        while (!areWorkersReady(pool, expected) && System.nanoTime() < deadline) {
+        while (System.nanoTime() < deadline) {
+            if (areWorkersReady(pool, expected)) {
+                return;
+            }
             Os.pause();
         }
-        Assert.assertEquals(expected, pool.getReadyWorkerCountForTesting());
-        for (int workerId = 0; workerId < expected; workerId++) {
-            Assert.assertTrue(pool.isWorkerReadyForTesting(workerId));
-        }
+        Assert.fail("workers did not become ready [expected=" + expected
+                + ", ready=" + pool.getReadyWorkerCountForTesting() + ']');
     }
 
     private static void awaitWaitQueueSize(FiberWalWaitQueue queue, int expected) {

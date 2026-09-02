@@ -27,7 +27,6 @@ package io.questdb;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.metrics.Target;
-import io.questdb.mp.Worker;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -214,7 +213,7 @@ public abstract class WorkerPoolManager implements Target {
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        long now = Worker.CLOCK_MICROS.getTicks();
+        long now = System.nanoTime();
         sharedPoolNetwork.updateWorkerMetrics(now);
         if (sharedPoolQuery != null) {
             sharedPoolQuery.updateWorkerMetrics(now);

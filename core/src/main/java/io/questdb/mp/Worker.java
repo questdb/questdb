@@ -33,16 +33,14 @@ import io.questdb.std.CarrierLocal;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.Clock;
-import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 
 public class Worker extends Thread {
-    public static final Clock CLOCK_MICROS = MicrosecondClockImpl.INSTANCE;
     public static final int NO_THREAD_AFFINITY = -1;
     private static final CarrierLocal<Worker> CURRENT = new CarrierLocal<>();
     private final int affinity;
@@ -51,7 +49,7 @@ public class Worker extends Thread {
     private final FiberRuntime fiberRuntime;
     private final SOCountDownLatch haltLatch;
     private final boolean haltOnError;
-    private final AtomicLong jobStartMicros = new AtomicLong();
+    private final AtomicLong jobStartNanos = new AtomicLong(System.nanoTime());
     private final ObjHashSet<? extends Job> jobs;
     private final AtomicReference<WorkerLifecycle> lifecycle = new AtomicReference<>(WorkerLifecycle.BORN);
     private final Log log;
@@ -60,11 +58,13 @@ public class Worker extends Thread {
     private final OnHaltAction onHaltAction;
     private final String poolName;
     private final long sleepMs;
+    private final long sleepNanos;
     private final long sleepThreshold;
+    private final WorkerWakeController wakeController;
     private final Job.WorkerContext workerContext;
     private final int workerId;
     private final long yieldThreshold;
-    private final WorkerWakeController wakeController;
+    private SuspensionScope.CarrierScope carrierScope;
     private int jobStartIndex;
 
     public Worker(
@@ -80,7 +80,6 @@ public class Worker extends Thread {
             long sleepThreshold,
             long sleepMs,
             Metrics metrics,
-            @Nullable FiberRuntime fiberRuntime,
             @Nullable Log log
     ) {
         this(
@@ -96,7 +95,7 @@ public class Worker extends Thread {
                 sleepThreshold,
                 sleepMs,
                 metrics,
-                fiberRuntime,
+                null,
                 null,
                 null,
                 log
@@ -122,9 +121,11 @@ public class Worker extends Thread {
             @Nullable Log log
     ) {
         assert yieldThreshold > 0L;
+        if ((fiberRuntime == null) != (fiberOwnerContext == null)) {
+            throw new IllegalArgumentException("Fiber runtime and owner context must be installed together");
+        }
         if (fiberOwnerContext != null
-                && (fiberRuntime == null
-                || !fiberOwnerContext.isOwnedBy(fiberRuntime)
+                && (!fiberOwnerContext.isOwnedBy(fiberRuntime)
                 || fiberOwnerContext.getWorkerId() != workerId)) {
             throw new IllegalArgumentException("Fiber owner context does not match the Worker runtime");
         }
@@ -155,6 +156,7 @@ public class Worker extends Thread {
         this.napThreshold = napThreshold;
         this.sleepThreshold = sleepThreshold;
         this.sleepMs = sleepMs;
+        this.sleepNanos = TimeUnit.MILLISECONDS.toNanos(sleepMs);
         this.metrics = metrics;
         this.fiberRuntime = fiberRuntime;
         this.fiberOwnerContext = fiberOwnerContext;
@@ -196,10 +198,9 @@ public class Worker extends Thread {
                 CURRENT.set(this);
                 if (fiberRuntime != null) {
                     fiberRuntime.initializeCarrier();
-                    if (fiberOwnerContext != null) {
-                        fiberRuntime.activateOwner(fiberOwnerContext);
-                        isFiberOwnerActive = true;
-                    }
+                    carrierScope = SuspensionScope.scope();
+                    fiberRuntime.activateOwner(fiberOwnerContext);
+                    isFiberOwnerActive = true;
                 }
 
                 final String workerName = getName();
@@ -230,9 +231,10 @@ public class Worker extends Thread {
             }
         } catch (Throwable e) {
             ex = e;
-            stdErrCritical(e);
+            reportUnhandledError("loop", e);
         } finally {
             lifecycle.set(WorkerLifecycle.HALTED);
+            carrierScope = null;
             if (wakeController != null) {
                 wakeController.unregisterReady(workerId);
             }
@@ -240,7 +242,7 @@ public class Worker extends Thread {
                 try {
                     fiberRuntime.onOwnerExit(fiberOwnerContext);
                 } catch (Throwable t) {
-                    stdErrCritical(t);
+                    reportUnhandledError("owner exit", t);
                 }
             }
             if (onHaltAction != null) {
@@ -297,9 +299,7 @@ public class Worker extends Thread {
             if (state == WorkerLifecycle.HALTING && fiberRuntime.state() == FiberRuntimeState.CLOSED) {
                 break;
             }
-            isRunAsap |= fiberOwnerContext != null
-                    ? fiberRuntime.drainOwned(fiberOwnerContext, fiberRuntime.getMountBudget()) > 0
-                    : fiberRuntime.drain(fiberRuntime.getMountBudget()) > 0;
+            isRunAsap |= fiberRuntime.drainOwned(fiberOwnerContext, fiberRuntime.getMountBudget()) > 0;
             if (state == WorkerLifecycle.HALTING && fiberRuntime.state() == FiberRuntimeState.CLOSED) {
                 break;
             }
@@ -308,24 +308,14 @@ public class Worker extends Thread {
                 ticker = 0;
                 continue;
             }
-            if (++ticker < 0) {
-                ticker = sleepThreshold + 1;
-            }
+            ticker++;
             if (ticker > sleepThreshold) {
-                if (fiberOwnerContext != null && wakeController != null) {
-                    if (parkFiberHost(saturatingMillisToNanos(sleepMs), wasInterruptedAtLoopStart)) {
-                        ticker = 0;
-                    }
-                } else {
-                    Os.sleep(sleepMs);
+                if (parkFiberHost(sleepNanos, wasInterruptedAtLoopStart)) {
+                    ticker = 0;
                 }
             } else if (ticker > napThreshold) {
-                if (fiberOwnerContext != null && wakeController != null) {
-                    if (parkFiberHost(1_000_000L, wasInterruptedAtLoopStart)) {
-                        ticker = 0;
-                    }
-                } else {
-                    Os.sleep(1);
+                if (parkFiberHost(1_000_000L, wasInterruptedAtLoopStart)) {
+                    ticker = 0;
                 }
             } else if (ticker > yieldThreshold) {
                 Os.pause();
@@ -347,9 +337,7 @@ public class Worker extends Thread {
                 ticker = 0;
                 continue;
             }
-            if (++ticker < 0) {
-                ticker = sleepThreshold + 1;
-            }
+            ticker++;
             if (ticker > sleepThreshold) {
                 Os.sleep(sleepMs);
             } else if (ticker > napThreshold) {
@@ -362,13 +350,11 @@ public class Worker extends Thread {
 
     private boolean runJobs() {
         boolean isRunAsap = false;
-        final SuspensionScope.CarrierScope suspensionScope = fiberRuntime != null
-                ? SuspensionScope.scope()
-                : null;
+        final SuspensionScope.CarrierScope suspensionScope = carrierScope;
         final SuspensionScope.Mode previousMode = suspensionScope != null
                 ? SuspensionScope.enterBlocking(suspensionScope)
                 : null;
-        jobStartMicros.lazySet(CLOCK_MICROS.getTicks());
+        jobStartNanos.lazySet(System.nanoTime());
         try {
             final int n = jobs.size();
             int jobIndex = jobStartIndex;
@@ -411,13 +397,23 @@ public class Worker extends Thread {
         }
     }
 
+    private void reportUnhandledError(String stage, Throwable e) {
+        stdErrCritical(e);
+        if (metrics.isEnabled()) {
+            metrics.healthMetrics().incrementUnhandledErrors();
+        }
+        if (log != null) {
+            log.critical().$("unhandled error in worker [name=").$(getName()).$(", stage=").$(stage).$(", ex=").$(e).I$();
+        }
+    }
+
     private void stdErrCritical(Throwable e) {
         System.err.println(criticalErrorLine);
         e.printStackTrace(System.err);
     }
 
-    long getJobStartMicros() {
-        return jobStartMicros.get();
+    long getJobStartNanos() {
+        return jobStartNanos.get();
     }
 
     void haltAfterFiberDrain() {
@@ -433,13 +429,6 @@ public class Worker extends Thread {
                 return;
             }
         }
-    }
-
-    private static long saturatingMillisToNanos(long millis) {
-        if (millis <= 0) {
-            return 0;
-        }
-        return millis > Long.MAX_VALUE / 1_000_000L ? Long.MAX_VALUE : millis * 1_000_000L;
     }
 
     private boolean parkFiberHost(long nanos, boolean wasInterruptedAtLoopStart) {

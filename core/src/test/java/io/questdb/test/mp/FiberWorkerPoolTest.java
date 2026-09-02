@@ -515,7 +515,7 @@ public class FiberWorkerPoolTest {
                     Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(queuedTask));
                 }
 
-                Assert.assertFalse(pool.isHaltTerminalSuccessfulForTesting(TimeUnit.MILLISECONDS.toNanos(1)));
+                Assert.assertFalse(pool.haltWithin(TimeUnit.MILLISECONDS.toNanos(1)));
                 releaseTask.countDown();
                 Assert.assertTrue(pool.haltWithin(TimeUnit.SECONDS.toNanos(10)));
                 for (int i = 0; i < queuedTasks.size(); i++) {
