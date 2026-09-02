@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionGeometry;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
@@ -168,6 +169,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private boolean hasParquetGenerated;
         private boolean isActive;
         private boolean isAttachable;
+        private boolean isComposite;
         private boolean isDetached;
         private boolean isParquet;
         private boolean isReadOnly;
@@ -280,6 +282,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             isActive = false;
             isDetached = false;
             isAttachable = false;
+            isComposite = false;
             isParquet = false;
             hasParquetGenerated = false;
             isRemotelyServed = false;
@@ -304,6 +307,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 hasParquetGenerated = tableTxReader.isPartitionParquetGenerated(partitionIndex);
                 isParquet = tableTxReader.isPartitionParquet(partitionIndex);
                 isRemotelyServed = tableTxReader.isPartitionRemotelyServed(partitionIndex);
+                isComposite = tableTxReader.isPartitionComposite(partitionIndex);
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
                 PartitionBy.setSinkForPartition(partitionName, timestampType, partitionBy, timestamp);
@@ -416,6 +420,15 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                         maxTimestamp = parquetMetaReader.getRowGroupMaxTimestamp(rowGroupCount - 1, tsIndex);
                     }
                     closeParquetMeta();
+                } else if (isComposite) {
+                    // A COMPOSITE partition's file rows are not in timestamp order - a merge-append
+                    // parks a rewritten piece at the tail and leaves the rows it superseded behind
+                    // as dead space - so file row 0 and file row numRows-1 name neither bound. The
+                    // geometry lists the pieces in timestamp order and carries each one's bounds,
+                    // so the directory's own bounds are the first piece's low and the last's high.
+                    final PartitionGeometry geometry = tableReader.getGeometry();
+                    minTimestamp = geometry.getPieceTimestampLo(partitionIndex, 0);
+                    maxTimestamp = geometry.getPieceTimestampHi(partitionIndex, geometry.getPieceCount(partitionIndex) - 1);
                 } else if (!isParquet) {
                     TableUtils.dFile(path.slash(), dynamicTsColName, TableUtils.COLUMN_NAME_TXN_NONE);
                     long fd = -1;

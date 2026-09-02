@@ -1356,6 +1356,64 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
     }
 
     /**
+     * {@code table_partitions()} reported a composite directory's bounds by reading byte offset 0 and
+     * byte offset {@code (liveRows - 1) * 8} of its timestamp column file. Both land on the wrong row
+     * once a merge-append has relocated a piece: file row 0 belongs to whichever piece was left in
+     * place, and the row at the live count's own offset is the last row WRITTEN rather than the last
+     * row in timestamp order. The bounds come from the geometry instead, which lists the pieces in
+     * timestamp order and carries each one's own low and high.
+     */
+    @Test
+    public void testTablePartitionsReportsTrueBoundsAcrossPieces() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+            // Narrower than the WIDE_COLUMNS tables the rest of this class uses, so the split threshold -
+            // in rows derived from an average record size - needs a proportionally smaller setting.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+            // Starts at noon, so the morning is free for a later backdated batch to relocate into, and
+            // its own min - midday - is what sits at file row 0 until then.
+            final String day1 = "SELECT x::INT i, timestamp_sequence('2020-02-03T12:00:00', 15*1000000L) ts" +
+                    " FROM long_sequence(2880)";
+            // Keeps 2020-02-03 from being the writer's active last partition when the backdated batch
+            // lands, so the write goes through the O3 path rather than an append to the open partition.
+            final String day2 = "SELECT x::INT + 90000 i, timestamp_sequence('2020-02-06', 60*1000000L) ts" +
+                    " FROM long_sequence(50)";
+            execute("CREATE TABLE x AS (" + day1 + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x " + day2);
+            drainWalQueue();
+
+            // Lands entirely before 2020-02-03's current min of noon, and closes well short of its
+            // 23:59:45 max: the merge parks it at the tail, so BOTH ends of the file now hold a row that
+            // is neither the directory's min nor its max.
+            final String backfill = "SELECT x::INT + 70000 i, timestamp_sequence('2020-02-03T00:00:00', 5*1000000L) ts" +
+                    " FROM long_sequence(2000)";
+            execute("INSERT INTO x " + backfill);
+            drainWalQueue();
+
+            final TableToken xt = engine.verifyTableName("x");
+            Assert.assertFalse("the composite write suspended the table", engine.getTableSequencerAPI().isSuspended(xt));
+            try (TableReader reader = engine.getReader(xt)) {
+                Assert.assertTrue("2020-02-03 should have gone composite", reader.getGeometry().getPieceCount(0) > 1);
+            }
+
+            assertQuery("SELECT name, minTimestamp, maxTimestamp, numRows FROM table_partitions('x')")
+                    .sizeMayVary()
+                    .noRandomAccess()
+                    .returns("name\tminTimestamp\tmaxTimestamp\tnumRows\n" +
+                            "2020-02-03\t2020-02-03T00:00:00.000000Z\t2020-02-03T23:59:45.000000Z\t4880\n" +
+                            "2020-02-06\t2020-02-06T00:00:00.000000Z\t2020-02-06T00:49:00.000000Z\t50\n");
+
+            // The table's own cached bounds come from _txn rather than from the directory scan above,
+            // so they are worth asserting separately: a relocated piece must not move them either.
+            assertQuery("SELECT min(ts) mn, max(ts) mx FROM x")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("mn\tmx\n2020-02-03T00:00:00.000000Z\t2020-02-06T00:49:00.000000Z\n");
+        });
+    }
+
+    /**
      * Regression test for a fixed bug: {@code CONVERT PARTITION TO PARQUET} used to call
      * {@code TableWriter.getPartitionSize} (live rows) and map each column file as one flat range from
      * byte 0 for that many rows - correct for an ordinary partition, but wrong for a composite one, whose
