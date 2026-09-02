@@ -36,10 +36,10 @@ public class AsciiStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select ascii('abc')").expectSize().returns("ascii\n97\n");
         // Unicode code point (matches PostgreSQL)
         assertQuery("select ascii('é')").expectSize().returns("ascii\n233\n");
+        // first character outside the BMP returns its full code point (surrogate pair)
+        assertQuery("select ascii('😀')").expectSize().returns("ascii\n128512\n");
         // empty string returns 0
         assertQuery("select ascii('')").expectSize().returns("ascii\n0\n");
-        // VARCHAR overload
-        assertQuery("select ascii('A'::varchar)").expectSize().returns("ascii\n65\n");
     }
 
     @Test
@@ -55,5 +55,33 @@ public class AsciiStrFunctionFactoryTest extends AbstractCairoTest {
                                 "\tnull\n" +
                                 "\t0\n"
                 );
+    }
+
+    @Test
+    public void testVarcharColumn() throws Exception {
+        assertQuery("select v, ascii(v) from t")
+                .ddl("create table t (v varchar)",
+                        "insert into t values ('A'), ('é'), (null), ('')")
+                .expectSize()
+                .returns(
+                        "v\tascii\n" +
+                                "A\t65\n" +
+                                "é\t233\n" +
+                                "\tnull\n" +
+                                "\t0\n"
+                );
+    }
+
+    @Test
+    public void testVarcharConstants() throws Exception {
+        // the VARCHAR overload reads the same code point through the UTF8 accessor
+        assertQuery("select ascii('A'::varchar)").expectSize().returns("ascii\n65\n");
+        // non-ASCII input takes the UTF8-to-UTF16 decode path
+        assertQuery("select ascii('é'::varchar)").expectSize().returns("ascii\n233\n");
+        // first character outside the BMP returns its full code point (surrogate pair)
+        assertQuery("select ascii('😀'::varchar)").expectSize().returns("ascii\n128512\n");
+        // empty VARCHAR returns 0, NULL VARCHAR returns NULL
+        assertQuery("select ascii(''::varchar)").expectSize().returns("ascii\n0\n");
+        assertQuery("select ascii(null::varchar)").expectSize().returns("ascii\nnull\n");
     }
 }
