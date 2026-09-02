@@ -1390,9 +1390,10 @@ public class O3PartitionPreSplitTest extends AbstractCairoTest {
             TxWriter tx = writer.getTxWriter();
             final int partitionIndex = tx.getPartitionIndex(partitionTs);
             final long committedRef = tx.getGeometryRef(partitionIndex);
-            // Bit 63 is TxReader.PARTITION_COMPOSITE_FLAG, not reachable from here (protected) -
-            // Long.MIN_VALUE is the same bit.
-            Assert.assertTrue("partition is not composite ahead of the fake-up", (committedRef & Long.MIN_VALUE) != 0);
+            // Ask the reader rather than test a bit directly: which bit carries COMPOSITE is an
+            // implementation detail of the offset-3 word, and it shares that word with REMOTE and
+            // SEQ_TXN_VALID.
+            Assert.assertTrue("partition is not composite ahead of the fake-up", tx.isPartitionComposite(partitionIndex));
             final int realGeneration = TxReader.geometryGeneration(committedRef);
             final long realOffset = TxReader.geometryOffset(committedRef);
             final long partitionNameTxn = tx.getPartitionNameTxn(partitionIndex);
