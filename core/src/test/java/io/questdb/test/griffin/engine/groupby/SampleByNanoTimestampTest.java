@@ -3044,7 +3044,7 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
         setCurrentMicros(MicrosTimestampDriver.floor("2023-01-01T11:22:33.000000000Z"));
         assertMemoryLeak(() -> assertQuery("select first(today), count(x), ts " +
                 "from ( " +
-                "  select today('UTC-06:00') today, x, timestamp_sequence_ns('2022-02-24', 60*1000*1000000) ts " +
+                "  select today('UTC-06:00') today, x, timestamp_sequence_ns('2022-02-24', 60*1000*1000000L) ts " +
                 "  from long_sequence(500) " +
                 ") timestamp(ts) " +
                 "SAMPLE by 1h;")
@@ -13408,8 +13408,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosFirst() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
                     SELECT a.ts as time, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
@@ -13446,8 +13446,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosLast() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
                     SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time
@@ -13484,8 +13484,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnAliasPosMid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
                     SELECT sum(a.to_grid), a.ts as time, sum(a.from_grid), sum(b.hourly_production)
@@ -13522,8 +13522,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasFirst() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
                     SELECT a.ts, sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production)
@@ -13560,8 +13560,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasLast() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
                     SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts
@@ -13598,8 +13598,8 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     @Test
     public void testTimestampColumnJoinTableAliasMid() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
-            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table ap_systems as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() hourly_production from long_sequence(100)) timestamp(ts) partition by day;");
+            execute("create table eloverblik as (select timestamp_sequence_ns(0, 60 * 1000000000L) ts, rnd_double() to_grid, rnd_double() from_grid from long_sequence(100)) timestamp(ts) partition by day;");
 
             assertQuery("""
                     SELECT sum(a.to_grid), sum(a.from_grid), sum(b.hourly_production), a.ts as time

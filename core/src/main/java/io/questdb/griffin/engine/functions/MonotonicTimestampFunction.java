@@ -58,6 +58,23 @@ public interface MonotonicTimestampFunction {
     int EXACT = 2;
 
     /**
+     * The {@link #shiftWrapsIntoRange} counterpart for a CALENDAR add ({@code 'M'}, {@code 'y'}),
+     * whose per-timestamp shift is not a constant and so cannot be measured against a ceiling.
+     * A positive calendar add near the domain max overflows the long boundary and wraps to a low
+     * value; with an open lower but finite upper bound that wrapped value matches the predicate and
+     * splits the preimage into two disjoint ranges, which a single interval cannot carry. The
+     * designated timestamp is non-negative, so a negative add cannot underflow.
+     * <p>
+     * Both spellings of the predicate share this test: the row-filter form through
+     * {@code TimestampAddFunctionFactory}, the {@code and_offset} interval pushdown through
+     * {@code RuntimeIntervalModelBuilder}. Keep them on one guard - they used to disagree, and the
+     * pushdown consumed predicates the row filter declined.
+     */
+    static boolean calendarShiftWrapsIntoRange(int stride, long lo, long hi) {
+        return stride > 0 && lo == Numbers.LONG_NULL && hi != Long.MAX_VALUE;
+    }
+
+    /**
      * Inverts {@code [lo, hi]} for a function whose result is {@code arg + shift}, a constant
      * offset applied to every timestamp: the inverse subtracts {@code shift} back. Returns
      * {@link #EXACT}, or {@link #NONE} when subtracting {@code shift} would overflow the long
@@ -68,6 +85,14 @@ public interface MonotonicTimestampFunction {
     static int invertConstantShift(Interval io, long shift, long maxTimestamp) {
         final long inLo = io.getLo();
         final long inHi = io.getHi();
+        if (inLo == Numbers.LONG_NULL && inHi == Long.MAX_VALUE) {
+            // An interval open at both ends constrains nothing, and a wrapping shift maps the whole
+            // domain onto itself, so its preimage is the whole domain too. Inverting the sentinels
+            // one at a time would truncate the upper end to Long.MAX_VALUE - shift and drop every
+            // timestamp the forward shift wraps to the bottom of the range - rows that satisfy a
+            // predicate every row satisfies. Answer with the input untouched.
+            return EXACT;
+        }
         if (shiftWrapsIntoRange(shift, inLo, inHi, maxTimestamp)) {
             return NONE;
         }

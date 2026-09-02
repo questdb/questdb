@@ -122,6 +122,38 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConstantChainAgreesWithLiteralForm() throws Exception {
+        // SqlParser.rewriteConcat turns every '||' OPERATION node into a concat() FUNCTION node,
+        // and addConcatArgs folds a nested concat into its parent's argument list, so the column
+        // spelling and the all-literal one both reach FunctionParser as one flat concat(...) call.
+        // reassociateConstants regroups neither: it regroups only a binary OPERATION pair. concat
+        // renders each operand through that operand's own type adapter, so the two spellings must
+        // emit the same characters. Every constant shape below carries a guard that closes the
+        // regroup for the arithmetic operators - a quoted numeric-looking literal, an integer
+        // literal that can wrap onto a NULL sentinel, and a floating-point / DECIMAL literal whose
+        // fold can round. None of those guards has any say over what a '||' chain compiles to.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR)");
+            execute("INSERT INTO t VALUES ('x')");
+
+            assertQuery("SELECT 'x' || '02' || '4' AS v").noLeakCheck().expectSize().returns("v\nx024\n");
+            assertQuery("SELECT a || '02' || '4' AS v FROM t").noLeakCheck().expectSize().returns("v\nx024\n");
+
+            assertQuery("SELECT 'x' || 2_147_483_647 || 1 AS v").noLeakCheck().expectSize().returns("v\nx21474836471\n");
+            assertQuery("SELECT a || 2_147_483_647 || 1 AS v FROM t").noLeakCheck().expectSize().returns("v\nx21474836471\n");
+
+            assertQuery("SELECT 'x' || 1.5 || 2.5 AS v").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
+            assertQuery("SELECT a || 1.5 || 2.5 AS v FROM t").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
+
+            assertQuery("SELECT 'x' || 1.5m || 2.5m AS v").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
+            assertQuery("SELECT a || 1.5m || 2.5m AS v FROM t").noLeakCheck().expectSize().returns("v\nx1.52.5\n");
+
+            // The right-nested spelling flattens the same way, into concat('02', '4', a).
+            assertQuery("SELECT '02' || ('4' || a) AS v FROM t").noLeakCheck().expectSize().returns("v\n024x\n");
+        });
+    }
+
+    @Test
     public void testCursor() throws Exception {
         assertQuery("select concat('hehe', select max(a) from test), concat('hoho', 'haha')")
                 .ddl("create table test as (select cast(x as varchar) a, timestamp_sequence(0, 1000000) ts from long_sequence(100))")
@@ -174,6 +206,40 @@ public class ConcatFunctionFactoryTest extends AbstractCairoTest {
                         concat
                         
                         """);
+    }
+
+    @Test
+    public void testPipeWithSingleArgConcat() throws Exception {
+        // SqlParser.rewriteConcat folds a nested concat() into the parent '||' node's argument
+        // list. A concat() call with fewer than three arguments carries them in rhs/lhs rather
+        // than in args, and the single-argument form leaves lhs null. Folding that null into the
+        // parent's args used to survive parsing and only blow up much later, as a bare NPE out of
+        // SqlOptimiser.emitLiterals.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (a VARCHAR)");
+            execute("INSERT INTO t VALUES ('x')");
+
+            // single-argument concat() on either side of '||'
+            assertQuery("SELECT 'x' || concat('y') AS v").noLeakCheck().expectSize().returns("v\nxy\n");
+            assertQuery("SELECT concat('y') || 'x' AS v").noLeakCheck().expectSize().returns("v\nyx\n");
+            assertQuery("SELECT 'x' || concat('y') || 'z' AS v").noLeakCheck().expectSize().returns("v\nxyz\n");
+            assertQuery("SELECT 'w' || concat(concat('y')) || 'z' AS v").noLeakCheck().expectSize().returns("v\nwyz\n");
+
+            // and with a column operand, which takes the non-constant code path
+            assertQuery("SELECT a || concat('y') AS v FROM t").noLeakCheck().expectSize().returns("v\nxy\n");
+            assertQuery("SELECT concat(a) || 'y' AS v FROM t").noLeakCheck().expectSize().returns("v\nxy\n");
+
+            // the two-argument form the fold already handled stays flattened
+            assertQuery("SELECT 'x' || concat('y', 'z') AS v").noLeakCheck().expectSize().returns("v\nxyz\n");
+        });
+    }
+
+    @Test
+    public void testPipeWithZeroArgConcat() throws Exception {
+        // A zero-argument concat() has neither rhs nor lhs, so rewriteConcat leaves it alone
+        // instead of folding an empty operand list into the parent. FunctionParser then rejects
+        // it at its own position, the same way a bare concat() is rejected.
+        assertQuery("SELECT 'x' || concat()").fails(14, "no arguments provided");
     }
 
     private void testAllTypes(int timestampType) throws Exception {

@@ -33,6 +33,7 @@ import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.PostingGenLookup;
 import io.questdb.cairo.idx.PostingIndexBwdReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
+import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryMR;
@@ -51,6 +52,7 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
@@ -565,6 +567,143 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
         });
     }
 
+    // populateCacheForKey() must prime every sparse-generation memo before readers freeze.
+    @Test
+    public void testPopulateCacheForKeyPrimesSidecarMemo() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "prime_sidecar_memo";
+                final int plen = path.size();
+                // One clearly-sparse covered gen: keys {0,50,100} over [0,100], single commit, no seal.
+                final int[] sparseKeys = {0, 50, 100};
+                final int rowsPerKey = 40;
+                final int totalRows = sparseKeys.length * rowsPerKey;
+                final long colBytes = (long) totalRows * Long.BYTES;
+                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
+                        int row = 0;
+                        for (int r = 0; r < rowsPerKey; r++) {
+                            for (int sk : sparseKeys) {
+                                writer.add(sk, row++);
+                            }
+                        }
+                        writer.setMaxValue(row - 1);
+                        writer.commit(); // single commit -> single sparse gen
+                    }
+
+                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    final int probeKey = 50;
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        reader.reloadConditionally();
+                        // No cursor has been positioned, so the memo is cold. (If this ever trips, the
+                        // reader eagerly warmed the memo and the assertion below would be vacuous.)
+                        assertFalse("sidecar memo must be cold before populateCacheForKey",
+                                reader.isSidecarGenPrimedForTesting(0));
+
+                        reader.populateCacheForKey(probeKey);
+
+                        // The probe key lives in gen 0, which is sparse and covered -> populateCacheForKey
+                        // must have primed its memo row so a frozen worker never builds it.
+                        assertTrue("populateCacheForKey must prime the covered sparse gen's sidecar memo",
+                                reader.isSidecarGenPrimedForTesting(0));
+                        assertFalse("one selective key must not allocate the full sparse-gen prefix",
+                                reader.isSidecarGenFullPrefixForTesting(0));
+                    }
+                } finally {
+                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    /**
+     * Pins the documented memory bound of the (deliberately unbudgeted) sparse-gen
+     * sidecar prefix-sum memo: pair rows retain at most two ints per active key, and
+     * a broad scan settles each gen at exactly one int per active key — a quarter of
+     * the 16-bytes/key sparse gen header the reader maps anyway.
+     */
+    @Test
+    public void testSidecarMemoRowBytesStayWithinDocumentedBound() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final String name = "memo_bound";
+                final int plen = path.size();
+                // Two committed (unsealed -> sparse) covered gens, each with the same 24
+                // spread-out keys {0, 5, ..., 115}, two rows per key per gen. 23 non-zero
+                // slots per gen crosses the 16-distinct-slot promotion threshold.
+                final int activeKeyCount = 24;
+                final int keyStride = 5;
+                final int gens = 2;
+                final int rowsPerKeyPerGen = 2;
+                final int totalRows = activeKeyCount * rowsPerKeyPerGen * gens;
+                final long colBytes = (long) totalRows * Long.BYTES;
+                final long colAddr = Unsafe.malloc(colBytes, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    for (int i = 0; i < totalRows; i++) {
+                        Unsafe.putLong(colAddr + (long) i * Long.BYTES, 1000L + i);
+                    }
+                    try (PostingIndexWriter writer = new PostingIndexWriter(configuration, path, name, COLUMN_NAME_TXN_NONE)) {
+                        writer.configureCovering(
+                                new long[]{colAddr}, new long[]{0}, new int[]{3}, new int[]{1}, new int[]{ColumnType.LONG}, 1);
+                        int row = 0;
+                        for (int g = 0; g < gens; g++) {
+                            for (int r = 0; r < rowsPerKeyPerGen; r++) {
+                                for (int k = 0; k < activeKeyCount; k++) {
+                                    writer.add(k * keyStride, row++);
+                                }
+                            }
+                            writer.setMaxValue(row - 1);
+                            writer.commit(); // one sparse gen per commit; no seal()
+                        }
+                    }
+
+                    final RecordMetadata md = coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG});
+                    final int[] required = {0};
+                    try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                            configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0, md, EMPTY_CVR, 0)) {
+                        reader.reloadConditionally();
+                        assertEquals("memo must be empty before any cursor",
+                                0, reader.getSidecarMemoRowBytesForTesting());
+
+                        // Selective phase: three keys at non-zero slots -> pair rows only.
+                        drainKeys(reader, required, new int[]{keyStride, 11 * keyStride, 23 * keyStride});
+                        final long pairPhaseBytes = reader.getSidecarMemoRowBytesForTesting();
+                        assertTrue("selective reads must memoize pair rows", pairPhaseBytes > 0);
+                        assertFalse("three selective keys must not promote gen 0",
+                                reader.isSidecarGenFullPrefixForTesting(0));
+                        assertTrue("pair rows must stay within two ints per active key: " + pairPhaseBytes,
+                                pairPhaseBytes <= (long) gens * activeKeyCount * 2 * Integer.BYTES);
+
+                        // Broad phase: a cursor per key promotes every gen to a full prefix.
+                        final int[] allKeys = new int[activeKeyCount];
+                        for (int k = 0; k < activeKeyCount; k++) {
+                            allKeys[k] = k * keyStride;
+                        }
+                        drainKeys(reader, required, allKeys);
+                        for (int g = 0; g < gens; g++) {
+                            assertTrue("broad scan must promote gen " + g,
+                                    reader.isSidecarGenFullPrefixForTesting(g));
+                        }
+                        final long promotedBytes = reader.getSidecarMemoRowBytesForTesting();
+                        assertEquals("promoted memo must retain exactly one int per active key per gen",
+                                (long) gens * activeKeyCount * Integer.BYTES, promotedBytes);
+                        assertEquals("promoted memo must be a quarter of the mapped sparse headers",
+                                (long) gens * PostingIndexUtils.genHeaderSizeSparse(activeKeyCount), 4 * promotedBytes);
+                    }
+                } finally {
+                    Unsafe.free(colAddr, colBytes, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
     /**
      * Freeze guard: while a reader is frozen, {@code reloadConditionally()} must be a
      * complete no-op so the value mmap (and everything keyed off it) stays put for
@@ -682,7 +821,7 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                 writer.commit();
                             }
 
-                            // --- FROZEN: reloadConditionally must do nothing observable. ---
+                            // While frozen, reloadConditionally must do nothing observable.
                             reader.setFrozen(true);
                             reader.reloadConditionally();
 
@@ -709,7 +848,7 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
                                     preRows.size(), fi);
                             Misc.free(frozenCursor);
 
-                            // --- UNFROZEN: reload resumes and picks up the new chain state. ---
+                            // Once unfrozen, reload resumes and picks up the new chain state.
                             reader.setFrozen(false);
                             reader.reloadConditionally();
 
@@ -930,6 +1069,19 @@ public class PostingReaderConcurrentReadTest extends AbstractCairoTest {
             m.add(new TableColumnMetadata("c" + i, type, IndexType.NONE, 0, false, null, i, false));
         }
         return m;
+    }
+
+    private static void drainKeys(PostingIndexFwdReader reader, int[] required, int[] keys) {
+        for (int key : keys) {
+            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE, required);
+            try {
+                while (cc.hasNext()) {
+                    cc.next();
+                }
+            } finally {
+                Misc.free(cc);
+            }
+        }
     }
 
     private static int freeCursorsSize(PostingIndexFwdReader reader) throws Exception {
