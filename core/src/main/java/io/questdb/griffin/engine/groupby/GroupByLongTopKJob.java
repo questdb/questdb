@@ -165,12 +165,11 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
         try {
             final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
             try {
-                if (circuitBreaker.checkIfTrippedOrYield()) {
-                    return;
+                if (!circuitBreaker.checkIfTrippedOrYield()) {
+                    final Map shard = atom.getDestShards().getQuick(shardIndex);
+                    final DirectLongLongSortedList list = atom.getLongTopKList(slotId, order, limit);
+                    shard.getCursor().longTopK(list, longFunc);
                 }
-                final Map shard = atom.getDestShards().getQuick(shardIndex);
-                final DirectLongLongSortedList list = atom.getLongTopKList(slotId, order, limit);
-                shard.getCursor().longTopK(list, longFunc);
             } finally {
                 atom.release(slotId);
             }
