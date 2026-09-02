@@ -47,6 +47,14 @@ public interface Frame extends Closeable {
     FrameColumn createColumn(int columnIndex);
 
     /**
+     * Opens a COVERING posting-indexed column as a plain one, so this frame writes its data but adds no
+     * index entries. The caller indexes the rows it appended itself, after every column is on disk, with
+     * the covered columns described. Default: index as usual.
+     */
+    default void setDeferCoveredIndexing(boolean deferCoveredIndexing) {
+    }
+
+    /**
      * The fan-out this frame's per-column work can run on, or {@code null} when it has none and every
      * operation against it stays on the calling thread. Only a writable frame has one - it is the
      * TARGET of an operation that owns it - and one frame runs one operation at a time, so the same

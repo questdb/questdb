@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexWriter;
+import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.frm.ColumnTopSink;
@@ -454,6 +455,25 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // readFrom() clears ctx.transientVersions itself, so no separate reset is needed - see
         // TransientColumnVersions and executeCompositePlan's own comment.
         ctx.transientVersions.readFrom(tableWriter.getColumnVersionWriter());
+        // Did this plan only ADD rows, leaving every row already in the files where it was and still
+        // live? KEEP writes nothing; APPEND and NEW_PIECE write this commit's own incoming rows at the
+        // tail. MERGE and DROP are the two that do not qualify: they retire rows that are already
+        // indexed, so the index has to be rebuilt over the whole directory to clear the entries those
+        // rows left behind - which is what the post-commit seal sweep does. A replace-range commit is
+        // excluded outright: it retires rows by declaring a range rather than through an action this
+        // loop can see.
+        //
+        // Decided BEFORE the plan runs, because it decides how the plan indexes: a covering posting
+        // column is written without index entries and indexed afterwards, once every column is on disk
+        // and the covered values can be read - see publishCoveredIndexesForAppend.
+        boolean appendOnly = !tableWriter.isCommitReplaceMode();
+        for (int i = 0, n = plan.actions.size(); appendOnly && i < n; i++) {
+            final O3CompositeMergeStrategy.ActionType type = plan.actions.getQuick(i).type;
+            appendOnly = type == O3CompositeMergeStrategy.ActionType.KEEP
+                    || type == O3CompositeMergeStrategy.ActionType.APPEND
+                    || type == O3CompositeMergeStrategy.ActionType.NEW_PIECE;
+        }
+
         final long e = executeCompositePlan(
                 pathToTable,
                 partitionTimestamp,
@@ -469,7 +489,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 ctx.pieces,
                 ctx.transientVersions,
                 ctx,
-                ctx.srcPath
+                ctx.srcPath,
+                appendOnly
         );
         // JOIN, automatically: fold whatever this plan's own KEEP/MERGE/NEW_PIECE/APPEND pieces left
         // list-and-file-adjacent, before publishing, rather than leaving it for a later housekeeping
@@ -508,6 +529,34 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final boolean fullyReplaced = ctx.pieces.size() == 0;
         if (fullyReplaced) {
             isComposite = false;
+        }
+
+        // Did this plan only ADD rows at the tail, leaving everything already in the files where it was?
+        // KEEP writes nothing and APPEND extends the last piece; MERGE, NEW_PIECE and DROP all move or
+        // retire rows that are already indexed, and the index then has to be rebuilt over the whole
+        // directory rather than extended. The partition must also end up ordinary: a composite one has
+        // its live rows scattered across pieces, so [eBefore, e) is not the range this commit added.
+        boolean coveredIndexesPublished = false;
+        if (appendOnly && !fullyReplaced && e > eBefore) {
+            final Path indexDir = ctx.srcPath;
+            indexDir.of(pathToTable);
+            setPathForNativePartition(
+                    indexDir,
+                    tableWriter.getMetadata().getTimestampType(),
+                    tableWriter.getPartitionBy(),
+                    partitionTimestamp,
+                    srcNameTxn
+            );
+            coveredIndexesPublished = publishCoveredIndexesForAppend(
+                    indexDir,
+                    partitionTimestamp,
+                    srcNameTxn,
+                    eBefore,
+                    e,
+                    tableWriter,
+                    ctx.transientVersions,
+                    ctx
+            );
         }
 
         // The geometry that gets published describes what was WRITTEN. Pieces are recorded by the executor
@@ -593,7 +642,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // routes o3ConsumePartitionUpdateSink to (see its srcDataNewPartitionSize == 0 branch), and what
         // keeps it off the live-row-count column-top trim a plain shrink would otherwise get - wrong for a
         // composite directory, whose live row count is not its physical extent.
-        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(fullyReplaced ? 1 : 0, 0));
+        // High int carries "the covering indexes of this partition are already published, with their
+        // covered values" - see publishCoveredIndexesForAppend. It tells the post-commit seal sweep to
+        // leave them alone instead of rewriting the whole sidecar to fill values in that are there.
+        Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(fullyReplaced ? 1 : 0, coveredIndexesPublished ? 1 : 0));
         Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
         Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
         Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, geometryRef);
@@ -602,6 +654,154 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         for (int i = 0; i < columnCount; i++) {
             Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, ctx.columnTopAfter[i]);
         }
+    }
+
+    /**
+     * Publishes this commit's appended rows into every COVERING posting index of the partition, as one
+     * new generation carrying its own covered values.
+     * <p>
+     * The executor above already indexed those rows, but through the frame column's plain index writer,
+     * which carries no covering configuration and so records only {@code (key, row)} pairs. Left like
+     * that, the post-commit seal sweep has to rewrite the partition's whole covered sidecar to fill the
+     * values in - work proportional to the partition on every commit. Re-adding the same rows here,
+     * with the covered columns described, makes {@code commit()} append ONE generation block instead,
+     * which costs the batch.
+     * <p>
+     * This runs after {@link #executeCompositePlan} has returned, which is the first moment the covered
+     * columns are on disk: the frame fan-out writes columns in no particular order, so a covered value
+     * read during the append could still be missing. It runs on the O3 worker, not the writer thread -
+     * every file it touches belongs to this partition's own directory, and one partition is planned and
+     * executed by one worker, so no other worker can be writing the same index.
+     * <p>
+     * Only a plan that APPENDED and relocated nothing qualifies (the caller checks). A merge moves rows
+     * that are already indexed, and the index then has to be rebuilt over the whole directory rather
+     * than extended.
+     *
+     * @return true when at least one covering index published, so the seal sweep can skip its rebuild
+     */
+    private static boolean publishCoveredIndexesForAppend(
+            Path partitionDir,
+            long partitionTimestamp,
+            long srcNameTxn,
+            long fromRow,
+            long toRow,
+            TableWriter tableWriter,
+            TransientColumnVersions versions,
+            O3CompositeContext ctx
+    ) {
+        final io.questdb.cairo.sql.TableMetadata metadata = tableWriter.getMetadata();
+        final FilesFacade ff = tableWriter.getFilesFacade();
+        final int dirLen = partitionDir.size();
+        boolean published = false;
+        boolean legacyHeadSeen = false;
+        for (int colIdx = 0, n = metadata.getColumnCount(); colIdx < n; colIdx++) {
+            if (metadata.getColumnType(colIdx) <= 0
+                    || !metadata.isColumnIndexed(colIdx)
+                    || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
+                continue;
+            }
+            final IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
+            if (coveringCols == null || coveringCols.size() == 0) {
+                // A plain posting index writes no covered values, so the sweep has nothing to rebuild
+                // for it either - the entries the executor already published are its final state.
+                continue;
+            }
+            final long columnTop = versions.getColumnTop(partitionTimestamp, colIdx);
+            final long lo = Math.max(fromRow, columnTop);
+            if (columnTop < 0 || lo >= toRow) {
+                continue;
+            }
+            ctx.coverNames.clear();
+            ctx.coverNameTxns.clear();
+            ctx.coverTops.clear();
+            ctx.coverShifts.clear();
+            ctx.coverIndices.clear();
+            ctx.coverTypes.clear();
+            for (int i = 0, m = coveringCols.size(); i < m; i++) {
+                final int covCol = coveringCols.getQuick(i);
+                if (covCol < 0) {
+                    // A tombstoned slot: the covered column was dropped. The reader still expects the
+                    // slot to exist, so describe it as absent rather than skipping it.
+                    ctx.coverNames.add(null);
+                    ctx.coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                    ctx.coverTops.add(0);
+                    ctx.coverShifts.add(0);
+                    ctx.coverIndices.add(-1);
+                    ctx.coverTypes.add(-1);
+                    continue;
+                }
+                final int covType = metadata.getColumnType(covCol);
+                ctx.coverNames.add(metadata.getColumnName(covCol));
+                ctx.coverNameTxns.add(versions.getColumnNameTxn(partitionTimestamp, covCol));
+                ctx.coverTops.add(Math.max(0, versions.getColumnTop(partitionTimestamp, covCol)));
+                ctx.coverShifts.add(ColumnType.pow2SizeOf(covType));
+                ctx.coverIndices.add(covCol);
+                ctx.coverTypes.add(covType);
+            }
+
+            final CharSequence colName = metadata.getColumnName(colIdx);
+            final long colNameTxn = versions.getColumnNameTxn(partitionTimestamp, colIdx);
+            final IndexWriter indexWriter = IndexFactory.createWriter(metadata.getColumnIndexType(colIdx), tableWriter.getConfiguration());
+            try {
+                indexWriter.of(partitionDir.trimTo(dirLen), colName, colNameTxn, 0);
+                // The covered sidecar a deferred purge has to find later lives under the partition
+                // directory, which the 4-arg of() above does not carry.
+                indexWriter.setPartitionContext(partitionTimestamp, srcNameTxn);
+                // A LEGACY (format-0) covering head must not be extended in place - that writes the
+                // aliased footer and re-exposes the out-of-bounds concurrent covered read the WAL
+                // fast-lag path already refuses for the same reason. Index the rows without covered
+                // values instead, exactly as the frame column would have, and report nothing
+                // published: the seal sweep's rebuild then migrates the head to the current format.
+                final boolean isLegacyHead = indexWriter instanceof PostingIndexWriter
+                        && ((PostingIndexWriter) indexWriter).isHeadCoveringFormatLegacy();
+                if (!isLegacyHead) {
+                    indexWriter.configureCovering(
+                            ctx.coverNames, ctx.coverNameTxns, ctx.coverTops, ctx.coverShifts,
+                            ctx.coverIndices, ctx.coverTypes, metadata.getTimestampIndex()
+                    );
+                }
+                // getTxn()+1 is the txn this commit will land on. It keeps the entry invisible to
+                // readers pinned on the current txn until txWriter.commit publishes it, and lets the
+                // writer-open recovery walk drop it if this commit never gets there.
+                indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                // Evict the uncovered entries the executor's own index writer just published for this
+                // range, so the rows are recorded once, by the generation that carries their values.
+                indexWriter.rollbackConditionally(lo);
+                final LPSZ dataFile = dFile(partitionDir.trimTo(dirLen), colName, colNameTxn);
+                final long fd = openRO(ff, dataFile, LOG);
+                try {
+                    final long mapSize = (toRow - columnTop) << 2;
+                    final long addr = mapRO(ff, fd, mapSize, MemoryTag.MMAP_O3);
+                    try {
+                        final long base = addr + ((lo - columnTop) << 2);
+                        for (long r = lo; r < toRow; r++) {
+                            indexWriter.add(toIndexKey(Unsafe.getInt(base + ((r - lo) << 2))), r);
+                        }
+                    } finally {
+                        ff.munmap(addr, mapSize, MemoryTag.MMAP_O3);
+                    }
+                } finally {
+                    ff.close(fd);
+                }
+                indexWriter.setMaxValue(toRow - 1);
+                indexWriter.commit();
+                if (isLegacyHead) {
+                    // One legacy column is enough to send the whole partition through the sweep's
+                    // rebuild. Rebuilding a column this pass already published is only wasted work,
+                    // never wrong, so there is no need to report per column.
+                    legacyHeadSeen = true;
+                } else {
+                    if (PostingIndexWriter.COVERING_COUNTERS_ENABLED) {
+                        PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.incrementAndGet();
+                    }
+                    published = true;
+                }
+            } finally {
+                partitionDir.trimTo(dirLen);
+                Misc.free(indexWriter);
+            }
+        }
+        return published && !legacyHeadSeen;
     }
 
     /**
@@ -644,7 +844,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             LongList piecesOut,
             TransientColumnVersions transientVersions,
             ColumnTopSink columnTopSink,
-            Path partitionPath
+            Path partitionPath,
+            boolean deferCoveredIndexing
     ) {
         final TableWriterMetadata metadata = (TableWriterMetadata) tableWriter.getMetadata();
         final FrameFactory frameFactory = tableWriter.getFrameFactory();
@@ -672,6 +873,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 Frame target = frameFactory.openRW(partitionPath, partitionTimestamp, metadata, transientVersions, columnTopSink, partitionE);
                 Frame o3 = frameFactory.openROFromMemoryColumns(oooColumns, metadata, srcOooMax, sortedTimestampsAddr)
         ) {
+            target.setDeferCoveredIndexing(deferCoveredIndexing);
             if (plan.appendActionIndex > -1) {
                 final O3CompositeMergeStrategy.Action append = actions.getQuick(plan.appendActionIndex);
                 final long o3Rows = append.getO3RowCount();
@@ -5453,6 +5655,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // same -1 sentinel as columnTopAfter. Separate from it so a fold knows which columns reported
         // since the last one without a worker ever having to append to a shared list.
         private long[] columnTopPending = new long[0];
+        // Worker-local scratch for the covered-column description a covering POSTING index needs before
+        // it can publish a generation. TableWriter has its own set of these lists, but they are the
+        // WRITER's, and several partitions of one commit run on different workers, so they cannot be
+        // borrowed here.
+        private final IntList coverIndices = new IntList();
+        private final LongList coverNameTxns = new LongList();
+        private final ObjList<CharSequence> coverNames = new ObjList<>();
+        private final IntList coverShifts = new IntList();
+        private final LongList coverTops = new LongList();
+        private final IntList coverTypes = new IntList();
         private final LongList cuts = new LongList();
         // Own Path buffers rather than Path.getThreadLocal(): both composite executors below hold their
         // partition path ACROSS a FrameAlgebra call, and a frame operation now fans its columns out onto

@@ -30,6 +30,8 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterMetadata;
+import io.questdb.cairo.IndexType;
+import io.questdb.std.IntList;
 import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.DeletedFrameColumn;
 import io.questdb.cairo.frm.Frame;
@@ -73,6 +75,12 @@ public class FrameImpl implements Frame {
      */
     private final LongList columnTops = new LongList();
     private boolean create = false;
+    // When set, a COVERING posting-indexed column is opened as a plain column, so the frame writes its
+    // data but adds no index entries. The caller then indexes the rows it appended itself, once every
+    // column is on disk, with the covered columns described - see
+    // O3PartitionJob#publishCoveredIndexesForAppend. Doing it here instead would index without covered
+    // values, and filling those in afterwards costs a rewrite of the partition's whole sidecar.
+    private boolean deferCoveredIndexing = false;
     private ColumnVersionReader crv;
     private RecycleBin<FrameImpl> frameRecycleBin;
     private int frameType;
@@ -111,6 +119,11 @@ public class FrameImpl implements Frame {
         if (columnTopSink != null) {
             columnTopSink.commitColumnTops();
         }
+    }
+
+    @Override
+    public void setDeferCoveredIndexing(boolean deferCoveredIndexing) {
+        this.deferCoveredIndexing = deferCoveredIndexing;
     }
 
     @Override
@@ -337,6 +350,14 @@ public class FrameImpl implements Frame {
         boolean isIndexed = metadata.isColumnIndexed(columnIndex);
         int indexBlockCapacity = isIndexed ? metadata.getIndexValueBlockCapacity(columnIndex) : 0;
         byte indexType = metadata.getColumnIndexType(columnIndex);
+        if (deferCoveredIndexing && isIndexed && IndexType.isPosting(indexType) && metadata instanceof TableWriterMetadata) {
+            IntList coveringCols = ((TableWriterMetadata) metadata).getColumnMetadata(columnIndex).getCoveringColumnIndices();
+            if (coveringCols != null && coveringCols.size() > 0) {
+                // A zero capacity is what the column pool reads as "not indexed", so it hands back the
+                // plain column and no index writer is opened at all.
+                indexBlockCapacity = 0;
+            }
+        }
         // A tracked top (only ever set by this frame's own saveChanges, when it has no external sink)
         // takes over from crv entirely once present: it already reflects everything crv would resolve to
         // PLUS every piece this frame has written since, and re-resolving from crv here would throw that

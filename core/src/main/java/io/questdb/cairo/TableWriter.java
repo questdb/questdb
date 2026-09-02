@@ -15690,6 +15690,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if at least one column indexer was touched.
      */
     private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
+        return sealPostingIndexForPartition(partitionTimestamp, canSkipRebuild, false);
+    }
+
+    private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild, boolean coveringPublished) {
         // Invariant: posting seal runs only after every O3 partition worker has
         // joined (finishO3Commit / post-await, or a writer-thread squash). It reads
         // the just-written partition column data and rotates value files; a worker
@@ -15776,6 +15780,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 IntList coveringCols = metadata.getColumnMetadata(colIdx).getCoveringColumnIndices();
                 boolean hasCovering = coveringCols != null && coveringCols.size() > 0;
+
+                if (hasCovering && coveringPublished) {
+                    // Already published with its covered values by the composite write. Touching the
+                    // writer here would rotate the sidecar for nothing; the entries this commit added
+                    // are its final state.
+                    continue;
+                }
 
                 if (hasCovering) {
                     int coverCount = coveringCols.size();
@@ -15937,7 +15948,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTimestamp = Unsafe.getLong(blockAddress);
             long newPartitionSize = Unsafe.getLong(blockAddress + 2 * Long.BYTES);
             long oldPartitionSize = Unsafe.getLong(blockAddress + 3 * Long.BYTES);
-            boolean partitionMutates = Numbers.decodeLowInt(Unsafe.getLong(blockAddress + 4 * Long.BYTES)) != 0;
+            long flags = Unsafe.getLong(blockAddress + 4 * Long.BYTES);
+            boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
+            // The composite write already published this partition's covering indexes, with their
+            // covered values, as one appended generation - see O3PartitionJob's
+            // publishCoveredIndexesForAppend. Rewriting the whole sidecar below would only reproduce
+            // what is already there, at a cost that grows with the partition.
+            boolean coveringPublished = Numbers.decodeHighInt(flags) != 0;
             long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
             // Sink offset 6 holds the original (pre-split) partition ts. Non-split
             // commits leave [0] == [6]; splits overwrite [0] with the new split's
@@ -15954,7 +15971,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && o3SplitPartitionSize == 0
                     && newPartitionSize >= oldPartitionSize;
 
-            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition)) {
+            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition, coveringPublished)) {
                 anyPartitionProcessed = true;
             }
             if (dataPartitionTimestamp != -1L && dataPartitionTimestamp != partitionTimestamp
