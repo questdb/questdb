@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.TableReader;
 import io.questdb.std.Chars;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -42,19 +43,16 @@ import org.junit.Test;
  * hides that class of defect. A blocked apply is also the shape a loaded server actually runs in:
  * transactions arrive faster than the apply job drains them, so they are applied in batches.
  * <p>
- * THE FINDING THAT MADE THIS CLASS WORTH KEEPING is the last test. A batch is applied as ONE commit,
- * so a batch of per-cell transactions becomes an interleaved MULTI-CELL commit -- which the branch
- * refuses on a table with a var-size column. "Split into per-cell commits", the documented workaround
- * for that refusal, therefore does not survive batching: the writer re-combines exactly what the user
- * split. It fails loudly (suspended table, named error) rather than silently, which is invariant 2
- * doing its job, but anyone relying on the workaround under load needs to know it is conditional on
- * the apply job never batching.
+ * THE FINDING THAT MADE THIS CLASS WORTH KEEPING is the var-size test at the end. A batch is applied
+ * as ONE commit, so a batch of per-cell transactions becomes an interleaved MULTI-CELL commit -- which
+ * this branch used to REFUSE on a table with a var-size column. "Split into per-cell commits" was the
+ * documented workaround for that refusal, and it did not survive batching: the writer recombined
+ * exactly what the user had split, suspending the table and keeping zero rows. So the workaround held
+ * only while the apply job did not batch, i.e. not under load.
  * <p>
- * That last test is also what keeps the other three honest. "Several transactions applied as one
- * block" is a claim about writer internals that a twin comparison cannot see -- if the queue were
- * drained one transaction at a time the tests would still pass, proving nothing. The refusal can only
- * fire when three SINGLE-cell transactions are combined into one MULTI-cell commit, so it is direct
- * evidence that this fixture does produce a batch.
+ * That is fixed -- the interleaved commit is supported now -- and the test remains as the regression
+ * lock, asserting the table is NOT suspended as well as comparing rows, because a silent zero-row
+ * table and a correct one look the same to a test that only reads what it can see.
  */
 public class CompositeWalBlockApplyTest extends AbstractCairoTest {
 
@@ -118,20 +116,57 @@ public class CompositeWalBlockApplyTest extends AbstractCairoTest {
             drainWalQueue();
 
             assertTwins();
+
+            // NON-VACUITY CHECK for this whole class. "Applied as one block" is a claim about writer
+            // internals a twin comparison cannot see: drained one transaction at a time these tests
+            // would still pass and would prove nothing the rest of the suite does not already cover.
+            //
+            // A writer commit bumps the table's _txn, so the batch above should sit at _txn 1 while the
+            // same three inserts drained individually reach 3. Both are measured here rather than one
+            // being asserted against a reasoned-about constant -- that is what makes this a proof that
+            // the metric discriminates, not just a number that happens to hold.
+            //
+            // This replaced an earlier proof that leaned on the var-size interleaved-commit REFUSAL
+            // firing. That was sound until the refusal was fixed, which is a good argument against
+            // resting a non-vacuity check on behaviour you intend to remove.
+            execute("CREATE TABLE seq (ts TIMESTAMP, exch SYMBOL, c_int INT, c_long LONG) TIMESTAMP(ts)"
+                    + " PARTITION BY DAY, exch WAL");
+            for (String cell : new String[]{"E0", "E1", "E2"}) {
+                execute("INSERT INTO seq SELECT ts, exch, c_int, c_long FROM src WHERE exch = '" + cell + "'");
+                drainWalQueue();
+            }
+
+            final long batched = txnOf("c");
+            final long sequential = txnOf("seq");
+            Assert.assertEquals("three transactions drained individually should be three writer commits",
+                    3, sequential);
+            Assert.assertEquals("three transactions drained together should be ONE writer commit;"
+                            + " this suite is not exercising a blocked apply", 1, batched);
         });
     }
 
+    private static long txnOf(String table) {
+        try (TableReader reader = getReader(table)) {
+            return reader.getTxn();
+        }
+    }
+
     /**
-     * The workaround's limit, pinned. Each INSERT here is single-cell -- precisely what the refusal's
-     * message tells the user to do -- but they are drained together, so the writer sees one
-     * interleaved multi-cell commit and refuses it. The table suspends with the named error and keeps
-     * ZERO rows, against the plain twin's full 240.
+     * The regression this class was written to catch, now the other way round.
      * <p>
-     * Asserted rather than merely documented because the failure is invisible from the SQL that
-     * produced it: nothing about three per-cell INSERTs suggests they will be recombined.
+     * Each INSERT here is single-cell -- precisely what the old var-size refusal told users to do --
+     * but they are drained together, so the writer sees ONE interleaved multi-cell commit. That used to
+     * suspend the table with "an interleaved multi-cell commit is not yet supported for a table with a
+     * var-size column" and leave ZERO rows against the plain twin's 240, which meant the documented
+     * workaround held only while the apply job did not batch, i.e. not under load.
+     * <p>
+     * The interleaved commit is supported now ({@code buildCompositeCellGroupScratch} gathers var-size
+     * columns through {@link io.questdb.cairo.ColumnTypeDriver#o3sort}), so the batch must simply match
+     * the plain twin. Asserting the table is NOT suspended is the part that matters: a silent zero-row
+     * table and a correct one are both "no exception" to a test that only compares what it can read.
      */
     @Test
-    public void testPerCellCommitsBatchedTogetherAreRefusedOnAVarSizeTable() throws Exception {
+    public void testPerCellCommitsBatchedTogetherOnAVarSizeTableMatchThePlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             execute(SRC);
             execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, c_int INT, c_varchar VARCHAR)"
@@ -144,24 +179,22 @@ public class CompositeWalBlockApplyTest extends AbstractCairoTest {
             }
             drainWalQueue();
 
+            assertNotSuspended();
             Assert.assertEquals("the plain twin takes the same batch", 240, count("SELECT count() FROM p"));
-            Assert.assertEquals("composite kept rows from a refused commit", 0, count("SELECT count() FROM c"));
-            assertSuspendedWith("an interleaved multi-cell commit is not yet supported for a table with a var-size column");
+            Assert.assertEquals("composite lost rows from the batched commit", 240, count("SELECT count() FROM c"));
+            assertSqlCursors("SELECT * FROM p ORDER BY ts, c_int", "SELECT * FROM c ORDER BY ts, c_int");
         });
     }
 
-    private void assertSuspendedWith(String expectedFragment) throws Exception {
+    private void assertNotSuspended() throws Exception {
         try (RecordCursorFactory factory = select("SELECT name, suspended, errorMessage FROM wal_tables()");
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             while (cursor.hasNext()) {
                 final CharSequence name = cursor.getRecord().getStrA(0);
                 if (name != null && Chars.equals("c", name)) {
-                    Assert.assertTrue("composite table should be suspended", cursor.getRecord().getBool(1));
-                    final CharSequence err = cursor.getRecord().getStrA(2);
-                    Assert.assertNotNull("suspended without an error message", err);
-                    Assert.assertTrue(
-                            "unexpected suspension reason: " + err,
-                            Chars.contains(err, expectedFragment)
+                    Assert.assertFalse(
+                            "composite table suspended: " + cursor.getRecord().getStrA(2),
+                            cursor.getRecord().getBool(1)
                     );
                     return;
                 }

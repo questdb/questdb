@@ -219,12 +219,12 @@ public class CompositeAllColumnTypesTest extends AbstractCairoTest {
         execute("CREATE TABLE src AS (" + GENERATOR + ") TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE c " + COLUMNS + " TIMESTAMP(ts) PARTITION BY DAY, exch WAL");
         execute("CREATE TABLE p " + COLUMNS + " TIMESTAMP(ts) PARTITION BY DAY WAL");
-        // PER CELL, one commit each. A single interleaved insert is REFUSED on this table --
-        // "an interleaved multi-cell commit is not yet supported for a table with a var-size column"
-        // -- and every column list worth calling complete has a var-size column in it, so this is the
-        // only shape in which a fully-typed composite table can be loaded today. That restriction is
-        // the reason this test looks like this, and it is worth knowing how wide it is: STRING,
-        // VARCHAR, BINARY or an ARRAY anywhere in the table forces the writer down this path.
+        // PER CELL, one commit each. This USED to be the only shape a fully-typed composite table
+        // could be loaded in: a single interleaved insert was refused on any table with a var-size
+        // column, and every column list worth calling complete has one. That refusal is gone, and
+        // CompositeInterleavedVarSizeTest covers the interleaved shape directly; the per-cell load is
+        // kept here because it is the shape this class's parquet arm was built around, and because
+        // both shapes are worth having over a column list this wide.
         for (String cell : new String[]{"E0", "E1", "E2"}) {
             execute("INSERT INTO c SELECT * FROM src WHERE exch = '" + cell + "'");
             drainWalQueue();

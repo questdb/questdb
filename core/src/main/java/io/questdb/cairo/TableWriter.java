@@ -14307,19 +14307,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int dimCount = metadata.getPartitionSpec().getDimensionCount();
         final int[] cellDimScratch = new int[dimCount];
         final StringSink cellSegmentSink = Misc.getThreadLocalSink();
-        // Static per-table-schema property (Plan 1 Task 2: dimension source columns are always
-        // SYMBOL, hence always fixed-size -- so this can only ever be about a non-dimension column).
-        // Computed once, not per-range.
-        boolean hasVarSizeColumnScan = false;
-        for (int i = 0; i < columnCount; i++) {
-            int columnType = metadata.getColumnType(i);
-            if (columnType >= 0 && i != timestampIndex && ColumnType.isVarSize(columnType)) {
-                hasVarSizeColumnScan = true;
-                break;
-            }
-        }
-        final boolean hasVarSizeColumn = hasVarSizeColumnScan;
-
         // Scratch buffers built for the multi-cellKey path, kept alive until every dispatched unit
         // this whole call issues has drained (the finally block below) -- freeing them any earlier
         // would race an in-flight O3PartitionJob still reading them.
@@ -14461,27 +14448,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             );
                         }
                     } else {
-                        // WHY, precisely, so the next attempt does not start from scratch. An interleaved
-                        // multi-cell commit is served by building a compact per-cell scratch
-                        // (buildCompositeCellGroupScratch) and dispatching each group. That gather copies
-                        // each row with a plain fixed-width Vect#memcpy of the column's element width --
-                        // width-agnostic, which is exactly why it handles every FIXED type with no
-                        // per-type switch, and exactly why it cannot handle a var-size one: those carry an
-                        // aux vector plus a data vector, and the row's value is a slice of the latter.
+                        // An interleaved multi-cell commit used to be REFUSED here on any table with a
+                        // var-size column, on the reasoning that the per-cell scratch gather
+                        // (buildCompositeCellGroupScratch) copies each row with a width-agnostic
+                        // Vect#memcpy -- fine for every fixed type, impossible for a var-size one, whose
+                        // value is a slice of a data vector described by a type-specific aux entry, and
+                        // "ColumnTypeDriver exposes no copy-one-value primitive".
                         //
-                        // Reading the slice is easy enough (getDataVectorSizeAt bounds it). WRITING the
-                        // scratch's aux entry is not: the aux format is type-specific -- VARCHAR packs an
-                        // inline prefix rather than storing a bare offset -- and ColumnTypeDriver exposes
-                        // no "copy one value" primitive. mergeShuffleColumnFromManyAddresses is not a
-                        // substitute: it consumes the index format radixSortManySegmentsIndexAsc emits,
-                        // not a per-row gather.
-                        // So this needs per-driver support, not a loop here -- and it lands on the same
-                        // scratch machinery whose .i field caused the merge-shuffle corruption in #25.
-                        if (hasVarSizeColumn) {
-                            throw CairoException.critical(0)
-                                    .put("composite partitioning: an interleaved multi-cell commit is not yet supported for a table with a var-size column [table=")
-                                    .put(tableToken.getTableName()).put(']');
-                        }
+                        // It exposes o3sort, which is that primitive at group granularity: it gathers a
+                        // var-size column through an index naming the source rows and sizes both
+                        // destination vectors itself. The scratch builder now uses it, so the refusal is
+                        // gone. See buildCompositeCellGroupScratch's var-size branch.
+                        //
+                        // This mattered more than a missing feature. The refusal told users to split
+                        // into per-cell commits -- but ApplyWal2TableJob applies a BATCH of transactions
+                        // as one commit, so under load it recombined those per-cell commits into exactly
+                        // the interleaved multi-cell commit being refused, suspending the table. The
+                        // workaround only ever held while the apply job did not batch. Pinned, from both
+                        // directions, by CompositeWalBlockApplyTest and CompositeInterleavedVarSizeTest.
 
                         // Stable-group the range's rows by cellKey (Integer boxing is fine -- this only
                         // runs for the rare genuinely-interleaved case; Arrays.sort(Object[], Comparator)
@@ -15470,11 +15454,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * Every other LIVE, FIXED-size column (dimension or not) is gathered via a plain per-row
      * {@link Vect#memcpy} of exactly that column's element width -- width-agnostic, so it uniformly
-     * handles every fixed column type without a per-type switch. Var-size columns are rejected before
-     * this method is ever called (see the {@code hasVarSizeColumn} guard in
-     * {@link #processO3BlockComposite}); the timestamp column's own scratch slot is deliberately left
-     * unpopulated (null), mirroring the same convention that makes {@code oooColumns}' timestamp-column
-     * entry unused in both the append and async paths.
+     * handles every fixed column type without a per-type switch.
+     * <p>
+     * A VAR-SIZE column cannot be gathered that way: its value is a slice of a data vector described by
+     * a type-specific aux entry (VARCHAR packs an inline prefix rather than a bare offset). Such a
+     * column used to be rejected before this method was ever called, which is what made an interleaved
+     * multi-cell commit a refusal on any table with a STRING/VARCHAR/BINARY/ARRAY column. It is now
+     * gathered by {@link ColumnTypeDriver#o3sort} -- the same per-driver primitive the whole-batch O3
+     * sort uses -- over a group-sized index, with the driver sizing both destination vectors. That
+     * gather reads the FULL source column, so it is driven by {@code gatherIndexAddr} (absolute batch
+     * rows), NOT by the returned {@code tsIndexAddr}, whose {@code .i} deliberately holds local
+     * positions for the downstream merge-shuffle. The two are the same length and both well-formed, so
+     * confusing them reads the wrong rows silently.
      * <p>
      * Every allocated buffer is appended to the caller-owned {@code scratchColumnsToFree}/
      * {@code scratchRawBuffersToFree} accumulators rather than freed here -- they must outlive this
@@ -15495,16 +15486,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long tsIndexAddr = Unsafe.malloc(tsIndexSize, MemoryTag.NATIVE_O3);
         scratchRawBuffersToFree.add(tsIndexAddr);
         scratchRawBuffersToFree.add(tsIndexSize);
-        for (int j = 0; j < groupLen; j++) {
-            long absoluteRow = srcOooLo + order[groupStart + j];
-            long ts = getTimestampIndexValue(sortedTimestampsAddr, absoluteRow);
-            Unsafe.putLong(tsIndexAddr + ((long) j << 4), ts);
-            // .i must be this row's LOCAL, 0-based position within THIS scratch (matching the
-            // scratchColumn[j] gather loop just below) -- NOT its absolute position in the original O3
-            // batch. Task #25: the native merge-shuffle path derefs this field to pick a row's
-            // non-timestamp values out of the scratch column buffers below; see this method's own docs.
-            Unsafe.putLong(tsIndexAddr + ((long) j << 4) + 8, (long) j);
+        // The SECOND index, in the same order, whose .i holds each row's ABSOLUTE position in the
+        // original O3 batch rather than its local one. Only a var-size gather needs it (see the
+        // ColumnTypeDriver#o3sort call below, which reads values out of the full-batch source column
+        // by absolute row); it is scratch for the duration of this method and freed before returning,
+        // unlike tsIndexAddr, which the dispatched async work reads long after that.
+        final long gatherIndexAddr = Unsafe.malloc(tsIndexSize, MemoryTag.NATIVE_O3);
+        try {
+            for (int j = 0; j < groupLen; j++) {
+                long absoluteRow = srcOooLo + order[groupStart + j];
+                long ts = getTimestampIndexValue(sortedTimestampsAddr, absoluteRow);
+                Unsafe.putLong(tsIndexAddr + ((long) j << 4), ts);
+                // .i must be this row's LOCAL, 0-based position within THIS scratch (matching the
+                // scratchColumn[j] gather loop just below) -- NOT its absolute position in the original O3
+                // batch. Task #25: the native merge-shuffle path derefs this field to pick a row's
+                // non-timestamp values out of the scratch column buffers below; see this method's own docs.
+                Unsafe.putLong(tsIndexAddr + ((long) j << 4) + 8, (long) j);
+                Unsafe.putLong(gatherIndexAddr + ((long) j << 4), ts);
+                Unsafe.putLong(gatherIndexAddr + ((long) j << 4) + 8, absoluteRow);
+            }
+            return buildCompositeCellGroupScratch0(
+                    srcOooLo, order, groupStart, groupLen, tsIndexAddr, gatherIndexAddr, scratchColumnsToFree
+            );
+        } finally {
+            Unsafe.free(gatherIndexAddr, tsIndexSize, MemoryTag.NATIVE_O3);
         }
+    }
+
+    private CompositeCellScratch buildCompositeCellGroupScratch0(
+            long srcOooLo,
+            Integer[] order,
+            int groupStart,
+            int groupLen,
+            long tsIndexAddr,
+            long gatherIndexAddr,
+            ObjList<MemoryCARW> scratchColumnsToFree
+    ) {
 
         final ObjList<MemoryCR> scratchColumns = new ObjList<>(columnCount * 2);
         scratchColumns.setPos(columnCount * 2);
@@ -15521,8 +15538,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             //   Cannot invoke "MemoryCR.addressOf(long)" because ReadOnlyObjList.getQuick(int) is null
             // and suspended the table on a DEDUP upsert into a parquet cell, where the plain twin
             // committed the row. Covered by CompositeUnevenColumnTopSurveyTest#testParquetDedupUpsertKeys.
-            // hasVarSizeColumn already guarded this at the caller -- assert, don't re-check silently.
-            assert !ColumnType.isVarSize(columnType) : "var-size column reached composite scratch build";
+            final int colOffsetForType = getPrimaryColumnIndex(i);
+            if (ColumnType.isVarSize(columnType)) {
+                // A var-size column carries an aux vector plus a data vector, and the row's value is a
+                // slice of the latter, so the width-agnostic memcpy below cannot gather it -- writing
+                // the scratch's aux entry is type-specific (VARCHAR packs an inline prefix rather than
+                // a bare offset). This used to be why an interleaved multi-cell commit was REFUSED on
+                // any table with a STRING/VARCHAR/BINARY/ARRAY column.
+                //
+                // ColumnTypeDriver#o3sort is exactly the per-driver primitive that was thought to be
+                // missing: it gathers a var-size column through an index whose .i field names the
+                // source rows, sizing and setting the append position on both destination vectors
+                // itself. It is what the ordinary whole-batch O3 sort uses (cthO3SortVarColumn), with
+                // the same primary=data / secondary=aux convention, so this is that call over a
+                // group-sized index rather than the whole batch.
+                //
+                // gatherIndexAddr, not tsIndexAddr: o3sort reads the FULL source column and needs each
+                // row's absolute batch position, while tsIndexAddr's .i deliberately holds the local
+                // position the downstream merge-shuffle wants. Passing the wrong one here reads the
+                // wrong rows -- silently, since both are well-formed indexes of the same length.
+                final int secondaryOffset = colOffsetForType + 1;
+                final MemoryCARW scratchData = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
+                scratchColumnsToFree.add(scratchData);
+                final MemoryCARW scratchAux = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
+                scratchColumnsToFree.add(scratchAux);
+                ColumnType.getDriver(columnType).o3sort(
+                        gatherIndexAddr,
+                        groupLen,
+                        o3Columns.getQuick(colOffsetForType),
+                        o3Columns.getQuick(secondaryOffset),
+                        scratchData,
+                        scratchAux
+                );
+                scratchColumns.setQuick(colOffsetForType, scratchData);
+                scratchColumns.setQuick(secondaryOffset, scratchAux);
+                continue;
+            }
             final int shl = ColumnType.pow2SizeOf(columnType);
             final int colOffset = getPrimaryColumnIndex(i);
             final long srcBase = o3Columns.getQuick(colOffset).addressOf(0);

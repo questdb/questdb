@@ -335,10 +335,11 @@ public class CompositeSquashTest extends AbstractCompositeTwinTest {
             createTwins("ts TIMESTAMP, exch SYMBOL, note VARCHAR, px DOUBLE",
                     "PARTITION BY DAY, exch LAYOUT PLAIN");
             final String order = " ORDER BY ts, exch, px";
-            // One cell per COMMIT. A composite table with a var-size column refuses an INTERLEAVED
-            // multi-cell commit ("an interleaved multi-cell commit is not yet supported for a table
-            // with a var-size column"), which is a write-path limitation independent of squash -- and
-            // it suspended this test on its first insert until the writes were separated.
+            // One cell per COMMIT. This was once a requirement: a composite table with a var-size
+            // column refused an INTERLEAVED multi-cell commit, which suspended this test on its first
+            // insert until the writes were separated. That refusal is gone (the per-cell scratch now
+            // gathers var-size columns through ColumnTypeDriver#o3sort), so the split is simply how
+            // this test is written -- it is about squash, not about commit shape.
             insertIntoBoth("('2023-01-01T01:00:00.000000Z','E0','alpha',1.0),"
                     + "('2023-01-01T20:00:00.000000Z','E0','bravo',2.0)");
             drainWalQueue();
