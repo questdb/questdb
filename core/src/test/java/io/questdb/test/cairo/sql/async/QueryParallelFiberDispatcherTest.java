@@ -2681,7 +2681,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     }
                     final AsyncGroupByAtom victimAtom = (AsyncGroupByAtom) TestUtils.findAtom(victimFactory, sql);
                     final AsyncQueryProgressState victimProgress = victimAtom.getShardingContext().getProgressState();
-                    final AtomicBooleanCircuitBreaker taskBreaker = new AtomicBooleanCircuitBreaker(engine);
+                    final PostAggregationCircuitBreaker taskBreaker = new PostAggregationCircuitBreaker(engine);
                     final AtomicInteger taskStarted = new AtomicInteger();
                     final AtomicInteger taskDone = new AtomicInteger();
                     taskBreaker.cancel();
@@ -3834,7 +3834,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
         void run() throws Exception;
     }
 
-    private static final class TestScopeCircuitBreaker extends AtomicBooleanCircuitBreaker {
+    private static final class TestScopeCircuitBreaker extends PostAggregationCircuitBreaker {
         private final Runnable onFirstCheck;
         private boolean hasObservedScope;
         private long observedGeneration = -1;
