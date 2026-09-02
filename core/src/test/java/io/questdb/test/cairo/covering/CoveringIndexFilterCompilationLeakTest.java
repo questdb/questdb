@@ -25,9 +25,11 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -94,6 +96,53 @@ public class CoveringIndexFilterCompilationLeakTest extends AbstractCairoTest {
             // compileWorkerFiltersConditionally). Without the wrapper's catch the
             // residual filter leaks and this would be 1.
             Assert.assertEquals(2, TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());
+        });
+    }
+
+    @Test
+    public void testWrapAdaptiveSymbolPatternWithFilterClosesPartitionFactoryExactlyOnceOnThrow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE tab (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO tab
+                    SELECT dateadd('h', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),
+                           'A' || (x % 5),
+                           x::DOUBLE
+                    FROM long_sequence(20)
+                    """);
+            engine.releaseAllWriters();
+
+            final int[] partitionFactoryCloseCount = new int[1];
+            // Install the observer on the concrete partition-frame factory before compilation.
+            // This counts actual close() invocations on the factory transferred to the adaptive
+            // owner, rather than inferring them from AdaptiveSymbolPatternRecordCursorFactory.close().
+            FullPartitionFrameCursorFactory.setCloseObserverForTesting(factory -> partitionFactoryCloseCount[0]++);
+            try {
+                final SqlExecutionContextImpl ctx = new SqlExecutionContextImpl(engine, 4) {
+                    @Override
+                    public boolean isParallelFilterEnabled() {
+                        throw new RuntimeException("test adaptive symbol pattern wrap failure");
+                    }
+                };
+                ctx.with(engine.getConfiguration().getFactoryProvider().getSecurityContextFactory().getRootContext());
+                try (ctx) {
+                    try (RecordCursorFactory ignored = engine.select(
+                            "SELECT price FROM tab WHERE sym LIKE 'A%' AND price > 0", ctx)) {
+                        Assert.fail("expected isolated adaptive-wrap failure");
+                    } catch (RuntimeException e) {
+                        TestUtils.assertContains(e.getMessage(), "test adaptive symbol pattern wrap failure");
+                    }
+                }
+            } finally {
+                FullPartitionFrameCursorFactory.clearCloseObserverForTesting();
+            }
+            Assert.assertEquals(1, partitionFactoryCloseCount[0]);
         });
     }
 }
