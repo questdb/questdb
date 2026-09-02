@@ -623,9 +623,10 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
                     return false;
                 }
             }
-            // The same 4-byte int image LiveViewSnapshotKeyCodec writes for a SYMBOL
-            // column off a window function's own map record - see its writeKey/readKey.
-            keyBuffer.putInt(lvId);
+            // The same 4-byte image LiveViewSnapshotKeyCodec writes for a SYMBOL column
+            // off a window function's own map record: byte-reversed, so the ids sort the
+            // way a partition map orders its pages.
+            keyBuffer.putInt(LiveViewSnapshotKeyCodec.encodeSymbolKey(lvId));
         } else {
             // The one encoding both sides have to be comparable in: a live-view
             // partition-by RecordSink rewrites an untranslated SYMBOL partition column as

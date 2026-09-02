@@ -168,9 +168,11 @@ public class LiveViewCheckpointKeyedReplayDomainTest extends AbstractCairoTest {
     }
 
     // One INT partition-key column, as LiveViewSnapshotKeyCodec writes a SYMBOL slot: a
-    // plain little-endian four-byte int, id or VALUE_IS_NULL alike.
+    // four-byte int in big-endian order, id or VALUE_IS_NULL alike, so that the unsigned
+    // byte comparison a checkpoint partition map orders its pages by puts the ids in
+    // numeric order.
     private static byte[] intKey(int value) {
-        return ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array();
+        return ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN).putInt(value).array();
     }
 
     private static LiveViewSymbolIdRegistry registry() {

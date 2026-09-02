@@ -49,10 +49,11 @@ import java.util.Arrays;
 import java.util.zip.CRC32;
 
 /**
- * Wire-format audit of the two on-disk shapes a translated SYMBOL partition key adds, and of
- * the field the checkpoint root grew to address them: the key dictionary's directory page
- * ({@code 0x2a}), its chunk pages ({@code 0x2b}), and the root's third
- * {@code LiveViewCheckpointPageRef}.
+ * Wire-format audit of the on-disk shapes a translated SYMBOL partition key adds, of the field
+ * the checkpoint root grew to address them, and of the key bytes themselves: the key
+ * dictionary's directory page ({@code 0x2a}), its chunk pages ({@code 0x2b}), the root's third
+ * {@code LiveViewCheckpointPageRef}, and the four bytes a partition-map leaf ({@code 0x16})
+ * carries for one translated key.
  * <p>
  * {@link LiveViewCheckpointWireFormatTest} audits the shapes a released 10.0.1 build wrote,
  * against bytes that build actually emitted. These shapes have no released bytes to check
@@ -79,6 +80,7 @@ public class LiveViewCheckpointSymbolKeyWireFormatTest extends AbstractLiveViewT
     private static final int PAGE_KIND_FUNCTION_ROOT = 0x18;
     private static final int PAGE_KIND_KEY_DICTIONARY_CHUNK = 0x2b;
     private static final int PAGE_KIND_KEY_DICTIONARY_DIRECTORY = 0x2a;
+    private static final int PAGE_KIND_PARTITION_MAP_LEAF = 0x16;
     private static final int PAGE_KIND_WINDOW_ROOT = 0x1d;
     // A metadata page reference: segmentId LONG, offset LONG, length INT.
     private static final int PAGE_REF_BYTES = 20;
@@ -302,6 +304,85 @@ public class LiveViewCheckpointSymbolKeyWireFormatTest extends AbstractLiveViewT
                 }
                 reader.detach();
             }
+        });
+    }
+
+    @Test
+    public void testAPartitionMapLeafCarriesTheSymbolIdMostSignificantByteFirst() throws Exception {
+        // The key bytes themselves, which is what decides where a key lands in the tree. A
+        // partition map orders its pages by an unsigned byte comparison, so a four-byte id
+        // written in the platform's own little-endian order sorts on its low byte first and a
+        // run of sequential ids scatters across every leaf; written most significant byte
+        // first it sorts numerically, and a batch of new ids is an append at the right edge.
+        // The strings below are interned in an order that is not their alphabetical one, so
+        // an implementation that keyed by the resolved string, or that wrote the id in the
+        // native order, produces a different leaf order than the one asserted here.
+        assertMemoryLeak(() -> {
+            createTranslatedView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:00.000000Z', 'zulu', 1), "
+                        + "('2024-01-01T00:00:01.000000Z', 'alpha', 2), "
+                        + "('2024-01-01T00:00:02.000000Z', 'mike', 3), "
+                        + "('2024-01-01T00:00:03.000000Z', null, 4)");
+                driveRefreshToQuiescence(job);
+            }
+
+            final ObjList<Page> pages = readPages();
+            final Page rootPage = newest(pages, PAGE_KIND_CHECKPOINT_ROOT);
+            final Directory dictionary = decodeDirectory(pages, pageAt(
+                    pages,
+                    readRef(rootPage.payload, 2 * Integer.BYTES + 3 * Long.BYTES + 2 * PAGE_REF_BYTES)
+            ));
+            Assert.assertArrayEquals(
+                    "the dictionary hands its ids out in first-seen order",
+                    new String[]{"zulu", "alpha", "mike"},
+                    dictionary.columns.getQuick(0).values()
+            );
+
+            // formatVersion INT, stateFormatVersion INT, identityLength INT, keySchemaLength
+            // INT, segmentCount INT, scalarStateRef, partitionMapRootRef.
+            final byte[] functionRoot = newest(pages, PAGE_KIND_FUNCTION_ROOT).payload;
+            final Page leaf = pageAt(pages, readRef(functionRoot, 5 * Integer.BYTES + STATE_REF_BYTES));
+            Assert.assertEquals("four keys fit one leaf", PAGE_KIND_PARTITION_MAP_LEAF, leaf.kind);
+
+            // Leaf payload: formatVersion INT, count INT, then per entry keyLength INT,
+            // scalarLength INT, stateRefCount INT, the key bytes, the scalar state and that
+            // many state page references.
+            final byte[] payload = leaf.payload;
+            Assert.assertEquals("partition map leaf [formatVersion]", 1, leInt(payload, 0));
+            final int count = leInt(payload, 4);
+            Assert.assertEquals("one entry per live key, the NULL key included", 4, count);
+            final ObjList<byte[]> keys = new ObjList<>();
+            int offset = 2 * Integer.BYTES;
+            for (int i = 0; i < count; i++) {
+                final int keyLength = leInt(payload, offset);
+                final int scalarLength = leInt(payload, offset + 4);
+                final int stateRefCount = leInt(payload, offset + 8);
+                offset += 3 * Integer.BYTES;
+                Assert.assertEquals(
+                        "partition map leaf entry " + i + " [key length]",
+                        Integer.BYTES,
+                        keyLength
+                );
+                keys.add(Arrays.copyOfRange(payload, offset, offset + keyLength));
+                offset += keyLength + scalarLength + stateRefCount * STATE_REF_BYTES;
+            }
+            Assert.assertEquals("partition map leaf [payload consumed]", payload.length, offset);
+
+            // The four bytes of each key, stated as literals rather than through any decoder:
+            // id 0 ('zulu'), id 1 ('alpha'), id 2 ('mike'), then VALUE_IS_NULL, which is
+            // Integer.MIN_VALUE and so leads with 0x80 and sorts after every non-negative id.
+            // Alphabetically 'alpha' would come first and 'zulu' last, and in the native byte
+            // order id 1 would read 01 00 00 00 - neither is what a leaf holds.
+            Assert.assertArrayEquals("leaf key 0 - id 0, 'zulu'", new byte[]{0, 0, 0, 0}, keys.getQuick(0));
+            Assert.assertArrayEquals("leaf key 1 - id 1, 'alpha'", new byte[]{0, 0, 0, 1}, keys.getQuick(1));
+            Assert.assertArrayEquals("leaf key 2 - id 2, 'mike'", new byte[]{0, 0, 0, 2}, keys.getQuick(2));
+            Assert.assertArrayEquals(
+                    "leaf key 3 - VALUE_IS_NULL",
+                    new byte[]{(byte) 0x80, 0, 0, 0},
+                    keys.getQuick(3)
+            );
         });
     }
 

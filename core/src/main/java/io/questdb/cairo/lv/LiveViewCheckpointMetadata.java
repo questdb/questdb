@@ -27,7 +27,10 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.IntList;
+import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
@@ -99,6 +102,59 @@ final class LiveViewCheckpointMetadata {
             }
         }
         return Integer.compare(left.length, right.length);
+    }
+
+    /**
+     * Fills {@code ordinalsOut} with {@code 0 .. keys.size() - 1}, ordered by the
+     * unsigned byte order {@link #compareBytes} imposes - which is the order a
+     * partition map lays its leaves out in.
+     * <p>
+     * A seal looks every key it freezes up in the map the previous boundary published,
+     * and {@link LiveViewCheckpointPartitionMapReader} memoises one decoded node per
+     * depth: consecutive lookups that land in one leaf decode it once, and lookups that
+     * arrive in a map cursor's order - hash-slot order, once the key is narrow enough
+     * for an unordered map - decode a leaf each, key by key. Walking the ordinals this
+     * fills instead makes the lookup cost the leaves the key set touches rather than the
+     * keys it holds, whatever order the cursor produced them in.
+     * <p>
+     * The order is a walk order and nothing else - every caller writes its results by the
+     * key's own index and hands its puts to a builder that sorts them again - so a tie
+     * this resolves arbitrarily costs nothing but locality.
+     * <p>
+     * Two arms, picked by whether a key fits a long. A key that does is packed into one
+     * whole, most significant byte first and with its sign bit flipped so that the signed
+     * order the sort compares by is the unsigned byte order the tree is laid out in; the
+     * ordinals ride along as the group's second long. That is the arm a translated SYMBOL
+     * key takes, and it is also the only key narrow enough for the hash-slot-ordered map
+     * that makes the sort worth doing. A wider key falls back to heapsorting the ordinals
+     * against the keys themselves - allocating nothing beyond the ordinal list, for the
+     * reason {@link LiveViewCheckpointMutationArena}'s own sort does - and skips even that
+     * when one linear scan says the keys already arrive in the tree's order, which an
+     * {@code OrderedMap} walking its cursor in insertion order often does.
+     */
+    static void sortKeyOrdinals(ObjList<byte[]> keys, LongList pairScratch, IntList ordinalsOut) {
+        final int size = keys.size();
+        ordinalsOut.clear();
+        if (packKeysIntoPairs(keys, pairScratch)) {
+            LongGroupSort.quickSort(2, pairScratch, 0, size);
+            for (int i = 0; i < size; i++) {
+                ordinalsOut.add((int) pairScratch.getQuick(2 * i + 1));
+            }
+            return;
+        }
+        for (int i = 0; i < size; i++) {
+            ordinalsOut.add(i);
+        }
+        if (isKeyOrderAscending(keys)) {
+            return;
+        }
+        for (int start = size >>> 1; start-- > 0; ) {
+            siftDownKeyOrdinal(keys, ordinalsOut, start, size);
+        }
+        for (int end = size; --end > 0; ) {
+            swapKeyOrdinals(ordinalsOut, 0, end);
+            siftDownKeyOrdinal(keys, ordinalsOut, 0, end);
+        }
     }
 
     /**
@@ -259,5 +315,68 @@ final class LiveViewCheckpointMetadata {
                     .put(", codec=").put(ref.getCodec())
                     .put(", rowCount=").put(ref.getRowCount()).put(']');
         }
+    }
+
+    private static int compareKeyOrdinals(ObjList<byte[]> keys, IntList ordinals, int left, int right) {
+        return compareBytes(keys.getQuick(ordinals.getQuick(left)), keys.getQuick(ordinals.getQuick(right)));
+    }
+
+    private static boolean isKeyOrderAscending(ObjList<byte[]> keys) {
+        for (int i = 1, n = keys.size(); i < n; i++) {
+            if (compareBytes(keys.getQuick(i - 1), keys.getQuick(i)) >= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Fills {@code pairScratch} with one {@code (packed key, ordinal)} group per key, most
+     * significant byte first and zero-padded on the right, so a key that is a prefix of
+     * another sorts ahead of it exactly as {@link #compareBytes} puts it.
+     *
+     * @return false as soon as a key is found that does not fit a long, leaving
+     * {@code pairScratch} half-filled for the next caller to clear
+     */
+    private static boolean packKeysIntoPairs(ObjList<byte[]> keys, LongList pairScratch) {
+        pairScratch.clear();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final byte[] key = keys.getQuick(i);
+            if (key.length > Long.BYTES) {
+                return false;
+            }
+            long packed = 0;
+            for (int b = 0; b < key.length; b++) {
+                packed |= (key[b] & 0xffL) << (Long.SIZE - Byte.SIZE - (b << 3));
+            }
+            pairScratch.add(packed ^ Long.MIN_VALUE);
+            pairScratch.add(i);
+        }
+        return true;
+    }
+
+    private static void siftDownKeyOrdinal(ObjList<byte[]> keys, IntList ordinals, int root, int end) {
+        while (true) {
+            final int left = (root << 1) + 1;
+            if (left >= end) {
+                return;
+            }
+            int largest = left;
+            final int right = left + 1;
+            if (right < end && compareKeyOrdinals(keys, ordinals, left, right) < 0) {
+                largest = right;
+            }
+            if (compareKeyOrdinals(keys, ordinals, root, largest) >= 0) {
+                return;
+            }
+            swapKeyOrdinals(ordinals, root, largest);
+            root = largest;
+        }
+    }
+
+    private static void swapKeyOrdinals(IntList ordinals, int left, int right) {
+        final int value = ordinals.getQuick(left);
+        ordinals.setQuick(left, ordinals.getQuick(right));
+        ordinals.setQuick(right, value);
     }
 }

@@ -2673,11 +2673,22 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     activeScratch.groupedFreezeLogicalBytes,
                     activeScratch.frozenByteArrays
             );
+            // Every member looks the same keys up in a root of its own, so the order that
+            // makes those lookups walk one leaf at a time is worth computing once, ahead of
+            // them all. Where a member's own partitions then land is free: the mutation
+            // arena sorts what it is handed.
+            final int keyCount = activeScratch.groupedFreezeKeys.size();
+            LiveViewCheckpointMetadata.sortKeyOrdinals(
+                    activeScratch.groupedFreezeKeys,
+                    activeScratch.keyLookupPairs,
+                    activeScratch.keyLookupOrder
+            );
             long logicalStateBytes = 0;
             for (int m = 0; m < memberCount; m++) {
                 final FrozenFunction frozen = members.getQuick(m);
                 final ObjList<byte[]> images = memberImages.getQuick(m);
-                for (int i = 0, n = activeScratch.groupedFreezeKeys.size(); i < n; i++) {
+                for (int o = 0; o < keyCount; o++) {
+                    final int i = activeScratch.keyLookupOrder.getQuick(o);
                     final byte[] key = activeScratch.groupedFreezeKeys.getQuick(i);
                     if (outputKeys != null && !outputKeys.contains(key)) {
                         // Outside the replay's key domain, exactly as in freezeFunction: the
@@ -2775,11 +2786,24 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 frozen.payloads,
                 activeScratch.frozenByteArrays
         );
-        for (int i = 0, n = frozen.keys.size(); i < n; i++) {
+        // The freeze names its keys in the map cursor's order, which is hash-slot order
+        // once the key is narrow enough for an unordered map, and every lookup below then
+        // lands in a different leaf of the predecessor's tree. Taking them in the tree's
+        // own order instead decodes each leaf once. The lists stay in the freeze's order -
+        // only the walk moves - so isUnchanged is filled by index rather than appended.
+        final int keyCount = frozen.keys.size();
+        LiveViewCheckpointMetadata.sortKeyOrdinals(
+                frozen.keys,
+                activeScratch.keyLookupPairs,
+                activeScratch.keyLookupOrder
+        );
+        frozen.isUnchanged.setAll(keyCount, false);
+        for (int o = 0; o < keyCount; o++) {
+            final int i = activeScratch.keyLookupOrder.getQuick(o);
             final byte[] key = frozen.keys.getQuick(i);
             if (outputKeys != null && !outputKeys.contains(key)) {
                 frozen.payloads.setQuick(i, null);
-                frozen.isUnchanged.add(true);
+                frozen.isUnchanged.setQuick(i, true);
                 continue;
             }
             // The predecessor's payload is already in the decoded leaf entry, so the
@@ -2789,7 +2813,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             final LiveViewCheckpointPartitionMapEntry previous = hasCompatiblePredecessor
                     ? previousBoundary.findWindowState(key)
                     : null;
-            frozen.isUnchanged.add(previous != null
+            frozen.isUnchanged.setQuick(i, previous != null
                     && previous.getStatePageCount() == 0
                     && Arrays.equals(previous.getScalarState(), frozen.payloads.getQuick(i)));
         }
@@ -3006,6 +3030,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final ObjList<FrozenFunction> incrementalMembers = new ObjList<>();
         private final MemoryCARWImpl keyBuffer =
                 new MemoryCARWImpl(SCRATCH_PAGE_SIZE, SCRATCH_MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
+        // The order the freeze's predecessor lookups take, which is the tree's rather than
+        // the map cursor's, and the pair buffer that computes it. One of each serves every
+        // walk of a boundary: they run one after another, and each fills them before it
+        // reads them.
+        private final IntList keyLookupOrder = new IntList();
+        private final LongList keyLookupPairs = new LongList();
         private final MemoryCARWImpl stateBuffer =
                 new MemoryCARWImpl(SCRATCH_PAGE_SIZE, SCRATCH_MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
         private int frozenAnchorPoolCursor;
@@ -3022,6 +3052,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             release();
             Misc.free(keyBuffer);
             Misc.free(stateBuffer);
+            keyLookupOrder.clear();
+            keyLookupPairs.clear();
             completeMemberImages.clear();
             completeMembers.clear();
             completeMemberProjections.clear();
@@ -3053,6 +3085,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private void release() {
             keyBuffer.clear();
             keyBuffer.setMemoryTracker(null);
+            keyLookupOrder.clear();
+            keyLookupPairs.clear();
             stateBuffer.clear();
             stateBuffer.setMemoryTracker(null);
             releaseGroupedFreezeScratch(incrementalMemberImages);
