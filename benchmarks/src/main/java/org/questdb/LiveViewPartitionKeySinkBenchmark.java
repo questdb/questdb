@@ -32,7 +32,9 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.RecordSinkSPI;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.lv.LiveViewSymbolIdRegistry;
 import io.questdb.cairo.lv.LiveViewSymbolIdTranslator;
 import io.questdb.cairo.lv.LiveViewTranslatingRecord;
 import io.questdb.cairo.map.Map;
@@ -102,9 +104,16 @@ import java.util.concurrent.TimeUnit;
  * everything else and for every STRING key - so it also carries the map win that the integer
  * key is worth in the first place.
  * <p>
- * The translator resolves every id from a fully interned forward array, which is the steady
- * state an id reaches after its first use. First-use interning is a hash lookup and is not
- * measured here; it is charged separately once the real translator exists.
+ * Two translators stand behind the two translated modes. {@code REGISTRY} is the one a live
+ * view binds - {@link LiveViewSymbolIdRegistry}, with a slot bound per key column, armed
+ * once against a static symbol table the way a pinned-reader cursor arms it, and warmed
+ * until every id's {@code baseId -> lvId} entry is earned. {@code STAND_IN} is the forward
+ * array the mechanisms were first priced against before the registry existed, kept so the
+ * registry's own hot path - the epoch check, the NULL and negative guards, the clean-band
+ * bound and the cache lookup - can be read against the cheapest translator that satisfies
+ * the contract. Both are the steady state an id reaches after its first use; first-use
+ * interning is a hash lookup per new id and is priced end to end by
+ * {@code LiveViewSteadyStateBenchmark}'s {@code interns} column rather than here.
  * <p>
  * Run with:
  * <pre>
@@ -134,13 +143,16 @@ public class LiveViewPartitionKeySinkBenchmark {
     private static final int ROWS = ROW_MASK + 1;
     private static final int SEED = 0x5eed;
     private final AccumulatingSink accumulatingSink = new AccumulatingSink();
-    private final SteadyStateTranslator translator = new SteadyStateTranslator();
+    private final SteadyStateTranslator standIn = new SteadyStateTranslator();
     @Param({"STRING", "RAW_INT", "SINK", "RECORD"})
     public String mode;
     @Param({"SINGLE", "COMPOSITE", "MIXED"})
     public String shape;
+    @Param({"REGISTRY", "STAND_IN"})
+    public String translator;
     private LiveViewTranslatingRecord flyweight;
     private Map map;
+    private LiveViewSymbolIdRegistry registry;
     private int rowCursor;
     private BaseRowRecord row;
     private RecordSink sink;
@@ -162,6 +174,7 @@ public class LiveViewPartitionKeySinkBenchmark {
     @TearDown(Level.Trial)
     public void close() {
         map = Misc.free(map);
+        registry = Misc.free(registry);
     }
 
     @Benchmark
@@ -193,7 +206,35 @@ public class LiveViewPartitionKeySinkBenchmark {
             key2Ids[i] = rnd.nextPositiveInt() % KEY2_CARDINALITY;
         }
 
-        translator.of(new int[][]{lvIds(rnd, KEY_CARDINALITY), lvIds(rnd, KEY2_CARDINALITY)});
+        final LiveViewSymbolIdTranslator translatorImpl;
+        if ("REGISTRY".equals(translator)) {
+            // The registry a live view binds, over the same two dictionaries: slot 0 is
+            // key1's and slot 1 is key2's, each bound to the column it reads and armed once
+            // against a static table the way a pinned-reader cursor arms it. Warming
+            // translates every raw id once in a shuffled order, so the lv ids come out as
+            // a permutation of the raw range - the same property the stand-in's forward
+            // array has, and what keeps RAW_INT a control rather than a second experiment.
+            registry = new LiveViewSymbolIdRegistry(new TableToken("lv", "lv~1", null, 1, true, false, false));
+            registry.bind(0, COL_KEY1, COL_KEY1, 1);
+            registry.bind(1, COL_KEY2, COL_KEY2, 1);
+            final ArraySymbolTable key1Table = new ArraySymbolTable(key1Symbols);
+            final ArraySymbolTable key2Table = new ArraySymbolTable(key2Symbols);
+            registry.armFor((reg, slot, baseScanColumnIndex, baseWriterColumnIndex) -> reg.armStatic(
+                    slot,
+                    slot == 0 ? KEY_CARDINALITY : KEY2_CARDINALITY,
+                    slot == 0 ? key1Table : key2Table
+            ));
+            for (int id : lvIds(rnd, KEY_CARDINALITY)) {
+                registry.translate(0, id);
+            }
+            for (int id : lvIds(rnd, KEY2_CARDINALITY)) {
+                registry.translate(1, id);
+            }
+            translatorImpl = registry;
+        } else {
+            standIn.of(new int[][]{lvIds(rnd, KEY_CARDINALITY), lvIds(rnd, KEY2_CARDINALITY)});
+            translatorImpl = standIn;
+        }
         row = new BaseRowRecord(key1Ids, key2Ids, key1Symbols, key2Symbols);
 
         final boolean isComposite = "COMPOSITE".equals(shape);
@@ -263,7 +304,7 @@ public class LiveViewPartitionKeySinkBenchmark {
                         sourceTypes,
                         filter,
                         slotByColumn,
-                        translator
+                        translatorImpl
                 );
                 sinkInput = row;
                 break;
@@ -280,7 +321,7 @@ public class LiveViewPartitionKeySinkBenchmark {
                         null
                 );
                 flyweight = new LiveViewTranslatingRecord(slotByColumn);
-                flyweight.of(row, translator);
+                flyweight.of(row, translatorImpl);
                 sinkInput = flyweight;
                 break;
             default:
@@ -449,6 +490,29 @@ public class LiveViewPartitionKeySinkBenchmark {
 
         @Override
         public void skip(int bytes) {
+        }
+    }
+
+    /**
+     * The static symbol table the registry resolves a clean id through when it first meets
+     * one. The benchmark's ids are all clean and all warmed before the first measured row,
+     * so this is read once per distinct id at setup and never on the hot path.
+     */
+    private static class ArraySymbolTable implements SymbolTable {
+        private final String[] symbols;
+
+        private ArraySymbolTable(String[] symbols) {
+            this.symbols = symbols;
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return valueOf(key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return key >= 0 && key < symbols.length ? symbols[key] : null;
         }
     }
 

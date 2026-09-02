@@ -28,12 +28,21 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.file.BlockFileReader;
+import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyDictionaryColumnSource;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyDictionaryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointMetaSegmentReader;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
+import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewPartitionKeyDecision;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewSymbolIdRegistry;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
 import io.questdb.cairo.sql.TableMetadata;
@@ -41,6 +50,7 @@ import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.DirectSymbolMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -53,6 +63,7 @@ import io.questdb.std.datetime.TimeZoneRuleFactory;
 import io.questdb.std.datetime.microtime.Micros;
 
 import java.io.IOException;
+import java.nio.file.DirectoryStream;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -159,16 +170,28 @@ import java.util.Locale;
  * change. Only {@code account_id} carries the base index, so a composite run prices no
  * keyed scan; read it against a single-key run of the same cardinality.
  * <p>
- * A SYMBOL key resolves per row and writes a variable-length UTF-16 key into every map
- * that names it; an INT key of the same value set writes four fixed-width bytes. That
- * pair is the standing in-build bracket for what an LV-private integer key domain would
- * be worth: {@code --key-type=symbol} is what ships and {@code --key-type=int} is the
- * upper bound, since it keys the same 4 bytes without paying for a translation.
- * {@code --partition-key-mode} is where the switch between the two key domains lands once
- * a live view binds a translator; it accepts only {@code legacy} today. A sink can emit a
- * translated id already - {@code LiveViewPartitionKeySinkBenchmark} prices both mechanisms
- * that do it - but nothing yet classifies a partition term as translated or owns the
- * dictionary behind it.
+ * <b>The key domain.</b> {@code --partition-key-mode} picks which domain a SYMBOL key's
+ * partition maps and checkpoint keys are written in. {@code private}, the default, is what
+ * ships: a direct base SYMBOL term keys through the view's own {@code lvId -> string}
+ * dictionary, so every map that names it stores four fixed-width bytes and the checkpoint
+ * persists the dictionary once beside them. {@code legacy} is the in-build control: the
+ * same view, same rows and same host, with the partition-key decision {@code _lv} carries
+ * rewritten to say nothing translates before the first refresh - which is exactly how a
+ * view created by a build that resolved the term to its string keys today - so every site
+ * resolves the symbol per row and writes a variable-length UTF-16 key. {@code --key-type=int}
+ * stays the upper bound from the other side: it keys the same four bytes over the same
+ * value set and pays for no translation. The per-batch {@code dict_size} and {@code interns}
+ * columns say which regime a batch ran in - a run that recycles its accounts interns only
+ * in its first sweep and then runs the array-lookup path, while one that mints a new account
+ * per row interns per row - and the closing {@code # dictionary} line reports what the
+ * dictionary costs to keep: its three resident structures separately, since only the forward
+ * half is required by the durable format, and the pages the checkpoint store retains for
+ * it. {@code # dictionary_rebuild} prices the reverse index a restore builds eagerly against
+ * loading the forward half alone, on the run's own strings. {@code --map-entry-size} moves
+ * {@code cairo.sql.unordered.map.max.entry.size}, which is what decides whether the narrow
+ * anchor entry - a 4-byte key beside 12 value bytes - reaches {@code Unordered4Map} at the
+ * embedded default of 16 or only at the server default of 32; the {@code # window_state}
+ * line reports which map the run got.
  * <p>
  * <b>The selective shape.</b> {@code --residual-percent} puts a residual filter on the
  * view, admitting roughly that share of base rows. The generator gives every row a
@@ -217,6 +240,19 @@ import java.util.Locale;
  *     org.questdb.LiveViewSteadyStateBenchmark \
  *     --seed=1000000 --batch=200000 --batches=10 --checkpoint-rows=200000 \
  *     --residual-percent=1
+ *
+ * # the key domain pair over a recycled key set: the STRING control, then what ships,
+ * # each restarted at the end so the restore is priced too
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx12g \
+ *     -cp benchmarks/target/benchmarks.jar \
+ *     org.questdb.LiveViewSteadyStateBenchmark \
+ *     --seed=1000000 --batch=200000 --batches=10 --checkpoint-rows=200000 \
+ *     --recycle-accounts=100000 --restart=true --partition-key-mode=legacy
+ * java --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED -Xmx12g \
+ *     -cp benchmarks/target/benchmarks.jar \
+ *     org.questdb.LiveViewSteadyStateBenchmark \
+ *     --seed=1000000 --batch=200000 --batches=10 --checkpoint-rows=200000 \
+ *     --recycle-accounts=100000 --restart=true --partition-key-mode=private
  * </pre>
  */
 public class LiveViewSteadyStateBenchmark {
@@ -275,7 +311,10 @@ public class LiveViewSteadyStateBenchmark {
         // second component on the same key domain rather than a different workload.
         long key2Cardinality = 32;
         // Which key domain the view's partition maps and its checkpoint are keyed on.
-        String partitionKeyMode = PartitionKeyMode.LEGACY.name;
+        String partitionKeyMode = PartitionKeyMode.PRIVATE_ID.name;
+        // -1 = leave cairo.sql.unordered.map.max.entry.size at the embedded default of 16,
+        // which is the boundary the narrow anchor entry sits on exactly.
+        int mapEntrySize = -1;
         // The share of base rows the view's residual filter admits. 100 leaves the view
         // unfiltered, which is what every reading before this knob existed measured.
         int residualPercent = 100;
@@ -374,6 +413,8 @@ public class LiveViewSteadyStateBenchmark {
                 key2Cardinality = Long.parseLong(arg.substring("--key2-cardinality=".length()));
             } else if (arg.startsWith("--partition-key-mode=")) {
                 partitionKeyMode = arg.substring("--partition-key-mode=".length());
+            } else if (arg.startsWith("--map-entry-size=")) {
+                mapEntrySize = Integer.parseInt(arg.substring("--map-entry-size=".length()));
             } else if (arg.startsWith("--residual-percent=")) {
                 residualPercent = Integer.parseInt(arg.substring("--residual-percent=".length()));
             } else if (arg.startsWith("--null-percent=")) {
@@ -430,9 +471,12 @@ public class LiveViewSteadyStateBenchmark {
         }
         final Shape selectShape = Shape.of(shape);
         final KeyType partitionKeyType = KeyType.of(keyType);
-        PartitionKeyMode.of(partitionKeyMode).reject();
+        final PartitionKeyMode requestedKeyMode = PartitionKeyMode.of(partitionKeyMode);
         if (keyColumns < 1 || keyColumns > 2) {
             throw new IllegalArgumentException("--key-columns must be 1 or 2: " + keyColumns);
+        }
+        if (mapEntrySize != -1 && mapEntrySize < Integer.BYTES) {
+            throw new IllegalArgumentException("--map-entry-size must be -1 or at least " + Integer.BYTES + ": " + mapEntrySize);
         }
         if (key2Cardinality < 1) {
             throw new IllegalArgumentException("--key2-cardinality must be positive: " + key2Cardinality);
@@ -477,6 +521,9 @@ public class LiveViewSteadyStateBenchmark {
             isIndexed = false;
             isSymbolPreSized = false;
         }
+        // Only a SYMBOL key has a dictionary to translate through, so the key domain
+        // describes nothing on an INT or LONG key either; the header reports none.
+        final PartitionKeyMode keyMode = partitionKeyType == KeyType.SYMBOL ? requestedKeyMode : PartitionKeyMode.NONE;
 
         // --anchor-period=daily:<zone> names an IANA zone for the DAILY anchor. That form
         // desugars to timestamp_floor_utc rather than timestamp_floor, and the zoned shape is
@@ -562,6 +609,7 @@ public class LiveViewSteadyStateBenchmark {
         final long finalCheckpointCompactionInterval = checkpointCompactionInterval;
         final int finalCompactThreshold = compactThreshold;
         final int finalCompactStalePercent = compactStalePercent;
+        final int finalMapEntrySize = mapEntrySize;
         final int finalRepairMaxChainedBoundaries = repairMaxChainedBoundaries;
         final boolean finalRepairIsolatedRuntime = isRepairIsolatedRuntime;
         final boolean finalRepairPerSegment = isRepairPerSegment;
@@ -618,6 +666,11 @@ public class LiveViewSteadyStateBenchmark {
                 }
 
                 @Override
+                public int getSqlUnorderedMapMaxEntrySize() {
+                    return finalMapEntrySize >= 0 ? finalMapEntrySize : super.getSqlUnorderedMapMaxEntrySize();
+                }
+
+                @Override
                 public boolean isDevModeEnabled() {
                     return true;
                 }
@@ -665,7 +718,7 @@ public class LiveViewSteadyStateBenchmark {
                             + "checkpointCompactionInterval=%d preSizeSymbol=%s index=%s recycleAccounts=%d "
                             + "anchorPeriod=%s anchorZone=%s accountWindow=%d rowsPerBucket=%d buckets=%d compactThreshold=%d "
                             + "compactStalePercent=%d shape=%s keyType=%s keyColumns=%d key2Cardinality=%d "
-                            + "jointKeys=%d partitionKeyMode=%s residualPercent=%d nullPercent=%d sumColumns=%d "
+                            + "jointKeys=%d partitionKeyMode=%s mapEntrySize=%d residualPercent=%d nullPercent=%d sumColumns=%d "
                             + "commitsPerBatch=%d commitRows=%d o3EveryN=%d o3Lag=%s o3LagRows=%d o3FromBatch=%d "
                             + "o3SpreadSteps=%d o3MaxLagRows=%d o3Depths=%s o3CommitPercent=%d "
                             + "hotKeyEveryN=%d equalTsEveryN=%d tsStepUs=%d "
@@ -683,7 +736,7 @@ public class LiveViewSteadyStateBenchmark {
                     selectShape.name, partitionKeyType.name, keyColumns, keyColumns > 1 ? key2Cardinality : 1,
                     jointKeys(distinctAccounts(totalRows, rowsPerBucket, recycleAccounts, accountWindow),
                             keyColumns, key2Cardinality, totalRows),
-                    partitionKeyMode, residualPercent, nullPercent, sumColumns,
+                    keyMode.name, configuration.getSqlUnorderedMapMaxEntrySize(), residualPercent, nullPercent, sumColumns,
                     commitsPerBatch, commitRows, o3EveryN, o3EveryN > 0 ? o3Lag : "none", o3LagMicros / tsStepMicros,
                     o3FromBatch, o3SpreadSteps, o3MaxLagMicros / tsStepMicros,
                     o3DepthLadder == null ? "none" : o3DepthLadder.describe(), o3CommitPercent,
@@ -741,6 +794,9 @@ public class LiveViewSteadyStateBenchmark {
                             + selectShape.extraWindows(partitionKeys),
                     sqlCtx
             );
+            if (keyMode == PartitionKeyMode.LEGACY) {
+                forceLegacyPartitionKeys(engine, configuration);
+            }
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(VIEW_NAME);
             final TableToken lvToken = engine.getTableTokenIfExists(VIEW_NAME);
             final CheckpointSegments segments = new CheckpointSegments(dbRoot.resolve(lvToken.getDirName()));
@@ -760,7 +816,7 @@ public class LiveViewSteadyStateBenchmark {
                         (System.nanoTime() - seedStart) / 1e6, instance.getHeadCheckpointWriteMicros() / 1e3);
 
                 segments.sample();
-                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\trefresh_max_pass_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\trepair");
+                System.out.println("batch\tstate_rows\tbase_apply_ms\trefresh_ms\trefresh_max_pass_ms\tcheckpoint_ms\trefresh_ex_cp_ms\trows_per_sec\tstate_bytes\tlag_seqtxn\tfaults\tmap_rows\tsweeps\tevicted\tsweep_ms\trefresh_peak_mb\tmeta_segs\tdata_segs\tmeta_bytes\tdata_bytes\to3_scan_rows\to3_resume_rows\to3_boundary_rows\ttl_gen\ttl_entries\thead_root\thead_lag_rows\tlv_apply_ms\tlv_rows\tlv_phys_rows\tlv_write_amp\tlv_parts\trepair\tdict_size\tinterns");
                 long firstRow = seedRows + 1;
                 // A seal after a sweep is the one this measurement is about: compact()
                 // demotes the next seal to a full scan of the whole live state, while a
@@ -792,6 +848,10 @@ public class LiveViewSteadyStateBenchmark {
                 long lvRowsTotal = 0;
                 long lvPhysRowsTotal = 0;
                 long lvApplyMicrosTotal = 0;
+                // Ids the partition-key dictionary assigned, cumulative over the instance's
+                // life; a batch's own share is the delta, and it is what separates the
+                // interning regime from the steady-state array lookup one.
+                long internsBefore = internCount(instance);
                 for (int b = 0; b < batches; b++) {
                     // One INSERT is one WAL commit, and O3 is classified per commit, so
                     // the split decides how many repairs a batch triggers as much as the
@@ -910,6 +970,9 @@ public class LiveViewSteadyStateBenchmark {
                     // localized rebuild would have. Every repair in one batch takes the same
                     // route in this workload, so the last is representative.
                     final String repair = repairName(instance);
+                    final long internsAfter = internCount(instance);
+                    final long interns = internsAfter - internsBefore;
+                    internsBefore = internsAfter;
 
                     final long baseSeqTxn = engine.getTableSequencerAPI()
                             .getTxnTracker(engine.getTableTokenIfExists("payments"))
@@ -917,7 +980,7 @@ public class LiveViewSteadyStateBenchmark {
                     segments.sample();
                     System.out.printf(
                             Locale.ROOT,
-                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%d\t%d\t%.1f\t%d\t%s%n",
+                            "%d\t%d\t%.3f\t%.3f\t%.3f\t%.3f\t%.3f\t%.0f\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%.1f\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%.3f\t%d\t%d\t%.1f\t%d\t%s\t%d\t%d%n",
                             b,
                             expected,
                             baseNanos / 1e6,
@@ -950,7 +1013,9 @@ public class LiveViewSteadyStateBenchmark {
                             lvPhysRows,
                             lvRows > 0 ? (double) lvPhysRows / lvRows : 0.0,
                             partitionCount(engine, lvToken),
-                            repair
+                            repair,
+                            totalDictionarySize(instance),
+                            interns
                     );
                     firstRow += batchRows;
                 }
@@ -1088,6 +1153,7 @@ public class LiveViewSteadyStateBenchmark {
                 reportLiveViewWrites(engine, lvToken, lvRowsTotal, lvPhysRowsTotal, lvApplyMicrosTotal);
                 reportSweeps(instance, sweptSealMs, sweptSealCount, unsweptSealMs, unsweptSealCount);
                 segments.report();
+                reportDictionary(configuration, dbRoot, lvToken, instance, "dictionary");
 
                 if (isRestartMeasured) {
                     // Drop the in-memory instances and read the definitions back from
@@ -1129,18 +1195,23 @@ public class LiveViewSteadyStateBenchmark {
                         }
                         System.out.printf(
                                 Locale.ROOT,
-                                "# restore state_rows=%d window_ms=%.3f reseal_ms=%.3f read_back_ms=%.3f probe_rows=%d "
-                                        + "state_bytes=%d lookup_depth=%d faults=%d peak_mb=%.1f%n",
+                                "# restore state_rows=%d window_ms=%.3f reseal_ms=%.3f read_back_ms=%.3f restore_ms=%.3f "
+                                        + "probe_rows=%d state_bytes=%d lookup_depth=%d faults=%d peak_mb=%.1f%n",
                                 stateRows,
                                 restoreNanos / 1e6,
                                 checkpointMs,
                                 restoreNanos / 1e6 - checkpointMs,
+                                restoreMillis(restarted),
                                 RESTART_PROBE_ROWS,
                                 restarted.getHeadCheckpointStateBytes(),
                                 restarted.getCheckpointLastLookupDepth(),
                                 restarted.getRefreshFaultCount(),
                                 restorePeakMb
                         );
+                        // The restored instance's own registry: what the restore rebuilt
+                        // from the root's dictionary pages, with the base-id cache empty
+                        // and the counters starting from zero.
+                        reportDictionary(configuration, dbRoot, lvToken, restarted, "restore_dictionary");
                     }
                 }
 
@@ -1599,6 +1670,228 @@ public class LiveViewSteadyStateBenchmark {
                 symbolCapacity,
                 isSymbolCached
         );
+    }
+
+    /**
+     * Rewrites the view's {@code _lv} so its partition-key decision says nothing translates,
+     * and reloads the view from disk, which is the path startup takes. A view created by
+     * this build records every direct SYMBOL term as translated; a view created by a build
+     * that resolved the term to its string records none, and every later compile honors
+     * what was recorded rather than re-deriving it. Rewriting the record before the first
+     * refresh therefore puts this run's view in the STRING key domain without touching the
+     * code that keys it, and with no checkpoint yet sealed there is nothing for the change
+     * to invalidate. Everything else in the definition round-trips unchanged.
+     */
+    private static void forceLegacyPartitionKeys(CairoEngine engine, CairoConfiguration configuration) {
+        final TableToken viewToken = engine.verifyTableName(VIEW_NAME);
+        final TableToken baseToken = engine.verifyTableName("payments");
+        final LiveViewDefinition current;
+        try (
+                io.questdb.std.str.Path path = new io.questdb.std.str.Path();
+                BlockFileReader reader = new BlockFileReader(configuration)
+        ) {
+            path.of(configuration.getDbRoot());
+            current = LiveViewDefinition.readFrom(
+                    reader, path, path.size(), viewToken, baseToken, new GenericRecordMetadata()
+            );
+        }
+        final LiveViewDefinition rewritten = new LiveViewDefinition(
+                current.getViewName(),
+                current.getViewSql(),
+                current.getBaseTableName(),
+                current.getBaseTableToken(),
+                current.getBaseTimestampType(),
+                current.getFlushEveryInterval(),
+                current.getFlushEveryIntervalUnit(),
+                current.getInMemoryInterval(),
+                current.getInMemoryIntervalUnit(),
+                current.getPartitionBy(),
+                current.getViewLowerBoundTimestamp(),
+                current.getStartFromKind(),
+                current.getAnchorSpec(),
+                current.getDependencyColumnNames(),
+                current.getDependencyColumnTypes(),
+                LiveViewPartitionKeyDecision.NOTHING_TRANSLATES,
+                current.getMetadata()
+        );
+        try (
+                io.questdb.std.str.Path path = new io.questdb.std.str.Path();
+                BlockFileWriter writer = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode())
+        ) {
+            writer.of(path.of(configuration.getDbRoot()).concat(viewToken)
+                    .concat(LiveViewDefinition.LIVE_VIEW_DEFINITION_FILE_NAME).$());
+            LiveViewDefinition.append(rewritten, writer);
+        }
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+    }
+
+    private static long internCount(LiveViewInstance instance) {
+        final LiveViewSymbolIdRegistry registry = instance.getPartitionKeyTranslators();
+        return registry != null ? registry.getInternCount() : 0;
+    }
+
+    private static long totalDictionarySize(LiveViewInstance instance) {
+        final LiveViewSymbolIdRegistry registry = instance.getPartitionKeyTranslators();
+        return registry != null ? registry.getTotalDictionarySize() : 0;
+    }
+
+    /**
+     * The restore proper - bounded generation selection, the root restore with its
+     * dictionary load, and the replay up to the applied base - which sits inside the
+     * restart probe's {@code read_back_ms} beside the probe's own refresh.
+     */
+    private static double restoreMillis(LiveViewInstance instance) {
+        final long micros = instance.getHeadCheckpointRestoreMicros();
+        return micros == Numbers.LONG_NULL ? 0.0 : micros / 1e3;
+    }
+
+    /**
+     * What the view's own partition-key dictionary costs to keep, beside the live key
+     * count it is reported against - the gap between the two is what a bounded frontier
+     * no longer bounds, since the dictionary is durable, append-only and never swept.
+     * <p>
+     * The three resident structures are reported separately because only the first is
+     * required by the durable format: {@code forward_bytes} is the {@code lvId -> string}
+     * half a restore must rebuild, {@code reverse_bytes} the {@code string -> lvId} index
+     * a restore builds in the same pass and could build lazily instead, and
+     * {@code base_id_cache_bytes} the {@code baseId -> lvId} accelerator a restart
+     * re-earns one resolve per distinct id. {@code dirty_band_bytes} is the WAL scratch,
+     * grown to the widest transaction band a row has reached. {@code disk_pages} and
+     * {@code disk_bytes} are the dictionary's directory and chunk pages every retained
+     * metadata segment holds, which is the on-disk side of the same growth: a seal appends
+     * a chunk for the delta and names its predecessor's chunks again rather than rewriting
+     * them. {@code interns} and {@code arms} are the registry's own counters - ids assigned
+     * and cursor opens armed - over the instance's life; a restarted instance starts both
+     * at zero.
+     */
+    private static void reportDictionary(
+            CairoConfiguration configuration,
+            Path dbRoot,
+            TableToken lvToken,
+            LiveViewInstance instance,
+            String label
+    ) throws IOException {
+        final LiveViewSymbolIdRegistry registry = instance.getPartitionKeyTranslators();
+        final long[] disk = dictionaryDiskBytes(configuration, dbRoot.resolve(lvToken.getDirName()));
+        if (registry == null || registry.getBoundSlotCount() == 0) {
+            System.out.printf(Locale.ROOT, "# %s slots=0 disk_pages=%d disk_bytes=%d%n", label, disk[0], disk[1]);
+            return;
+        }
+        System.out.printf(
+                Locale.ROOT,
+                "# %s slots=%d size=%d live_keys=%d forward_bytes=%d reverse_bytes=%d base_id_cache_bytes=%d "
+                        + "dirty_band_bytes=%d interns=%d arms=%d disk_pages=%d disk_bytes=%d%n",
+                label,
+                registry.getBoundSlotCount(),
+                registry.getTotalDictionarySize(),
+                anchorMapSize(instance),
+                registry.getForwardDictionaryBytes(),
+                registry.getReverseDictionaryBytes(),
+                registry.getBaseIdCacheBytes(),
+                registry.getDirtyBandBytes(),
+                registry.getInternCount(),
+                registry.getArmCount(),
+                disk[0],
+                disk[1]
+        );
+        reportDictionaryRebuild(registry, label);
+    }
+
+    /**
+     * Prices the decision a restore leaves open: whether to build the {@code string -> lvId}
+     * reverse index eagerly, in the same pass that loads the forward half, or lazily on the
+     * first intern. A restore interns every entry in id order, which is what builds the
+     * index and what checks uniqueness; loading the forward half alone is a {@code put} per
+     * entry. Both run here over the same strings the run's own dictionary holds, from
+     * memory rather than from pages, so the difference between them is the index build
+     * itself and nothing else - {@code reverse_share} is how much of the eager load it is.
+     * One pass each, unwarmed, which is also how a restart runs it.
+     */
+    private static void reportDictionaryRebuild(LiveViewSymbolIdRegistry registry, String label) {
+        final LiveViewCheckpointKeyDictionaryColumnSource source = registry.newDictionaryColumnSource();
+        long entries = 0;
+        long internNanos = 0;
+        long putNanos = 0;
+        for (int c = 0, n = source.getColumnCount(); c < n; c++) {
+            final int count = source.getEntryCount(c);
+            entries += count;
+            try (DirectSymbolMap map = new DirectSymbolMap(4096, 64, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)) {
+                final long start = System.nanoTime();
+                for (int id = 0; id < count; id++) {
+                    map.intern(source.getEntryValue(c, id));
+                }
+                internNanos += System.nanoTime() - start;
+            }
+            try (DirectSymbolMap map = new DirectSymbolMap(4096, 64, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)) {
+                final long start = System.nanoTime();
+                for (int id = 0; id < count; id++) {
+                    map.put(id, source.getEntryValue(c, id));
+                }
+                putNanos += System.nanoTime() - start;
+            }
+        }
+        System.out.printf(
+                Locale.ROOT,
+                "# %s_rebuild entries=%d intern_ms=%.3f put_ms=%.3f reverse_share=%.1f%%%n",
+                label,
+                entries,
+                internNanos / 1e6,
+                putNanos / 1e6,
+                internNanos > 0 ? 100.0 * (internNanos - putNanos) / internNanos : 0.0
+        );
+    }
+
+    /**
+     * Counts the key-dictionary pages - the directory kind and the chunk kind - across every
+     * metadata segment the view's checkpoint store retains, walking each published segment
+     * page by page; a {@code .tmp} name is a staged segment whose header is not committed.
+     * Retained rather than reachable: an obsolete segment holds pages no live root names any
+     * more and is counted until the purge this benchmark does not run reclaims it, which is
+     * also what the {@code # segments} line reports for the store as a whole.
+     *
+     * @return {@code {pages, bytes}}
+     */
+    private static long[] dictionaryDiskBytes(CairoConfiguration configuration, Path viewDir) throws IOException {
+        final Path checkpoints = viewDir.resolve(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
+        final Path metaDir = checkpoints.resolve(LiveViewCheckpointLayout.META_DIR_NAME);
+        final long[] out = new long[2];
+        if (!Files.exists(metaDir)) {
+            return out;
+        }
+        try (
+                io.questdb.std.str.Path checkpointsPath = new io.questdb.std.str.Path();
+                LiveViewCheckpointMetaSegmentReader reader = new LiveViewCheckpointMetaSegmentReader(configuration);
+                DirectoryStream<Path> files = Files.newDirectoryStream(metaDir)
+        ) {
+            checkpointsPath.of(checkpoints.toString());
+            for (Path file : files) {
+                final String name = file.getFileName().toString();
+                final int dot = name.indexOf('.');
+                if (dot < 0 || name.endsWith(".tmp")) {
+                    continue;
+                }
+                final long segmentId;
+                try {
+                    segmentId = Long.parseLong(name.substring(dot + 1));
+                } catch (NumberFormatException e) {
+                    continue;
+                }
+                reader.of(checkpointsPath, segmentId);
+                long offset = reader.firstPageOffset();
+                for (int p = 0, n = reader.getPageCount(); p < n; p++) {
+                    final long next = reader.openPageAt(offset, -1);
+                    final int kind = reader.getPageKind();
+                    if (kind == LiveViewCheckpointKeyDictionaryReader.DIRECTORY_PAGE_KIND
+                            || kind == LiveViewCheckpointKeyDictionaryReader.CHUNK_PAGE_KIND) {
+                        out[0]++;
+                        out[1] += next - offset;
+                    }
+                    offset = next;
+                }
+            }
+        }
+        return out;
     }
 
     /**
@@ -2132,27 +2425,40 @@ public class LiveViewSteadyStateBenchmark {
      * <p>
      * {@code MapFactory.createUnorderedMap} selects {@code Unordered4Map} or
      * {@code Unordered8Map} only while {@code keySize + valueSize} fits
-     * {@code cairo.sql.unordered.map.max.entry.size}, default 16. An INT key with the
-     * anchor-only 10-byte value sits at 14 and moves to {@code OrderedMap} at 26 once a
-     * 16-byte accumulator joins it; a LONG key was already past the limit at 18 before
-     * fusing, and a SYMBOL key was never eligible. The INT control is therefore the only
-     * run that can show the transition, and it is why it exists.
+     * {@code cairo.sql.unordered.map.max.entry.size}, 16 by default and 32 on a server.
+     * An INT key beside the anchor-only value fits the embedded default exactly and moves
+     * to {@code OrderedMap} once a fused accumulator joins it; a LONG key was already past
+     * the limit before fusing, and a SYMBOL key is eligible only in the {@code private}
+     * domain. {@code --map-entry-size} moves the limit so a run can state the boundary
+     * rather than sit on it.
      * <p>
-     * It is also the upper bound on what an LV-private integer key domain would be worth.
-     * A SYMBOL partition key is rewritten to STRING before it reaches any map, so it
-     * resolves per row and writes a variable-length UTF-16 key; an INT key over the same
-     * value set writes four fixed-width bytes and can reach the narrow map. The INT run
-     * therefore prices the key shape a private id would produce without paying for the
-     * translation that would produce it, and the SYMBOL run prices what ships. Neither is
-     * the measurement itself - see {@link PartitionKeyMode}.
+     * It is also the upper bound on what the LV-private integer key domain is worth. A
+     * SYMBOL partition key in the {@code legacy} domain is rewritten to STRING before it
+     * reaches any map, so it resolves per row and writes a variable-length UTF-16 key; in
+     * the {@code private} domain it is a 4-byte id the view's own dictionary assigned, and
+     * an INT key over the same value set writes the same four bytes without the
+     * translation that produces them. So a SYMBOL run brackets the translation between its
+     * two domains, and the INT run says how much of the gap is the key shape alone - see
+     * {@link PartitionKeyMode}.
      * <p>
      * A composite key is the same choice applied twice: {@code --key-columns=2} gives both
      * components this type, so an {@code [INT, INT]} run is the control for a
      * {@code [SYMBOL, SYMBOL]} one. Neither reaches the narrow map, because
      * {@code MapFactory} picks an unordered implementation only for a single key column.
+     * <p>
+     * {@code int-swapped} is the INT control with its three low bytes reversed, so the
+     * key's little-endian image on disk sorts in the key's own numeric order. A checkpoint
+     * partition map orders its pages by comparing key bytes, and a 4-byte key is written as
+     * the raw little-endian int, so a run of sequential ids - which is what a dictionary
+     * hands out - lands its consecutive keys in different leaves: the low byte moves first.
+     * This control keys the same value set with the opposite byte order and nothing else
+     * changed, so the difference between it and {@code int} is what the byte order alone
+     * costs the seal. It needs the account ordinal to stay below 2^24, which the generator
+     * satisfies by a wide margin, and it is not a shape a live view can produce.
      */
     private enum KeyType {
         INT("int"),
+        INT_SWAPPED("int-swapped"),
         LONG("long"),
         SYMBOL("symbol");
 
@@ -2168,19 +2474,28 @@ public class LiveViewSteadyStateBenchmark {
                     return keyType;
                 }
             }
-            throw new IllegalArgumentException("--key-type must be one of symbol, int, long: " + name);
+            throw new IllegalArgumentException("--key-type must be one of symbol, int, int-swapped, long: " + name);
         }
 
         String keyExpression(String symbolPrefix, String keyId) {
             return switch (this) {
                 case SYMBOL -> "'" + symbolPrefix + "' || " + keyId + "::string";
                 case INT -> keyId + "::int";
+                // bytes [b2, b1, b0, 0] of the ordinal, as the int whose little-endian
+                // image they are. SQL has no shift, so division and multiplication by
+                // powers of two stand in; every operand is non-negative.
+                case INT_SWAPPED -> "((((" + keyId + ") / 65536) & 255) + ((((" + keyId + ") / 256) & 255) * 256)"
+                        + " + (((" + keyId + ") & 255) * 65536))::int";
                 case LONG -> keyId + "::long";
             };
         }
 
         String columnDdl(String capacity, String indexClause) {
-            return this == SYMBOL ? "symbol" + capacity + " nocache" + indexClause : name;
+            return switch (this) {
+                case SYMBOL -> "symbol" + capacity + " nocache" + indexClause;
+                case INT, INT_SWAPPED -> "int";
+                case LONG -> "long";
+            };
         }
     }
 
@@ -2188,21 +2503,21 @@ public class LiveViewSteadyStateBenchmark {
      * Which key domain the view's runtime partition maps and its persisted checkpoint keys
      * are written in.
      * <p>
-     * {@code legacy} is what ships: a direct base SYMBOL partition term is rewritten to
-     * STRING at every site that keys on it, because a WAL symbol int is transaction-local
-     * and cannot be persisted. {@code private} is the LV-private integer key domain the
-     * optimization plan builds, and it is where a comparison between the two belongs -
-     * in one build, against a control that ran on the same host in the same run, rather
-     * than across branches.
+     * {@code private} is what ships: a direct base SYMBOL partition term keys through the
+     * view's own append-only {@code lvId -> string} dictionary, which the checkpoint
+     * persists beside the maps and restores ahead of them. {@code legacy} is the control:
+     * the domain a view keyed in before the dictionary existed, and still the domain of a
+     * view whose CREATE recorded that nothing translates. The run reaches it the way an
+     * upgrade does - it rewrites the partition-key decision {@code _lv} carries to say
+     * nothing translates and reloads the view before its first refresh - so the two modes
+     * differ in nothing but the key domain: same build, same rows, same host, same run.
      * <p>
-     * Nothing can emit a translated id yet, so {@code private} is refused rather than
-     * silently measured. Until the sink exists, {@code --key-type=int} is the standing
-     * upper bound: it keys the same fixed-width four bytes and pays for no translation, so
-     * it brackets the prize from above while {@code --key-type=symbol} brackets it from
-     * below.
+     * {@code none} is what a run reports when the key is not a SYMBOL at all, and cannot be
+     * asked for.
      */
     private enum PartitionKeyMode {
         LEGACY("legacy"),
+        NONE("none"),
         PRIVATE_ID("private");
 
         private final String name;
@@ -2213,23 +2528,11 @@ public class LiveViewSteadyStateBenchmark {
 
         static PartitionKeyMode of(String name) {
             for (PartitionKeyMode mode : values()) {
-                if (mode.name.equals(name)) {
+                if (mode != NONE && mode.name.equals(name)) {
                     return mode;
                 }
             }
             throw new IllegalArgumentException("--partition-key-mode must be one of legacy, private: " + name);
-        }
-
-        void reject() {
-            if (this == PRIVATE_ID) {
-                throw new IllegalArgumentException(
-                        "--partition-key-mode=private has nothing to switch to: a sink can emit a translated "
-                                + "symbol id now, but no live view binds one - the shared partition-term "
-                                + "classifier and the translator registry it would read are not built yet. Use "
-                                + "--key-type=int for the upper bound on what one would be worth, and "
-                                + "LiveViewPartitionKeySinkBenchmark for what the emission itself costs"
-                );
-            }
         }
     }
 
