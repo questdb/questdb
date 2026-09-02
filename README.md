@@ -227,7 +227,7 @@ Protocol:
 - [C/C++](https://questdb.com/docs/connect/clients/c-and-cpp/)
 - [Go](https://questdb.com/docs/connect/clients/go/)
 - [Java](https://questdb.com/docs/connect/clients/java/)
-- [NodeJS](https://questdb.com/docs/connect/clients/nodejs/)
+- [NodeJS](https://questdb.com/docs/connect/clients/nodejs/) (QWP support coming soon)
 - [Rust](https://questdb.com/docs/connect/clients/rust/)
 
 ### Connect to QuestDB
