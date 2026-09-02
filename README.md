@@ -95,7 +95,7 @@ One engine covers the full lifecycle of the data:
 
 The SQL is standard, extended where time series needs it: `SAMPLE BY`,
 `LATEST ON`, `ASOF JOIN`, `WINDOW JOIN`, `HORIZON JOIN`, materialized views,
-and n-dimensional arrays with 2D arrays for order books.
+and n-dimensional arrays.
 
 ```sql
 -- 15-minute OHLCV bars over the last day, from the live demo
