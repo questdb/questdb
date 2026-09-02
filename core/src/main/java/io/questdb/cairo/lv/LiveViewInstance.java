@@ -151,6 +151,7 @@ public class LiveViewInstance implements QuietCloseable {
     // being silently excluded by the boundary; an earlier START FROM avoids it.
     private volatile long belowLowerBoundCount;
     private RecordCursorFactory compiledFactory;
+    private LiveViewCompiledPlan compiledPlan;
     // Cumulative count of coupled dedup-base refresh cycles that proved the base range
     // clean and took the cheap raw-WAL append path.
     // In-memory observability, reset to 0 on restart; bumped only on the refresh worker.
@@ -861,6 +862,15 @@ public class LiveViewInstance implements QuietCloseable {
 
     public RecordCursorFactory getCompiledFactory() {
         return compiledFactory;
+    }
+
+    /**
+     * The decomposition of {@link #getCompiledFactory()} the refresh path drives. Set and
+     * cleared with the factory it describes - it borrows that factory's functions and
+     * cross index, so it must never outlive it.
+     */
+    public LiveViewCompiledPlan getCompiledPlan() {
+        return compiledPlan;
     }
 
     public long getDedupRawWalCleanCycles() {
@@ -1892,11 +1902,12 @@ public class LiveViewInstance implements QuietCloseable {
         this.checkpointRestoreSucceeded = true;
     }
 
-    public void setCompiledFactory(RecordCursorFactory factory) {
+    public void setCompiledFactory(RecordCursorFactory factory, LiveViewCompiledPlan plan) {
         if (compiledFactory != factory) {
             Misc.free(compiledFactory);
             compiledFactory = factory;
         }
+        compiledPlan = plan;
     }
 
     /**
@@ -2388,6 +2399,8 @@ public class LiveViewInstance implements QuietCloseable {
      */
     private void freeCompiledArtifacts() {
         compiledFactory = Misc.free(compiledFactory);
+        // The plan borrows the factory's functions and cross index; it dies with it.
+        compiledPlan = null;
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
         // The head's root was frozen from the window state those artifacts own, and

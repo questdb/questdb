@@ -717,14 +717,15 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                     node.token,
                     sqlExecutionContext.isLiveViewCompile() ? "live view" : "materialized view"
             );
+            // Construction succeeded, so the function has taken ownership of args (see the args.clear()
+            // below on the success path). Close the function itself - not just its argument list - so
+            // any native resource it allocated beyond its arguments (e.g. an IN-value set) is released
+            // instead of leaked. Closing the function also frees the args it owns, so do not free them
+            // separately. Preserve the rejection exception if close() were to throw.
             if (args != null) {
                 args.clear(); // newInstance() transferred argument ownership to function
             }
-            try {
-                function.close();
-            } catch (Throwable cleanupFailure) {
-                exception.addSuppressed(cleanupFailure);
-            }
+            Misc.free(function, exception);
             throw exception;
         }
         if (args != null) {
@@ -1447,6 +1448,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             case ColumnType.CHAR:
                 if (toType == ColumnType.SYMBOL) {
                     return new CastCharToSymbolFunctionFactory.Func(function);
+                } else if (ColumnType.isDecimal(toType)) {
+                    return CastStrToDecimalFunctionFactory.newInstance(sqlExecutionContext.getDecimal256(), position, toType, function);
                 }
                 break;
             case ColumnType.IPv4:
@@ -1553,13 +1556,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
                 if (function instanceof IntConstant) {
                     return function;
                 } else {
-                    int intConst = function.getInt(null);
-                    long longConst = function.getLong(null);
-                    if (intConst == Numbers.INT_NULL || intConst == longConst) {
-                        return IntConstant.newInstance(intConst);
-                    } else {
-                        return new LongConstant(longConst);
-                    }
+                    final int intConst = function.getInt(null);
+                    return intConst == Numbers.INT_NULL ? IntConstant.NULL : IntConstant.newInstance(intConst);
                 }
             case ColumnType.BOOLEAN:
                 if (function instanceof BooleanConstant) {

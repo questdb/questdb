@@ -26,9 +26,13 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshSqlExecutionContext;
+import io.questdb.cairo.security.AbstractPrincipalAwareSecurityContext;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -38,6 +42,8 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * A live view is only well-defined if its result is a pure function of the base table and
@@ -109,6 +115,41 @@ public class LiveViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRefreshContextForPrincipalKeepsViewScopedInsert() throws Exception {
+        // forPrincipal must NOT downgrade the refresh context to a plain read-only context: its
+        // newPrincipalContext override returns this, so the view-scoped authorizeInsert (which lets writes
+        // through to the refreshing view's own table) survives the per-principal derivation. A plain
+        // ReadOnlySecurityContext would deny the view insert too. Mirrors the mat view guard in MatViewTest.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, g SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY g ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull("live view must be registered at CREATE", instance);
+            final TableToken viewToken = instance.getLiveViewToken();
+            final TableToken baseToken = engine.verifyTableName("base");
+
+            final LiveViewRefreshSqlExecutionContext ctx = new LiveViewRefreshSqlExecutionContext(engine, 0);
+            final SecurityContext securityContext = ctx.getSecurityContext();
+
+            ctx.ofRefreshingInstance(instance);
+            try {
+                // forPrincipal returns the very same instance rather than deriving a plain read-only context
+                final SecurityContext derived = ((AbstractPrincipalAwareSecurityContext) securityContext).forPrincipal("alice");
+                Assert.assertSame(securityContext, derived);
+
+                // the view-scoped allowance survives the derivation: the refreshing view's own table stays
+                // writable, while every other table stays denied (a plain read-only downgrade would deny the
+                // view insert too, so the permitted case is what proves the override was not dropped)
+                derived.authorizeInsert(viewToken);
+                assertInsertDenied(derived, baseToken);
+            } finally {
+                ctx.ofRefreshingInstance(null);
+            }
+        });
+    }
+
+    @Test
     public void testRefreshContextForbidsNonDeterministicFunctions() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -135,6 +176,49 @@ public class LiveViewRefreshSqlExecutionContextTest extends AbstractCairoTest {
                             Chars.contains(e.getFlyweightMessage(), "non-deterministic function cannot be used in live view: now")
                     );
                 }
+            } finally {
+                ctx.setLiveViewCompile(false);
+            }
+        });
+    }
+
+    @Test
+    public void testRefreshContextToleratesPartitionFormatChangeWithoutReopening() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('2026-01-01T00:00:00.000000Z', 1),
+                    ('2026-01-02T00:00:00.000000Z', 2)
+                    """);
+            drainWalQueue();
+
+            final AtomicInteger readerBorrowCount = new AtomicInteger();
+            final LiveViewRefreshSqlExecutionContext ctx = new LiveViewRefreshSqlExecutionContext(engine, 0) {
+                @Override
+                public TableReader getReader(TableToken tableToken, long version) {
+                    readerBorrowCount.incrementAndGet();
+                    return super.getReader(tableToken, version);
+                }
+            };
+            Assert.assertFalse(sqlExecutionContext.isPartitionFormatChangeTolerated());
+            Assert.assertTrue(ctx.isPartitionFormatChangeTolerated());
+            ctx.setLiveViewCompile(true);
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = compiler.compile("SELECT ts, i FROM base WHERE i > 0", ctx).getRecordCursorFactory()) {
+                ctx.setLiveViewCompile(false);
+                readerBorrowCount.set(0);
+                execute("ALTER TABLE base CONVERT PARTITION TO PARQUET LIST '2026-01-01'");
+                drainWalQueue();
+
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    long rowCount = 0;
+                    while (cursor.hasNext()) {
+                        rowCount++;
+                    }
+                    Assert.assertEquals(2, rowCount);
+                }
+                Assert.assertEquals("format tolerance must reuse the borrowed reader", 1, readerBorrowCount.get());
             } finally {
                 ctx.setLiveViewCompile(false);
             }

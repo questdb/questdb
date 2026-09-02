@@ -272,16 +272,17 @@ class AsyncHorizonJoinRecordCursor implements RecordCursor {
         this.slaveFrameCursor = (TablePageFrameCursor) slaveFactory.getPageFrameCursor(executionContext, ORDER_ASC);
 
         // Initialize record functions with a symbol table source that routes lookups
-        // to the correct source (master or slave) based on column mappings. Skip the group by
-        // functions: the atom initializes them in initTimeFrameCursors(), before any frame is
-        // dispatched, and donates the owner state to the per-worker clones. Re-initializing them
-        // here would re-run stateful initialization, such as a cursor comparison re-executing its
-        // scalar sub-query, and could diverge from the state the workers observe. The constructor
+        // to the correct source (master or slave) based on column mappings. The constructor
         // pre-filters the non-group-by functions once, so cached re-executions skip the
         // per-function classification scan.
         final HorizonJoinSymbolTableSource symbolTableSource = atom.getSymbolTableSource();
         symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveFrameCursor);
         Function.init(nonGroupByFunctions, symbolTableSource, executionContext, null);
+        // The group by functions bind here too, and only here: a parent projection or sort over a
+        // SYMBOL aggregate resolves the output column's static symbol table at getCursor() time,
+        // which is before the slave time-frame cache is built on the first read. The atom donates
+        // the owner state to the per-worker clones when it binds those in initTimeFrameCursors().
+        atom.initOwnerGroupByFunctions(executionContext);
 
         isDataMapBuilt = false;
         isSlaveTimeFrameCacheBuilt = false;

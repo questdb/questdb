@@ -36,6 +36,7 @@ import io.questdb.cairo.lv.ForwardingLiveViewStateStore;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshTask;
 import io.questdb.cairo.lv.LiveViewStateStore;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -213,6 +214,119 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             }
         };
         AbstractCairoTest.setUpStatic();
+    }
+
+    @Test
+    public void testApplyLagDeferralRebuildsAdvancedWindowState() throws Exception {
+        // Regression for questdb#7514: a reader saw the view's FIRST row carrying a running
+        // count well above 1 (rn=193 on a 12-row lead, rn=201 on a 22-row generation).
+        //
+        // The drain walks base commits in sequencer order, feeding each through the compiled
+        // window cursor. On an out-of-order commit it rolls the cycle back - the WAL draft and
+        // latestSeenTs - and hands off to o3Replay, which clears the accumulators before it
+        // recomputes. But o3Replay first gates on the base being applied, and when
+        // ApplyWal2TableJob has not caught up ensureBaseApplied throws LiveViewApplyLagException
+        // to defer the cycle. That deferral used to be treated as a clean no-op. It is not: the
+        // commits BELOW the offending one had already advanced the accumulators, and the
+        // rollback does not undo them. windowStateDirty is a per-turn field that refreshInstance
+        // re-seeds from the instance at every entry, so the debt evaporated and the next turn
+        // drained the same commits again over accumulators that already counted them.
+        //
+        // This test drives that interleaving with no threads at all: it withholds the base apply
+        // so ensureBaseApplied is guaranteed to throw. The assertion is the debt itself -
+        // isWindowStateDirty() after the deferral - because that is what the next turn reads.
+        // Asserting only the final contents would not hold the fix: once the apply lands, the
+        // re-drain hits the same O3 commit again, this time replays for real, and clearWindowState
+        // converges the view. That is exactly why the soak only ever caught this mid-flight.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+            execute("CREATE TABLE base (ts TIMESTAMP, i LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS
+                    SELECT ts, i, count(*) OVER (
+                        PARTITION BY 0
+                        ORDER BY ts
+                        ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW
+                    ) AS rn
+                    FROM base
+                    """);
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                Assert.assertFalse("the seeded view must start healthy", instance.isInvalid());
+                Assert.assertFalse("a quiesced seed owes no window-state rebuild", instance.isWindowStateDirty());
+
+                // Commit 1: three in-order rows. The drain feeds these through the window cursor,
+                // which is what leaves the accumulators at 3.
+                execute("""
+                        INSERT INTO base VALUES
+                            ('2027-01-01T00:00:01.000000Z', 1),
+                            ('2027-01-01T00:00:02.000000Z', 2),
+                            ('2027-01-01T00:00:03.000000Z', 3)
+                        """);
+                // Commit 2: a row below commit 1's maximum, so the drain classifies it as
+                // cross-commit O3 and diverts to o3Replay.
+                execute("INSERT INTO base VALUES ('2027-01-01T00:00:00.500000Z', 4)");
+
+                // Both commits are in the sequencer, but only commit 1 queued a refresh task:
+                // LiveViewStateStoreImpl gates the notification per base table and commit 2 found
+                // the gate closed. A turn driven from that task would stop AT commit 1, so the two
+                // commits would land in different turns and the O3 detect would fire having fed
+                // nothing - not the shape this regression is about. Consume the task without
+                // refreshing; notifyBaseRefreshed observes the newer commit and re-enqueues at
+                // commit 2's seqTxn, so the next turn walks BOTH: it feeds commit 1 through the
+                // window cursor and only THEN discovers commit 2 is out of order.
+                final LiveViewStateStore stateStore = engine.getLiveViewStateStore();
+                final LiveViewRefreshTask pendingTask = new LiveViewRefreshTask();
+                Assert.assertTrue(
+                        "the base commits must have queued a refresh task",
+                        stateStore.tryDequeueRefreshTask(pendingTask)
+                );
+                stateStore.notifyBaseRefreshed(pendingTask, pendingTask.seqTxn);
+
+                // Deliberately NO drainWalQueue() here. The raw-WAL drain reads both commits, but
+                // the base TABLE is unapplied, so o3Replay's ensureBaseApplied gate cannot be
+                // satisfied and the cycle defers. This is the whole point of the fixture: it makes
+                // the apply lag a certainty rather than a race the test would have to win.
+                drainJob(job);
+
+                Assert.assertNotEquals(
+                        "the cycle must have deferred on base apply lag, or this test is not exercising the gate",
+                        Numbers.LONG_NULL,
+                        instance.getApplyLagDeferTargetSeqTxn()
+                );
+                Assert.assertTrue(
+                        "a deferred cycle that fed rows through the window cursor must leave the "
+                                + "accumulator debt on the instance for the next turn to rebuild",
+                        instance.isWindowStateDirty()
+                );
+
+                // Let the apply land and the view converge, then assert the view agrees with a
+                // from-scratch evaluation of its own SELECT - rn gapless from 1.
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+
+            TestUtils.assertSqlCursors(
+                    engine,
+                    sqlExecutionContext,
+                    """
+                            (SELECT ts, i, count(*) OVER (
+                                PARTITION BY 0
+                                ORDER BY ts
+                                ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW
+                            ) AS rn FROM base) ORDER BY 1""",
+                    "(lv) ORDER BY 1",
+                    LOG,
+                    true
+            );
+            assertNoRefreshFaults("lv");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
@@ -426,6 +540,128 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // their from-scratch recomputes.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runMultiViewConcurrent(rnd, 4, 800));
+    }
+
+    @Test
+    public void testConcurrentRefreshCannotInvalidateFromStaleBaseHead() throws Exception {
+        // The fallback worker used to read the base head first and the volatile view watermark
+        // second, without the per-view refresh latch. Freeze it BETWEEN those two reads, publish a
+        // new base commit, and let a notification worker consume that commit. The freeze point is
+        // what gives this test its force: the commit lands after one operand is captured and before
+        // the other, so the two read orders disagree. In the correct order the watermark is already
+        // captured (old) and the base head is read after (new), which is coherent; in the racy order
+        // the base head is captured (old) and the watermark is read after (new), and that mixed-time
+        // pair durably invalidates a healthy view. Assert the view survives.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS
+                    SELECT ts, x, count(*) OVER (
+                        PARTITION BY 0
+                        ORDER BY ts
+                        ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW
+                    ) AS rn
+                    FROM base
+                    """);
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            try (LiveViewRefreshJob seedJob = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(seedJob, "lv");
+            }
+            Assert.assertFalse("the seeded view must start healthy", instance.isInvalid());
+            final long processedBefore = instance.getLastProcessedSeqTxn();
+            final LiveViewStateStore stateStore = engine.getLiveViewStateStore();
+            final LiveViewRefreshTask staleTask = new LiveViewRefreshTask();
+            while (stateStore.tryDequeueRefreshTask(staleTask)) {
+                stateStore.notifyBaseRefreshed(staleTask, staleTask.seqTxn);
+            }
+
+            // The idle fallback scan is sharded by table id (LiveViewRegistry.getShardedViews), so the
+            // fallback worker reaches the ahead guard only for the views it owns. It owns this one today
+            // - setUpCairo resets the table id generator per test, making base=1 and lv=2 - but pin the
+            // assumption here. Without this, a fixture edit that shifts lv's id (one more CREATE TABLE
+            // ahead of it) would surface as the 30s guardReadsSplit timeout below, which names the latch
+            // rather than the shard it actually lost.
+            final int fallbackWorkerId = 0;
+            final int workerCount = 2;
+            Assert.assertEquals(
+                    "the fallback worker must own the lv shard, or its scan never reaches the ahead guard",
+                    fallbackWorkerId,
+                    Math.floorMod(instance.getLiveViewToken().getTableId(), workerCount)
+            );
+
+            final CountDownLatch guardReadsSplit = new CountDownLatch(1);
+            final CountDownLatch releaseFallback = new CountDownLatch(1);
+            final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+            try (
+                    LiveViewRefreshJob fallbackJob = new LiveViewRefreshJob(fallbackWorkerId, workerCount, engine, 1);
+                    LiveViewRefreshJob notificationJob = new LiveViewRefreshJob(1, workerCount, engine, 1)
+            ) {
+                fallbackJob.setSimulateBaseCommitBetweenAheadGuardReadsForTest(() -> {
+                    guardReadsSplit.countDown();
+                    try {
+                        if (!releaseFallback.await(30, TimeUnit.SECONDS)) {
+                            throw new AssertionError("timed out waiting to release fallback scan");
+                        }
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        throw new AssertionError("fallback scan interrupted", e);
+                    }
+                });
+                final Thread fallbackThread = new Thread(() -> {
+                    try {
+                        fallbackJob.processNotificationsForTest();
+                    } catch (Throwable t) {
+                        errors.add(t);
+                        guardReadsSplit.countDown();
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-stale-base-head-scan");
+                fallbackThread.start();
+                try {
+                    Assert.assertTrue(
+                            "fallback scan did not stop between the two ahead-guard reads",
+                            guardReadsSplit.await(30, TimeUnit.SECONDS)
+                    );
+                    if (!errors.isEmpty()) {
+                        throw new RuntimeException("fallback scan thread failed", errors.peek());
+                    }
+                    execute("INSERT INTO base VALUES ('2026-06-01T00:00:00.000000Z', 1)");
+                    Assert.assertTrue("the notification worker must consume the new commit",
+                            notificationJob.processNotificationsForTest());
+                    Assert.assertTrue(
+                            "the notification worker must advance the view before the fallback resumes",
+                            instance.getLastProcessedSeqTxn() > processedBefore
+                    );
+                    // The guard compares the watermark against max(cached head, writerTxn), so a
+                    // read-order swap only shows while the base apply trails the view. Nothing
+                    // drains the WAL queue here; pin that, or a fixture edit that applies the
+                    // commit first leaves this test green under the swap.
+                    Assert.assertTrue(
+                            "the base writerTxn must trail the view watermark, or a read-order swap in the ahead guard goes undetected",
+                            engine.getTableSequencerAPI().getTxnTracker(engine.verifyTableName("base")).getWriterTxn()
+                                    < instance.getLastProcessedSeqTxn()
+                    );
+                } finally {
+                    releaseFallback.countDown();
+                    fallbackThread.join(30_000);
+                }
+                Assert.assertFalse("fallback scan thread did not finish", fallbackThread.isAlive());
+            }
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("fallback scan thread failed", errors.peek());
+            }
+
+            Assert.assertFalse(
+                    "a fresh base commit processed concurrently with the fallback scan must not invalidate the live view",
+                    instance.isInvalid()
+            );
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
+        });
     }
 
     @Test
@@ -1015,6 +1251,19 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         assertMemoryLeak(() -> runVarSizeReaderChurnSoak(rnd, 4, 4, 800));
     }
 
+    /**
+     * False: {@link #setUpStatic} pins this class's {@code MillisecondClock} to
+     * {@code MillisecondClockImpl.INSTANCE}, so the storage engine's spin deadlines measure real
+     * time here no matter how far the soaks fast-forward the microsecond clock. That keeps
+     * {@link AbstractLiveViewTest#setUp} from raising {@code spinLockTimeout} past a simulated year,
+     * which would cost this class - the only live view suite running readers against a real clock -
+     * its 5s reader-side "Transaction read timeout" and leave only the 20-minute class timeout.
+     */
+    @Override
+    protected boolean isMillisecondClockSimulated() {
+        return false;
+    }
+
     private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
         TableWriter.Row row = walWriter.newRow(ts);
         if (symIdx < 0) {
@@ -1074,13 +1323,6 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             default -> throw new IllegalArgumentException("variant=" + variant);
         };
     }
-
-    // Drives the named view's seed sweep to completion, re-fetching the instance
-    // each pass, then applies the LV WAL. Mirrors the fuzz harness.
-
-    // Pumps the refresh job until no further LV WAL work is produced, advancing the
-    // clock each pass so deferred flushes land, and applying the LV's own WAL after
-    // each burst. Mirrors the fuzz harness.
 
     // Like newPacedWriterThread, but for the var-size base table (ts, vs STRING,
     // vv VARCHAR): writer w ingests the round-robin slice fromIndex+w, fromIndex+w+numWriters,

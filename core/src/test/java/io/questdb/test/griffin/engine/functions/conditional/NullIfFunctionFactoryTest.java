@@ -65,6 +65,69 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDecimalNullBothOperands() throws Exception {
+        assertQuery("select nullif(a, b) is null n from x")
+                .ddl("create table x (a decimal(9,2), b decimal(38,5))",
+                        "insert into x values (null, null)")
+                .expectSize()
+                .returns("""
+                        n
+                        true
+                        """);
+    }
+
+    @Test
+    public void testDecimalNullLeftOperandRescaled() throws Exception {
+        // Operands differing in width or scale take the rescaling path.
+        // A NULL left operand must stay NULL at every result width.
+        assertQuery("""
+                select nullif(d8, r) is null n8, nullif(d16, r) is null n16, nullif(d32, r) is null n32\
+                , nullif(d64, r) is null n64, nullif(d128, r) is null n128, nullif(d256, r) is null n256 from x""")
+                .ddl("""
+                                create table x (d8 decimal(2,1), d16 decimal(4,2), d32 decimal(9,3)\
+                                , d64 decimal(18,4), d128 decimal(38,5), d256 decimal(76,6), r decimal(38,2))""",
+                        "insert into x values (null, null, null, null, null, null, 1.50m)")
+                .expectSize()
+                .returns("""
+                        n8\tn16\tn32\tn64\tn128\tn256
+                        true\ttrue\ttrue\ttrue\ttrue\ttrue
+                        """);
+    }
+
+    @Test
+    public void testDecimalNullLeftOperandUnscaled() throws Exception {
+        assertQuery("""
+                select nullif(d8, r8) is null n8, nullif(d16, r16) is null n16, nullif(d32, r32) is null n32\
+                , nullif(d64, r64) is null n64, nullif(d128, r128) is null n128, nullif(d256, r256) is null n256 from x""")
+                .ddl("""
+                                create table x (d8 decimal(2,1), r8 decimal(2,1), d16 decimal(4,2), r16 decimal(4,2)\
+                                , d32 decimal(9,3), r32 decimal(9,3), d64 decimal(18,4), r64 decimal(18,4)\
+                                , d128 decimal(38,5), r128 decimal(38,5), d256 decimal(76,6), r256 decimal(76,6))""",
+                        """
+                                insert into x values (null, 1.5m, null, 1.50m, null, 1.500m, null, 1.5000m\
+                                , null, 1.50000m, null, 1.500000m)""")
+                .expectSize()
+                .returns("""
+                        n8\tn16\tn32\tn64\tn128\tn256
+                        true\ttrue\ttrue\ttrue\ttrue\ttrue
+                        """);
+    }
+
+    @Test
+    public void testDecimalRescaledEquality() throws Exception {
+        assertQuery("select a, b, nullif(a, b) n, nullif(a, b) is null isNull from x")
+                .ddl("create table x (a decimal(9,2), b decimal(38,5))",
+                        "insert into x values (1.50m, 1.50000m), (2.50m, 1.50000m), (null, 1.50000m)")
+                .expectSize()
+                .returns("""
+                        a\tb\tn\tisNull
+                        1.50\t1.50000\t\ttrue
+                        2.50\t1.50000\t2.50\tfalse
+                        \t1.50000\t\ttrue
+                        """);
+    }
+
+    @Test
     public void testDecimalSimple() throws Exception {
         assertQuery("select dec, nullif(dec,0.3m) from x")
                 .ddl("create table x as (" +
@@ -119,6 +182,40 @@ public class NullIfFunctionFactoryTest extends AbstractCairoTest {
                         0.4\t0.4
                         0.5\t0.5
                         """);
+    }
+
+    @Test
+    public void testFirstArgumentIsReadOncePerRow() throws Exception {
+        // nullif compared one read of its first argument and returned another. A second read of a
+        // non-deterministic argument is a fresh draw, so nullif returned the very value it was
+        // asked to exclude - roughly one row in four for a two-valued draw. Each count below is
+        // zero only while the argument is read once per row.
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(1, 2, 0), 1) AS v FROM long_sequence(10_000)) WHERE v = 1")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_long(1, 2, 0), 1) AS v FROM long_sequence(10_000)) WHERE v = 1")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(1, 2, 0)::DOUBLE, 1.0) AS v FROM long_sequence(10_000)) WHERE v = 1.0")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            // 'B', not 'A': Rnd.nextChar() draws from 'B'..'Z', so excluding 'A' can never null a
+            // row out and the assertion would hold however many times the argument is read.
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_char(), 'B') AS v FROM long_sequence(10_000)) WHERE v = 'B'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(1, 2, 0)::IPV4, '0.0.0.1') AS v FROM long_sequence(10_000)) WHERE v = '0.0.0.1'")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+
+            // An INT argument that is neither width stable nor row stable cannot be read at both
+            // widths at all, so getLong() moves the comparison to long width and reads once there.
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(1, 2, 0) * 2, 2)::LONG AS v FROM long_sequence(10_000)) WHERE v = 2")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+
+            // BOTH arguments have to move to long width together. p + q is 2147483648 there and the
+            // INT_NULL sentinel when it wraps, so comparing the 64-bit first argument against the
+            // wrapped second one misses the equal pair and hands back the excluded value.
+            execute("CREATE TABLE nw AS (SELECT 2_147_483_647 p, 1 q FROM long_sequence(1_000))");
+            assertQuery("SELECT count() AS c FROM (SELECT nullif(rnd_int(0, 1, 0) + 2_147_483_647, p + q)::LONG AS v FROM nw) WHERE v = 2_147_483_648")
+                    .noLeakCheck().noRandomAccess().expectSize().returns("c\n0\n");
+        });
     }
 
     @Test
