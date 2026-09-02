@@ -27,11 +27,16 @@ package io.questdb.network;
 import io.questdb.log.Log;
 import io.questdb.std.Mutable;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 
 public abstract class IOContext<T extends IOContext<T>> implements Mutable, QuietCloseable {
+    private static final long DISCONNECTING_OFFSET = Unsafe.getFieldOffset(IOContext.class, "disconnecting");
     protected final Socket socket;
     protected long heartbeatId = -1;
+    // 0 while this lease of the context is live, flipped to 1 by the single caller that claims the
+    // disconnect. of() resets it at every checkout so each connection starts unclaimed.
+    private volatile int disconnecting = 0;
     private int disconnectReason;
     private volatile boolean initialized = false;
 
@@ -85,6 +90,7 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
 
     @SuppressWarnings("unchecked")
     public final T of(long fd) {
+        disconnecting = 0;
         socket.of(fd);
         return (T) this;
     }
@@ -108,6 +114,18 @@ public abstract class IOContext<T extends IOContext<T>> implements Mutable, Quie
 
     public void setHeartbeatId(long heartbeatId) {
         this.heartbeatId = heartbeatId;
+    }
+
+    /**
+     * Atomically claims this context for disconnect. Returns {@code true} for the single caller that
+     * wins the claim and must free it; {@code false} for any other caller, which must leave it alone.
+     * This makes {@link AbstractIODispatcher#doDisconnect} idempotent when two threads reach it for the
+     * same context concurrently -- e.g. {@code close()}'s pendingHeartbeats sweep racing a worker's
+     * post-close {@code disconnect()}/{@code registerChannel()} -- so the context is freed exactly once.
+     * The claim is reset per lease in {@link #of(long)}.
+     */
+    public boolean tryDisconnect() {
+        return Unsafe.cas(this, DISCONNECTING_OFFSET, 0, 1);
     }
 
     private void _clear() {

@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -131,8 +132,12 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
             this.result = new SimdJsonResult();
             this.stringBuf = new DirectUtf8Sink(maxJsonValueSize);
             // Allocate native memory for column names (stable pointers for C++ access).
+            // The parser keeps protective quotes on a dotted COLUMNS field name (e.g. "a.b")
+            // so its dots stay content for display; the JSON extraction key must strip them,
+            // or the C++ matcher looks up a field literally spelled "a.b" and never matches
+            // the JSON key a.b, silently returning NULL.
             for (int i = 0; i < columnCount; i++) {
-                CharSequence name = columnNames.getQuick(i);
+                CharSequence name = SqlUtil.toColumnName(columnNames.getQuick(i));
                 @SuppressWarnings("resource") DirectUtf8Sink nameSink = new DirectUtf8Sink(name.length());
                 nameSink.put(name);
                 columnNameSinks[i] = nameSink;
@@ -481,7 +486,7 @@ public class JsonUnnestSource implements UnnestSource, QuietCloseable {
                 .put("JSON UNNEST: value exceeds maximum size of ")
                 .put(maxJsonValueSize)
                 .put(" bytes for column '")
-                .put(columnNames.getQuick(sourceCol))
+                .put(SqlUtil.toColumnName(columnNames.getQuick(sourceCol)))
                 .put("' at array index ")
                 .put(elementIndex);
     }

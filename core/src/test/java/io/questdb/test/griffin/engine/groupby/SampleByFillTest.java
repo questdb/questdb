@@ -14,7 +14,6 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
-import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -195,6 +194,34 @@ public class SampleByFillTest extends AbstractCairoTest {
                                                 Row forward scan
                                                 Frame forward scan on: weather
                             """);
+        });
+    }
+
+    @Test
+    public void testFillConstCharValueAgainstDecimalTarget() throws Exception {
+        assertMemoryLeak(() -> {
+            // a single-digit fill literal types as CHAR and converts; a non-numeric one is
+            // reported against the literal rather than raising per filled row
+            execute("CREATE TABLE x (val DECIMAL(10, 2), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO x VALUES " +
+                    "(1.00::DECIMAL(10,2), '2024-01-01T00:00:00.000000Z')," +
+                    "(3.00::DECIMAL(10,2), '2024-01-01T02:00:00.000000Z')");
+
+            assertQuery("SELECT first(val), ts FROM x SAMPLE BY 1h FILL('5') ALIGN TO CALENDAR")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            first\tts
+                            1.00\t2024-01-01T00:00:00.000000Z
+                            5.00\t2024-01-01T01:00:00.000000Z
+                            3.00\t2024-01-01T02:00:00.000000Z
+                            """);
+
+            String sql = "SELECT first(val), ts FROM x SAMPLE BY 1h FILL('a') ALIGN TO CALENDAR";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .fails(sql.indexOf("'a'"), "inconvertible value: `a` [CHAR -> DECIMAL(10,2)]");
         });
     }
 
@@ -915,8 +942,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                             final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
                             final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(
                                     engine,
-                                    circuitBreakerConfiguration,
-                                    MemoryTag.NATIVE_DEFAULT
+                                    circuitBreakerConfiguration
                             );
                             try {
                                 engine.execute(

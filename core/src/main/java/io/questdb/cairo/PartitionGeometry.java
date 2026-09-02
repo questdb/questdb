@@ -86,7 +86,7 @@ public class PartitionGeometry implements Closeable, Mutable {
      * that never change for a directory - unlike a partition index, which shifts whenever a partition is
      * inserted or removed.
      */
-    private static final int LONGS_PER_RESOLVED = 10;
+    private static final int LONGS_PER_RESOLVED = 11;
     private static final int PIECE_CUMULATIVE_LO = 4;
     private static final int PIECE_ROW_COUNT = 3;
     private static final int PIECE_ROW_OFFSET = 2;
@@ -101,6 +101,7 @@ public class PartitionGeometry implements Closeable, Mutable {
     private static final int RES_NAME_TXN = 1;
     private static final int RES_PIECE_COUNT = 3;
     private static final int RES_PIECE_LO = 2;
+    private static final int RES_SEQ_TXN = 10;
     private static final int RES_WRITER_TXN = 6;
     /**
      * The piece array being built by {@link #beginUpdate}/{@link #addPiece}, not yet installed.
@@ -294,6 +295,17 @@ public class PartitionGeometry implements Closeable, Mutable {
         return pieceLong(res, ordinal, PIECE_TS_LO);
     }
 
+    /**
+     * The partition's last-modifying seqTxn, as recorded in its committed {@code _geometry} record, or
+     * -1 when unknown. A composite partition spends its {@code _txn} slot-3 value field on the geometry
+     * pointer and carries no slot-3 stamp, so this is where {@link TxReader#getNativePartitionSeqTxn}'s
+     * contract is answered for it.
+     */
+    public long getSeqTxn(int partitionIndex) {
+        final int res = findResolved(txReader.getPartitionTimestampByIndex(partitionIndex), txReader.getPartitionNameTxn(partitionIndex));
+        return res < 0 ? -1 : resolved.getQuick(res + RES_SEQ_TXN);
+    }
+
     public long getWriterTxn(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
         return res < 0 ? -1 : resolved.getQuick(res + RES_WRITER_TXN);
@@ -405,6 +417,7 @@ public class PartitionGeometry implements Closeable, Mutable {
             resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, 0);
             resolved.setQuick(slot + RES_GEOMETRY_REF, -1L);
             resolved.setQuick(slot + RES_WRITER_TXN, -1L);
+            resolved.setQuick(slot + RES_SEQ_TXN, -1L);
         } else {
             pieceHoles += (int) resolved.getQuick(slot + RES_PIECE_COUNT) * LONGS_PER_PIECE;
         }
@@ -439,7 +452,7 @@ public class PartitionGeometry implements Closeable, Mutable {
      * commit {@code _txn}. A crash between the two leaves an unreferenced record, which is harmless; the
      * reverse order is durably inconsistent.
      */
-    public long publish(int partitionIndex, long writerTxn, long nowMicros, int commitMode) {
+    public long publish(int partitionIndex, long writerTxn, long seqTxn, long nowMicros, int commitMode) {
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         final long nameTxn = txReader.getPartitionNameTxn(partitionIndex);
         final int slot = findResolved(partitionTimestamp, nameTxn);
@@ -450,7 +463,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         final int count = (int) resolved.getQuick(slot + RES_PIECE_COUNT);
         final int lo = (int) resolved.getQuick(slot + RES_PIECE_LO);
         long liveRows = 0;
-        geometryFile.beginRecord(writerTxn, count);
+        geometryFile.beginRecord(writerTxn, seqTxn, count);
         for (int p = 0; p < count; p++) {
             final int at = lo + p * LONGS_PER_PIECE;
             geometryFile.addPiece(
@@ -501,6 +514,7 @@ public class PartitionGeometry implements Closeable, Mutable {
 
         resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, size);
         resolved.setQuick(slot + RES_WRITER_TXN, writerTxn);
+        resolved.setQuick(slot + RES_SEQ_TXN, seqTxn);
         resolved.setQuick(slot + RES_LAST_WRITE_MICROS, nowMicros);
         final long ref = TxReader.PARTITION_COMPOSITE_FLAG
                 | ((long) generation << TxReader.PARTITION_GEOMETRY_GENERATION_BIT_OFFSET)
@@ -624,6 +638,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.setQuick(slot + RES_E, geometryFile.getPhysicalRows());
         resolved.setQuick(slot + RES_LAST_WRITE_MICROS, geometryFile.getLastWriteMicros());
         resolved.setQuick(slot + RES_WRITER_TXN, geometryFile.getWriterTxn());
+        resolved.setQuick(slot + RES_SEQ_TXN, geometryFile.getSeqTxn());
         resolved.setQuick(slot + RES_COMMITTED_RECORD_SIZE, PartitionGeometryFile.recordSize(count));
         resolved.setQuick(slot + RES_GEOMETRY_REF, ref);
         resolved.setQuick(slot + RES_FLAGS, 0);

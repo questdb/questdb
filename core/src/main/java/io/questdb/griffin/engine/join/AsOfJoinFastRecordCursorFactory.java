@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SingleRecordSink;
 import io.questdb.cairo.sql.ParquetDecodeHint;
@@ -51,8 +52,8 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
     private final RecordSink masterKeySink;
     private final RecordSink slaveKeySink;
     private final SymbolShortCircuit symbolShortCircuit;
-    private final @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
     private final long toleranceInterval;
+    private @Nullable SymbolTranslatingRecord symbolTranslatingRecord;
 
     public AsOfJoinFastRecordCursorFactory(
             CairoConfiguration configuration,
@@ -78,10 +79,12 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
                 NullRecordFactory.getInstance(slaveFactory.getMetadata()),
                 masterFactory.getMetadata().getTimestampIndex(),
                 masterFactory.getMetadata().getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 slaveFactory.getMetadata().getTimestampIndex(),
                 slaveFactory.getMetadata().getTimestampType(),
-                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN),
+                new SingleRecordSink(maxSinkTargetHeapSize, MemoryTag.NATIVE_RECORD_CHAIN, SingleRecordSink.OWNER_ASOF_JOIN,
+                        SingleRecordSink.CONFIG_KEYS_ASOF_JOIN),
                 configuration.getSqlAsOfJoinLookAhead()
         );
         this.symbolShortCircuit = symbolShortCircuit;
@@ -141,10 +144,11 @@ public final class AsOfJoinFastRecordCursorFactory extends AbstractJoinRecordCur
 
     @Override
     protected void _close() {
-        Misc.freeIfCloseable(getMetadata());
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(symbolTranslatingRecord);
+        final SymbolTranslatingRecord symbolTranslatingRecord = this.symbolTranslatingRecord;
+        this.symbolTranslatingRecord = null;
+        Throwable failure = closeJoinOwnersBestEffort();
+        failure = Misc.freeBestEffort(failure, symbolTranslatingRecord);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class AsOfJoinKeyedFastRecordCursor extends AbstractKeyedAsOfJoinRecordCursor {

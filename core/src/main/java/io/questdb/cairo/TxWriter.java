@@ -372,19 +372,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         resetLagAppliedRows();
     }
 
-    public void resetPartitionParquetFormat(long timestamp) {
-        setPartitionParquetFormat(timestamp, -1, false);
-    }
-
-    public void resetPartitionParquetGenerated(int partitionIndex) {
-        resetPartitionParquetGeneratedByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
-    }
-
-    public void resetPartitionParquetGeneratedByRawIndex(int indexRaw) {
-        setPartitionParquetGeneratedByRawIndex(indexRaw, false);
-        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, -1L);
-    }
-
     public void resetStructureVersionUnsafe() {
         txMemBase.putLong(readBaseOffset + TX_OFFSET_STRUCT_VERSION_64, 0);
     }
@@ -443,10 +430,16 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
-     * Publishes a partition's geometry pointer into its {@code _txn} record - slot 3, the same word that
-     * holds a parquet file size for a parquet partition. The value comes from the composite write path and
-     * is opaque here: this class stores it, and only {@link TxReader#isPartitionComposite} and the resolver
-     * take it apart.
+     * Publishes a partition's geometry pointer into its {@code _txn} record - the offset-3 word, whose
+     * VALUE field a composite NATIVE partition spends on the pointer instead of on a seqTxn stamp. The
+     * value comes from the composite write path and is opaque here: this class stores it, and only
+     * {@link TxReader#isPartitionComposite} and the resolver take it apart. Pass
+     * {@link TableWriter#NO_GEOMETRY_REF} to drop the partition back to plain.
+     * <p>
+     * REMOTE and the reserved flags survive; {@link TxReader#PARTITION_SEQ_TXN_VALID_BIT} does not,
+     * because a composite word holds no stamp - that is what makes
+     * {@link TxReader#getNativePartitionSeqTxn} read the seqTxn out of the {@code _geometry} record
+     * instead. A caller dropping back to plain is free to stamp one afterwards.
      * <p>
      * Ordering is the crash-consistency contract and belongs to the caller: the {@code _geometry} record
      * must be durable BEFORE the {@code _txn} that points at it, the same ordering {@code _cv} obeys. A
@@ -457,41 +450,39 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(timestamp);
         if (indexRaw > -1) {
             assert !isPartitionParquetByRawIndex(indexRaw) : "slot 3 of a parquet partition is its file size";
-            attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, geometryRef);
+            assert (geometryRef & PARTITION_VERSION_FLAGS_MASK & ~PARTITION_COMPOSITE_FLAG) == 0
+                    : "a geometry ref must not carry foreign flag bits";
+            final long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
+                    & ~(PARTITION_COMPOSITE_FLAG | PARTITION_SEQ_TXN_VALID_BIT);
+            attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, flags | geometryRef);
             recordStructureVersion++;
             partitionTableVersion++;
         }
     }
 
-    public void setPartitionParquetFormat(long timestamp, long fileLength) {
-        setPartitionParquetFormat(timestamp, fileLength, true);
+    public void setPartitionNative(long timestamp, long seqTxn) {
+        setPartitionFormat(timestamp, false, seqTxn);
     }
 
-    public void setPartitionParquetFormat(long timestamp, long fileLength, boolean isParquetFormat) {
-        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+    public void setPartitionParquet(long timestamp, long fileLength) {
+        setPartitionFormat(timestamp, true, fileLength);
+    }
+
+    public void setPartitionParquetFileSize(int partitionIndex, long size) {
+        setPartitionParquetFileSizeByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, size);
+    }
+
+    public void setPartitionParquetFileSizeByRawIndex(int indexRaw, long size) {
         if (indexRaw < 0) {
             throw CairoException.nonCritical().put("bad partition index -1");
         }
-        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
-        long maskedSize = attachedPartitions.getQuick(offset);
-
-        maskedSize = updatePartitionHasParquetFormat(maskedSize, isParquetFormat);
-
-        attachedPartitions.setQuick(offset, maskedSize);
-
-        int fileLenOffset = indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET;
-        attachedPartitions.setQuick(fileLenOffset, fileLength);
+        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~PARTITION_REMOTE_BIT;
+        attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (size & PARTITION_VERSION_VALUE_MASK) | flags);
     }
 
     public void setPartitionParquetGenerated(int partitionIndex, boolean parquetGenerated) {
         int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         setPartitionParquetGeneratedByRawIndex(indexRaw, parquetGenerated);
-    }
-
-    public void setPartitionParquetGenerated(int partitionIndex, long fileLength) {
-        int indexRaw = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
-        setPartitionParquetGeneratedByRawIndex(indexRaw, true);
-        attachedPartitions.setQuick(indexRaw + PARTITION_PARQUET_FILE_SIZE_OFFSET, fileLength);
     }
 
     public void setPartitionParquetGenerated(long timestamp, boolean parquetGenerated) {
@@ -522,6 +513,50 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public void setPartitionReadOnlyByTimestamp(long timestamp, boolean isReadOnly) {
         setPartitionReadOnlyByRawIndex(findAttachedPartitionRawIndex(timestamp), isReadOnly);
+    }
+
+    public void setPartitionRemote(int partitionIndex, boolean isRemote) {
+        setPartitionRemoteByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, isRemote);
+    }
+
+    public void setPartitionRemoteByRawIndex(int indexRaw, boolean isRemote) {
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        final long word = getPartitionOffset3(indexRaw);
+        final long updated = isRemote
+                ? word | PARTITION_REMOTE_BIT
+                : word & ~PARTITION_REMOTE_BIT;
+        attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, updated);
+    }
+
+    public void setPartitionRemoteByTimestamp(long timestamp, boolean isRemote) {
+        setPartitionRemoteByRawIndex(findAttachedPartitionRawIndex(timestamp), isRemote);
+    }
+
+    public void setPartitionSeqTxn(int partitionIndex, long seqTxn) {
+        setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, seqTxn);
+    }
+
+    /**
+     * Stamps a native partition's last-modifying seqTxn into the offset-3 word, preserving
+     * reserved flag bits. Clears REMOTE and parquet_generated: the stamp records a data
+     * change, so no remote or generated copy matches the bytes anymore. A positive stamp
+     * carries {@link TxReader#PARTITION_SEQ_TXN_VALID_BIT}, marking the word a trusted seqTxn
+     * (untrusted legacy words read as -1). The non-WAL path stamps 0, the cleared word, which
+     * reads back as the -1 "no version" sentinel.
+     */
+    public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+        if (isPartitionCompositeByRawIndex(indexRaw)) {
+            // A composite partition spends the value field on its geometry pointer and keeps its
+            // seqTxn in the _geometry record, which the composite write path stamps. Overwriting the
+            // word here would destroy the pointer.
+            return;
+        }
+        setPartitionParquetGeneratedByRawIndex(indexRaw, false);
+        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
+        final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
+        attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (seqTxn & PARTITION_VERSION_VALUE_MASK) | flags | valid);
     }
 
     public void setSeqTxn(long seqTxn) {
@@ -605,6 +640,14 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     public void updateMaxTimestamp(long timestamp) {
         prevMaxTimestamp = maxTimestamp;
         maxTimestamp = timestamp;
+    }
+
+    public void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
+        recordStructureVersion++;
+        updatePartitionSizeByRawIndex(index, partitionSize);
+        // New partition version is written, reset the squash counter.
+        setPartitionSquashCounterByRawIndex(index, (short) 0);
+        attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 
     public void updatePartitionSizeByRawIndex(int partitionIndex, long partitionTimestampLo, long rowCount) {
@@ -790,6 +833,28 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    private void setPartitionFormat(long timestamp, boolean isParquetFormat, long version) {
+        int indexRaw = findAttachedPartitionRawIndex(timestamp);
+        if (indexRaw < 0) {
+            throw CairoException.nonCritical().put("bad partition index -1");
+        }
+        int offset = indexRaw + PARTITION_MASKED_SIZE_OFFSET;
+        long maskedSize = attachedPartitions.getQuick(offset);
+
+        maskedSize = updatePartitionHasParquetFormat(maskedSize, isParquetFormat);
+
+        attachedPartitions.setQuick(offset, maskedSize);
+
+        // A parquet partition is materialized whole and is never composite; the value field it is
+        // about to take is its file size, not a geometry pointer.
+        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
+                & ~(PARTITION_SEQ_TXN_VALID_BIT | PARTITION_COMPOSITE_FLAG);
+        if (!isParquetFormat && version > 0) {
+            flags |= PARTITION_SEQ_TXN_VALID_BIT;
+        }
+        attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (version & PARTITION_VERSION_VALUE_MASK) | flags);
+    }
+
     private void setPartitionSquashCounterByRawIndex(int partitionRawIndex, short partitionSquashCounter) {
         int rawIndex = partitionRawIndex + PARTITION_MASKED_SIZE_OFFSET;
         long partitionSizeMasked = attachedPartitions.getQuick(rawIndex);
@@ -878,13 +943,5 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     long unsafeCommittedTransientRowCount() {
         return getLong(TX_OFFSET_TRANSIENT_ROW_COUNT_64);
-    }
-
-    void updatePartitionSizeAndTxnByRawIndex(int index, long partitionSize) {
-        recordStructureVersion++;
-        updatePartitionSizeByRawIndex(index, partitionSize);
-        // New partition version is written, reset the squash counter.
-        setPartitionSquashCounterByRawIndex(index, (short) 0);
-        attachedPartitions.set(index + PARTITION_NAME_TX_OFFSET, txn);
     }
 }

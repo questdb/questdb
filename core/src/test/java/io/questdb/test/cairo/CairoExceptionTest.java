@@ -26,10 +26,12 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Misc;
 import io.questdb.test.AbstractTest;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.Closeable;
 import java.lang.reflect.Method;
 
 public class CairoExceptionTest extends AbstractTest {
@@ -57,6 +59,93 @@ public class CairoExceptionTest extends AbstractTest {
         Assert.assertFalse("clear() must reset the sticky preferences-out-of-date flag", ex.isPreferencesOutOfDateError());
     }
 
+    // readOnlyAccess() sets BOTH the authorization flag and the read-only-refusal marker in lockstep.
+    // The QWP NACK classifier keys on isReadOnlyAccessRefusal() to route a TRANSIENT demote refusal
+    // into the reconnect-eligible role-change close instead of a terminal ACL NACK. If clear() failed
+    // to reset the marker on a recycled flyweight (e.g. LineProtocolException via ThreadLocal), the
+    // NEXT exception built on that flyweight would inherit a stale marker and a genuine ACL denial
+    // would be silently misrouted into a reconnect-eligible close. This extends the sticky-flag guard
+    // pattern to the read-only-refusal marker (and the authorization flag set alongside it).
+    @Test
+    public void testClearResetsStickyReadOnlyAccessRefusalFlag() throws Exception {
+        CairoException ex = CairoException.readOnlyAccess();
+        Assert.assertTrue(ex.isReadOnlyAccessRefusal());
+        Assert.assertTrue("readOnlyAccess() implies the authorization flag", ex.isAuthorizationError());
+        invokeClear(ex);
+        Assert.assertFalse("clear() must reset the sticky read-only-access-refusal marker", ex.isReadOnlyAccessRefusal());
+        Assert.assertFalse("clear() must reset the authorization flag set alongside it", ex.isAuthorizationError());
+    }
+
+    @Test
+    public void testClearResetsStickySchemaMismatchFlag() throws Exception {
+        CairoException ex = CairoException.schemaMismatch().put("type coercion from VARCHAR to IPV4 is not supported");
+        Assert.assertTrue(ex.isSchemaMismatch());
+        invokeClear(ex);
+        Assert.assertFalse("clear() must reset the sticky schema-mismatch marker", ex.isSchemaMismatch());
+    }
+
+    @Test
+    public void testRethrowCleanupFailureUsesCairoBoundaryAndPreservesUncheckedIdentity() {
+        CairoException.rethrowCleanupFailure(null);
+
+        final RuntimeException runtimeException = new RuntimeException("runtime");
+        Assert.assertSame(
+                runtimeException,
+                Assert.assertThrows(RuntimeException.class, () -> CairoException.rethrowCleanupFailure(runtimeException))
+        );
+
+        final Error error = new AssertionError("error");
+        Assert.assertSame(
+                error,
+                Assert.assertThrows(Error.class, () -> CairoException.rethrowCleanupFailure(error))
+        );
+
+        final Exception checked = new Exception("checked");
+        final Throwable cleanupFailure = Misc.freeBestEffort(null, (Closeable) () -> sneakyThrow(checked));
+        Assert.assertSame(checked, cleanupFailure);
+        final CairoException wrapper = Assert.assertThrows(
+                CairoException.class,
+                () -> CairoException.rethrowCleanupFailure(cleanupFailure)
+        );
+        Assert.assertSame(checked, wrapper.getCause());
+        Assert.assertEquals(0, wrapper.getSuppressed().length);
+    }
+
+    @Test
+    public void testSchemaMismatchIsNonCriticalAndNotAuthorization() {
+        CairoException ex = CairoException.schemaMismatch();
+        Assert.assertTrue(ex.isSchemaMismatch());
+        Assert.assertFalse("schema mismatch must be non-critical", ex.isCritical());
+        Assert.assertFalse("schema mismatch must not be an authorization error", ex.isAuthorizationError());
+    }
+
+    @Test
+    public void testMarkerFlagsAreIndependent() throws Exception {
+        CairoException ex = CairoException.schemaMismatch();
+        ex.setOutOfMemory(true);
+        ex.setCacheable(true);
+        Assert.assertTrue(ex.isSchemaMismatch());
+        Assert.assertTrue(ex.isOutOfMemory());
+        Assert.assertTrue(ex.isCacheable());
+        Assert.assertFalse(ex.isCancellation());
+        Assert.assertFalse(ex.isAuthorizationError());
+
+        ex.setCacheable(false);
+        Assert.assertFalse(ex.isCacheable());
+        Assert.assertTrue(ex.isOutOfMemory());
+        Assert.assertTrue(ex.isSchemaMismatch());
+
+        // clearing OOM alone must leave schema-mismatch set: proves distinct bits
+        ex.setOutOfMemory(false);
+        Assert.assertFalse(ex.isOutOfMemory());
+        Assert.assertTrue(ex.isSchemaMismatch());
+
+        invokeClear(ex);
+        Assert.assertFalse(ex.isSchemaMismatch());
+        Assert.assertFalse(ex.isOutOfMemory());
+        Assert.assertFalse(ex.isCacheable());
+    }
+
     @Test
     public void testMatViewDoesNotExistIsNotCritical() {
         Assert.assertFalse(CairoException.matViewDoesNotExist("foo").isCritical());
@@ -76,5 +165,10 @@ public class CairoExceptionTest extends AbstractTest {
         Method clear = CairoException.class.getDeclaredMethod("clear", int.class);
         clear.setAccessible(true);
         clear.invoke(ex, CairoException.NON_CRITICAL);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void sneakyThrow(Throwable failure) throws T {
+        throw (T) failure;
     }
 }

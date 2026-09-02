@@ -67,6 +67,7 @@ import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -1265,6 +1266,7 @@ public class TableReaderTest extends AbstractCairoTest {
         }
     };
     private static final Rnd rnd = TestUtils.generateRandom(null);
+    private boolean savedFsCacheEnabled;
     private TimestampDriver timestampDriver;
     private int timestampType;
 
@@ -1278,6 +1280,22 @@ public class TableReaderTest extends AbstractCairoTest {
     public void setUp2() {
         timestampType = rnd.nextBoolean() ? ColumnType.TIMESTAMP_MICRO : ColumnType.TIMESTAMP_NANO;
         this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
+    }
+
+    // Some of the mmap-cache tests below assert that separate readers converge on the
+    // same mapping, which requires Files.FS_CACHE_ENABLED to be true. Other test classes
+    // sharing this JVM fork (e.g. FilesCacheFuzzTest) can leave that static flag false
+    // after they finish, so force and restore it here to keep this class hermetic
+    // regardless of run order.
+    @Before
+    public void setUpFsCache() {
+        savedFsCacheEnabled = Files.FS_CACHE_ENABLED;
+        Files.FS_CACHE_ENABLED = true;
+    }
+
+    @After
+    public void tearDownFsCache() {
+        Files.FS_CACHE_ENABLED = savedFsCacheEnabled;
     }
 
     @Test
@@ -2057,6 +2075,237 @@ public class TableReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMmapCacheSharesAcrossConcurrentReaderInstances() throws Exception {
+        // Confirms readers racing to open the same historical partition's column
+        // AT THE SAME TIME (not just one after another, as in
+        // testMmapCacheSharesAcrossReaderInstancesForHistoricalPartition) still
+        // converge on one shared mapping. This exercises the concurrent-creation
+        // race in FdCache.getFdCacheRecord()/MmapCache.cacheMmap() -- multiple
+        // threads asking for a not-yet-cached path at once -- rather than only
+        // the get-or-create-when-already-cached path a lone, later opener hits.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, b LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, b, ts) VALUES
+                            (1, 100, '2020-01-01T01:00:00.000Z'),
+                            (2, 200, '2020-01-02T01:00:00.000Z'),
+                            (3, 300, '2020-01-03T01:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            final int readerN = 8;
+            final TableReader[] readers = new TableReader[readerN];
+            final long[] addresses = new long[readerN];
+            for (int i = 0; i < readerN; i++) {
+                readers[i] = getReader("x");
+            }
+
+            final CyclicBarrier startBarrier = new CyclicBarrier(readerN);
+            final SOCountDownLatch stopLatch = new SOCountDownLatch(readerN);
+            final AtomicInteger errors = new AtomicInteger();
+
+            try {
+                for (int i = 0; i < readerN; i++) {
+                    final int idx = i;
+                    new Thread(() -> {
+                        try {
+                            startBarrier.await();
+                            TableReader reader = readers[idx];
+                            reader.openPartition(0);
+                            addresses[idx] = reader.getColumn(
+                                    TableReader.getPrimaryColumnIndex(reader.getColumnBase(0), 0)
+                            ).getPageAddress(0);
+                        } catch (Throwable e) {
+                            e.printStackTrace(System.out);
+                            errors.incrementAndGet();
+                        } finally {
+                            Path.clearThreadLocals();
+                            stopLatch.countDown();
+                        }
+                    }).start();
+                }
+
+                stopLatch.await();
+                Assert.assertEquals(0, errors.get());
+
+                for (int i = 0; i < readerN; i++) {
+                    Assert.assertTrue("mapping address must be valid", addresses[i] != 0);
+                    Assert.assertEquals(
+                            "all concurrent readers must observe the same mmap address for the same " +
+                                    "historical partition column",
+                            addresses[0],
+                            addresses[i]
+                    );
+                }
+
+                // The shared mapping must still serve correct data, not just a
+                // consistent-but-wrong address.
+                int primaryIndex = TableReader.getPrimaryColumnIndex(readers[0].getColumnBase(0), 0);
+                Assert.assertEquals(1, readers[0].getColumn(primaryIndex).getInt(0));
+            } finally {
+                for (TableReader reader : readers) {
+                    reader.close();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMmapCacheSharesAcrossReaderInstancesForHistoricalPartition() throws Exception {
+        // Confirms that two independently checked-out TableReader instances DO share
+        // a memory mapping when they open the same HISTORICAL (non-last) partition's
+        // column file. openOrCreateColumnMemory() keeps the fd open for as long as
+        // the mapping stays open, for every partition, not just the last one -- so
+        // the FdCache/MmapCache record for a historical partition's column survives
+        // as long as any reader still has it mapped, and a second, non-overlapping
+        // opener of the same file finds and shares the existing mapping instead of
+        // creating its own. Table x has 3 partitions here, so partition 0 is never
+        // last -- this is exactly the access pattern of a multi-worker historical
+        // scan that used to exhaust the process's virtual address space.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, b LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, b, ts) VALUES
+                            (1, 100, '2020-01-01T01:00:00.000Z'),
+                            (2, 200, '2020-01-02T01:00:00.000Z'),
+                            (3, 300, '2020-01-03T01:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            try (
+                    TableReader reader1 = getReader("x");
+                    TableReader reader2 = getReader("x")
+            ) {
+                Assert.assertNotSame("pool must hand out two distinct reader instances", reader1, reader2);
+                Assert.assertEquals(3, reader1.getPartitionCount());
+
+                reader1.openPartition(0);
+                reader2.openPartition(0);
+
+                long addr1 = reader1.getColumn(TableReader.getPrimaryColumnIndex(reader1.getColumnBase(0), 0)).getPageAddress(0);
+                long addr2 = reader2.getColumn(TableReader.getPrimaryColumnIndex(reader2.getColumnBase(0), 0)).getPageAddress(0);
+
+                Assert.assertTrue("mapping address must be valid", addr1 != 0 && addr2 != 0);
+                Assert.assertEquals(
+                        "TableReader must share mmap regions across separate reader instances of " +
+                                "the same historical (non-last) partition's column file",
+                        addr1,
+                        addr2
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testMmapCacheSharesPerPartitionUnderConcurrentAccess() throws Exception {
+        // Extends testMmapCacheSharesAcrossConcurrentReaderInstances to multiple
+        // partitions racing at once, to confirm the fd/mmap cache still keys
+        // strictly by file identity under concurrent, mixed-partition load:
+        // readers racing on the SAME partition converge on one mapping, but
+        // readers racing on DIFFERENT partitions never share one, even though
+        // all the races overlap in time.
+        assertMemoryLeak(() -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, b LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, b, ts) VALUES
+                            (1, 100, '2020-01-01T01:00:00.000Z'),
+                            (2, 200, '2020-01-02T01:00:00.000Z'),
+                            (3, 300, '2020-01-03T01:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            final int partitionCount = 3;
+            final int readersPerPartition = 3;
+            final int readerN = partitionCount * readersPerPartition;
+            final TableReader[] readers = new TableReader[readerN];
+            final long[] addresses = new long[readerN];
+            for (int i = 0; i < readerN; i++) {
+                readers[i] = getReader("x");
+            }
+
+            final CyclicBarrier startBarrier = new CyclicBarrier(readerN);
+            final SOCountDownLatch stopLatch = new SOCountDownLatch(readerN);
+            final AtomicInteger errors = new AtomicInteger();
+
+            try {
+                for (int i = 0; i < readerN; i++) {
+                    final int idx = i;
+                    final int partitionIndex = idx % partitionCount;
+                    new Thread(() -> {
+                        try {
+                            startBarrier.await();
+                            TableReader reader = readers[idx];
+                            reader.openPartition(partitionIndex);
+                            addresses[idx] = reader.getColumn(
+                                    TableReader.getPrimaryColumnIndex(reader.getColumnBase(partitionIndex), 0)
+                            ).getPageAddress(0);
+                        } catch (Throwable e) {
+                            e.printStackTrace(System.out);
+                            errors.incrementAndGet();
+                        } finally {
+                            Path.clearThreadLocals();
+                            stopLatch.countDown();
+                        }
+                    }).start();
+                }
+
+                stopLatch.await();
+                Assert.assertEquals(0, errors.get());
+
+                for (int p = 0; p < partitionCount; p++) {
+                    long expected = -1;
+                    for (int i = p; i < readerN; i += partitionCount) {
+                        Assert.assertTrue("mapping address must be valid", addresses[i] != 0);
+                        if (expected == -1) {
+                            expected = addresses[i];
+                        } else {
+                            Assert.assertEquals(
+                                    "concurrent readers of the same partition must share the mapping",
+                                    expected,
+                                    addresses[i]
+                            );
+                        }
+                    }
+                }
+                for (int p1 = 0; p1 < partitionCount; p1++) {
+                    for (int p2 = p1 + 1; p2 < partitionCount; p2++) {
+                        Assert.assertNotEquals(
+                                "readers of different partitions must not share a mapping",
+                                addresses[p1],
+                                addresses[p2]
+                        );
+                    }
+                }
+            } finally {
+                for (TableReader reader : readers) {
+                    reader.close();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testNullValueRecovery() throws Exception {
         final String expected = replaceTimestampSuffix1(
                 """
@@ -2091,6 +2340,58 @@ public class TableReaderTest extends AbstractCairoTest {
             ) {
                 println(reader.getMetadata(), cursor);
                 TestUtils.assertEquals(expected, sink);
+            }
+        });
+    }
+
+    @Test
+    public void testOpenParquetMetadataOpensSidecarOnceAndReleasesResolver() throws Exception {
+        // Opening a parquet partition must open its _pm sidecar exactly once:
+        // the committed size is read from the same fd that is then mmapped,
+        // not via a size-reading open followed by a second open to map.
+        AtomicInteger pmOpenCount = new AtomicInteger();
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, "_pm")) {
+                    pmOpenCount.incrementAndGet();
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            execute(
+                    """
+                            CREATE TABLE x (a INT, b LONG, ts TIMESTAMP)
+                            TIMESTAMP(ts) PARTITION BY DAY WAL
+                            """
+            );
+            execute(
+                    """
+                            INSERT INTO x(a, b, ts) VALUES
+                            (1, 100, '2020-01-01T01:00:00.000Z'),
+                            (2, 200, '2020-01-01T02:00:00.000Z'),
+                            (3, 300, '2020-01-02T01:00:00.000Z')
+                            """
+            );
+            drainWalQueue();
+
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+
+            try (TableReader reader = getReader("x")) {
+                // Close the partition so the next openPartition() runs the full
+                // openPartition0() path that maps the _pm sidecar.
+                reader.closePartitionByIndex(0);
+
+                pmOpenCount.set(0);
+                reader.openPartition(0);
+                Assert.assertEquals(1, pmOpenCount.get());
+                Assert.assertFalse(
+                        "the temporary footer resolver must not outlive the _pm open operation",
+                        reader.isParquetMetaReaderOpen()
+                );
             }
         });
     }

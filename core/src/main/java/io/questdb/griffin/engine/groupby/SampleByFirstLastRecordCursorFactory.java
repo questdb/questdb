@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.groupby;
 
 import io.questdb.cairo.AbstractRecordCursorFactory;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -50,10 +51,12 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.EmptyTableRecordCursor;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.std.BitmapIndexUtilsNative;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -62,6 +65,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.NotNull;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 
@@ -71,9 +75,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private static final int ITEMS_PER_OUT_ARRAY_SHIFT = 2;
     private static final int LAST_OUT_INDEX = 1;
     private static final int TIMESTAMP_OUT_INDEX = 2;
-    private final RecordCursorFactory base;
     private final LongList crossFrameRow;
-    private final SampleByFirstLastRecordCursor cursor;
     private final int[] firstLastIndexByCol;
     private final int groupBySymbolColIndex;
     private final boolean[] isKeyColumn;
@@ -82,11 +84,18 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
     private final int[] queryToFrameColumnMapping;
     private final SingleSymbolFilter symbolFilter;
     private final int timestampIndex;
+    private RecordCursorFactory base;
+    private SampleByFirstLastRecordCursor cursor;
     private int groupByTimestampIndex = -1;
+    private Function offsetFunc;
     private DirectLongList rowIdOutAddress;
+    private Function sampleFromFunc;
     private DirectLongList samplePeriodAddress;
+    private Function sampleToFunc;
+    private Function timezoneNameFunc;
 
     public SampleByFirstLastRecordCursorFactory(
+            @NotNull CairoConfiguration configuration,
             RecordCursorFactory base,
             TimestampSampler timestampSampler,
             GenericRecordMetadata groupByMetadata,
@@ -107,6 +116,12 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         super(groupByMetadata);
         try {
             this.base = base;
+            // adopt the temporal parameter functions first, so close() reaches them if the
+            // remainder of the construction throws
+            this.timezoneNameFunc = timezoneNameFunc;
+            this.offsetFunc = offsetFunc;
+            this.sampleFromFunc = sampleFromFunc;
+            this.sampleToFunc = sampleToFunc;
             groupBySymbolColIndex = symbolFilter.getColumnIndex();
             queryToFrameColumnMapping = new int[columns.size()];
             firstLastIndexByCol = new int[columns.size()];
@@ -126,6 +141,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             samplePeriodAddress = new DirectLongList(pageSize, MemoryTag.NATIVE_SAMPLE_BY_LONG_LIST);
             this.symbolFilter = symbolFilter;
             cursor = new SampleByFirstLastRecordCursor(
+                    configuration,
                     timestampSampler,
                     metadata.getColumnType(timestampIndex),
                     timezoneNameFunc,
@@ -138,7 +154,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFuncPos
             );
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -193,7 +209,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 } else {
                     sink.val(", ");
                 }
-                sink.putBaseColumnName(i);
+                sink.putBaseColumnName(queryToFrameColumnMapping[i]);
             }
         }
         sink.val(']');
@@ -208,7 +224,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sink.val(", ");
                 }
                 sink.val(firstLastIndexByCol[i] == LAST_OUT_INDEX ? "last" : "first").val('(');
-                sink.putBaseColumnName(i);
+                sink.putBaseColumnName(queryToFrameColumnMapping[i]);
                 sink.val(')');
             }
         }
@@ -261,7 +277,10 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 } else {
                     throw SqlException.$(ast.position, "expected first() or last() functions but got ").put(ast.token);
                 }
-                int underlyingColIndex = metadata.getColumnIndex(ast.rhs.token);
+                // Defensive uniformity, not reachable with a protected token: ast.rhs.token names a
+                // physical page-frame column here, which arrives unquoted, so getColumnIndex's
+                // protected-alias strip-retry never fires - no test drives it through this path.
+                int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
                 queryToFrameColumnMapping[i] = underlyingColIndex;
 
                 int underlyingType = metadata.getColumnType(underlyingColIndex);
@@ -274,7 +293,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                             .put(" ");
                 }
             } else {
-                int underlyingColIndex = metadata.getColumnIndex(ast.token);
+                int underlyingColIndex = SqlUtil.getColumnIndex(metadata, ast.token);
                 isKeyColumn[i] = true;
                 queryToFrameColumnMapping[i] = underlyingColIndex;
                 if (underlyingColIndex == timestampIndex) {
@@ -286,10 +305,42 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
 
     @Override
     protected void _close() {
-        Misc.free(cursor);
-        Misc.free(base);
-        rowIdOutAddress = Misc.free(rowIdOutAddress);
-        samplePeriodAddress = Misc.free(samplePeriodAddress);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final SampleByFirstLastRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Function offsetFunc = this.offsetFunc;
+        this.offsetFunc = null;
+        final DirectLongList rowIdOutAddress = this.rowIdOutAddress;
+        this.rowIdOutAddress = null;
+        final Function sampleFromFunc = this.sampleFromFunc;
+        this.sampleFromFunc = null;
+        final DirectLongList samplePeriodAddress = this.samplePeriodAddress;
+        this.samplePeriodAddress = null;
+        final Function sampleToFunc = this.sampleToFunc;
+        this.sampleToFunc = null;
+        final Function timezoneNameFunc = this.timezoneNameFunc;
+        this.timezoneNameFunc = null;
+
+        Throwable failure = Misc.freeBestEffort(null, cursor);
+        failure = Misc.freeBestEffort(failure, base);
+        failure = Misc.freeBestEffort(failure, rowIdOutAddress);
+        failure = Misc.freeBestEffort(failure, samplePeriodAddress);
+        // The factory is the lifetime owner of the temporal parameter functions (timezone,
+        // offset, FROM, TO); the cursor only borrows them across the executions of this cached
+        // factory. The generator accepts runtime-constant expressions here, which may own child
+        // functions, so they must be closed exactly once.
+        failure = Misc.freeBestEffort(failure, timezoneNameFunc);
+        if (offsetFunc != timezoneNameFunc) {
+            failure = Misc.freeBestEffort(failure, offsetFunc);
+        }
+        if (sampleFromFunc != timezoneNameFunc && sampleFromFunc != offsetFunc) {
+            failure = Misc.freeBestEffort(failure, sampleFromFunc);
+        }
+        if (sampleToFunc != timezoneNameFunc && sampleToFunc != offsetFunc && sampleToFunc != sampleFromFunc) {
+            failure = Misc.freeBestEffort(failure, sampleToFunc);
+        }
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class SampleByFirstLastRecordCursor extends AbstractSampleByCursor {
@@ -304,7 +355,6 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private final static int STATE_SEARCH = 5;
         private final static int STATE_START = 0;
         private final PageFrameAddressCache frameAddressCache;
-        private final PageFrameMemoryPool frameMemoryPool;
         private final SampleByFirstLastRecord record = new SampleByFirstLastRecord();
         private SqlExecutionCircuitBreaker circuitBreaker;
         private int crossRowState;
@@ -314,6 +364,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private long frameHi = -1;
         private long frameLo = -1;
         private PageFrameMemory frameMemory;
+        private PageFrameMemoryPool frameMemoryPool;
         private long frameNextRowId = -1;
         private int groupBySymbolKey;
         private IndexFrameCursor indexCursor;
@@ -328,6 +379,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
         private int state;
 
         public SampleByFirstLastRecordCursor(
+                @NotNull CairoConfiguration configuration,
                 TimestampSampler timestampSampler,
                 int timestampType,
                 Function timezoneNameFunc,
@@ -352,7 +404,7 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                     sampleToFuncPos
             );
             frameAddressCache = new PageFrameAddressCache();
-            frameMemoryPool = new PageFrameMemoryPool(0L);
+            frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
         }
 
         @Override
@@ -753,6 +805,26 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
             }
 
             @Override
+            public short getDecimal16(int col) {
+                return currentRecord.getDecimal16(col);
+            }
+
+            @Override
+            public int getDecimal32(int col) {
+                return currentRecord.getDecimal32(col);
+            }
+
+            @Override
+            public long getDecimal64(int col) {
+                return currentRecord.getDecimal64(col);
+            }
+
+            @Override
+            public byte getDecimal8(int col) {
+                return currentRecord.getDecimal8(col);
+            }
+
+            @Override
             public double getDouble(int col) {
                 return currentRecord.getDouble(col);
             }
@@ -828,6 +900,26 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                 @Override
                 public char getChar(int col) {
                     return (char) crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public short getDecimal16(int col) {
+                    return (short) crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public int getDecimal32(int col) {
+                    return (int) crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public long getDecimal64(int col) {
+                    return crossFrameRow.getQuick(col);
+                }
+
+                @Override
+                public byte getDecimal8(int col) {
+                    return (byte) crossFrameRow.getQuick(col);
                 }
 
                 @Override
@@ -908,6 +1000,46 @@ public class SampleByFirstLastRecordCursorFactory extends AbstractRecordCursorFa
                         return Unsafe.getChar(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
                     } else {
                         return 0;
+                    }
+                }
+
+                @Override
+                public short getDecimal16(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getShort(pageAddress + (getRowId(firstLastIndexByCol[col]) << 1));
+                    } else {
+                        return Decimals.DECIMAL16_NULL;
+                    }
+                }
+
+                @Override
+                public int getDecimal32(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getInt(pageAddress + (getRowId(firstLastIndexByCol[col]) << 2));
+                    } else {
+                        return Decimals.DECIMAL32_NULL;
+                    }
+                }
+
+                @Override
+                public long getDecimal64(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getLong(pageAddress + (getRowId(firstLastIndexByCol[col]) << 3));
+                    } else {
+                        return Decimals.DECIMAL64_NULL;
+                    }
+                }
+
+                @Override
+                public byte getDecimal8(int col) {
+                    long pageAddress = pageAddresses[col];
+                    if (pageAddress > 0) {
+                        return Unsafe.getByte(pageAddress + getRowId(firstLastIndexByCol[col]));
+                    } else {
+                        return Decimals.DECIMAL8_NULL;
                     }
                 }
 

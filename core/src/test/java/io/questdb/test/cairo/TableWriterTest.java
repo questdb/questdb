@@ -81,6 +81,7 @@ import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
@@ -2263,6 +2264,77 @@ public class TableWriterTest extends AbstractCairoTest {
                 Assert.assertEquals(0, reader.size());
             }
         }
+    }
+
+    @Test
+    public void testMalformedDirectUtf8IsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING)");
+
+            final long ptr = Unsafe.malloc(2, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Unsafe.putByte(ptr, (byte) '1');
+                Unsafe.putByte(ptr + 1, (byte) 0xC3);
+
+                try (TableWriter writer = getWriter("x")) {
+                    TableWriter.Row row = writer.newRow();
+                    try {
+                        row.putStrUtf8(0, new DirectUtf8String().of(ptr, ptr + 2));
+                        Assert.fail("expected the malformed value to be rejected");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                    }
+                    row.cancel();
+
+                    // the writer stays usable, and the rejected value left no trace
+                    row = writer.newRow();
+                    row.putStr(0, "ok");
+                    row.append();
+                    writer.commit();
+                }
+            } finally {
+                Unsafe.free(ptr, 2, MemoryTag.NATIVE_DEFAULT);
+            }
+
+            assertQuery("SELECT s FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            ok
+                            """);
+        });
+    }
+
+    @Test
+    public void testMalformedUtf8IsRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (s STRING)");
+
+            try (TableWriter writer = getWriter("x")) {
+                TableWriter.Row row = writer.newRow();
+                try {
+                    row.putStrUtf8(0, new Utf8String(new byte[]{'1', (byte) 0xC3}, false));
+                    Assert.fail("expected the malformed value to be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "invalid UTF8 in value for");
+                }
+                row.cancel();
+
+                row = writer.newRow();
+                row.putStr(0, "ok");
+                row.append();
+                writer.commit();
+            }
+
+            assertQuery("SELECT s FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            s
+                            ok
+                            """);
+        });
     }
 
     @Test

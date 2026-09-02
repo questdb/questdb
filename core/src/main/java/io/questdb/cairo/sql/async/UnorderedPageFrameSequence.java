@@ -70,12 +70,12 @@ import java.util.concurrent.atomic.AtomicLong;
 public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
-    private final T atom;
+    private T atom;
     private final AtomicInteger cancelReason = new AtomicInteger(SqlExecutionCircuitBreaker.STATE_OK);
     private final MillisecondClock clock;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final StringSink errorMsg = new StringSink();
-    private final PageFrameAddressCache frameAddressCache;
+    private PageFrameAddressCache frameAddressCache;
     private final LongList frameRowCounts = new LongList();
     private final AtomicBoolean isValid = new AtomicBoolean(true);
     private final MPSequence reducePubSeq;
@@ -91,6 +91,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
     private PageFrameCursor frameCursor;
     private long id;
     private boolean isCancelled;
+    private boolean isClosing;
     private boolean isInterrupted;
     private boolean isOutOfMemory;
     private boolean isReadyToDispatch;
@@ -119,13 +120,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             this.frameAddressCache = new PageFrameAddressCache();
             this.reducer = reducer;
             this.clock = configuration.getMillisecondClock();
-            this.workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, sharedQueryWorkerCount);
+            this.workStealingStrategy = configuration.getFactoryProvider()
+                    .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.workStealCircuitBreaker = new SqlExecutionCircuitBreakerWrapper(engine, configuration.getCircuitBreakerConfiguration());
             this.reduceQueue = messageBus.getUnorderedPageFrameReduceQueue();
             this.reducePubSeq = messageBus.getUnorderedPageFrameReducePubSeq();
             this.reduceSubSeq = messageBus.getUnorderedPageFrameReduceSubSeq();
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
     }
@@ -137,10 +139,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         }
         // Wait for all queued frames to complete.
         while (!doneLatch.done(queuedCount)) {
-            stealWork();
-            // Restore the circuit breaker delegate after work-stealing, since
-            // consumeQueue may have re-initialized it for a foreign sequence.
-            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            if (stealWork()) {
+                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            }
             Os.pause();
         }
     }
@@ -174,10 +175,23 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
 
     @Override
     public void close() {
-        reset();
-        localRecord = Misc.free(localRecord);
-        workStealCircuitBreaker = Misc.free(workStealCircuitBreaker);
-        Misc.free(atom);
+        Throwable cleanupFailure = null;
+        isClosing = true;
+        try {
+            reset();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        final PageFrameMemoryRecord localRecordToFree = localRecord;
+        localRecord = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, localRecordToFree);
+        final SqlExecutionCircuitBreakerWrapper circuitBreakerToFree = workStealCircuitBreaker;
+        workStealCircuitBreaker = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, circuitBreakerToFree);
+        final T atomToFree = atom;
+        atom = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, atomToFree);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**
@@ -212,8 +226,9 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
                     } else if (cursor == -1) {
                         // Queue full.
                         if (workStealingStrategy.shouldSteal(localCount)) {
-                            stealWork();
-                            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                            if (stealWork()) {
+                                workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+                            }
                             continue;
                         }
                         // Reduce locally as fallback.
@@ -230,23 +245,26 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         }
 
         // Phase 2: Wait for all queued frames to complete.
+        final SqlExecutionCircuitBreaker circuitBreaker = sqlExecutionContext.getCircuitBreaker();
         while (!doneLatch.done(queued)) {
             if (!isActive()) {
                 break;
             }
             if (!isUninterruptible) {
-                workStealCircuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
             }
-            stealWork();
-            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            if (stealWork()) {
+                workStealCircuitBreaker.init(circuitBreaker);
+            }
             Os.pause();
         }
 
         // If we exited early due to cancellation, still wait for in-flight tasks
         // to complete to avoid data races with setError().
         while (!doneLatch.done(queued)) {
-            stealWork();
-            workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+            if (stealWork()) {
+                workStealCircuitBreaker.init(circuitBreaker);
+            }
             Os.pause();
         }
 
@@ -322,6 +340,17 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         return frameCursor;
     }
 
+    /**
+     * Returns the single work-stealing strategy this sequence uses for every phase. There is one
+     * strategy instance per query: the reduce phase already bound its counter to this same object,
+     * and a post-aggregation caller rebinds its own counter through {@code of()} before calling
+     * {@code shouldSteal}. This getter returns that instance as-is; it does not unwrap anything.
+     * <p>
+     * A latch-gated test strategy (see {@code SlotGatedWorkStealingStrategy}) is a subclass, so it is
+     * returned here too. Such a test must ensure the acquire latch reaches zero during reduce, before
+     * post-aggregation calls {@code shouldSteal} on this same instance; otherwise that phase parks on
+     * a gate nothing will open.
+     */
     public WorkStealingStrategy getWorkStealingStrategy() {
         return workStealingStrategy;
     }
@@ -396,9 +425,41 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
         frameRowCounts.clear();
-        atom.clear();
-        Misc.free(frameAddressCache);
-        frameCursor = Misc.free(frameCursor);
+
+        Throwable cleanupFailure = null;
+        try {
+            if (atom != null) {
+                atom.clear();
+            }
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        // Unfreeze the covered posting readers frozen in buildAddressCache() BEFORE the
+        // address cache (which holds them) and the frame cursor (which owns them) are
+        // torn down. reset() runs after the sequence has been awaited, so every worker
+        // cursor has finished and the unfreeze is race-free. A reader left frozen would
+        // make its reloadConditionally() a permanent no-op and break the next query
+        // against the same partition.
+        final PageFrameAddressCache frameAddressCacheToFree = frameAddressCache;
+        if (isClosing) {
+            frameAddressCache = null;
+        }
+        if (frameAddressCacheToFree != null) {
+            try {
+                frameAddressCacheToFree.unfreezeCoveredReaders();
+            } catch (Throwable th) {
+                if (cleanupFailure == null) {
+                    cleanupFailure = th;
+                } else if (cleanupFailure != th) {
+                    cleanupFailure.addSuppressed(th);
+                }
+            }
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameAddressCacheToFree);
+        final PageFrameCursor frameCursorToFree = frameCursor;
+        frameCursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameCursorToFree);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     /**
@@ -440,6 +501,15 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);
         }
+
+        // Mirror PageFrameSequence.buildAddressCache(): covered frames decode their
+        // columns on the async workers by iterating detached cursors over the shared
+        // per-partition posting readers, which is only race-free if those readers are
+        // positioned at the query txn, cache-warm, and FROZEN before any worker decodes.
+        // The eager production iteration above already positioned + warmed each reader,
+        // so freeze them now, before dispatch. unfreezeCoveredReaders() in reset()
+        // reverses it once the sequence has been awaited.
+        frameAddressCache.freezeCoveredReaders();
     }
 
     private boolean hasError() {
@@ -472,12 +542,13 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> implements Close
         }
     }
 
-    private void stealWork() {
+    private boolean stealWork() {
         // N.B. consumeQueue may process a task from any UnorderedPageFrameSequence,
-        // not just this one, which will re-initialize localRecord for the foreign
-        // sequence's symbol table. Callers must not assume localRecord state is
-        // preserved across this call.
-        UnorderedPageFrameReduceJob.consumeQueue(
+        // not just this one, which will re-initialize localRecord and the circuit
+        // breaker wrapper for the foreign sequence. Callers must not assume their
+        // state is preserved across this call and must re-init the wrapper when
+        // this method returns true (a task was consumed).
+        return !UnorderedPageFrameReduceJob.consumeQueue(
                 reduceQueue,
                 reduceSubSeq,
                 localRecord,

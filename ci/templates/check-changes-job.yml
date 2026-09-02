@@ -6,30 +6,70 @@ jobs:
       - checkout: none
       - bash: |
           set -ux
+          if ! [[ $PRID =~ ^[0-9]+$ ]] && [[ $BUILD_SOURCEBRANCH =~ ^refs/heads/gh-readonly-queue/.*/pr-([0-9]+)- ]]; then
+            # Merge-queue build: Azure sets no PR variables, but the ephemeral branch
+            # refs/heads/gh-readonly-queue/<base>/pr-<n>-<sha> carries the PR number, so
+            # change detection scopes to the queued PR instead of testing everything.
+            PRID="${BASH_REMATCH[1]}"
+          fi
           echo "PR ID: $PRID"
           if ! [[ $PRID =~ ^[0-9]+$ ]]; then
             # The workflow wasn't triggered by a PR; test everything
+            set +x
             echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*"
             echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
             echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
             echo "##vso[task.setvariable variable=RUST_SOURCE_CODE_CHANGED;isOutput=true]true"
+            echo "##vso[task.setvariable variable=CXX_SOURCE_CODE_CHANGED;isOutput=true]true"
             exit
           fi
           
           COV_CLASSES=""
           CHANGED_CORE_FILES=""
           CHANGED_RUST_FILES=""
-          
+          CHANGED_CXX_FILES=""
+
+          # Authenticate only with a usable token. The macwin pipeline defines no GH_TOKEN,
+          # so Azure leaves the macro unexpanded; its parentheses fail this test.
+          AUTH=()
+          if [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]]; then
+            AUTH=(-H "Authorization: token $GH_TOKEN")
+          fi
+
+          # An unreadable changed-file list falls back to the same "test everything" values
+          # the non-PR branch above publishes. Reporting that nothing changed would merge
+          # the PR untested; failing would red a required check the merge queue ejects on.
+          test_everything() {
+            set +x
+            echo "##vso[task.logissue type=warning]$1; testing everything"
+            echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]+:*"
+            echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]JaCoCo"
+            echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]true"
+            echo "##vso[task.setvariable variable=RUST_SOURCE_CODE_CHANGED;isOutput=true]true"
+            echo "##vso[task.setvariable variable=CXX_SOURCE_CODE_CHANGED;isOutput=true]true"
+            exit 0
+          }
+
           PAGE=0
           while true; do
             PAGE=$((PAGE+1))
             echo PAGE $PAGE
-            set -e
-            FILES=$(curl "https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100&page=$PAGE" -s)
-            set +e
+            # Plain --retry skips GitHub's 403 rate limit, which no retry clears before the
+            # hourly reset. --retry-max-time bounds a 429 Retry-After; --max-time cannot.
+            if ! FILES=$(curl -sS --fail --max-time 60 --retry 3 --retry-delay 2 --retry-max-time 120 \
+                "${AUTH[@]}" \
+                "https://api.github.com/repos/questdb/questdb/pulls/$PRID/files?per_page=100&page=$PAGE"); then
+              test_everything "GitHub API request for PR #$PRID changed files (page $PAGE) failed"
+            fi
             ANY=$(echo "$FILES" | grep '"filename":')
             if [ -z "$ANY" ]; then
               set +x
+              if [ "$PAGE" -eq 1 ]; then
+                # An empty first page carries no file list to classify: either the response
+                # was not one, or the PR has no diff. Over-test rather than guess. Pages 2+
+                # end pagination normally, so a real docs-only PR still reports false.
+                test_everything "GitHub API listed no changed files for PR #$PRID"
+              fi
               if [ -n "$COV_CLASSES" ]; then
                 COV_CLASSES=$(echo "$COV_CLASSES" | sed -e 's/,$//g')
                 COVERAGE_TOOL='JaCoCo'
@@ -47,11 +87,17 @@ jobs:
               else
                 RUST_SOURCE_CODE_CHANGED='false'
               fi
+              if [ -n "$CHANGED_CXX_FILES" ]; then
+                CXX_SOURCE_CODE_CHANGED='true'
+              else
+                CXX_SOURCE_CODE_CHANGED='false'
+              fi
 
               echo "##vso[task.setvariable variable=COVERAGE_DIFF;isOutput=true]$COV_CLASSES"
               echo "##vso[task.setvariable variable=CODE_COVERAGE_TOOL_OPTION;isOutput=true]$COVERAGE_TOOL"
               echo "##vso[task.setvariable variable=SOURCE_CODE_CHANGED;isOutput=true]$SOURCE_CODE_CHANGED"
               echo "##vso[task.setvariable variable=RUST_SOURCE_CODE_CHANGED;isOutput=true]$RUST_SOURCE_CODE_CHANGED"
+              echo "##vso[task.setvariable variable=CXX_SOURCE_CODE_CHANGED;isOutput=true]$CXX_SOURCE_CODE_CHANGED"
 
               break
             fi
@@ -64,8 +110,14 @@ jobs:
             fi
             CHANGED_CORE_FILES="${CHANGED_CORE_FILES}$(echo "$ANY" | grep -oP '"(core|benchmarks|compat|utils)')"
             CHANGED_RUST_FILES="${CHANGED_RUST_FILES}$(echo "$ANY" | grep -oP '"core/rust')"
+            # ci/templates/aux-job.yml is in the list on purpose: it carries the native JIT test job,
+            # so a change to that job runs the job. Without it a new or edited native gate lands
+            # unexercised, which is the one thing a gate must not do.
+            CHANGED_CXX_FILES="${CHANGED_CXX_FILES}$(echo "$ANY" | grep -oP '"(core/src/main/c/|core/src/test/c/|core/CMakeLists.txt|ci/templates/aux-job.yml)')"
           done
         name: check_coverage
         env:
           PRID: $(System.PullRequest.PullRequestNumber)
+          BUILD_SOURCEBRANCH: $(Build.SourceBranch)
+          GH_TOKEN: $(GH_TOKEN)
         displayName: "Check which files changed, list classes for coverage"

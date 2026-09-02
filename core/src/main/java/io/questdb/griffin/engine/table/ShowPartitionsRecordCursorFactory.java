@@ -68,12 +68,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
     private static final Log LOG = LogFactory.getLog(ShowPartitionsRecordCursor.class);
     private static final RecordMetadata METADATA_TIMESTAMP;
     private static final RecordMetadata METADATA_TIMESTAMP_NS;
-    private final ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
-    private final Path path = new Path();
     private final TableToken tableToken;
     private CairoConfiguration cairoConfig;
+    private ShowPartitionsRecordCursor cursor = new ShowPartitionsRecordCursor();
     private SqlExecutionContext executionContext;
     private FilesFacade ff;
+    private Path path = new Path();
 
     public ShowPartitionsRecordCursorFactory(TableToken tableToken, int timestampType) {
         super(ColumnType.isTimestampMicro(timestampType) ? METADATA_TIMESTAMP : METADATA_TIMESTAMP_NS);
@@ -100,11 +100,16 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     @Override
     protected void _close() {
-        Misc.free(path);
-        Misc.free(cursor);
+        final ShowPartitionsRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final Path path = this.path;
+        this.path = null;
         executionContext = null;
         cairoConfig = null;
         ff = null;
+        Throwable failure = Misc.freeBestEffort(null, path);
+        failure = Misc.freeBestEffort(failure, cursor);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private enum Column {
@@ -126,10 +131,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         HAS_PARQUET_GENERATED(13, "hasParquetGenerated", ColumnType.BOOLEAN),
         IS_PARQUET(14, "isParquet", ColumnType.BOOLEAN),
         PARQUET_FILE_SIZE(15, "parquetFileSize", ColumnType.LONG),
-        DEAD_ROWS(16, "deadRows", ColumnType.LONG),
+        SEQ_TXN(16, "seqTxn", ColumnType.LONG),
+        IS_REMOTELY_SERVED(17, "isRemotelyServed", ColumnType.BOOLEAN),
+        DEAD_ROWS(18, "deadRows", ColumnType.LONG),
         // Wall clock, always microseconds whatever the table's designated timestamp resolution is: it
         // comes from the writer's clock, not from the data.
-        LAST_WRITE_TIMESTAMP(17, "lastWriteTimestamp", ColumnType.TIMESTAMP_MICRO);
+        LAST_WRITE_TIMESTAMP(19, "lastWriteTimestamp", ColumnType.TIMESTAMP_MICRO);
 
         private final int idx;
         private final TableColumnMetadata metadata;
@@ -164,6 +171,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private boolean isDetached;
         private boolean isParquet;
         private boolean isReadOnly;
+        private boolean isRemotelyServed;
         private long lastWriteTimestamp = Numbers.LONG_NULL;
         private int limit; // partitionCount + detached + attachable
         private long maxTimestamp = Long.MIN_VALUE;
@@ -175,6 +183,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int partitionIndex = -1;
         private long partitionSize = -1L;
         private int rootLen;
+        private long seqTxn;
         private TableReader tableReader;
         private int timestampType;
         private CharSequence tsColName;
@@ -273,7 +282,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             isAttachable = false;
             isParquet = false;
             hasParquetGenerated = false;
+            isRemotelyServed = false;
             parquetFileSize = -1L;
+            seqTxn = Numbers.LONG_NULL; // no value (non-WAL / unstamped) renders null, not -1
             minTimestamp = Numbers.LONG_NULL; // so that in absence of metadata is NaN
             maxTimestamp = Long.MIN_VALUE;
             numRows = -1L;
@@ -292,13 +303,34 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 isReadOnly = tableTxReader.isPartitionReadOnly(partitionIndex);
                 hasParquetGenerated = tableTxReader.isPartitionParquetGenerated(partitionIndex);
                 isParquet = tableTxReader.isPartitionParquet(partitionIndex);
+                isRemotelyServed = tableTxReader.isPartitionRemotelyServed(partitionIndex);
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
                 PartitionBy.setSinkForPartition(partitionName, timestampType, partitionBy, timestamp);
                 TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
-                if (hasParquetGenerated || isParquet) {
+                if (isParquet) {
                     openParquetMeta(path, tableTxReader.getPartitionParquetFileSize(partitionIndex));
+                } else if (hasParquetGenerated) {
+                    // generated-but-not-switched: offset 3 holds the seqTxn, not a size. The local
+                    // data.parquet still exists, so stat it for the real on-disk parquet size.
+                    int dirLen = path.size();
+                    parquetFileSize = ff.length(path.concat(TableUtils.PARQUET_PARTITION_NAME).$());
+                    path.trimTo(dirLen);
                 }
+                // A COMPOSITE partition spends its offset-3 value field on the geometry pointer, so
+                // getNativePartitionSeqTxn reports "unknown" for it; its stamp lives in the _geometry
+                // record instead.
+                final long resolvedSeqTxn;
+                if (isParquet) {
+                    resolvedSeqTxn = parquetMetaReader != null && parquetMetaReader.isOpen() ? parquetMetaReader.getResolvedSeqTxn() : -1L;
+                } else if (tableTxReader.isPartitionComposite(partitionIndex)) {
+                    resolvedSeqTxn = tableReader.getGeometry().getSeqTxn(partitionIndex);
+                } else {
+                    resolvedSeqTxn = tableTxReader.getNativePartitionSeqTxn(partitionIndex);
+                }
+                // no seqTxn (non-WAL, or unstamped/legacy) resolves to 0 or -1; render null so a
+                // converted partition doesn't show 0 where its native form shows nothing.
+                seqTxn = resolvedSeqTxn > 0 ? resolvedSeqTxn : Numbers.LONG_NULL;
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
                 long physicalRows = tableReader.getPartitionPhysicalRowCount(partitionIndex);
                 deadRows = physicalRows - numRows;
@@ -483,9 +515,11 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     // hasParquetGenerated=false, isParquet=true. That is harmless internally, but
                     // showed up oddly in SHOW PARTITIONS (a parquet partition reporting "not
                     // generated"). Treat any parquet partition as having a generated parquet file:
-                    // isParquet implies a parquet file was generated for it.
-                    case 13 -> hasParquetGenerated || isParquet;
+                    // isParquet implies a parquet file was generated for it. A remotely-served
+                    // partition is the exception: its local data.parquet was evicted, so report false.
+                    case 13 -> (hasParquetGenerated || isParquet) && !isRemotelyServed;
                     case 14 -> isParquet;
+                    case 17 -> isRemotelyServed;
                     default -> throw new UnsupportedOperationException();
                 };
             }
@@ -506,8 +540,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     case 5 -> numRows;
                     case 6 -> partitionSize;
                     case 15 -> parquetFileSize;
-                    case 16 -> deadRows;
-                    case 17 -> lastWriteTimestamp;
+                    case 16 -> seqTxn;
+                    case 18 -> deadRows;
+                    case 19 -> lastWriteTimestamp;
                     default -> throw new UnsupportedOperationException();
                 };
             }
@@ -537,7 +572,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 return switch (col) {
                     case 3 -> minTimestamp;
                     case 4 -> maxTimestamp;
-                    case 17 -> lastWriteTimestamp;
+                    case 19 -> lastWriteTimestamp;
                     default -> throw new UnsupportedOperationException();
                 };
             }
@@ -562,6 +597,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.HAS_PARQUET_GENERATED.metadata());
         metadata.add(Column.IS_PARQUET.metadata());
         metadata.add(Column.PARQUET_FILE_SIZE.metadata());
+        metadata.add(Column.SEQ_TXN.metadata());
+        metadata.add(Column.IS_REMOTELY_SERVED.metadata());
         metadata.add(Column.DEAD_ROWS.metadata());
         metadata.add(Column.LAST_WRITE_TIMESTAMP.metadata());
         METADATA_TIMESTAMP = metadata;
@@ -582,6 +619,8 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadataNs.add(Column.HAS_PARQUET_GENERATED.metadata());
         metadataNs.add(Column.IS_PARQUET.metadata());
         metadataNs.add(Column.PARQUET_FILE_SIZE.metadata());
+        metadataNs.add(Column.SEQ_TXN.metadata());
+        metadataNs.add(Column.IS_REMOTELY_SERVED.metadata());
         metadataNs.add(Column.DEAD_ROWS.metadata());
         metadataNs.add(Column.LAST_WRITE_TIMESTAMP.metadata());
         METADATA_TIMESTAMP_NS = metadataNs;

@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -46,7 +47,6 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
-import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -57,13 +57,13 @@ import io.questdb.griffin.engine.join.JoinRecordMetadata;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
@@ -79,15 +79,16 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
 public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final UnorderedPageFrameReducer FILTER_AND_REDUCE = AsyncHorizonJoinNotKeyedRecordCursorFactory::filterAndReduce;
     private static final UnorderedPageFrameReducer REDUCE = AsyncHorizonJoinNotKeyedRecordCursorFactory::reduce;
-    private final AsyncHorizonJoinNotKeyedRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
-    private final ObjList<GroupByFunction> groupByFunctions;
+    private AsyncHorizonJoinNotKeyedRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence;
+    private ObjList<GroupByFunction> groupByFunctions;
     // Combined metadata (master + offsets pseudo-table + slave) used for GROUP BY function column references in toPlan
-    private final JoinRecordMetadata horizonJoinMetadata;
-    private final RecordCursorFactory masterFactory;
+    private JoinRecordMetadata horizonJoinMetadata;
+    private RecordCursorFactory masterFactory;
     // Pre-computed offset values (in microseconds)
     private final long[] offsets;
-    private final RecordCursorFactory slaveFactory;
+    private AsyncHorizonJoinResources resources;
+    private RecordCursorFactory slaveFactory;
     private final int workerCount;
 
     public AsyncHorizonJoinNotKeyedRecordCursorFactory(
@@ -102,7 +103,6 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             long @NotNull [] offsets,
             int masterTimestampColumnIndex,
             @NotNull ObjList<GroupByFunction> groupByFunctions,
-            @Nullable ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions,
             int valueCount,
             @Nullable ColumnTypes asOfJoinKeyTypes,
             @Nullable Class<RecordSink> masterAsOfJoinMapSinkClass,
@@ -112,12 +112,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             int @Nullable [] slaveSymbolKeyColumnIndices,
             int @NotNull [] columnSources,
             int @NotNull [] columnIndexes,
-            @Nullable CompiledFilter compiledFilter,
-            @Nullable MemoryCARW bindVarMemory,
-            @Nullable ObjList<Function> bindVarFunctions,
-            @Nullable Function filter,
-            @Nullable IntHashSet filterUsedColumnIndexes,
-            @Nullable ObjList<Function> perWorkerFilters,
+            @NotNull AsyncHorizonJoinResources resources,
             int workerCount
     ) {
         super(metadata);
@@ -127,6 +122,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             this.slaveFactory = slaveFactory;
             this.offsets = offsets;
             this.groupByFunctions = groupByFunctions;
+            this.resources = resources;
             this.workerCount = workerCount;
 
             // Compute timestamp scale factors for cross-resolution support
@@ -139,6 +135,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                 slaveTsScale = ColumnType.getTimestampDriver(slaveTsType).toNanosScale();
             }
 
+            final boolean hasFilter = resources.getFilter() != null;
             final AsyncHorizonJoinNotKeyedAtom atom = new AsyncHorizonJoinNotKeyedAtom(
                     asm,
                     configuration,
@@ -155,13 +152,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     columnSources,
                     columnIndexes,
                     groupByFunctions,
-                    perWorkerGroupByFunctions,
-                    compiledFilter,
-                    bindVarMemory,
-                    bindVarFunctions,
-                    filter,
-                    filterUsedColumnIndexes,
-                    perWorkerFilters,
+                    resources,
                     masterTsScale,
                     slaveTsScale,
                     workerCount
@@ -172,15 +163,21 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     configuration,
                     messageBus,
                     atom,
-                    filter != null ? FILTER_AND_REDUCE : REDUCE,
+                    hasFilter ? FILTER_AND_REDUCE : REDUCE,
                     workerCount
             );
 
             this.cursor = new AsyncHorizonJoinNotKeyedRecordCursor(groupByFunctions, slaveFactory);
         } catch (Throwable th) {
-            close();
+            Misc.free(this, th);
             throw th;
         }
+    }
+
+    @Override
+    @TestOnly
+    public AsyncHorizonJoinNotKeyedAtom getAtom() {
+        return frameSequence.getAtom();
     }
 
     @Override
@@ -278,15 +275,18 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
 
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-        record.init(frameMemory);
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot, see PerWorkerLocks.acquireSlot().
         try {
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final SimpleMapValue value = atom.getMapValue(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
@@ -297,7 +297,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             // Apply filter to master rows
             final DirectLongList rows = filterCtx.getFilteredRows(slotId);
             rows.clear();
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 applyFilter(filter, rows, record, frameRowCount);
             } else {
                 applyCompiledFilter(
@@ -358,8 +358,11 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     circuitBreaker
             );
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -417,7 +420,7 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
             final long scaledHorizonTs = scaleTimestamp(horizonTs, masterTsScale);
             long asOfRowId = slaveTimeFrameHelper.findAsOfRow(scaledHorizonTs);
 
-            long matchRowId = Long.MIN_VALUE;
+            long matchRowId;
             if (keyedAsOfJoin) {
                 matchRowId = slaveTimeFrameHelper.findKeyedAsOfMatch(
                         asOfRowId,
@@ -473,10 +476,13 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
 
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
 
+        // navigateTo()/populateFrameMemory() decode the frame and can throw, so they must sit
+        // inside the try that releases the slot, see PerWorkerLocks.acquireSlot().
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
             final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
             final SimpleMapValue value = atom.getMapValue(slotId);
             final int masterTimestampColumnIndex = atom.getMasterTimestampColumnIndex();
@@ -513,20 +519,43 @@ public class AsyncHorizonJoinNotKeyedRecordCursorFactory extends AbstractRecordC
                     circuitBreaker
             );
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
     @Override
     protected void _close() {
+        final AsyncHorizonJoinNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncHorizonJoinNotKeyedAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final JoinRecordMetadata horizonJoinMetadata = this.horizonJoinMetadata;
+        this.horizonJoinMetadata = null;
+        final RecordCursorFactory masterFactory = this.masterFactory;
+        this.masterFactory = null;
+        final AsyncHorizonJoinResources resources = this.resources;
+        this.resources = null;
+        final RecordCursorFactory slaveFactory = this.slaveFactory;
+        this.slaveFactory = null;
+
+        Throwable cleanupFailure = null;
         // Free cursor before frameSequence: a cursor left half-open by a failed
         // getCursor() still references frameSequence and reset()s it on close().
-        Misc.free(cursor);
-        Misc.free(frameSequence);
-        Misc.free(masterFactory);
-        Misc.free(slaveFactory);
-        Misc.free(horizonJoinMetadata);
-        Misc.freeObjList(groupByFunctions);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, masterFactory);
+        if (slaveFactory != masterFactory) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, slaveFactory);
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, horizonJoinMetadata);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, resources);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

@@ -1,23 +1,23 @@
+parameters:
+  - name: isCheckoutEnabled
+    type: boolean
+    default: true
+  - name: isHetznerAptMirrorEnabled
+    type: boolean
+    default: true
+
 steps:
-  - bash: |
-      # Apply only to Hetzner self-hosted agents. AGENT_MACHINENAME is the
-      # agent's self-configured name (e.g. "hetzner-incus-12"), distinct
-      # from the OS hostname and from the timeline's workerName.
-      if [[ "${AGENT_MACHINENAME:-}" != hetzner-incus-* ]]; then
-        echo "Skipping on ${AGENT_MACHINENAME:-unknown}; only applied to hetzner-incus-* agents"
-        exit 0
-      fi
-      # Abort any git HTTP transfer that averages below 100 KiB/s for 120s
-      # so Azure's checkout retry picks a fresh TCP connection instead of
-      # crawling for 30-60 min. Mitigates the per-flow upstream-network
-      # stalls observed on the FSN1 dedicated-server boxes.
-      git config --global http.lowSpeedLimit 102400
-      git config --global http.lowSpeedTime 120
-    displayName: "Set git low-speed abort thresholds"
-  - checkout: self
-    fetchDepth: 1
-    lfs: false
-    submodules: false
+  - ${{ if eq(parameters.isCheckoutEnabled, true) }}:
+      - template: checkout-source.yml
+  - ${{ if eq(parameters.isHetznerAptMirrorEnabled, true) }}:
+      - template: use-hetzner-apt-mirrors.yml
+        parameters:
+          shouldRun: |
+            and(
+              succeeded(),
+              eq(variables['os'], 'Linux'),
+              startsWith(variables['poolName'], 'hetzner-')
+            )
   - template: detect-local-client.yml
   - bash: |
       if curl -sf --connect-timeout 2 http://maven.internal:8081/ > /dev/null 2>&1; then
@@ -43,6 +43,45 @@ steps:
       rm -rf /tmp/junit* /tmp/surefire-agent /tmp/libquestdbr* /tmp/libqdbsqllogic*
     displayName: "Cleanup dangling test artifacts from /tmp"
     condition: startsWith(variables['poolName'], 'hetzner-')
+  # Never infer the architecture from an image label: "macos-14" is arm64 on
+  # GitHub Actions but Intel x64 on Azure. Assert it so a silent swap back to
+  # Intel fails loudly instead of testing an architecture we do not ship.
+  #
+  # The arm64 image exposes the JDK as JAVA_HOME_25_ARM64, but the Maven task
+  # resolves jdkVersionOption via JAVA_HOME_25_X64. Point the latter at the JDK
+  # we found, exactly as the linux_arm64 job does for hetzner-incus-arm.
+  - bash: |
+      set -eu
+      echo "image=$(imageName) arch=$(uname -m) os=$(sw_vers -productVersion)"
+      if [ "$(uname -m)" != "arm64" ]; then
+        echo "ERROR: expected arm64, got $(uname -m)"
+        exit 1
+      fi
+      JAVA_PATH="${JAVA_HOME_25_ARM64:-}"
+      if [ -z "$JAVA_PATH" ]; then
+        JAVA_PATH="$(/usr/libexec/java_home -v 25 2>/dev/null || true)"
+      fi
+      if [ -z "$JAVA_PATH" ]; then
+        echo "ERROR: no JDK 25 on the image. Available:"
+        /usr/libexec/java_home -V 2>&1 || true
+        exit 1
+      fi
+      echo "JAVA_HOME will be set to: $JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+      echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+    displayName: "Assert macOS agent is arm64 and activate JDK 25"
+    condition: eq(variables['os'], 'macOS')
+  # macOS caps the number of files a process may open separately from its
+  # inherited rlimit. If kern.maxfilesperproc is too low, the JVM cannot raise
+  # its soft limit and falls back to OPEN_MAX (10240), which is insufficient for
+  # tests that scan thousands of table partitions in parallel.
+  - bash: |
+      set -eux
+      sudo sysctl -w kern.maxfiles=10485760
+      sudo sysctl -w kern.maxfilesperproc=1048576
+      sysctl kern.maxfiles kern.maxfilesperproc
+    displayName: "Increase file count on macOS"
+    condition: eq(variables['os'], 'macOS')
   - bash: sudo sysctl -w fs.file-max=500000
     displayName: "Increase file count on Linux"
     condition: |
@@ -82,6 +121,11 @@ steps:
     displayName: "Activate GraalVM 25"
     condition: |
       eq(variables['System.JobName'], 'linux_x64_graal')
+  # Compile the client's native library from source when building it as a
+  # -SNAPSHOT (local-client). A Maven-Central client ships the binaries in its
+  # jar, so this is a no-op there. Runs after JDK activation so $JAVA_HOME points
+  # at the JDK whose jni.h CMake builds against.
+  - template: build-client-native.yml
   - task: Cache@2
     displayName: "Cache non-default Maven"
     continueOnError: true
@@ -163,7 +207,7 @@ steps:
         and(
           startsWith(variables['testset'], 'coverage'),
           eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-          eq(variables['System.PullRequest.IsFork'], 'false')
+          ne(variables['System.PullRequest.IsFork'], 'true')
         )
 
   - task: Maven@3
@@ -211,7 +255,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
   - task: Maven@3
     displayName: "Pre-build for Coverage"
@@ -228,7 +272,7 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
-        eq(variables['System.PullRequest.IsFork'], 'false'),
+        ne(variables['System.PullRequest.IsFork'], 'true'),
         or(
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
@@ -255,7 +299,7 @@ steps:
     condition: |
       and(
         startsWith(variables['testset'], 'coverage'),
-        eq(variables['System.PullRequest.IsFork'], 'false'),
+        ne(variables['System.PullRequest.IsFork'], 'true'),
         or(
             eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
             eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true')
@@ -331,7 +375,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
   - task: PublishBuildArtifacts@1
     displayName: "Upload partial JaCoCo report"
@@ -339,7 +383,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
     inputs:
       pathToPublish: $(Build.SourcesDirectory)/$(testset).exec
@@ -371,7 +415,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
   - task: PublishBuildArtifacts@1
     displayName: "Upload partial Rust coverage report (LCOV)"
@@ -379,7 +423,7 @@ steps:
       and(
         startsWith(variables['testset'], 'coverage'),
         eq(variables['RUST_SOURCE_CODE_CHANGED'], 'true'),
-        eq(variables['System.PullRequest.IsFork'], 'false')
+        ne(variables['System.PullRequest.IsFork'], 'true')
       )
     inputs:
       pathToPublish: $(Build.SourcesDirectory)/$(testset).lcov

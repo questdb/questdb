@@ -81,23 +81,23 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final static Log LOG = LogFactory.getLog(GroupByRecordCursorFactory.class);
     private final static int ROSTI_MINIMIZED_SIZE = 16; // 16 is the minimum size usable on arm
 
-    private final RecordCursorFactory base;
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
     private final PageFrameAddressCache frameAddressCache;
-    private final ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
-    private final long[] pRosti;
     private final PerWorkerLocks perWorkerLocks; // used to protect pRosti and VAF's internal slots
     private final RostiAllocFacade raf;
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker; // used to signal cancellation to workers
     private final AtomicInteger startedCounter = new AtomicInteger();
-    private final ObjList<VectorAggregateFunction> vafList;
     private final WorkStealingStrategy workStealingStrategy;
     private final int workerCount;
+    private RecordCursorFactory base;
+    private ObjList<PageFrameMemoryPool> frameMemoryPools; // per worker pools
+    private long[] pRosti;
     private ObjList<RostiSharedCursor> sharedCursors;
+    private ObjList<VectorAggregateFunction> vafList;
 
     public GroupByRecordCursorFactory(
             CairoEngine engine,
@@ -197,7 +197,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             this.frameMemoryPools = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 // Single sequential scan; no LRU caching needed across frames.
-                frameMemoryPools.add(new PageFrameMemoryPool(0L));
+                frameMemoryPools.add(new PageFrameMemoryPool(configuration, 0L));
             }
         } catch (Throwable th) {
             close();
@@ -208,6 +208,18 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    // Vector aggregates are column-bound builtins (sum/min/max/avg/count/...) with no argument
+    // expressions, hence deterministic by construction; stability is the base's.
+    @Override
+    public boolean isNonDeterministic() {
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return base.isStableWithinExecution();
     }
 
     @Override
@@ -356,17 +368,40 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        Misc.freeObjListAndKeepObjects(frameMemoryPools);
-        Misc.freeObjList(vafList);
-        for (int i = 0, n = pRosti.length; i < n; i++) {
-            if (pRosti[i] != 0) {
-                raf.free(pRosti[i]);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final ObjList<PageFrameMemoryPool> frameMemoryPools = this.frameMemoryPools;
+        this.frameMemoryPools = null;
+        final long[] pRosti = this.pRosti;
+        this.pRosti = null;
+        final ObjList<RostiSharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<VectorAggregateFunction> vafList = this.vafList;
+        this.vafList = null;
+
+        Throwable failure = Misc.freeObjListAndKeepObjectsBestEffort(null, frameMemoryPools);
+        failure = Misc.freeObjListBestEffort(failure, vafList);
+        if (pRosti != null) {
+            for (int i = 0, n = pRosti.length; i < n; i++) {
+                final long pointer = pRosti[i];
                 pRosti[i] = 0;
+                if (pointer != 0) {
+                    try {
+                        raf.free(pointer);
+                    } catch (Throwable th) {
+                        if (failure == null) {
+                            failure = th;
+                        } else if (failure != th) {
+                            failure.addSuppressed(th);
+                        }
+                    }
+                }
             }
         }
-        Misc.free(base);
+        failure = Misc.freeBestEffort(failure, base);
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        CairoException.rethrowCleanupFailure(failure);
     }
 
     private class RostiRecordCursor implements RecordCursor {
@@ -559,6 +594,15 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     frameAddressCache.add(frameCount++, frame);
                 }
 
+                // Covered frames decode their columns on the vector-aggregate
+                // workers (PageFrameMemoryPool.navigateTo) over the shared
+                // per-partition posting readers; freeze each reader so its mmaps
+                // stay stable for the concurrent detached cursors. The add() loop
+                // above already positioned + warmed them via the eager production
+                // decode. unfreezeCoveredReaders() runs in the finally below, after
+                // runWhatsLeft has drained the done-latch (so no worker is reading).
+                frameAddressCache.freezeCoveredReaders();
+
                 for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
                     final long frameRowCount = frameAddressCache.getFrameSize(frameIndex);
                     for (int vafIndex = 0; vafIndex < vafCount; vafIndex++) {
@@ -570,7 +614,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                         while (true) {
                             long cursor = pubSeq.next();
                             if (cursor < 0) {
-                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
                                 if (workStealingStrategy.shouldSteal(mergedCount)) {
                                     VectorAggregateEntry.aggregateUnsafe(
@@ -647,7 +691,12 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                 if (sharedCircuitBreaker.checkIfTripped()) {
                     resetRostiMemorySize();
                 }
-                // Release page frame memory now, when no worker is using it.
+                // runWhatsLeft has drained the done-latch, so every vector-aggregate
+                // worker has finished iterating its detached covered cursors. Unfreeze
+                // the covered posting readers (no-op when none) so later queries can
+                // reload them, and release page frame memory -- both safe now that no
+                // worker is using it.
+                frameAddressCache.unfreezeCoveredReaders();
                 Misc.freeObjListAndKeepObjects(frameMemoryPools);
             }
 

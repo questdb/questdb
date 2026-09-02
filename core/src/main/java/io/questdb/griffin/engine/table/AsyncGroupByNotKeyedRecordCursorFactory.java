@@ -28,6 +28,7 @@ import io.questdb.MessageBus;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -63,6 +64,7 @@ import io.questdb.std.Rows;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -72,11 +74,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
     private static final UnorderedPageFrameReducer AGGREGATE_VECT = AsyncGroupByNotKeyedRecordCursorFactory::aggregateVect;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByNotKeyedRecordCursorFactory::filterAndAggregate;
 
-    private final RecordCursorFactory base;
-    private final AsyncGroupByNotKeyedRecordCursor cursor;
-    private final UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
-    private final ObjList<GroupByFunction> groupByFunctions;
-    private final @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
+    private RecordCursorFactory base;
+    private AsyncGroupByNotKeyedRecordCursor cursor;
+    private UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence;
+    private ObjList<GroupByFunction> groupByFunctions;
+    private @Nullable ObjList<ObjList<Function>> sharedRecordFunctions;
     private final boolean vectorized;
     private final int workerCount;
     private ObjList<AsyncGroupByNotKeyedSharedCursor> sharedCursors;
@@ -175,14 +177,51 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             this.cursor = new AsyncGroupByNotKeyedRecordCursor(groupByFunctions);
             this.workerCount = workerCount;
         } catch (Throwable e) {
-            close();
+            Misc.free(this, e);
             throw e;
         }
     }
 
     @Override
+    @TestOnly
+    public AsyncGroupByNotKeyedAtom getAtom() {
+        return frameSequence.getAtom();
+    }
+
+    @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
+    }
+
+    // Stable iff every aggregate (which may evaluate arbitrary argument expressions, for example
+    // max(rnd_timestamp(...))), the fused filter (held by the atom, not the base) and the base
+    // are stable. Per-worker filters are clones of the owner filter, so checking it suffices.
+    @Override
+    public boolean isNonDeterministic() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (groupByFunctions.getQuick(i).isNonDeterministic()) {
+                return true;
+            }
+        }
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null && filter.isNonDeterministic()) {
+            return true;
+        }
+        return base.isNonDeterministic();
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            if (!groupByFunctions.getQuick(i).isStableWithinExecution()) {
+                return false;
+            }
+        }
+        final Function filter = frameSequence.getAtom().getFilterContext().getFilter(-1);
+        if (filter != null && !filter.isStableWithinExecution()) {
+            return false;
+        }
+        return base.isStableWithinExecution();
     }
 
     @Override
@@ -207,16 +246,32 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public RecordCursor getSharedCursor(SqlExecutionContext executionContext, int sharedId) throws SqlException {
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        if (sharedRecordFunctions == null) {
+            throw new UnsupportedOperationException();
+        }
         if (sharedCursors == null) {
             sharedCursors = new ObjList<>();
         }
         int idx = sharedId - 1;
         AsyncGroupByNotKeyedSharedCursor shared = sharedCursors.getQuiet(idx);
         if (shared == null) {
-            assert sharedRecordFunctions != null;
             assert idx < sharedRecordFunctions.size();
             shared = new AsyncGroupByNotKeyedSharedCursor(cursor, sharedRecordFunctions.getQuick(idx), frameSequence.getAtom().getOwnerMapValue());
             sharedCursors.extendAndSet(idx, shared);
+        }
+        // Donate the owner state to the consumer's aligned clones before they initialize, so
+        // stateful functions inside aggregate arguments - such as cursor comparisons caching a
+        // scalar sub-query result - never re-run their expensive and potentially
+        // nondeterministic initialization in a shared consumer. The donation is open-order
+        // independent: it marks the clones state-inherited so their init skips
+        // self-execution, and the donated value itself is never read - shared consumers only
+        // materialize the owner's map value through VirtualRecord - while the owner initializes
+        // exactly once in the atom when the primary cursor opens.
+        final ObjList<Function> sharedFunctions = sharedRecordFunctions.getQuick(idx);
+        assert groupByFunctions.size() == sharedFunctions.size();
+        for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
+            groupByFunctions.getQuick(i).offerStateTo(sharedFunctions.getQuick(i));
         }
         shared.of(executionContext, frameSequence);
         return shared;
@@ -229,7 +284,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
 
     @Override
     public boolean supportsSharedCursors() {
-        return true;
+        return sharedRecordFunctions != null;
     }
 
     @Override
@@ -272,12 +327,15 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        record.init(frameMemory);
 
         final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
         final SimpleMapValue value = atom.getMapValue(slotId);
+        // navigateTo() decodes the frame and can throw, so it must sit inside the try that
+        // releases the slot, see PerWorkerLocks.acquireSlot().
         try {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            record.init(frameMemory);
+
             record.setRowIndex(0);
             long rowId = record.getRowId();
             for (long r = 0; r < frameRowCount; r++) {
@@ -290,8 +348,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 }
             }
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -330,14 +391,16 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
         final AsyncFilterContext filterCtx = atom.getFilterContext();
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
 
         final SimpleMapValue value = atom.getMapValue(slotId);
         final int[] batchColumnIndexes = atom.getBatchColumnIndexes();
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final int functionCount = functions.size();
+        // navigateTo() can throw; it must sit inside the try that releases the slot. See
+        // aggregate() for why a leaked slot is permanent.
         try {
-            if (frameMemory.hasColumnTops()) {
+            final PageFrameMemory frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            if (frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Fall back to row-by-row for the entire frame.
                 record.init(frameMemory);
                 final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
@@ -401,8 +464,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
                 }
             }
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -447,15 +513,7 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final PageFrameAddressCache addressCache = frameSequence.getPageFrameAddressCache();
         final boolean isParquetFrame = addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET;
         final boolean useLateMaterialization = filterCtx.shouldUseLateMaterialization(slotId, isParquetFrame);
-
         final PageFrameMemoryPool frameMemoryPool = filterCtx.getMemoryPool(slotId);
-        final PageFrameMemory frameMemory;
-        if (useLateMaterialization) {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
-        } else {
-            frameMemory = frameMemoryPool.navigateTo(frameIndex);
-        }
-        record.init(frameMemory);
 
         final DirectLongList rows = filterCtx.getFilteredRows(slotId);
         rows.clear();
@@ -464,8 +522,18 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
         final SimpleMapValue value = atom.getMapValue(slotId);
         final CompiledFilter compiledFilter = filterCtx.getCompiledFilter();
         final Function filter = filterCtx.getFilter(slotId);
+        // navigateTo() can throw; it must sit inside the try that releases the slot. See
+        // aggregate() for why a leaked slot is permanent.
         try {
-            if (compiledFilter == null || frameMemory.hasColumnTops()) {
+            final PageFrameMemory frameMemory;
+            if (useLateMaterialization) {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex, filterCtx.getFilterUsedColumnIndexes());
+            } else {
+                frameMemory = frameMemoryPool.navigateTo(frameIndex);
+            }
+            record.init(frameMemory);
+
+            if (compiledFilter == null || frameMemory.hasColumnTops() || frameMemory.hasColumnTypeCasts()) {
                 // Use Java-based filter when there is no compiled filter or in case of a page frame with column tops.
                 AsyncFilterUtils.applyFilter(filter, rows, record, frameRowCount);
             } else {
@@ -494,8 +562,11 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
             long baseRowId = Rows.toRowID(frameIndex, 0);
             aggregateFiltered(record, rows, baseRowId, value, functionUpdater);
         } finally {
-            frameMemoryPool.releaseParquetBuffers();
-            atom.release(slotId);
+            try {
+                frameMemoryPool.releaseParquetBuffers();
+            } finally {
+                atom.release(slotId);
+            }
         }
     }
 
@@ -520,12 +591,29 @@ public class AsyncGroupByNotKeyedRecordCursorFactory extends AbstractRecordCurso
      */
     @Override
     protected void _close() {
-        Misc.free(base);
-        Misc.free(cursor);
-        Misc.free(frameSequence);
-        Misc.freeObjList(groupByFunctions);
-        GroupByRecordCursorFactory.freeSharedRecordFunctions(sharedRecordFunctions);
+        final RecordCursorFactory base = this.base;
+        this.base = null;
+        final AsyncGroupByNotKeyedRecordCursor cursor = this.cursor;
+        this.cursor = null;
+        final UnorderedPageFrameSequence<AsyncGroupByNotKeyedAtom> frameSequence = this.frameSequence;
+        this.frameSequence = null;
+        final ObjList<GroupByFunction> groupByFunctions = this.groupByFunctions;
+        this.groupByFunctions = null;
+        final ObjList<AsyncGroupByNotKeyedSharedCursor> sharedCursors = this.sharedCursors;
+        this.sharedCursors = null;
+        final ObjList<ObjList<Function>> sharedRecordFunctions = this.sharedRecordFunctions;
+        this.sharedRecordFunctions = null;
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, base);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, frameSequence);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, groupByFunctions);
+        cleanupFailure = GroupByRecordCursorFactory.freeSharedRecordFunctionsBestEffort(
+                cleanupFailure,
+                sharedRecordFunctions
+        );
         // Shared cursors hold no native memory; primary state freed above covers it.
         Misc.clear(sharedCursors);
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 }

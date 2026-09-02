@@ -84,7 +84,6 @@ public class TableUpdateDetails implements Closeable {
     // Set only for WAL tables, i.e. when writerThreadId == -1.
     private final SecurityContext ownSecurityContext;
     private final Utf8String tableNameUtf8;
-    private final TableToken tableToken;
     private final TimestampDriver timestampDriver;
     private final int timestampIndex;
     private final long writerTickRowsCountMod;
@@ -99,6 +98,7 @@ public class TableUpdateDetails implements Closeable {
     private MetadataService metadataService;
     private int networkIOOwnerCount = 0;
     private long nextCommitTime;
+    private TableToken tableToken;
     private volatile boolean writerInError;
     private int writerThreadId;
 
@@ -236,7 +236,7 @@ public class TableUpdateDetails implements Closeable {
             // acquire the lock, skip the lock acquire entirely. This is NOT the
             // authoritative refusal -- the in-lock re-check below is.
             if (engine.isReadOnlyMode()) {
-                throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                throw CairoException.readOnlyAccess();
             }
             // Hold the role-switch lock across the authoritative re-check and the
             // actual commit. The role-flip path in EntCairoEngine acquires the same
@@ -256,7 +256,7 @@ public class TableUpdateDetails implements Closeable {
                 // authorizeCommit(): a real authorization failure must still roll back the writer
                 // and surface as a wrapped CommitFailedException, exactly as before this gate existed.
                 if (engine.isReadOnlyMode()) {
-                    throw CairoException.authorization().put(CairoException.READ_ONLY_ACCESS_MESSAGE);
+                    throw CairoException.readOnlyAccess();
                 }
                 try {
                     authorizeCommit();
@@ -405,6 +405,17 @@ public class TableUpdateDetails implements Closeable {
         if (metadataService != null) {
             metadataService.tick();
         }
+    }
+
+    /**
+     * Rebinds this entry's table token. Called by QWP salvage after
+     * {@code goActive()} replayed a RENAME into the writer: the salvage commit
+     * and its insert authorization must run under the renamed table's identity,
+     * not the name this entry was cached under. The entry is evicted right
+     * after the salvage, so the rebound token never serves another lookup.
+     */
+    public void updateTableToken(TableToken tableToken) {
+        this.tableToken = tableToken;
     }
 
     private void authorizeCommit() {

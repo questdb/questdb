@@ -41,6 +41,17 @@ public interface WindowContext {
 
     int getOrderByPos();
 
+    /**
+     * The base cursor's scan direction when the compiler dismissed this window's ORDER BY
+     * against it, and {@code RecordCursorFactory.SCAN_DIRECTION_OTHER} when it did not -
+     * which is also what a window carrying no ORDER BY at all reports.
+     * <p>
+     * {@link #isOrderedByDesignatedTimestamp()} is the same field read as a boolean, and is
+     * what a RANGE frame asks. This returns the direction itself, for a caller that has to
+     * record which way the rows arrive rather than only that they arrive ordered.
+     */
+    int getOrderByScanDirection();
+
     ColumnTypes getPartitionByKeyTypes();
 
     VirtualRecord getPartitionByRecord();
@@ -64,6 +75,12 @@ public interface WindowContext {
     boolean isEmpty();
 
     boolean isIgnoreNulls();
+
+    // True when this window is being compiled as part of a live view's SELECT.
+    // Drives opt-in value-layout slots that only live views need (e.g. the
+    // tombstone slot that RowNumberFunctionFactory and
+    // RankFunctionFactory.RankOverPartitionFunction use for anchor-driven compaction).
+    boolean isLiveView();
 
     boolean isOrdered();
 

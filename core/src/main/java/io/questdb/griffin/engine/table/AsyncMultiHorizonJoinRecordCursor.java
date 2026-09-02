@@ -58,6 +58,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  */
 class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
     private final MessageBus messageBus;
+    // Borrowed non-group-by views into recordFunctions; the factory owns and closes the functions.
+    private final ObjList<Function> nonGroupByFunctions;
     private final AtomicBooleanCircuitBreaker postAggregationCircuitBreaker;
     private final SOUnboundedCountDownLatch postAggregationDoneLatch = new SOUnboundedCountDownLatch();
     private final AtomicInteger postAggregationStartedCounter = new AtomicInteger();
@@ -91,6 +93,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
             this.messageBus = messageBus;
             this.postAggregationCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             this.recordFunctions = recordFunctions;
+            this.nonGroupByFunctions = GroupByUtils.extractNonGroupByFunctions(recordFunctions);
             this.slaveFactories = slaveFactories;
             this.slaveCount = slaveFactories.size();
             this.slaveFrameCursors = new ObjList<>(slaveCount);
@@ -308,7 +311,15 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 slaveSources.setQuick(s, slaveFrameCursors.getQuick(s));
             }
             symbolTableSource.of(frameSequence.getSymbolTableSource(), slaveSources);
-            Function.init(recordFunctions, symbolTableSource, executionContext, null);
+            // The constructor pre-filters the non-group-by functions once, so cached re-executions
+            // skip the per-function classification scan.
+            Function.init(nonGroupByFunctions, symbolTableSource, executionContext, null);
+            // The owner group by and key functions bind here too, and only here: a parent
+            // projection or sort over a SYMBOL aggregate resolves the output column's static symbol
+            // table at getCursor() time, which is before the slave time-frame cache is built on the
+            // first read. The atom donates the owner state to the per-worker clones when it binds
+            // those in initGroupByFunctions().
+            atom.initOwnerFunctions(executionContext);
         } catch (Throwable th) {
             Misc.freeObjList(slaveFrameCursors);
             throw th;

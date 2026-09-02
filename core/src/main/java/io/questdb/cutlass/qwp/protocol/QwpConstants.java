@@ -128,7 +128,7 @@ public final class QwpConstants {
     /**
      * Maximum symbol dictionary entries per column or per connection.
      */
-    public static final int MAX_SYMBOL_DICTIONARY_SIZE = 1_000_000;
+    public static final int MAX_SYMBOL_DICTIONARY_SIZE = 2_000_000;
     /**
      * Maximum table name length in bytes.
      */
@@ -138,6 +138,14 @@ public final class QwpConstants {
      * frame or the server invoked explicit cancellation.
      */
     public static final byte STATUS_CANCELLED = 0x0A;
+    /**
+     * A delta symbol dictionary whose start id runs past the connection dictionary.
+     * Distinct from {@link #STATUS_PARSE_ERROR} because the verdict depends on
+     * per-connection SERVER state, not on the frame's bytes: the identical frame is
+     * accepted once the sender has re-registered its dictionary. A client should treat
+     * it as retriable and re-register from id 0.
+     */
+    public static final byte STATUS_DICTIONARY_GAP = 0x0D;
     /**
      * Status: Per-table durable-upload acknowledgment.
      * <p>
@@ -159,6 +167,16 @@ public final class QwpConstants {
      * (query timeout, memory cap, circuit breaker, OOM).
      */
     public static final byte STATUS_LIMIT_EXCEEDED = 0x0B;
+    /**
+     * Status: Reserved. Node cannot accept writes (read-only replica /
+     * demoting primary). Servers currently signal this state with a
+     * reconnect-eligible {@code NORMAL_CLOSURE} close instead of a NACK (see
+     * the role-change close in {@code QwpIngressProcessorState}); the byte is
+     * reserved so a future server can NACK it mid-stream once deployed client
+     * fleets classify it as retriable-with-endpoint-rotation rather than
+     * unknown/terminal.
+     */
+    public static final byte STATUS_NOT_WRITABLE = 0x0C;
     /**
      * Status: Batch accepted successfully.
      */

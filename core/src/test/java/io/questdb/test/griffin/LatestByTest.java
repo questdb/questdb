@@ -32,6 +32,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -40,6 +43,8 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.BindVarTuple;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -228,6 +233,72 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByConstantFalseWhere() throws Exception {
+        // A LATEST ON whose WHERE the optimiser folds to a compile-time constant-false
+        // predicate (a col<col / col>col / ts>ts self-comparison, or an AND of them)
+        // used to trip 'assert nested != null' in generateLatestBy (NPE in production).
+        // The SQL-correct answer is an empty result set, the same as any query over a
+        // constant-false filter. See also testLatestByConstantFalseWhereBindMatches below.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t AS (\n" +
+                            "  SELECT\n" +
+                            "    timestamp_sequence(1, 1000)::#TIMESTAMP ts,\n" +
+                            "    rnd_double() c2,\n" +
+                            "    rnd_symbol('a','b','c') c3\n" +
+                            "  FROM long_sequence(100)\n" +
+                            ") TIMESTAMP(ts);\n",
+                    timestampType.getTypeName()
+            );
+
+            final String empty = "ts\tc2\tc3\n";
+            // self-comparison on a non-key column
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 > c2 LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
+            // self-comparison on the designated timestamp
+            assertQuery("SELECT * FROM t WHERE ts > ts LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
+            // self-comparison on the partition key
+            assertQuery("SELECT * FROM t WHERE c3 != c3 LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
+            // AND of self-comparisons
+            assertQuery("SELECT * FROM t WHERE c2 < c2 AND ts > ts LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
+            // a folded literal-only constant-false term
+            assertQuery("SELECT * FROM t WHERE 1 > 2 LATEST ON ts PARTITION BY c3").noLeakCheck().timestamp("ts").returns(empty);
+            // with ORDER BY and LIMIT riding along (the fuzzer shapes)
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3 ORDER BY ts ASC").noLeakCheck().timestamp("ts").returns(empty);
+            assertQuery("SELECT * FROM t WHERE c2 < c2 LATEST ON ts PARTITION BY c3 LIMIT 10").noLeakCheck().timestamp("ts").returns(empty);
+        });
+    }
+
+    @Test
+    public void testLatestByConstantFalseWhereBindMatches() throws Exception {
+        // The runtime-constant bind variant of the same predicate is a runtime no-op (it
+        // does not fold), so it always compiled; cross-check that the folded literal form
+        // now matches it, both empty.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t AS (\n" +
+                            "  SELECT\n" +
+                            "    timestamp_sequence(1, 1000)::#TIMESTAMP ts,\n" +
+                            "    rnd_double() c2,\n" +
+                            "    rnd_symbol('a','b','c') c3\n" +
+                            "  FROM long_sequence(100)\n" +
+                            ") TIMESTAMP(ts);\n",
+                    timestampType.getTypeName()
+            );
+
+            bindVariableService.clear();
+            bindVariableService.setBoolean("b0", false);
+            // a boolean bind variable is a runtime constant; it does not fold, so it takes
+            // the generateLatestByTableQuery path (which already clears latestBy on a
+            // constant-false runtime filter). It must agree with the folded literal form.
+            assertQuery("SELECT * FROM t WHERE :b0 LATEST ON ts PARTITION BY c3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("ts\tc2\tc3\n");
+        });
+    }
+
+    @Test
     public void testLatestByDoesNotNeedFullScan() throws Exception {
         assertMemoryLeak(() -> {
             ff = new TestFilesFacadeImpl() {
@@ -254,6 +325,81 @@ public class LatestByTest extends AbstractCairoTest {
                     .returns("ts\ts\n" +
                             "1970-01-02T23:00:00.000000" + suffix + "\ta\n" +
                             "1970-01-03T00:00:00.000000" + suffix + "\tb\n");
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedSymbolFilterNotDropped() throws Exception {
+        // A WHERE predicate over an INDEXED SYMBOL combined with LATEST ON ... PARTITION BY
+        // a non-symbol key used to be silently dropped. WhereClauseParser extracted the
+        // indexed-symbol predicate into a key-column intrinsic (expecting an index scan to
+        // serve it), but the LatestByAllFiltered path - chosen because the partition key is
+        // not a symbol - ignores that intrinsic and applies only the residual filter, which
+        // was then empty. The indexed table enumerated rows the WHERE should have removed and
+        // diverged from its non-indexed sibling. Cross-check the two and pin the SQL-correct
+        // answer for several predicate shapes and both index families.
+        assertMemoryLeak(() -> {
+            for (String indexDdl : new String[]{"INDEX", "INDEX TYPE POSTING"}) {
+                execute("DROP TABLE IF EXISTS t_idx;");
+                execute("DROP TABLE IF EXISTS t_plain;");
+                for (String name : new String[]{"t_idx", "t_plain"}) {
+                    String symDecl = "t_idx".equals(name) ? "sym SYMBOL " + indexDdl : "sym SYMBOL";
+                    executeWithRewriteTimestamp(
+                            "CREATE TABLE " + name + " (ts #TIMESTAMP, " + symDecl + ", c1 DOUBLE)" +
+                                    " TIMESTAMP(ts) PARTITION BY DAY;",
+                            timestampType.getTypeName()
+                    );
+                    // partition 1.0 has both rows non-null (latest unaffected by filter),
+                    // partition 2.0 has a NULL latest row (filter must skip back one row),
+                    // partition 3.0 is entirely NULL (filter must drop the whole partition).
+                    executeWithRewriteTimestamp(
+                            "INSERT INTO " + name + " VALUES " +
+                                    "(1::#TIMESTAMP, 'a', 1.0)," +
+                                    "(2::#TIMESTAMP, 'b', 1.0)," +
+                                    "(3::#TIMESTAMP, 'c', 2.0)," +
+                                    "(4::#TIMESTAMP, null, 2.0)," +
+                                    "(5::#TIMESTAMP, null, 3.0)," +
+                                    "(6::#TIMESTAMP, null, 3.0);",
+                            timestampType.getTypeName()
+                    );
+                }
+
+                for (String pred : new String[]{
+                        "sym IS NOT NULL",
+                        "sym = 'c'",
+                        "sym IN ('a', 'b')",
+                        "sym != 'b'",
+                        "sym NOT IN ('a')",
+                }) {
+                    String suffix = " WHERE " + pred + " LATEST ON ts PARTITION BY c1 ORDER BY c1, sym";
+                    try {
+                        assertSqlCursors(
+                                "SELECT sym, c1 FROM t_plain" + suffix,
+                                "SELECT sym, c1 FROM t_idx" + suffix
+                        );
+                    } catch (AssertionError e) {
+                        throw new AssertionError("predicate=[" + pred + "] index=[" + indexDdl + "]", e);
+                    }
+                }
+
+                // The indexed table must compute the same latest-by rows as the full scan does;
+                // pin the canonical answers (no timestamp in the projection, so format-independent).
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym IS NOT NULL LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\nb\t1.0\nc\t2.0\n");
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym = 'c' LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\nc\t2.0\n");
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym IN ('a', 'b') LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\nb\t1.0\n");
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym != 'b' LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\na\t1.0\n\t2.0\n\t3.0\n");
+                assertQuery("SELECT sym, c1 FROM t_idx WHERE sym NOT IN ('a') LATEST ON ts PARTITION BY c1 ORDER BY c1, sym")
+                        .expectSize()
+                        .returns("sym\tc1\nb\t1.0\n\t2.0\n\t3.0\n");
+            }
         });
     }
 
@@ -582,6 +728,171 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByOverGenerateSeries() throws Exception {
+        // A table function leaf holds the LATEST ON nodes itself and has no nested model, so
+        // generateLatestBy() used to trip 'assert nested != null' (an NPE with assertions off).
+        assertQuery(
+                """
+                        SELECT * FROM generate_series(
+                          '2021-01-01T00:00:00.000000Z'::timestamp,
+                          '2021-01-01T00:00:03.000000Z'::timestamp,
+                          1_000_000L)
+                        LATEST ON generate_series PARTITION BY generate_series"""
+        ).expectSize().returns("""
+                generate_series
+                2021-01-01T00:00:00.000000Z
+                2021-01-01T00:00:01.000000Z
+                2021-01-01T00:00:02.000000Z
+                2021-01-01T00:00:03.000000Z
+                """);
+    }
+
+    @Test
+    public void testLatestByOverGenerateSeriesConstantFalseFilter() throws Exception {
+        assertQuery(
+                """
+                        SELECT * FROM generate_series(
+                          '2021-01-01T00:00:00.000000Z'::timestamp,
+                          '2021-01-01T00:00:03.000000Z'::timestamp,
+                          1_000_000L)
+                        WHERE 1 > 2
+                        LATEST ON generate_series PARTITION BY generate_series"""
+        ).returns("generate_series\n");
+    }
+
+    @Test
+    public void testLatestByOverGenerateSeriesDescending() throws Exception {
+        // A negative step makes the base scan descend. A table-function leaf has no nested model, so
+        // generateLatestBy() has no ORDER BY to inspect and must leave orderedByTimestampAsc unset: the
+        // cursor then stores and compares timestamps instead of trusting the scan order. The rows alone
+        // cannot prove that - PARTITION BY generate_series keys on the timestamp itself, so every key
+        // holds exactly one row and both map builds agree - hence the plan assertion, which goes red the
+        // moment the nested == null path starts claiming ascending order.
+        assertQuery(
+                """
+                        SELECT * FROM generate_series(
+                          '2021-01-01T00:00:03.000000Z'::timestamp,
+                          '2021-01-01T00:00:00.000000Z'::timestamp,
+                          -1_000_000L)
+                        LATEST ON generate_series PARTITION BY generate_series"""
+        ).expectSize().withPlanContaining("LatestBy light order_by_timestamp: false").returns("""
+                generate_series
+                2021-01-01T00:00:03.000000Z
+                2021-01-01T00:00:02.000000Z
+                2021-01-01T00:00:01.000000Z
+                2021-01-01T00:00:00.000000Z
+                """);
+    }
+
+    @Test
+    public void testLatestByOverSubQueryFilterLimitNotPushedDown() throws Exception {
+        // A LATEST ON over a sub-query with a residual WHERE and a LIMIT used to push the limit
+        // advice into the base async filter, truncating it to the first N rows. LATEST ON then saw
+        // only that prefix and returned the latest row per key within it (the earliest rows
+        // overall). The literal WHERE folds away (no filter to push into) and stayed correct; only
+        // the runtime-constant (bind-variable) residual async filter diverged. Pin the latest-per-key
+        // rows and cross-check the bind form against the equivalent no-filter form.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t (sym SYMBOL, v LONG, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY;",
+                    timestampType.getTypeName()
+            );
+            // Six day-1 rows then two day-2 rows. The latest row per key is in day 2 (v=7, v=8);
+            // the first four rows are all day 1, so a limit pushed below LATEST ON would pick
+            // a=v3, b=v4 from day 1 instead.
+            executeWithRewriteTimestamp(
+                    "INSERT INTO t VALUES " +
+                            "('a', 1, '2024-01-01T00:00:00.000000Z'::#TIMESTAMP)," +
+                            "('b', 2, '2024-01-01T01:00:00.000000Z'::#TIMESTAMP)," +
+                            "('a', 3, '2024-01-01T02:00:00.000000Z'::#TIMESTAMP)," +
+                            "('b', 4, '2024-01-01T03:00:00.000000Z'::#TIMESTAMP)," +
+                            "('a', 5, '2024-01-01T04:00:00.000000Z'::#TIMESTAMP)," +
+                            "('b', 6, '2024-01-01T05:00:00.000000Z'::#TIMESTAMP)," +
+                            "('a', 7, '2024-01-02T00:00:00.000000Z'::#TIMESTAMP)," +
+                            "('b', 8, '2024-01-02T01:00:00.000000Z'::#TIMESTAMP);",
+                    timestampType.getTypeName()
+            );
+
+            // A column-free runtime constant (TIMESTAMP vs DATE compare behind a bind variable)
+            // that always evaluates to true - the exact shape the query fuzzer surfaced.
+            bindVariableService.clear();
+            bindVariableService.setStr("b0", "2024-01-01T00:00:00.000000Z");
+
+            final String bind = "WITH cte0 AS (SELECT sym AS r0, v AS r1, ts AS r7 FROM t) " +
+                    "SELECT r0, r1 FROM cte0 WHERE :b0::timestamp < '2024-09-22'::date " +
+                    "LATEST ON r7 PARTITION BY r0 ORDER BY r7 ASC LIMIT 4";
+            final String noFilter = "WITH cte0 AS (SELECT sym AS r0, v AS r1, ts AS r7 FROM t) " +
+                    "SELECT r0, r1 FROM cte0 " +
+                    "LATEST ON r7 PARTITION BY r0 ORDER BY r7 ASC LIMIT 4";
+
+            // Canonical latest-per-key answer (no timestamp in the projection, so
+            // format-independent across the timestamp-type parameterizations).
+            assertQuery(bind).expectSize().returns("r0\tr1\na\t7\nb\t8\n");
+
+            // The residual-filter form must match the equivalent no-filter form.
+            assertSqlCursors(noFilter, bind);
+        });
+    }
+
+    @Test
+    public void testLatestByOverSubQueryRejectedKeyDoesNotLeak() throws Exception {
+        // generateLatestBy used to leak its input factory - and the async page-frame circuit
+        // breaker (NATIVE_CB2) the factory transitively owns - when latest by over a sub-query was
+        // rejected at codegen because the partition key is an unsupported type (DECIMAL). The
+        // CTE keeps latest by over a sub-query (not pushed into the table scan), and under a worker
+        // pool the WHERE compiles to an async filter that allocates the breaker at compile time, so
+        // the rejection must free the half-built factory tree and leak nothing.
+        TestUtils.assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE x (ts TIMESTAMP, v LONG, d DECIMAL(18,1)) TIMESTAMP(ts) PARTITION BY DAY",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO x SELECT (x * 1_000_000L)::timestamp, x, x::decimal(18,1) FROM long_sequence(1_000)",
+                                sqlExecutionContext
+                        );
+                        // The leak is only observable while the sub-query's filter compiles to an
+                        // ASYNC filter: its PageFrameSequence allocates the circuit breaker at
+                        // compile time, and that is the native memory the rejected codegen used to
+                        // strand. Pin that routing here - if parallel-filter routing ever changes,
+                        // the base factory holds no native memory and the assertion below would
+                        // pass green with the leak reintroduced. Same table, same WHERE, same
+                        // worker pool; only the LATEST ON is dropped.
+                        try (RecordCursorFactory base = engine.select(
+                                "WITH cte0 AS (SELECT * FROM x) SELECT * FROM cte0 WHERE v > 0",
+                                sqlExecutionContext
+                        )) {
+                            // engine.select() hands back a QueryProgress wrapper; the filter sits under it.
+                            // Either async variant will do - both own the PageFrameSequence that
+                            // allocates the circuit breaker; which one compiles depends on the JIT.
+                            final RecordCursorFactory filter = base.getBaseFactory();
+                            Assert.assertTrue(
+                                    "the sub-query filter must compile to an async filter for this test to observe the "
+                                            + "leak, but got " + filter.getClass().getSimpleName(),
+                                    filter instanceof AsyncFilteredRecordCursorFactory
+                                            || filter instanceof AsyncJitFilteredRecordCursorFactory
+                            );
+                        }
+                        try (RecordCursorFactory ignore = engine.select(
+                                "WITH cte0 AS (SELECT * FROM x) SELECT * FROM cte0 WHERE v > 0 LATEST ON ts PARTITION BY d",
+                                sqlExecutionContext
+                        )) {
+                            Assert.fail("expected the query to be rejected for the DECIMAL partition key");
+                        } catch (SqlException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "invalid type, only");
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testLatestByPartitionByByte() throws Exception {
         testLatestByPartitionBy("byte", "1", "2");
     }
@@ -749,6 +1060,49 @@ public class LatestByTest extends AbstractCairoTest {
             // Each case re-executes the held factory under its OWN execution context with its OWN
             // bind-variable service, verifying the parametrized latest-by re-reads :sym from the
             // execution context's service - not a value cached at compile time.
+            try (
+                    SqlExecutionContextImpl contextC = new SqlExecutionContextImpl(engine, 1);
+                    SqlExecutionContextImpl contextA = new SqlExecutionContextImpl(engine, 1)
+            ) {
+                contextC.with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(configuration));
+                contextA.with(AllowAllSecurityContext.INSTANCE, new BindVariableServiceImpl(configuration));
+
+                final ObjList<BindVarTuple> cases = new ObjList<>();
+                // sanity check: same value as compiled with, via a different service
+                cases.add(BindVarTuple.ok(
+                        "different service, sym=c",
+                        "ts\ts\n1970-01-03T00:00:00.000000" + suffix + "\tc\n",
+                        bindVariableService -> bindVariableService.setStr("sym", "c")
+                ).withContext(contextC));
+                // different value via a different service must yield a different result
+                cases.add(BindVarTuple.ok(
+                        "different service, sym=a",
+                        "ts\ts\n1970-01-02T23:00:00.000000" + suffix + "\ta\n",
+                        bindVariableService -> bindVariableService.setStr("sym", "a")
+                ).withContext(contextA));
+
+                assertQuery("select ts, s from t where s = :sym latest on ts partition by s")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .assertBinds(cases);
+            }
+        });
+    }
+
+    @Test
+    public void testLatestBySymbolDifferentBindingServiceIndexed() throws Exception {
+        // Same as testLatestBySymbolDifferentBindingService, but the symbol column is INDEXED,
+        // which routes the query through LatestByValueDeferredIndexedRowCursorFactory.
+        // That factory used to inherit the no-op RowCursorFactory.init(), so it never rebound
+        // its bind-variable function to the executing context's service and kept resolving the
+        // value of whichever execution compiled it.
+
+        assertMemoryLeak(() -> {
+            execute("create table t as (" +
+                    "select rnd_symbol('a', 'b', 'c') s, timestamp_sequence(0, 60*60*1000*1000L)::" + timestampType.getTypeName() + " ts from long_sequence(49)" +
+                    "), index(s) timestamp(ts) partition by DAY");
+
+            final String suffix = getTimestampSuffix(timestampType.getTypeName());
             try (
                     SqlExecutionContextImpl contextC = new SqlExecutionContextImpl(engine, 1);
                     SqlExecutionContextImpl contextA = new SqlExecutionContextImpl(engine, 1)
@@ -1576,5 +1930,361 @@ public class LatestByTest extends AbstractCairoTest {
                             xyz\t1\t42
                             """);
         });
+    }
+
+    // Regression: indexed LATEST ON PARTITION BY <symbol> with a residual filter on a second column
+    // routes through the index-backed filtered cursor. The bitmap index cursor already returns
+    // frame-relative row ids, so the cursor must NOT subtract partitionLo again. When the matched
+    // row lands in a page frame with partitionLo > 0 (i.e. a partition large enough to span several
+    // page frames), the double subtraction positioned the record partitionLo rows too early and
+    // returned a neighbouring row, often belonging to a different partition-by key. Small page
+    // frames are forced here so the single partition splits and partitionLo becomes > 0.
+    @Test
+    public void testLatestByValueIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // Latest 'g2' row on venue 'v1' is the deep ordinal x=198 (px=198), in a frame with partitionLo>0.
+                assertQuery("select sym, px from tk " +
+                        "where sym = 'g2' and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByValuesIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // IN-list drives the multi-value filtered index cursor. Latest per key on venue 'v1':
+                // g1 -> x=197 (px=197), g2 -> x=198 (px=198); both deep, so partitionLo>0.
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2') and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same fix via the deferred path: a bind-variable key value is a runtime constant, so the query
+    // routes through LatestByValueDeferredIndexedFilteredRecordCursorFactory, which delegates to the
+    // same LatestByValueIndexedFilteredRecordCursor.
+    @Test
+    public void testLatestByValueDeferredIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                bindVariableService.clear();
+                bindVariableService.setStr("targetSym", "g2");
+                assertQuery("select sym, px from tk " +
+                        "where sym = :targetSym and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same fix with a column top: 'px' is added after the first batch, so it has columnTop > 0. The
+    // matched row sits in a deep page frame (partitionLo > 0) in the post-ALTER region, exercising the
+    // interaction between the (fixed) frame-relative positioning and columnTop handling.
+    @Test
+    public void testLatestByValueIndexedFilteredColumnTopAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                // First batch (ordinals 1..100), no px column yet.
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(100);"
+                );
+                execute("alter table tk add column px double");
+                // Second batch (ordinals 101..200) with px set; 100 % 4 == 0 and 100 % 5 == 0 keep the cycles aligned.
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || ((x + 100) % 4),\n" +
+                                "  case when (x + 100) % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  ((x + 100) * 1_000_000)::" + timestampType.getTypeName() + ",\n" +
+                                "  (x + 100)::double\n" +
+                                "from long_sequence(100);"
+                );
+                // Latest 'g2'/'v1' overall is ordinal 198 (post-ALTER, px=198), deep => partitionLo>0, px columnTop=100.
+                assertQuery("select sym, px from tk " +
+                        "where sym = 'g2' and venue = 'v1' latest on ts partition by sym")
+                        .returns("""
+                                sym\tpx
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestBySubQueryIndexedFilteredAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in (select list('g1', 'g2') from long_sequence(2)) and venue = 'v1' " +
+                        "latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Coverage for a not-found element in an indexed IN-list combined with the split-frame setup.
+    // 'zzz' is absent from the symbol table, so it resolves to VALUE_NOT_FOUND and is never added to
+    // deferredSymbolKeys. keyCount must therefore stay at the count of resolvable keys (g1, g2) so the
+    // early exit (found.size() < keyCount) still fires; otherwise the cursor would full-scan. Small page
+    // frames force partitionLo > 0 on the matched (deep) rows.
+    @Test
+    public void testLatestByValuesIndexedFilteredWithNotFoundKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                // 'zzz' is not in the symbol table: it must not inflate keyCount nor change the result.
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', 'zzz') and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same as above but with a NULL element in the IN-list. Unlike the not-found 'zzz' case, the NULL
+    // constant resolves to SymbolTable.VALUE_IS_NULL (not VALUE_NOT_FOUND), and toIndexKey(VALUE_IS_NULL)
+    // == 0, so it is added to symbolKeys as the null bucket (index key 0). The sym column contains no
+    // nulls, so key 0 matches nothing and the result is still (g1, g2). Verifies a NULL key in the
+    // IN-list does not corrupt the row positioning under the split-frame setup.
+    @Test
+    public void testLatestByValuesIndexedFilteredWithNullKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, venue symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  case when x % 5 = 0 then 'v2' else 'v1' end,\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', null) and venue = 'v1' latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    // Same coverage for the non-filtered indexed cursor (LatestByValuesIndexedRecordCursor): no residual
+    // filter, an indexed IN-list with a not-found element, under the split-frame setup.
+    @Test
+    public void testLatestByValuesIndexedWithNotFoundKeyAcrossPageFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.changePageFrameSizes(1, 8);
+            try {
+                executeWithRewriteTimestamp(
+                        "create table tk (sym symbol index, px double, ts #TIMESTAMP) timestamp(ts)",
+                        timestampType.getTypeName()
+                );
+                execute(
+                        "insert into tk select\n" +
+                                "  'g' || (x % 4),\n" +
+                                "  x::double,\n" +
+                                "  (x * 1_000_000)::" + timestampType.getTypeName() + "\n" +
+                                "from long_sequence(200);"
+                );
+                assertQuery("select sym, px from tk " +
+                        "where sym in ('g1', 'g2', 'zzz') latest on ts partition by sym order by sym")
+                        .expectSize()
+                        .returns("""
+                                sym\tpx
+                                g1\t197.0
+                                g2\t198.0
+                                """);
+            } finally {
+                sqlExecutionContext.restoreToDefaultPageFrameSizes();
+            }
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedDuplicateDeferredKeyDoesNotFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            // Fail to open the older partition; the test then fails loudly if the duplicate deferred key
+            // makes the cursor scan it after the only unique key was already found in the latest partition.
+            ff = failOpenForPartition("1970-01-01");
+
+            executeWithRewriteTimestamp(
+                    "create table tk (sym symbol index, px double, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    insert into tk values
+                    ('a', 1.0, '1970-01-01T00:00:00.000000Z'),
+                    ('a', 2.0, '1970-01-02T00:00:00.000000Z')
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+
+            assertQuery("select sym, px from tk where sym in ('a', :sym) latest on ts partition by sym")
+                    .expectSize()
+                    .returns("""
+                            sym\tpx
+                            a\t2.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLatestByIndexedFilteredDuplicateDeferredKeyDoesNotFullScan() throws Exception {
+        assertMemoryLeak(() -> {
+            // Fail to open the older partition; the test then fails loudly if the duplicate deferred key
+            // makes the cursor scan it after the only unique key already passed the residual filter.
+            ff = failOpenForPartition("1970-01-01");
+
+            executeWithRewriteTimestamp(
+                    "create table tk (sym symbol index, venue symbol, px double, ts #TIMESTAMP) timestamp(ts) partition by day",
+                    timestampType.getTypeName()
+            );
+            execute("""
+                    insert into tk values
+                    ('a', 'v1', 1.0, '1970-01-01T00:00:00.000000Z'),
+                    ('a', 'v1', 2.0, '1970-01-02T00:00:00.000000Z')
+                    """);
+            bindVariableService.clear();
+            bindVariableService.setStr("sym", "a");
+
+            assertQuery("select sym, px from tk " +
+                    "where sym in ('a', :sym) and venue = 'v1' latest on ts partition by sym")
+                    .expectSize()
+                    .returns("""
+                            sym\tpx
+                            a\t2.0
+                            """);
+        });
+    }
+
+    // A FilesFacade whose openRO fails for any file under the named partition. Used to prove an indexed
+    // LATEST ON cursor short-circuits before opening (and thus reading) an older partition once every key
+    // has already been resolved in a newer one.
+    private static TestFilesFacadeImpl failOpenForPartition(String partition) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.containsAscii(name, partition)) {
+                    return -1;
+                }
+                return TestFilesFacadeImpl.INSTANCE.openRO(name);
+            }
+        };
     }
 }

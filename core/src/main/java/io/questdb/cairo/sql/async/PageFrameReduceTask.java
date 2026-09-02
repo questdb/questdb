@@ -77,7 +77,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
             this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
             this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
-            this.frameMemoryPool = new PageFrameMemoryPool(0L);
+            this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
         } catch (Throwable th) {
             close();
             throw th;

@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.table.ShowCreateDatabaseRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
@@ -78,7 +79,7 @@ public class QueryModel implements IQueryModel {
     private final HorizonJoinContext horizonJoinContext = new HorizonJoinContext();
     private final ObjList<ExpressionNode> joinColumns = new ObjList<>(4);
     private final ObjList<IQueryModel> joinModels = new ObjList<>();
-    private final ObjList<CharSequence> lateralCountColumns = new ObjList<>();
+    private final ObjList<QueryColumn> lateralCountTemplates = new ObjList<>();
     private final ObjList<ExpressionNode> latestBy = new ObjList<>();
     private final LowerCaseCharSequenceIntHashMap modelAliasIndexes = new LowerCaseCharSequenceIntHashMap();
     // Named window definitions from WINDOW clause (e.g., WINDOW w AS (PARTITION BY ...))
@@ -141,6 +142,11 @@ public class QueryModel implements IQueryModel {
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
     private boolean isCteModel;
+    private ExpressionNode lateralCountCoalesceGuard;
+    private boolean isLateralCountCoalesceRequired;
+    // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
+    // synthesized alignment columns after wildcard expansion assigns final aliases.
+    private boolean isOuterRefWildcardExcluded;
     // A flag to mark intermediate SELECT translation models. Such models do not contain the full list of selected
     // columns (e.g. they lack virtual columns), so they should be skipped when rewriting positional ORDER BY.
     private boolean isSelectTranslation = false;
@@ -180,6 +186,7 @@ public class QueryModel implements IQueryModel {
     private int selectModelType = SELECT_MODEL_NONE;
     private int setOperationType;
     private int sharedRefByParentCount = 0;
+    private int showCreateDatabaseInclude = ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
     private int showKind = -1;
     private boolean skipped;
     private boolean standaloneUnnest;
@@ -292,6 +299,11 @@ public class QueryModel implements IQueryModel {
         if (joinModel != null && viewNameExpr != null) {
             joinModel.setViewNameExpr(viewNameExpr);
         }
+    }
+
+    @Override
+    public void addLateralCountTemplate(QueryColumn template) {
+        lateralCountTemplates.add(template);
     }
 
     @Override
@@ -448,8 +460,11 @@ public class QueryModel implements IQueryModel {
         //  default is SELECT
         isUpdateModel = false;
         isCteModel = false;
+        isLateralCountCoalesceRequired = false;
+        lateralCountCoalesceGuard = null;
+        isOuterRefWildcardExcluded = false;
+        lateralCountTemplates.clear();
         modelType = ExecutionModel.QUERY;
-        lateralCountColumns.clear();
         updateSetColumns.clear();
         updateTableColumnTypes.clear();
         standaloneUnnest = false;
@@ -464,6 +479,7 @@ public class QueryModel implements IQueryModel {
         setOperationType = SET_OPERATION_UNION_ALL;
         artificialStar = false;
         explicitTimestamp = false;
+        showCreateDatabaseInclude = ShowCreateDatabaseRecordCursorFactory.INCLUDE_ALL;
         showKind = -1;
         sampleByOffset = ZERO_OFFSET;
         sampleByTo = null;
@@ -563,6 +579,7 @@ public class QueryModel implements IQueryModel {
         for (int i = 0, n = aliases.size(); i < n; i++) {
             final CharSequence alias = aliases.getQuick(i);
             QueryColumn qc = otherMap.get(alias);
+            boolean isGenerated = qc.isGenerated();
             if (qc.getAst().type != ExpressionNode.LITERAL) {
                 qc = queryColumnPool.next().of(
                         alias,
@@ -574,6 +591,7 @@ public class QueryModel implements IQueryModel {
                         ),
                         qc.isIncludeIntoWildcard()
                 );
+                qc.setGenerated(isGenerated);
             }
             aliasToColumnMap.put(alias, qc);
         }
@@ -821,8 +839,8 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public ObjList<CharSequence> getLateralCountColumns() {
-        return lateralCountColumns;
+    public ObjList<QueryColumn> getLateralCountTemplates() {
+        return lateralCountTemplates;
     }
 
     @Override
@@ -1059,6 +1077,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<QueryModelWrapper> getSharedRefs() {
         return sharedRefs;
+    }
+
+    @Override
+    public int getShowCreateDatabaseInclude() {
+        return showCreateDatabaseInclude;
     }
 
     @Override
@@ -1301,6 +1324,16 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getLateralCountCoalesceGuard() {
+        return lateralCountCoalesceGuard;
+    }
+
+    @Override
+    public boolean isLateralCountCoalesceRequired() {
+        return isLateralCountCoalesceRequired;
+    }
+
+    @Override
     public boolean isNestedModelIsSubQuery() {
         return nestedModelIsSubQuery;
     }
@@ -1313,6 +1346,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public boolean isOrderDescendingByDesignatedTimestampOnly() {
         return orderDescendingByDesignatedTimestampOnly;
+    }
+
+    @Override
+    public boolean isOuterRefWildcardExcluded() {
+        return isOuterRefWildcardExcluded;
     }
 
     @Override
@@ -1411,6 +1449,7 @@ public class QueryModel implements IQueryModel {
                 // `thisColumn` alias should let us lookup, the column's reference
                 QueryColumn col = queryColumnPool.next();
                 col.of(thisColumn.getAlias(), thatColumn.getAst(), thisColumn.isIncludeIntoWildcard());
+                col.setGenerated(thisColumn.isGenerated());
                 bottomUpColumns.setQuick(i, col);
 
                 int index = aliasToColumnMap.keyIndex(thisColumn.getAlias());
@@ -1524,8 +1563,12 @@ public class QueryModel implements IQueryModel {
         // pre-order traversal
         sqlNodeStack.clear();
         while (!sqlNodeStack.isEmpty() || n != null) {
-            if (n != null && n.token != null) {
-                if (isAndKeyword(n.token)) {
+            if (n != null) {
+                // a tokenless conjunct (e.g. a sub-query used directly as a boolean predicate)
+                // is not an AND node and must be kept: dropping it here would silently remove
+                // the predicate from the rebuilt WHERE clause instead of letting filter
+                // compilation reject (or evaluate) it
+                if (n.token != null && isAndKeyword(n.token)) {
                     if (n.rhs != null) {
                         sqlNodeStack.push(n.rhs);
                     }
@@ -1717,6 +1760,16 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setLateralCountCoalesceGuard(ExpressionNode guard) {
+        this.lateralCountCoalesceGuard = guard;
+    }
+
+    @Override
+    public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
+        this.isLateralCountCoalesceRequired = isLateralCountCoalesceRequired;
+    }
+
+    @Override
     public void setLatestByType(int latestByType) {
         this.latestByType = latestByType;
     }
@@ -1798,6 +1851,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded) {
+        this.isOuterRefWildcardExcluded = isOuterRefWildcardExcluded;
+    }
+
+    @Override
     public void setPivotGroupByColumnHasNoAlias(boolean pivotGroupByColumnHasNoAlias) {
         this.pivotGroupByColumnHasNoAlias = pivotGroupByColumnHasNoAlias;
     }
@@ -1859,6 +1917,11 @@ public class QueryModel implements IQueryModel {
 
     public void setSharedRefByParentCount(int sharedRefByParentCount) {
         this.sharedRefByParentCount = sharedRefByParentCount;
+    }
+
+    @Override
+    public void setShowCreateDatabaseInclude(int includeMask) {
+        this.showCreateDatabaseInclude = includeMask;
     }
 
     @Override
@@ -2499,33 +2562,8 @@ public class QueryModel implements IQueryModel {
     }
 
     private static void unitToSink(CharSink<?> sink, char timeUnit) {
-        switch (timeUnit) {
-            case 0:
-                break;
-            case WindowExpression.TIME_UNIT_NANOSECOND:
-                sink.putAscii(" nanosecond");
-                break;
-            case WindowExpression.TIME_UNIT_MICROSECOND:
-                sink.putAscii(" microsecond");
-                break;
-            case WindowExpression.TIME_UNIT_MILLISECOND:
-                sink.putAscii(" millisecond");
-                break;
-            case WindowExpression.TIME_UNIT_SECOND:
-                sink.putAscii(" second");
-                break;
-            case WindowExpression.TIME_UNIT_MINUTE:
-                sink.putAscii(" minute");
-                break;
-            case WindowExpression.TIME_UNIT_HOUR:
-                sink.putAscii(" hour");
-                break;
-            case WindowExpression.TIME_UNIT_DAY:
-                sink.putAscii(" day");
-                break;
-            default:
-                sink.putAscii(" [unknown unit]");
-                break;
+        if (timeUnit != 0) {
+            sink.putAscii(' ').putAscii(WindowExpression.timeUnitName(timeUnit));
         }
     }
 

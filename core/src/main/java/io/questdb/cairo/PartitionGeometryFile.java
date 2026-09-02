@@ -47,7 +47,7 @@ import java.io.Closeable;
  * <p>
  * Layout of one record:
  * <pre>
- * header (48 bytes)
+ * header (56 bytes)
  *   0   magic            i32   sanity, catches a garbage offset
  *   4   pieceCount       i32
  *   8   writerTxn        i64   the txn that APPENDED this record
@@ -55,6 +55,10 @@ import java.io.Closeable;
  *   24  liveRows         i64   sum of piece row counts; cross-checks the _txn slot-1 value
  *   32  checksum         i64   over the whole record
  *   40  lastWriteMicros  i64   wall clock at which this record was appended
+ *   48  seqTxn           i64   the partition's last-modifying seqTxn, -1 when unknown/non-WAL. A
+ *                              composite partition spends its _txn slot-3 value field on the geometry
+ *                              pointer and so carries no slot-3 stamp; this is where TxReader's
+ *                              getNativePartitionSeqTxn contract is answered for it.
  *
  * piece entry (32 bytes) x pieceCount, ascending by tsLo, non-overlapping
  *   0   tsLo           i64   routing floor
@@ -72,7 +76,7 @@ import java.io.Closeable;
  * safe; a {@link TxReader} owns one for reading, a {@link TxWriter} owns one for reading and appending.
  */
 public class PartitionGeometryFile implements Closeable, Mutable {
-    public static final int HEADER_SIZE = 48;
+    public static final int HEADER_SIZE = 56;
     public static final int MAGIC = 0x4D4F4547; // 'G','E','O','M'
     // Below TxReader's PARTITION_GEOMETRY_OFFSET_MASK's own reach (24 bits of 8-byte units = 128MB), on
     // purpose: PartitionGeometry.publish rotates to a fresh generation once a record would cross this,
@@ -87,6 +91,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     public static final int HEADER_OFFSET_MAGIC_32 = 0;
     public static final int HEADER_OFFSET_PHYSICAL_ROWS_64 = 16;
     public static final int HEADER_OFFSET_PIECE_COUNT_32 = 4;
+    public static final int HEADER_OFFSET_SEQ_TXN_64 = 48;
     public static final int HEADER_OFFSET_WRITER_TXN_64 = 8;
     public static final int PIECE_OFFSET_ROW_COUNT_64 = 24;
     public static final int PIECE_OFFSET_ROW_OFFSET_64 = 16;
@@ -118,12 +123,15 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     /**
      * Starts building a record in the scratch buffer. Follow with {@link #addPiece(long, long, long, long)}
      * calls and finish with {@link #append(FilesFacade, Path, int, long, int)}.
+     *
+     * @param seqTxn the partition's last-modifying seqTxn, or -1 when unknown (non-WAL table)
      */
-    public void beginRecord(long writerTxn, int expectedPieceCount) {
+    public void beginRecord(long writerTxn, long seqTxn, int expectedPieceCount) {
         ensureCapacity(recordSize(Math.max(expectedPieceCount, 1)));
         pieceCount = 0;
         Unsafe.getUnsafe().putInt(buf + HEADER_OFFSET_MAGIC_32, MAGIC);
         Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_WRITER_TXN_64, writerTxn);
+        Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_SEQ_TXN_64, seqTxn);
         Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_PHYSICAL_ROWS_64, 0);
         Unsafe.getUnsafe().putLong(buf + HEADER_OFFSET_LIVE_ROWS_64, 0);
         // The scratch buffer is reused across records and ensureCapacity carries its old contents
@@ -143,7 +151,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     /**
-     * Appends the record built since {@link #beginRecord(long, int)} at {@code offset} of
+     * Appends the record built since {@link #beginRecord(long, long, int)} at {@code offset} of
      * {@code <partitionDir>/_geometry.<generation>}, creating the file when it does not exist, and syncs
      * it per {@code commitMode}. Returns the number of bytes written, so the caller's append cursor
      * becomes {@code offset + returned}.
@@ -227,6 +235,10 @@ public class PartitionGeometryFile implements Closeable, Mutable {
 
     public long getRecordSize() {
         return recordSize(pieceCount);
+    }
+
+    public long getSeqTxn() {
+        return Unsafe.getUnsafe().getLong(buf + HEADER_OFFSET_SEQ_TXN_64);
     }
 
     public long getWriterTxn() {
@@ -313,6 +325,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
         // The loop below starts at HEADER_SIZE, so a header field added after the checksum word is NOT
         // covered by it and has to be mixed in by hand.
         h = mix(h, Unsafe.getUnsafe().getLong(addr + HEADER_OFFSET_LAST_WRITE_MICROS_64));
+        h = mix(h, Unsafe.getUnsafe().getLong(addr + HEADER_OFFSET_SEQ_TXN_64));
         for (long p = addr + HEADER_SIZE, lim = p + (long) PIECE_SIZE * pieceCount; p < lim; p += Long.BYTES) {
             h = mix(h, Unsafe.getUnsafe().getLong(p));
         }

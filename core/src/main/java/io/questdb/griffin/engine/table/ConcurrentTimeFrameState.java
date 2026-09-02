@@ -78,6 +78,9 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
     private final UninitializedPageFrame uninitializedFrame = new UninitializedPageFrame();
     private int frameCount;
     private TablePageFrameCursor frameCursor;
+    // Index of the pseudo-partition the frame cursor's LEAD frames are filed under, or -1
+    // when it has none. See addLeadFrames().
+    private int leadPartitionIndex = -1;
     private MemoryTracker memoryTracker;
     private int partitionCount;
 
@@ -256,7 +259,42 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
             }
         }
 
+        addLeadFrames();
         return this;
+    }
+
+    /**
+     * Appends the frame cursor's LEAD frames - rows no partition of the table holds, sorting
+     * at or above every row that a partition does hold (see
+     * {@link TablePageFrameCursor#hasLeadFrames()}) - under a pseudo-partition one past the
+     * reader's last. The twin of {@code TimeFrameCursorImpl.addLeadFrames()}, whose javadoc
+     * carries the reasoning for the pseudo-partition, the widest-legal estimates and the
+     * up-front opened mark; the two models must agree, since the same query shape can reach
+     * either.
+     * <p>
+     * Runs single-threaded at build time, before any slave cursor reads the state, so it
+     * needs none of {@link #ensurePartitionOpened(int)}'s ordering care.
+     */
+    private void addLeadFrames() {
+        leadPartitionIndex = -1;
+        if (!frameCursor.hasLeadFrames()) {
+            return;
+        }
+        leadPartitionIndex = partitionCount;
+        partitionTimestamps.add(Long.MIN_VALUE);
+        partitionCeilings.add(Long.MAX_VALUE);
+        partitionFirstFrame.extendAndSet(leadPartitionIndex, frameCount);
+        partitionOpened.extendAndSet(leadPartitionIndex, 1);
+        partitionCount++;
+
+        frameCursor.toLeadFrames();
+        PageFrame frame;
+        while ((frame = frameCursor.next()) != null) {
+            addressCache.add(frameCount, frame);
+            framePartitionIndexes.add(leadPartitionIndex);
+            frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
+            frameCount++;
+        }
     }
 
     /**
@@ -347,6 +385,22 @@ public class ConcurrentTimeFrameState implements QuietCloseable {
         frameCursor.toTop();
         PageFrame frame;
         while ((frame = frameCursor.next()) != null) {
+            if (frame.getPartitionIndex() >= partitionCount) {
+                // Not a partition of this reader, so it has no place in a model indexed by
+                // them - ensurePartitionOpened() and the whole time-frame API address frames
+                // through partitionIndex. A frame source may sit over the table and add rows
+                // of its own (a live view's in-memory tier does exactly that, and reserves a
+                // partition index ABOVE the table's to say so); this walk models the table,
+                // so it takes the table's frames alone. The lazy branch above reaches the
+                // same place by walking one partition at a time.
+                //
+                // Those rows are not dropped from the read: addLeadFrames() takes them back
+                // from the cursor's own lead-scoped walk once this one is done, under a
+                // pseudo-partition index this model CAN address. Skipping them here rather
+                // than filing them as they arrive is what lets both branches share that one
+                // step - the lazy branch never sees such a frame at all.
+                continue;
+            }
             addressCache.add(frameCount, frame);
             framePartitionIndexes.add(frame.getPartitionIndex());
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
