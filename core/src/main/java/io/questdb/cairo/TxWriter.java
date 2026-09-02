@@ -547,14 +547,15 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * reads back as the -1 "no version" sentinel.
      */
     public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
-        if (isPartitionCompositeByRawIndex(indexRaw)) {
-            // A composite partition spends the value field on its geometry pointer and keeps its
-            // seqTxn in the _geometry record, which the composite write path stamps. Overwriting the
-            // word here would destroy the pointer.
-            return;
-        }
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
-        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
+        // COMPOSITE goes with REMOTE, and for the same reason: a stamp says the partition's bytes just
+        // changed, and a geometry pointer describes the bytes that were there before. This is the clear
+        // the pre-composite code did through resetPartitionParquetGeneratedByRawIndex, which master
+        // replaced with this stamp - without it a partition rewritten into a fresh directory keeps a
+        // pointer into a _geometry file that directory does not have. A composite write republishes its
+        // own pointer after this, which is why o3ConsumePartitionUpdateSink publishes it LAST.
+        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
+                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT | PARTITION_COMPOSITE_FLAG);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (seqTxn & PARTITION_VERSION_VALUE_MASK) | flags | valid);
     }
