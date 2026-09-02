@@ -1059,7 +1059,17 @@ public class TableReader implements Closeable, SymbolTableSource {
             throw CairoException.critical(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
         }
         MemoryR col = columns.getQuick(globalIndex);
-        if (col instanceof NullMemoryCMR) {
+        // A partition that does not contain the column at all answers the NULL key with
+        // every one of its rows, and the stand-in null reader does that correctly -- its
+        // only shortcoming is that it cannot carry INCLUDE values. So it stays in use for
+        // every index that returns row numbers alone, and only a COVERING posting index
+        // needs the real reader. That reader serves such a partition as an empty index
+        // with a full column top, so its ordinary null-prefix cursor reads the covered
+        // values from the INCLUDE columns' own files.
+        boolean isColumnAbsentFromPartition = col instanceof NullMemoryCMR;
+        boolean isCoveringIndex = IndexType.isPosting(metadata.getColumnIndexType(columnIndex))
+                && metadata.getColumnMetadata(columnIndex).isCovering();
+        if (isColumnAbsentFromPartition && !isCoveringIndex) {
             if (direction == IndexReader.DIR_BACKWARD) {
                 reader = new IndexBwdNullReader(columnNameTxn, partitionTxn);
                 indexes.setQuick(globalIndex, reader);
@@ -1085,7 +1095,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                         metadata,
                         columnVersionReader,
                         partitionTimestamp,
-                        txn
+                        txn,
+                        isColumnAbsentFromPartition
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);

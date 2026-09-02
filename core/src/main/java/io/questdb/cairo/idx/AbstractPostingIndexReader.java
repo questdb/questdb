@@ -106,6 +106,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     // the cursor degrades to the empty path and ignores entryMaxValue.
     protected long entryMaxValue = -1L;
     protected int genCount;
+    protected boolean isColumnAbsentFromPartition;
+    protected boolean isCoversFromMetadata;
     protected int keyCount;
     protected RecordMetadata metadata;
     // Last successfully observed seqlock value of the chain header's active
@@ -620,6 +622,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         // no-op reloadConditionally() and miss writer republishes). genLookup.reopen()
         // clears the mirrored genLookup freeze. See setFrozen().
         this.frozen = false;
+        // Pooled readers are reused across partitions; never inherit the previous one's state.
+        this.isCoversFromMetadata = false;
+        this.isColumnAbsentFromPartition = false;
         genLookup.reopen();
         final int pLen = path.size();
 
@@ -654,6 +659,14 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
             readIndexMetadataFromChain();
 
+            if (coverCount == 0 && columnTop > 0) {
+                // No .pci for this partition, yet the indexed column has a column top so
+                // the null-prefix cursor will be asked for covered values. The INCLUDE set
+                // is a property of the index as a whole, so recover it from table metadata;
+                // the values themselves come from the INCLUDE columns' own files.
+                initCoversFromMetadata(columnName);
+            }
+
             if (headEntryOffset == PostingIndexUtils.V2_NO_HEAD || valueMemSize <= 0) {
                 // Chain is empty or not yet visible at our pin. Skip mapping
                 // the value file — readers will treat the partition as empty.
@@ -673,6 +686,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public void reloadConditionally() {
+        if (isColumnAbsentFromPartition) {
+            // No index file was opened for this partition; there is nothing to re-read.
+            return;
+        }
         if (frozen) {
             // Parallel decode in progress: in-flight worker cursors hold raw
             // page addresses into valueMem / sidecar mappings. Suppress the
@@ -1264,7 +1281,92 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
      * On chain-header unreadable failures we spin briefly and retry; the
      * picker has its own bounded internal retry loop, so transient writer-
      * mid-publish states are absorbed inside it.
+     * <p>
+     * Rebuild the covered-column list from table metadata for a partition that has no
+     * index files. Normally this comes from the partition's .pci, which does not exist
+     * here, but the INCLUDE set is a property of the index as a whole, so the table's
+     * own metadata carries it. Without this the null-prefix cursor would find
+     * coverCount == 0 and report every covered column as NULL.
      */
+    private void initCoversFromMetadata(CharSequence columnName) {
+        sidecarColumnIndices.clear();
+        sidecarColumnTypes.clear();
+        sidecarCovTs.clear();
+        closeSidecarMems();
+        coverCount = 0;
+        if (metadata == null || columnVersionReader == null) {
+            return;
+        }
+        final int denseKeyIdx = metadata.getColumnIndexQuiet(columnName);
+        if (denseKeyIdx < 0) {
+            return;
+        }
+        final IntList covers = metadata.getColumnMetadata(denseKeyIdx).getCoveringColumnIndices();
+        if (covers == null || covers.size() == 0) {
+            return;
+        }
+        for (int i = 0, n = covers.size(); i < n; i++) {
+            final int writerIdx = covers.getQuick(i);
+            sidecarColumnIndices.add(writerIdx);
+            if (sidecarMems.getQuiet(i) == null) {
+                sidecarMems.extendAndSet(i, Vm.getCMRInstance());
+            }
+            final int denseIdx = writerIdx < 0 ? -1 : denseIndexFromWriter(metadata, writerIdx);
+            if (denseIdx < 0) {
+                sidecarColumnTypes.add(-1);
+                sidecarCovTs.add(TableUtils.COLUMN_NAME_TXN_NONE);
+                continue;
+            }
+            sidecarColumnTypes.add(metadata.getColumnType(denseIdx));
+            sidecarCovTs.add(columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIdx));
+        }
+        coverCount = covers.size();
+        isCoversFromMetadata = true;
+    }
+
+    /**
+     * Initialise for a partition whose indexed column has no rows at all, as recorded in
+     * the column version file (_cv): its column top equals the partition row count. There
+     * is nothing to read here, so no index file is opened -- whether or not one happens to
+     * exist on disk, which varies with history (a rowless partition, a parquet reconvert)
+     * and is not a fact worth asking the filesystem for.
+     * <p>
+     * The result is an empty index whose only key is the implicit NULL, so the ordinary
+     * null-prefix cursor serves every row of the partition and reads covered values from
+     * the INCLUDE columns' own files.
+     */
+    protected void ofColumnAbsentFromPartition(
+            CairoConfiguration configuration,
+            @Transient Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
+        this.columnTop = columnTop;
+        this.columnTxn = columnNameTxn;
+        this.partitionTxn = partitionTxn;
+        this.metadata = metadata;
+        this.columnVersionReader = columnVersionReader;
+        this.partitionTimestamp = partitionTimestamp;
+        this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
+        this.clock = configuration.getMillisecondClock();
+        this.ff = configuration.getFilesFacade();
+        this.indexColumnName = columnName;
+        this.sidecarBasePath.of(path);
+        this.frozen = false;
+        this.isColumnAbsentFromPartition = true;
+        genLookup.reopen();
+        initCoversFromMetadata(columnName);
+        this.keyCount = 0;
+        this.keyCountIncludingNulls = columnTop > 0 ? 1 : 0;
+        this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+        this.valueMemSize = 0;
+    }
+
     private void readIndexMetadataFromChain() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {
@@ -1918,7 +2020,10 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             // here: zeroing-then-rewriting coveredAvailable[] would race sibling workers
             // and momentarily publish a false availability. The array is already correct,
             // so this is a no-op while frozen.
-            assert allRequiredCoveredAvailable(requiredCoverColumns)
+            // A partition with no .pci has no sidecars to warm: its covered values come
+            // from the INCLUDE columns' own files via the null-prefix path, so sidecar
+            // availability says nothing about whether it can be served.
+            assert isCoversFromMetadata || allRequiredCoveredAvailable(requiredCoverColumns)
                     : "frozen reader missing a warm-opened sidecar for the requested cover columns";
             return;
         }

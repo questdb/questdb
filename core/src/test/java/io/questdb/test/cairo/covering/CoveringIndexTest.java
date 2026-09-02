@@ -41,6 +41,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.FSSTNative;
+import io.questdb.cairo.idx.IndexFwdNullReader;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.idx.PostingIndexUtils;
@@ -18939,6 +18940,293 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_neg_mk WHERE sym IN ('A', 'B') AND price > 0 LIMIT 3")
                     .noLeakCheck()
                     .assertsPlanContaining("Async Filter");
+        });
+    }
+
+    @Test
+    public void testNullKeyExplicitNullPostingKeepsIncludeValues() throws Exception {
+        // PRE-EXISTING BUG (A-1). This test is EXPECTED TO FAIL until the reader is fixed --
+        // it is a live reproduction, not a broken build. The defect is unchanged from base
+        // 4777a4e7e72a260b631b46170440d60865142fb7 (verified with a read-only git show of both
+        // posting-index readers at that commit).
+        //
+        // PostingIndexFwdReader.getCursor()'s `key == 0 && columnTop > 0 && minValue <
+        // columnTop` branch returns a NullCursor WITHOUT calling openRequiredSidecars(); the
+        // sibling real-posting branch calls it. NullCursor serves the synthetic null-prefix
+        // rows (rowId < columnTop) from the INCLUDE column's own .d/.i files -- those come
+        // back correct -- then falls through to super.hasNext() for the chain's REAL key-0
+        // postings, the rows carrying an explicit NULL symbol at rowId >= columnTop. Those
+        // rows read sidecarMems, which nothing ever opened, so every INCLUDE column comes
+        // back NULL. The designated timestamp is lost the same way -- getTimestamp() reads
+        // the same sidecar -- which the second assertion below pins.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_np_explicit (
+                        ts TIMESTAMP,
+                        val INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // Two rows before sym2 exists. They match sym2 = null through the reader's
+            // synthetic null prefix (rowId < columnTop).
+            execute("""
+                    INSERT INTO t_np_explicit VALUES
+                    ('2024-01-01T00:00:00', 10),
+                    ('2024-01-01T00:01:00', 20)
+                    """);
+            execute("ALTER TABLE t_np_explicit ADD COLUMN sym2 SYMBOL");
+            // Two more rows in the SAME partition, above sym2's column top, carrying an
+            // explicit NULL sym2. These are real key-0 postings in the chain -- the rows the
+            // null-prefix cursor mishandles.
+            execute("""
+                    INSERT INTO t_np_explicit VALUES
+                    ('2024-01-01T00:02:00', 100, NULL),
+                    ('2024-01-01T00:03:00', 200, NULL)
+                    """);
+            execute("ALTER TABLE t_np_explicit ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (val)");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // Oracle first: the same rows read WITHOUT the covering index. The literal the
+            // covering scan is held to below is the database's own answer, not a guess.
+            assertQuery("SELECT /*+ no_covering */ sym2, val FROM t_np_explicit WHERE sym2 = null")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            sym2\tval
+                            \t10
+                            \t20
+                            \t100
+                            \t200
+                            """);
+
+            // The defect is ORDER-DEPENDENT: a cursor that asked for a NON-ZERO key earlier on
+            // this same cached reader would already have opened sidecarMems, and the
+            // real-posting tail would then read correctly, hiding the bug. Drop every cached
+            // reader so the covering scan below runs against a reader whose sidecars have
+            // never been opened. No other query touches this table before the assertion.
+            engine.releaseAllReaders();
+
+            assertQuery("SELECT sym2, val FROM t_np_explicit WHERE sym2 = null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex on: sym2 with: val")
+                    .returns("""
+                            sym2\tval
+                            \t10
+                            \t20
+                            \t100
+                            \t200
+                            """);
+
+            // Same rows, now projecting the designated timestamp. getTimestamp() is served
+            // from the same unopened sidecar, so ts is lost on exactly the two explicit-NULL
+            // rows as well.
+            engine.releaseAllReaders();
+
+            assertQuery("SELECT ts, sym2, val FROM t_np_explicit WHERE sym2 = null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: sym2 with: ts, val")
+                    .returns("""
+                            ts\tsym2\tval
+                            2024-01-01T00:00:00.000000Z\t\t10
+                            2024-01-01T00:01:00.000000Z\t\t20
+                            2024-01-01T00:02:00.000000Z\t\t100
+                            2024-01-01T00:03:00.000000Z\t\t200
+                            """);
+        });
+    }
+
+    @Test
+    public void testNullKeyExplicitNullPostingKeepsIncludeValuesLatestOn() throws Exception {
+        // PRE-EXISTING BUG (A-1), backward reader. EXPECTED TO FAIL until the reader is fixed.
+        // PostingIndexBwdReader.getCursor() carries the same defect as its forward twin: the
+        // `key == 0 && columnTop > 0 && minValue < columnTop` branch skips
+        // openRequiredSidecars(). Unchanged from base 4777a4e7e72a260b631b46170440d60865142fb7.
+        // LATEST ON picks the newest matching row, which here is a REAL key-0 posting (an
+        // explicit NULL above the column top), so the covering read loses the INCLUDE column.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_np_explicit_bwd (
+                        ts TIMESTAMP,
+                        val INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_np_explicit_bwd VALUES
+                    ('2024-01-01T00:00:00', 10),
+                    ('2024-01-01T00:01:00', 20)
+                    """);
+            execute("ALTER TABLE t_np_explicit_bwd ADD COLUMN sym2 SYMBOL");
+            execute("""
+                    INSERT INTO t_np_explicit_bwd VALUES
+                    ('2024-01-01T00:02:00', 100, NULL),
+                    ('2024-01-01T00:03:00', 200, NULL)
+                    """);
+            execute("ALTER TABLE t_np_explicit_bwd ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (val)");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            assertQuery("SELECT /*+ no_covering */ sym2, val FROM t_np_explicit_bwd WHERE sym2 = null LATEST ON ts PARTITION BY sym2")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            sym2\tval
+                            \t200
+                            """);
+
+            // See the forward test: a fresh reader with unopened sidecars is what makes this
+            // deterministic.
+            engine.releaseAllReaders();
+
+            assertQuery("SELECT sym2, val FROM t_np_explicit_bwd WHERE sym2 = null LATEST ON ts PARTITION BY sym2")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex op: latest on: sym2 with: val")
+                    .returns("""
+                            sym2\tval
+                            \t200
+                            """);
+        });
+    }
+
+    @Test
+    public void testNullKeyScanKeepsPartitionEntirelyPredatingIndexedColumn() throws Exception {
+        // PRE-EXISTING BUG (A-2). EXPECTED TO FAIL until the covering factory is fixed --
+        // a live reproduction, not a broken build. Unchanged from base
+        // 4777a4e7e72a260b631b46170440d60865142fb7.
+        //
+        // The 2024-01-01 partition entirely predates sym2, so the table reader holds
+        // NullMemoryCMR for that column there and TableReader.createIndexReaderAt() hands back
+        // an IndexFwdNullReader / IndexBwdNullReader -- never a posting-index reader at all.
+        // Its cursor is a plain RowCursor, not a CoveringRowCursor, so
+        // CoveringIndexRecordCursorFactory.tryOpenKey() reads it as "no rows here" and skips
+        // the whole partition. Every row that predates the indexed column silently disappears
+        // from a NULL-key covering scan.
+        //
+        // No explicit NULL is ever written into sym2 in this table, which keeps this test
+        // clear of bug A-1 (see testNullKeyExplicitNullPostingKeepsIncludeValues): the only
+        // NULL-matching rows here live in a partition the scan never opens.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_np_partition (
+                        ts TIMESTAMP,
+                        val INT
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            // The whole 2024-01-01 partition is written before sym2 exists.
+            execute("""
+                    INSERT INTO t_np_partition VALUES
+                    ('2024-01-01T00:00:00', 10),
+                    ('2024-01-01T01:00:00', 20),
+                    ('2024-01-01T02:00:00', 30)
+                    """);
+            execute("ALTER TABLE t_np_partition ADD COLUMN sym2 SYMBOL");
+            // A separate 2024-01-02 partition where sym2 exists and is never null.
+            execute("""
+                    INSERT INTO t_np_partition VALUES
+                    ('2024-01-02T00:00:00', 40, 'A'),
+                    ('2024-01-02T01:00:00', 50, 'B')
+                    """);
+            execute("ALTER TABLE t_np_partition ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (val)");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // Oracle: without the covering index all three 2024-01-01 rows match sym2 = null.
+            assertQuery("SELECT /*+ no_covering */ sym2, val FROM t_np_partition WHERE sym2 = null")
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .noLeakCheck()
+                    .returns("""
+                            sym2\tval
+                            \t10
+                            \t20
+                            \t30
+                            """);
+
+            engine.releaseAllReaders();
+
+            assertQuery("SELECT sym2, val FROM t_np_partition WHERE sym2 = null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex on: sym2 with: val")
+                    .returns("""
+                            sym2\tval
+                            \t10
+                            \t20
+                            \t30
+                            """);
+
+            // The backward reader drops the partition the same way -- verified separately, the
+            // covering LATEST ON returns no rows at all where the no_covering scan returns the
+            // newest 2024-01-01 row. This assertion is unreachable while the forward one above
+            // is red; it guards the backward path once A-2 is fixed.
+            engine.releaseAllReaders();
+
+            assertQuery("SELECT sym2, val FROM t_np_partition WHERE sym2 = null LATEST ON ts PARTITION BY sym2")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex op: latest on: sym2 with: val")
+                    .returns("""
+                            sym2\tval
+                            \t30
+                            """);
+        });
+    }
+
+    @Test
+    public void testNullKeyScanUsesNullReaderOnlyForNonCoveringIndex() throws Exception {
+        // A partition that predates the indexed column has no rows for it, so the stand-in
+        // null index reader answers the NULL key with every row -- which is correct for any
+        // index that returns row numbers alone. Only a COVERING index has to carry INCLUDE
+        // values too, and only it needs the real posting reader. This pins both sides of
+        // that choice: drop the isCovering() test in TableReader.createIndexReaderAt and
+        // the non-covering half fails.
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"t_nc_split", "t_cov_split"}) {
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, val LONG)" +
+                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                // Day 1 is written before sym exists, so sym is absent from that partition.
+                execute("INSERT INTO " + table + " VALUES" +
+                        " ('2024-01-01T00:00:00', 10), ('2024-01-01T01:00:00', 20)");
+                execute("ALTER TABLE " + table + " ADD COLUMN sym SYMBOL");
+                execute("INSERT INTO " + table + " VALUES ('2024-01-02T00:00:00', 30, 'A')");
+            }
+            execute("ALTER TABLE t_nc_split ALTER COLUMN sym ADD INDEX TYPE POSTING");
+            execute("ALTER TABLE t_cov_split ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // Columns are ts(0), val(1), sym(2). Partition 0 is the one without sym.
+            try (TableReader reader = engine.getReader("t_nc_split")) {
+                reader.openPartition(0);
+                Assert.assertTrue(
+                        "a non-covering index needs no values, so the cheap stand-in reader must stay",
+                        reader.getIndexReader(0, 2, IndexReader.DIR_FORWARD) instanceof IndexFwdNullReader
+                );
+            }
+            try (TableReader reader = engine.getReader("t_cov_split")) {
+                reader.openPartition(0);
+                Assert.assertTrue(
+                        "a covering index must carry INCLUDE values, so it needs the real reader",
+                        reader.getIndexReader(0, 2, IndexReader.DIR_FORWARD) instanceof PostingIndexFwdReader
+                );
+            }
+
+            // Both still answer the NULL key with every row of the predating partition.
+            assertQuery("SELECT sym, val FROM t_nc_split WHERE sym = null ORDER BY ts")
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tval
+                            \t10
+                            \t20
+                            """);
         });
     }
 

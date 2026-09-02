@@ -41,6 +41,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
@@ -89,10 +90,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             io.questdb.cairo.sql.RecordMetadata metadata,
             io.questdb.cairo.ColumnVersionReader columnVersionReader,
             long partitionTimestamp,
-            long pinnedTableTxn
+            long pinnedTableTxn,
+            boolean isColumnAbsentFromPartition
     ) {
         setPinnedTableTxn(pinnedTableTxn);
-        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+        if (isColumnAbsentFromPartition) {
+            ofColumnAbsentFromPartition(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+        } else {
+            of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
+        }
     }
 
     @Override
@@ -131,6 +137,13 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            // A NullCursor serves the synthetic prefix rows (rowId < columnTop) from the
+            // INCLUDEd columns' own .d/.i files, then falls through to super.hasNext() for
+            // the chain's REAL key-0 postings -- rows at or above columnTop carrying an
+            // explicit NULL. Those tail rows read the sidecars just like the real-posting
+            // branch below, so arm them here too. The call runs before the cursor is
+            // acquired, so a throw cannot strand one.
+            openRequiredSidecars(requiredCoverColumns);
             NullCursor nc;
             if (freeNullCursors.size() > 0) {
                 nc = freeNullCursors.popLast();
@@ -205,6 +218,11 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
+            // See getCursor: the chain's real key-0 postings served after the synthetic
+            // prefix read the sidecars, so arm them on this branch as well. While the
+            // reader is frozen this is the documented no-op -- the pre-freeze production
+            // pass through getCursor already opened the same subset.
+            openRequiredSidecars(requiredCoverColumns);
             NullCursor nc = new NullCursor();
             nc.isDetached = true;
             // of() can throw (e.g. OOM growing the block buffer). A detached cursor is
@@ -1064,6 +1082,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         // True only while hasNext() is currently serving a synthetic null-prefix row
         // (as opposed to a real posting reached via super.hasNext()). Gates every
         // getCoveredXxx override below: false means behave exactly as inherited.
+        // While true the overrides answer ONLY from the INCLUDEd columns' own .d/.i
+        // files. A prefix row has no posting in the chain, so the sidecar carries no
+        // entry for it, and a raw miss (the INCLUDEd column's own column top, a
+        // dropped column, a column outside npRequiredColumns) is a genuine NULL.
+        // Falling through to super here would hand back whatever sidecar slot the
+        // cursor happens to sit on -- a different row's value.
         private boolean isNullPrefixRow;
 
         @Override
@@ -1089,10 +1113,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public ArrayView getCoveredArray(int includeIdx, int columnType) {
             if (isNullPrefixRow) {
-                ArrayView v = readRawCoveredArray(includeIdx, next, columnType, arrayView);
-                if (v != null) {
-                    return v;
-                }
+                return readRawCoveredArray(includeIdx, next, columnType, arrayView);
             }
             return super.getCoveredArray(includeIdx, columnType);
         }
@@ -1100,10 +1121,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public BinarySequence getCoveredBin(int includeIdx) {
             if (isNullPrefixRow) {
-                BinarySequence v = readRawCoveredBin(includeIdx, next, binView);
-                if (v != null) {
-                    return v;
-                }
+                return readRawCoveredBin(includeIdx, next, binView);
             }
             return super.getCoveredBin(includeIdx);
         }
@@ -1112,9 +1130,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         public long getCoveredBinLen(int includeIdx) {
             if (isNullPrefixRow) {
                 BinarySequence v = readRawCoveredBin(includeIdx, next, binView);
-                if (v != null) {
-                    return v.length();
-                }
+                return v != null ? v.length() : TableUtils.NULL_LEN;
             }
             return super.getCoveredBinLen(includeIdx);
         }
@@ -1122,82 +1138,115 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public byte getCoveredByte(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, Byte.BYTES);
-            return addr != 0 ? Unsafe.getByte(addr) : super.getCoveredByte(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getByte(addr);
+            }
+            return isNullPrefixRow ? 0 : super.getCoveredByte(includeIdx);
         }
 
         @Override
         public double getCoveredDouble(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, Double.BYTES);
-            return addr != 0 ? Unsafe.getDouble(addr) : super.getCoveredDouble(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getDouble(addr);
+            }
+            return isNullPrefixRow ? Double.NaN : super.getCoveredDouble(includeIdx);
         }
 
         @Override
         public float getCoveredFloat(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, Float.BYTES);
-            return addr != 0 ? Unsafe.getFloat(addr) : super.getCoveredFloat(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getFloat(addr);
+            }
+            return isNullPrefixRow ? Float.NaN : super.getCoveredFloat(includeIdx);
         }
 
         @Override
         public int getCoveredInt(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, Integer.BYTES);
-            return addr != 0 ? Unsafe.getInt(addr) : super.getCoveredInt(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getInt(addr);
+            }
+            return isNullPrefixRow ? Numbers.INT_NULL : super.getCoveredInt(includeIdx);
         }
 
         @Override
         public long getCoveredLong(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, Long.BYTES);
-            return addr != 0 ? Unsafe.getLong(addr) : super.getCoveredLong(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getLong(addr);
+            }
+            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong(includeIdx);
         }
 
         @Override
         public long getCoveredLong128Hi(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, 16);
-            return addr != 0 ? Unsafe.getLong(addr + 8) : super.getCoveredLong128Hi(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getLong(addr + 8);
+            }
+            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong128Hi(includeIdx);
         }
 
         @Override
         public long getCoveredLong128Lo(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, 16);
-            return addr != 0 ? Unsafe.getLong(addr) : super.getCoveredLong128Lo(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getLong(addr);
+            }
+            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong128Lo(includeIdx);
         }
 
         @Override
         public long getCoveredLong256_0(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, 32);
-            return addr != 0 ? Unsafe.getLong(addr) : super.getCoveredLong256_0(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getLong(addr);
+            }
+            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong256_0(includeIdx);
         }
 
         @Override
         public long getCoveredLong256_1(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, 32);
-            return addr != 0 ? Unsafe.getLong(addr + 8) : super.getCoveredLong256_1(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getLong(addr + 8);
+            }
+            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong256_1(includeIdx);
         }
 
         @Override
         public long getCoveredLong256_2(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, 32);
-            return addr != 0 ? Unsafe.getLong(addr + 16) : super.getCoveredLong256_2(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getLong(addr + 16);
+            }
+            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong256_2(includeIdx);
         }
 
         @Override
         public long getCoveredLong256_3(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, 32);
-            return addr != 0 ? Unsafe.getLong(addr + 24) : super.getCoveredLong256_3(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getLong(addr + 24);
+            }
+            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong256_3(includeIdx);
         }
 
         @Override
         public short getCoveredShort(int includeIdx) {
             long addr = resolveRawFixedAddr(includeIdx, next, Short.BYTES);
-            return addr != 0 ? Unsafe.getShort(addr) : super.getCoveredShort(includeIdx);
+            if (addr != 0) {
+                return Unsafe.getShort(addr);
+            }
+            return isNullPrefixRow ? 0 : super.getCoveredShort(includeIdx);
         }
 
         @Override
         public CharSequence getCoveredStrA(int includeIdx) {
             if (isNullPrefixRow) {
-                CharSequence v = readRawCoveredStr(includeIdx, next, stringViewA);
-                if (v != null) {
-                    return v;
-                }
+                return readRawCoveredStr(includeIdx, next, stringViewA);
             }
             return super.getCoveredStrA(includeIdx);
         }
@@ -1205,10 +1254,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public CharSequence getCoveredStrB(int includeIdx) {
             if (isNullPrefixRow) {
-                CharSequence v = readRawCoveredStr(includeIdx, next, stringViewB);
-                if (v != null) {
-                    return v;
-                }
+                return readRawCoveredStr(includeIdx, next, stringViewB);
             }
             return super.getCoveredStrB(includeIdx);
         }
@@ -1216,10 +1262,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public Utf8Sequence getCoveredVarcharA(int includeIdx) {
             if (isNullPrefixRow) {
-                Utf8Sequence v = readRawCoveredVarchar(includeIdx, next, varcharViewA);
-                if (v != null) {
-                    return v;
-                }
+                return readRawCoveredVarchar(includeIdx, next, varcharViewA);
             }
             return super.getCoveredVarcharA(includeIdx);
         }
@@ -1227,10 +1270,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         @Override
         public Utf8Sequence getCoveredVarcharB(int includeIdx) {
             if (isNullPrefixRow) {
-                Utf8Sequence v = readRawCoveredVarchar(includeIdx, next, varcharViewB);
-                if (v != null) {
-                    return v;
-                }
+                return readRawCoveredVarchar(includeIdx, next, varcharViewB);
             }
             return super.getCoveredVarcharB(includeIdx);
         }
@@ -1558,7 +1598,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
             long fileRow = row - npColTops[includeIdx];
             if (fileRow < 0) {
-                return 0; // genuinely null (below the INCLUDEd column's own top) -- caller falls back
+                return 0; // genuinely null (below the INCLUDEd column's own top)
             }
             return resolveRawDataAddr(includeIdx, fileRow * size, size);
         }
