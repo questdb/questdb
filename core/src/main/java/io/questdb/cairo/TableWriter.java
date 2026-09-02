@@ -14231,6 +14231,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // path" doc). Counted before the guards below so a REPLACE-mode throw still records that this
         // WAS a genuine attempt at the O3 path, not a fast-append.
         compositeO3MergeCommitCount.incrementAndGet();
+        // FLATTEN THE TIMESTAMP INDEX, exactly as processO3BlockPlain does -- omitting it was a JVM
+        // CRASH (SIGSEGV in merge_copy_var_column_int32_AVX512) and, for fixed-size columns, silent
+        // wrong data.
+        //
+        // flattenTimestamp == true means the caller GATHERED this commit's rows into o3MemColumns1 in
+        // sorted order (processWalCommit's needsOrdering branch: "Row indexes start from 0, not
+        // rowLo"), so the columns handed to the dispatch below are 0-based -- while the sorted index's
+        // .i field still holds each row's position in the WAL SEGMENT. Those two disagree the moment a
+        // segment carries more than this one transaction: measured, a 4th insert into a segment already
+        // holding 240 rows arrived as rowLo=0/srcOooMax=6 with .i values 240..245. The merge index
+        // built from it then addressed row 240 of a 6-row buffer -- for a var-size column that is an
+        // offset read from beyond the mapped aux vector, i.e. a wild pointer.
+        //
+        // The plain path flattens lazily, at its first non-append (merge) partition. The composite path
+        // must do it up-front instead, because EVERY composite dispatch takes the async merge path (see
+        // this method's own doc) -- there is no append branch here that could skip it.
+        //
+        // Why this hid for so long: flattening is a no-op when .i already equals the row's position,
+        // which is the case whenever a commit is the only transaction in its segment -- the shape
+        // nearly every test writes. It also cannot be reached through the multi-cell or dedup branches
+        // below, which build their own local, 0-based index in buildCompositeCellGroupScratch and pass
+        // THAT downstream; only the single-cell raw-index dispatch forwards this index untouched. So
+        // the differential fuzz, which is multi-cell by construction, could not have found it.
+        if (flattenTimestamp && o3RowCount > 0) {
+            Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
+            flattenTimestamp = false;
+        }
         // REPLACE-range mode is supported. Two things make it different from an ordinary commit, and
         // both are handled in the loop below:
         //   1. the loop must visit partitions the commit has NO rows for, because deleting [lo, hi)

@@ -25,7 +25,7 @@
 package io.questdb.test.cairo;
 
 import io.questdb.test.AbstractCairoTest;
-import org.junit.Ignore;
+
 import org.junit.Test;
 
 /**
@@ -96,35 +96,73 @@ public class CompositeAllColumnTypesTest extends AbstractCairoTest {
             + " FROM long_sequence(240)";
 
     /**
-     * REPRODUCES A JVM CRASH (SIGSEGV in {@code merge_copy_var_column_int32_AVX512}), so it cannot run
-     * in a suite -- a crashed fork takes every other test in the module with it.
+     * The shape that used to CRASH THE JVM (SIGSEGV in {@code merge_copy_var_column_int32_AVX512}):
+     * composite, a var-size column, a day holding several cells, and an O3 merge into one of them --
+     * issued as SINGLE-CELL commits, which is the workaround this branch documents for the refusal on an
+     * interleaved multi-cell commit with a var-size column. The documented workaround was what crashed.
      * <p>
-     * Composite, a var-size column, a day holding SEVERAL cells, and an O3 merge into one of them. Every
-     * commit here is SINGLE-CELL, which is the workaround this branch documents for the refusal on an
-     * interleaved multi-cell commit with a var-size column -- so the documented workaround is what
-     * crashes. Narrowed by bisection: plain with identical data is fine, composite without a var-size
-     * column is fine, a four-row merge is fine, and one cell in the whole table is fine. STRING, BINARY,
-     * VARCHAR and DOUBLE[] all crash, so it is the var-size shape rather than any one type.
+     * The root cause was not var-size at all: {@code processO3BlockComposite} never flattened the sorted
+     * timestamp index (see its own doc). A var-size column merely turns the resulting out-of-range row
+     * id into a wild pointer instead of silently wrong data -- {@link
+     * #testFixedSizeColumnsO3AfterEarlierTransactionsMatchThePlainTwin} covers the quiet half.
      * <p>
-     * PRE-EXISTING, not introduced by the cell-scoped work around it: it reproduces at 256bee8952,
-     * before that work started.
+     * The preceding per-cell inserts are load-bearing, not scene-setting: they put earlier transactions
+     * in the SAME WAL segment, which is what makes the index's row ids differ from their positions. A
+     * commit alone in its segment flattens to a no-op and would prove nothing.
      */
-    @Ignore("reproduces a JVM crash (SIGSEGV) -- see the javadoc; running it kills the test fork")
     @Test
-    public void testMultiCellDayO3WithAVarSizeColumnCrashesTheJvm() throws Exception {
+    public void testMultiCellDayO3WithAVarSizeColumnMatchesThePlainTwin() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE src AS (SELECT timestamp_sequence(1672531200000000L, 3600000000L) ts,"
                     + " rnd_symbol('E0','E1','E2') exch, rnd_int() c_int, rnd_str(4, 12, 1) c_string"
                     + " FROM long_sequence(240)) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, c_int INT, c_string STRING) TIMESTAMP(ts) "
                     + "PARTITION BY DAY, exch WAL");
+            execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, c_int INT, c_string STRING) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY WAL");
+            // The identical transaction sequence into both twins, so the segment layering the defect
+            // needs exists on each side and the plain table is a fair oracle.
             for (String cell : new String[]{"E0", "E1", "E2"}) {
                 execute("INSERT INTO c SELECT * FROM src WHERE exch = '" + cell + "'");
+                execute("INSERT INTO p SELECT * FROM src WHERE exch = '" + cell + "'");
+                drainWalQueue();
+            }
+            // ORDER BY c_int makes this genuinely out of order, forcing the gathered (sorted-into-memory)
+            // path whose 0-based columns the index has to agree with.
+            execute("INSERT INTO c SELECT * FROM src WHERE ts < '2023-01-02' AND exch = 'E0' ORDER BY c_int");
+            execute("INSERT INTO p SELECT * FROM src WHERE ts < '2023-01-02' AND exch = 'E0' ORDER BY c_int");
+            drainWalQueue();
+
+            assertSqlCursors("SELECT * FROM p ORDER BY ts, c_int", "SELECT * FROM c ORDER BY ts, c_int");
+        });
+    }
+
+    /**
+     * The same missing flatten with NO var-size column anywhere: the merge then reads a fixed-width value
+     * from an out-of-range row instead of dereferencing a garbage offset, so it returns WRONG DATA rather
+     * than crashing. Silent corruption is the worse half of the defect and needs its own test -- a crash
+     * announces itself, this does not.
+     */
+    @Test
+    public void testFixedSizeColumnsO3AfterEarlierTransactionsMatchThePlainTwin() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src AS (SELECT timestamp_sequence(1672531200000000L, 3600000000L) ts,"
+                    + " rnd_symbol('E0','E1','E2') exch, rnd_int() c_int, rnd_long() c_long,"
+                    + " rnd_double() c_double FROM long_sequence(240)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, c_int INT, c_long LONG, c_double DOUBLE)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY, exch WAL");
+            execute("CREATE TABLE p (ts TIMESTAMP, exch SYMBOL, c_int INT, c_long LONG, c_double DOUBLE)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            for (String cell : new String[]{"E0", "E1", "E2"}) {
+                execute("INSERT INTO c SELECT * FROM src WHERE exch = '" + cell + "'");
+                execute("INSERT INTO p SELECT * FROM src WHERE exch = '" + cell + "'");
                 drainWalQueue();
             }
             execute("INSERT INTO c SELECT * FROM src WHERE ts < '2023-01-02' AND exch = 'E0' ORDER BY c_int");
+            execute("INSERT INTO p SELECT * FROM src WHERE ts < '2023-01-02' AND exch = 'E0' ORDER BY c_int");
             drainWalQueue();
-            assertQuery("SELECT count() FROM c").noLeakCheck().noRandomAccess().expectSize().returns("count\n248\n");
+
+            assertSqlCursors("SELECT * FROM p ORDER BY ts, c_int", "SELECT * FROM c ORDER BY ts, c_int");
         });
     }
 
@@ -134,11 +172,16 @@ public class CompositeAllColumnTypesTest extends AbstractCairoTest {
             createTwinsAndSeed();
             assertTwinsAgree("after the in-order load");
 
-            // NO O3 ARM HERE, deliberately: an O3 merge into a multi-cell day that has a var-size
-            // column CRASHES the JVM, which the ignored reproduction at the top of this class pins.
-            // A coverage test cannot also be the crash test -- the fork dies and takes the module with
-            // it -- so this asserts what a fully-typed composite table does support today: a per-cell
-            // load, and the conversions below.
+            // The O3 arm, which this test could not have before: an out-of-order merge into a day that
+            // already holds several cells used to crash the JVM on any var-size column, and every
+            // complete column list has one. It runs every type through the merge path, not just the
+            // append path the load above exercises.
+            execute("INSERT INTO c SELECT * FROM src WHERE ts < '2023-01-02' AND exch = 'E0' ORDER BY c_int");
+            execute("INSERT INTO p SELECT * FROM src WHERE ts < '2023-01-02' AND exch = 'E0' ORDER BY c_int");
+            drainWalQueue();
+            engine.releaseInactive();
+
+            assertTwinsAgree("after an out-of-order merge into a populated cell");
         });
     }
 
