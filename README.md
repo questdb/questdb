@@ -4,6 +4,18 @@
 <p>&nbsp;</p>
 
 <p align="center">
+  <a href="https://github.com/questdb/questdb/blob/master/LICENSE.txt">
+    <img src="https://img.shields.io/github/license/questdb/questdb" alt="Apache 2.0 license"/>
+  </a>
+  <a href="https://github.com/questdb/questdb/releases">
+    <img src="https://img.shields.io/github/v/release/questdb/questdb?display_name=tag" alt="Latest release"/>
+  </a>
+  <a href="https://hub.docker.com/r/questdb/questdb">
+    <img src="https://img.shields.io/docker/pulls/questdb/questdb" alt="Docker pulls"/>
+  </a>
+  <a href="https://slack.questdb.com/">
+    <img src="https://img.shields.io/badge/slack-join-4A154B?logo=slack&logoColor=white" alt="QuestDB community Slack"/>
+  </a>
   <a href="#contribute">
     <img src="https://img.shields.io/github/contributors/questdb/questdb" alt="QuestDB open source contributors"/>
   </a>
@@ -16,15 +28,42 @@
 
 ---
 
-QuestDB is an open-source time-series database offering blazingly fast ingestion
-and dynamic, low-latency SQL queries.
+QuestDB is the open-source, low-latency time-series database on open formats.
+It ingests millions of events per second, computes on live data in
+milliseconds, and keeps years of history queryable. One SQL engine spans
+ingestion, stream processing, and tiered storage.
 
-QuestDB delivers a multi-tier storage engine (WAL → native → Parquet on object storage), 
-and the core engine is implemented in zero-GC Java and C++; QuestDB Enterprise includes additional components in Rust.
+The engine is zero-GC Java with C++ and Rust on the hot paths. Data lives in
+memory-mapped, time-partitioned columns. Queries run across all cores with SIMD
+and JIT-compiled filters. There are no third-party dependencies on the data
+path.
 
-We achieve high performance via a column-oriented storage model, parallelized
-vector execution, SIMD instructions, and low-latency techniques. In addition,
-QuestDB is hardware efficient, with quick setup and operational efficiency.
+Storage is tiered: a parallel write-ahead log, native columnar partitions for
+hot data, and Apache Parquet for cold history. Parquet, Apache Iceberg, and
+Apache Arrow keep the data open to any tool.
+
+> **New in QuestDB 10.0:** the QuestDB Wire Protocol (QWP), one binary
+> columnar protocol for writes and for Arrow reads, plus native arrays and
+> live views in beta.
+> [Release notes](https://questdb.com/blog/questdb-10-release/).
+
+### Ingress and egress over QWP
+
+QWP is a binary columnar protocol over WebSocket. The same connection writes
+rows in and streams query results out as Apache Arrow.
+
+| Measured on QuestDB 10.0 | Result | Source |
+|---|---|---|
+| Ingestion over the network | 19M rows/sec per server | [QWP vs ILP ingestion benchmark](https://questdb.com/blog/qwp-vs-ilp-ingestion-benchmark/) |
+| Query results streamed into Arrow | 220M rows/sec with eight readers | [Streaming 500 million rows into Arrow](https://questdb.com/blog/streaming-500-million-rows-into-apache-arrow/) |
+| Time to stream 500M rows | 2.3 seconds | same post |
+| First Arrow batch | 32 ms | same post |
+
+On the way in, QWP holds its rate from one thousand to one million series.
+On the way out, the first batch lands in milliseconds and client memory stays
+flat however large the result. The
+[QWP overview](https://questdb.com/blog/questdb-qwp-binary-wire-protocol/)
+covers the protocol design.
 
 > Ready to go? Jump to the
 > [Get started](#get-started) section.
@@ -32,7 +71,7 @@ QuestDB is hardware efficient, with quick setup and operational efficiency.
 <p>&nbsp;</p>
 
 <div align="center">
-  <a href="https://demo.questdb.com/">
+  <a href="https://demo.questdb.io/">
     <img alt="QuestDB Web Console showing a live technical-analysis dashboard, schema explorer, and monitoring panel" src=".github/console.webp" width="900" />
   </a>
   <p><em>QuestDB Web Console - click to launch demo</em></p>
@@ -40,43 +79,65 @@ QuestDB is hardware efficient, with quick setup and operational efficiency.
 
 <p>&nbsp;</p>
 
-## Benefits of QuestDB
+## What QuestDB does
 
-Feature highlights include:
+One engine covers the full lifecycle of the data:
 
-- Low-latency, high-throughput ingestion — from single events to millions/sec
-- Low-latency SQL with time-series extensions (ASOF JOIN, WINDOW JOIN, HORIZON JOIN, SAMPLE BY, LATEST ON)
-- SIMD-accelerated, parallel execution
-- Multi-tier storage: WAL → native columnar → Parquet (time-partitioned and time-ordered)
-- Postgres protocol (PGwire) and REST API
-- Views, materialized views, and n-dimensional arrays (incl. 2D arrays for order books)
-- Web console for queries and data management
-- Apache 2.0 open source and open formats — no vendor lock-in
-- [Finance functions](https://questdb.com/docs/query/functions/finance/) and [orderbook analytics](https://questdb.com/docs/tutorials/order-book/)
+- **Capture.** Ingest millions of ordered and out-of-order events per second
+  without pre-aggregation. Deduplication and out-of-order correction are built
+  in.
+- **Compute.** Transform, enrich, and aggregate events as they arrive with
+  materialized views, then publish the results in real time.
+- **Query.** Run time-series SQL across live and historical data with
+  predictable low latency.
+- **Retain.** Keep the complete record online across hot native storage and
+  Parquet cold storage, all through the same SQL.
 
-QuestDB excels with:
+The SQL is standard, extended where time series needs it: `SAMPLE BY`,
+`LATEST ON`, `ASOF JOIN`, `WINDOW JOIN`, `HORIZON JOIN`, materialized views,
+and n-dimensional arrays with 2D arrays for order books.
 
-- financial market data (tick data, trades, order books, OHLC)
-- Sensor/telemetry data with high data cardinality
-- real-time dashboards and monitoring
-- [AI coding agents](https://questdb.com/agents/) for automated data pipelines and analytics
+```sql
+-- 15-minute OHLCV bars over the last day, from the live demo
+SELECT
+  timestamp,
+  first(price) AS open,
+  last(price) AS close,
+  min(price),
+  max(price),
+  sum(amount) AS volume
+FROM trades
+WHERE symbol = 'BTC-USDT'
+  AND timestamp > dateadd('d', -1, now())
+SAMPLE BY 15m ALIGN TO CALENDAR;
 
-And why use a time-series database?
+-- Match each trade to the most recent quote by timestamp
+SELECT t.timestamp, t.symbol, t.price, q.bid, q.ask
+FROM trades t
+ASOF JOIN quotes q ON (symbol);
+```
 
-Beyond performance and efficiency, with a specialized time-series database, you
-don't need to worry about:
+Where it runs:
 
-- out-of-order data
-- deduplication and exactly one semantics
-- Continuous streaming ingest with many concurrent queries
-- streaming data (low latency)
-- volatile and "bursty" data
-- adding new columns - change schema "on the fly" while streaming data
+- capital markets: tick data, order books, trades, pre- and post-trade
+  analytics, with
+  [finance functions](https://questdb.com/docs/query/functions/finance/) and
+  [order book analytics](https://questdb.com/docs/tutorials/order-book/)
+- aerospace and robotics: flight-test telemetry, fleet data, mission replay
+- energy and infrastructure: reactor, turbine, and grid telemetry at full
+  resolution
+- [AI agents](https://questdb.com/agents/) that discover the schema, write the
+  SQL, and drive notebooks and dashboards
+
+A time-series engine takes care of what a general database leaves to you:
+out-of-order data, deduplication and exactly-once semantics, continuous
+ingest under concurrent queries, bursty load, and schema changes while
+streaming.
 
 ## Try QuestDB, demo and dashboards
 
-The [live, public demo](https://demo.questdb.com/) is provisioned with the latest
-QuestDB release and sample datasets:
+The [live, public demo](https://demo.questdb.io/) runs the latest QuestDB
+release on sample datasets. Scan more than 2 billion rows in milliseconds:
 
 - Trades: live crypto trades with 30M+ rows per month (OKX exchange)
 - FX order book: live charts with orderbook FX pairs.
@@ -111,10 +172,17 @@ As always, we encourage you to run your own benchmarks.
 
 ## AI coding agents
 
-QuestDB works out of the box with AI coding agents. Install the
-[QuestDB agent skill](https://questdb.com/agents/) and go from prompt to
-production in under 60 seconds: streaming ingestion, materialized views, and
-real-time analytics with zero manual code.
+QuestDB works out of the box with Claude Code, Codex, Cursor, and any MCP
+client. Install the agent skills, then let the agent discover the schema, write
+the SQL, and build notebooks and live dashboards in the Web Console through the
+[QuestDB MCP server](https://questdb.com/docs/getting-started/web-console/mcp-server/).
+
+```bash
+npx skills add questdb/skills
+```
+
+See the [agents page](https://questdb.com/agents/) and the
+[coding agents guide](https://questdb.com/docs/getting-started/ai-coding-agents/).
 
 <div align="center">
   <a href="https://questdb.com/agents/">
@@ -145,7 +213,7 @@ questdb stop
 QuestDB bundles native libraries for Apple Silicon only. On an Intel Mac, use
 the Docker image above.
 
-Alternatively, to kickoff the full onboarding journey, start with our concise
+For the full walkthrough, start with the
 [quick start guide](https://questdb.com/docs/getting-started/quick-start/).
 
 ### First-party clients
@@ -187,18 +255,24 @@ provides a SQL editor, charts, and CSV import on port `9000`.
 
 ### Popular third-party tools
 
-Popular tools that integrate with QuestDB include:
+Ingest from:
 
 - [Kafka](https://questdb.com/docs/connect/message-brokers/kafka/)
 - [Redpanda](https://questdb.com/docs/connect/message-brokers/redpanda/)
-- [Grafana](https://questdb.com/docs/integrations/visualization/grafana/)
-- [Polars](https://questdb.com/docs/integrations/data-processing/polars/)
-- [Pandas](https://questdb.com/docs/integrations/data-processing/pandas/)
-- [PowerBI](https://questdb.com/docs/integrations/visualization/powerbi/)
-- [Superset](https://questdb.com/docs/integrations/visualization/superset/)
-- [Apache Flink](https://questdb.com/docs/connect/message-brokers/flink/)
 - [Telegraf](https://questdb.com/docs/connect/message-brokers/telegraf/)
-- [MindsDB](https://questdb.com/docs/integrations/other/mindsdb/)
+- [Apache Flink](https://questdb.com/docs/connect/message-brokers/flink/)
+
+Query from:
+
+- [Grafana](https://questdb.com/docs/integrations/visualization/grafana/)
+- [Pandas](https://questdb.com/docs/integrations/data-processing/pandas/)
+- [Polars](https://questdb.com/docs/integrations/data-processing/polars/)
+- [Apache Spark](https://questdb.com/docs/integrations/data-processing/spark/)
+- [Superset](https://questdb.com/docs/integrations/visualization/superset/)
+- [PowerBI](https://questdb.com/docs/integrations/visualization/powerbi/)
+
+The [integrations overview](https://questdb.com/docs/integrations/overview/)
+lists the rest.
 
 ### End-to-end code scaffolds
 
@@ -214,20 +288,19 @@ fine-tune QuestDB for production workloads.
 
 ### QuestDB Enterprise
 
-For secure operation at greater scale or within larger organizations.
+The QuestDB you already run, hardened for production. Enterprise adds:
 
-Additional features include:
-
-- high availability and read replica(s)
+- high availability: replication, read replicas, automatic failover
 - multi-primary ingestion
-- cold storage integration
-- role-based access control
-- TLS encryption
-- native querying of Parquet files via object storage
-- support SLAs, enhanced monitoring and more
+- multi-tier storage at petabyte scale: cold partitions tier automatically to
+  Parquet on object storage and stay queryable in place
+- security and governance: role-based access control, TLS, SSO, audit logs
+- 24/7 support with a 99.9% uptime SLA
 
-Visit the [Enterprise page](https://questdb.com/enterprise/) for further details
-and contact information.
+Run it on-prem, as a managed service, or inside your own AWS or Azure account
+with [Bring Your Own Cloud](https://questdb.com/byoc/). See the
+[feature comparison](https://questdb.com/enterprise/#compare-features) and the
+[Enterprise page](https://questdb.com/enterprise/).
 
 ## Additional resources
 
@@ -261,6 +334,7 @@ and contact information.
 - [DigitalOcean](https://questdb.com/docs/deployment/digital-ocean/)
 - [Hetzner](https://questdb.com/docs/deployment/hetzner/)
 - [ZFS compression](https://questdb.com/docs/deployment/compression-zfs/)
+- [Bring Your Own Cloud](https://questdb.com/byoc/) (Enterprise)
 
 ## Contribute
 
