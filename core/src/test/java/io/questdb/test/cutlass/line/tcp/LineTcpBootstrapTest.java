@@ -44,9 +44,11 @@ import io.questdb.client.network.NetworkFacadeImpl;
 import io.questdb.client.std.Decimal256;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.test.AbstractBootstrapTest;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -1208,6 +1210,141 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testMicroDesignatedTimestampOutOfRangeIsRejectedOnNonWalTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables()) {
+                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
+                serverMain.execute("""
+                        CREATE TABLE test_ts_micros_out_of_range (
+                            x LONG,
+                            ts TIMESTAMP
+                        ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                        """);
+
+                // 10000-01-01 is past the 9999-12-31 ceiling of a micros designated timestamp, yet far
+                // below the nanos ceiling, so a guard keyed on CommonUtils.MAX_TIMESTAMP alone lets it
+                // through to the writer, which cancels the row and reports nothing to the producer
+                final long outOfRange = Micros.YEAR_10000;
+                final long inRange = MicrosTimestampDriver.floor("2024-01-01 00:00:00.000000");
+
+                // the designated timestamp is out of range as the line timestamp
+                assertNonWalDesignatedTimestampRejected(port, "test_ts_micros_out_of_range", sender -> {
+                    sender.table("test_ts_micros_out_of_range")
+                            .longColumn("x", 1)
+                            .at(inRange, ChronoUnit.MICROS);
+                    sender.table("test_ts_micros_out_of_range")
+                            .longColumn("x", 2)
+                            .at(outOfRange, ChronoUnit.MICROS);
+                });
+
+                // the designated timestamp is out of range as a named field overriding the line timestamp
+                assertNonWalDesignatedTimestampRejected(port, "test_ts_micros_out_of_range", sender -> {
+                    sender.table("test_ts_micros_out_of_range")
+                            .longColumn("x", 3)
+                            .at(inRange + 1, ChronoUnit.MICROS);
+                    sender.table("test_ts_micros_out_of_range")
+                            .longColumn("x", 4)
+                            .timestampColumn("ts", outOfRange, ChronoUnit.MICROS)
+                            .atNow();
+                });
+
+                // the writer survives the rejection: a good line sent after the faults still lands
+                try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
+                    sender.table("test_ts_micros_out_of_range")
+                            .longColumn("x", 5)
+                            .at(inRange + 2, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                // only the out-of-range messages are rejected, the rows around them land
+                assertEventually(() -> serverMain.assertSql(
+                        "SELECT x FROM test_ts_micros_out_of_range",
+                        """
+                                x
+                                1
+                                3
+                                5
+                                """));
+            }
+        });
+    }
+
+    @Test
+    public void testMicroDesignatedTimestampOutOfRangeIsRejectedPerMessageOnWalTable() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    // keep the connection open past a rejected message, so the test can assert that the
+                    // same producer keeps writing to the same table over the very same connection
+                    PropertyKey.LINE_TCP_DISCONNECT_ON_ERROR.getEnvVarName(), "false"
+            )) {
+                int port = serverMain.getConfiguration().getLineTcpReceiverConfiguration().getBindPort();
+                serverMain.execute("""
+                        CREATE TABLE ts_micros_out_of_range_wal (
+                            x LONG,
+                            ts TIMESTAMP
+                        ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                        """);
+
+                final long first = MicrosTimestampDriver.floor("2024-01-01 00:00:00.000000");
+                final long second = MicrosTimestampDriver.floor("2024-01-02 00:00:00.000000");
+                final long third = MicrosTimestampDriver.floor("2024-01-03 00:00:00.000000");
+                // 10000-01-01 is past the 9999-12-31 ceiling of a micros designated timestamp, yet far
+                // below the nanos ceiling, so a guard keyed on CommonUtils.MAX_TIMESTAMP alone lets it
+                // through to the writer
+                final long outOfRange = Micros.YEAR_10000;
+
+                // The rows landing is not enough to tell a per-message rejection from the writer
+                // escalation: the scheduler closes a writer the fault reached, the close commits the
+                // pending row, and the next message re-acquires the same pooled WAL writer, so the
+                // rows around the faults land either way. What the escalation leaves behind is its
+                // log line, so the test captures the log and pins its absence.
+                LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
+                        sender.table("ts_micros_out_of_range_wal")
+                                .longColumn("x", 1)
+                                .at(first, ChronoUnit.MICROS);
+                        // out of range as the line timestamp
+                        sender.table("ts_micros_out_of_range_wal")
+                                .longColumn("x", 2)
+                                .at(outOfRange, ChronoUnit.MICROS);
+                        sender.table("ts_micros_out_of_range_wal")
+                                .longColumn("x", 3)
+                                .at(second, ChronoUnit.MICROS);
+                        // out of range as a named field overriding the line timestamp
+                        sender.table("ts_micros_out_of_range_wal")
+                                .longColumn("x", 4)
+                                .timestampColumn("ts", outOfRange, ChronoUnit.MICROS)
+                                .atNow();
+                        sender.table("ts_micros_out_of_range_wal")
+                                .longColumn("x", 5)
+                                .at(third, ChronoUnit.MICROS);
+                        sender.flush();
+                    }
+
+                    // only the two out-of-range messages are rejected, the rows around them land
+                    assertEventually(() -> serverMain.assertSql("SELECT x, ts FROM ts_micros_out_of_range_wal", """
+                            x\tts
+                            1\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z
+                            """));
+                    // the I/O thread logged each rejection before it parsed the next line, and the
+                    // rows after the faults are visible, so a drain hands over both log records
+                    capture.drain();
+                } finally {
+                    capture.stop();
+                }
+                // the rejection is per message: nothing closed the writer
+                capture.assertNotLogged("closing writer because of error");
+                // and it names the table and the value
+                capture.assertLogged("table: ts_micros_out_of_range_wal, timestamp: 253402300800000000; designated timestamp beyond 9999-12-31 is not allowed");
+            }
+        });
+    }
+
+    @Test
     public void testMultipleVarcharCols() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables()) {
@@ -1248,7 +1385,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 final long inRange = NanosTimestampDriver.floor("2024-01-01 00:00:00.000000000");
 
                 // the designated timestamp is out of range as the line timestamp
-                assertNonWalDesignatedTimestampRejected(port, sender -> {
+                assertNonWalDesignatedTimestampRejected(port, "test_ts_ns_out_of_range", sender -> {
                     sender.table("test_ts_ns_out_of_range")
                             .longColumn("x", 1)
                             .at(inRange, ChronoUnit.NANOS);
@@ -1258,7 +1395,7 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
                 });
 
                 // the designated timestamp is out of range as a named field overriding the line timestamp
-                assertNonWalDesignatedTimestampRejected(port, sender -> {
+                assertNonWalDesignatedTimestampRejected(port, "test_ts_ns_out_of_range", sender -> {
                     sender.table("test_ts_ns_out_of_range")
                             .longColumn("x", 3)
                             .at(inRange + 1, ChronoUnit.NANOS);
@@ -1564,14 +1701,14 @@ public class LineTcpBootstrapTest extends AbstractBootstrapTest {
      * that the server rejects that message as a line protocol error. ILP TCP has no error channel,
      * so a rejected message surfaces as a disconnect under the default disconnect-on-error policy.
      */
-    private void assertNonWalDesignatedTimestampRejected(int port, Consumer<Sender> batchWriter) throws Exception {
+    private void assertNonWalDesignatedTimestampRejected(int port, String tableName, Consumer<Sender> batchWriter) throws Exception {
         try (Sender sender = createTcpSender(port, PROTOCOL_VERSION_V2)) {
             batchWriter.accept(sender);
             sender.flush();
             // TCP buffering may hide the disconnect from the first probe, so keep probing
             assertEventually(() -> {
                 try {
-                    sender.table("test_ts_ns_out_of_range").longColumn("x", -1).atNow();
+                    sender.table(tableName).longColumn("x", -1).atNow();
                     sender.flush();
                     Assert.fail("server did not reject the out-of-range designated timestamp");
                 } catch (LineSenderException ignored) {

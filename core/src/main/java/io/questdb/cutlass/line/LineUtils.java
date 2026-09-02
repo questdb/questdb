@@ -1,8 +1,8 @@
 package io.questdb.cutlass.line;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.line.tcp.LineProtocolException;
-import io.questdb.std.datetime.CommonUtils;
 
 public final class LineUtils {
     private LineUtils() {
@@ -39,10 +39,14 @@ public final class LineUtils {
      * Converts a line protocol designated timestamp to the precision of the designated timestamp
      * column and checks it against the bounds the storage layer enforces. Every ILP entry point
      * must funnel the designated timestamp through this method: {@code TableWriter}/{@code WalWriter}
-     * reject an out-of-range value with a plain {@link io.questdb.cairo.CairoException}, which the
-     * ILP callers cannot tell apart from an infrastructure failure and therefore escalate to
-     * closing the table writer. A {@link LineProtocolException} instead classifies as a per-message
-     * rejection and leaves the writer alone.
+     * reject an out-of-range value with a plain {@link CairoException}, which the ILP callers
+     * cannot tell apart from an infrastructure failure and therefore escalate to closing the table
+     * writer. A {@link LineProtocolException} instead classifies as a per-message rejection and
+     * leaves the writer alone.
+     * <p>
+     * The ceiling is the column's own: {@link TimestampDriver#validateBounds(long)} caps a
+     * micros designated timestamp at 9999-12-31 and a nanos one at 2261-12-31, and the writer
+     * applies the same check, so nothing this method accepts is refused downstream.
      *
      * @param driver         timestamp driver of the designated timestamp column
      * @param ts             designated timestamp, in the units the producer sent
@@ -56,8 +60,10 @@ public final class LineUtils {
             throw LineProtocolException.designatedTimestampMustBePositive(tableNameUtf16, ts);
         }
         final long timestamp = from(driver, ts, unit);
-        if (timestamp > CommonUtils.MAX_TIMESTAMP) {
-            throw LineProtocolException.designatedTimestampValueOverflow(tableNameUtf16, timestamp);
+        try {
+            driver.validateBounds(timestamp);
+        } catch (CairoException e) {
+            throw LineProtocolException.designatedTimestampOutOfBounds(tableNameUtf16, timestamp, e.getFlyweightMessage());
         }
         return timestamp;
     }

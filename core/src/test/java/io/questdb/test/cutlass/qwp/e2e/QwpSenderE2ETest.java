@@ -37,6 +37,8 @@ import io.questdb.client.std.Decimal64;
 import io.questdb.client.std.bytes.DirectByteSlice;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.microtime.Micros;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -4709,6 +4711,62 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
     }
 
     @Test
+    public void testTimestampMicrosBeyondCeilingIsTerminal() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_ts_micros_beyond_ceiling";
+            execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // 10000-01-01T00:00:00Z, one past the 9999-12-31 ceiling of a micros designated timestamp
+            assertDesignatedTimestampRefusalIsTerminal(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).at(Micros.YEAR_10000, ChronoUnit.MICROS),
+                    "designated timestamp beyond 9999-12-31 is not allowed", "column=ts, value=253402300800000000");
+        });
+    }
+
+    @Test
+    public void testTimestampMicrosToNanosBeyondCeilingIsTerminal() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_ts_micros_to_nanos_beyond_ceiling";
+            execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // Wire micros into a nanos column takes the conversion path. The value scales to nanos
+            // without overflowing a long, yet lands one micro past the 2261-12-31 ceiling.
+            long beyondCeilingMicros = CommonUtils.MAX_TIMESTAMP / 1000 + 1;
+            assertDesignatedTimestampRefusalIsTerminal(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).at(beyondCeilingMicros, ChronoUnit.MICROS),
+                    "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed",
+                    "column=ts, value=9214646400000000000");
+        });
+    }
+
+    @Test
+    public void testTimestampNanosBeforeEpochIsTerminal() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_ts_nanos_before_epoch";
+            execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            assertDesignatedTimestampRefusalIsTerminal(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).at(-1L, ChronoUnit.NANOS),
+                    "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed",
+                    "column=ts, value=-1");
+        });
+    }
+
+    @Test
+    public void testTimestampNanosBeyondCeilingIsTerminal() throws Exception {
+        runInContext((port) -> {
+            String table = "test_qwp_ts_nanos_beyond_ceiling";
+            execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // one nano past the 2261-12-31 23:59:59.999999999 ceiling of a nanos designated timestamp
+            assertDesignatedTimestampRefusalIsTerminal(port, table,
+                    (s, t) -> s.table(t).longColumn("v", 1L).at(CommonUtils.MAX_TIMESTAMP + 1, ChronoUnit.NANOS),
+                    "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed",
+                    "column=ts, value=9214646400000000000");
+        });
+    }
+
+    @Test
     public void testTimestampMicrosToNanosDesignatedOverflow() throws Exception {
         runInContext((port) -> {
             String table = "test_qwp_ts_overflow";
@@ -4964,6 +5022,33 @@ public class QwpSenderE2ETest extends AbstractQwpWebSocketTest {
         } finally {
             assertRejectionTerminalOnClose(sender, terminalFut, expectedTerminalCategory, expectedMsgPart1, expectedMsgPart2);
         }
+    }
+
+    /**
+     * A designated timestamp the column cannot hold is refused by the storage layer, not by the
+     * QWP decoder. That refusal repeats under byte-identical replay, so the server must NACK it as
+     * a terminal SCHEMA_MISMATCH like every other per-value refusal, rather than as a retriable
+     * WRITE_ERROR that the client replays until its poison-frame detector gives up. The refused row
+     * never lands, and the table keeps accepting rows from a later producer.
+     */
+    private void assertDesignatedTimestampRefusalIsTerminal(
+            int port,
+            String table,
+            java.util.function.BiConsumer<QwpWebSocketSender, String> sendAction,
+            String expectedMsgPart1,
+            String expectedMsgPart2
+    ) throws Exception {
+        assertCoercionError(port, table, sendAction, expectedMsgPart1, expectedMsgPart2);
+
+        try (QwpWebSocketSender sender = connectWs(port)) {
+            sender.table(table).longColumn("v", 2L).at(1_000_000L, ChronoUnit.MICROS);
+            sender.flush();
+        }
+        drainWalQueue();
+        assertQuery("SELECT v FROM " + table)
+                .noLeakCheck()
+                .expectSize()
+                .returns("v\n2\n");
     }
 
     private static void assertThrowsContains(Runnable action, String expectedMsgPart) {

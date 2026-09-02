@@ -56,6 +56,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatCompiler;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
@@ -2745,6 +2746,69 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testMicroDesignatedTimestampOutOfRangeIsRejectedPerMessage() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.HTTP_RECEIVE_BUFFER_SIZE.getEnvVarName(), "2048"
+            )) {
+                serverMain.execute("CREATE TABLE tab (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+                int port = serverMain.getHttpServerPort();
+                try (Sender sender = Sender.builder(Sender.Transport.HTTP)
+                        .address("localhost:" + port)
+                        // an internal error is retryable, a per-message rejection is not;
+                        // disabling retries keeps the assertion on the first response
+                        .retryTimeoutMillis(0)
+                        .build()
+                ) {
+                    // 10000-01-01 is past the 9999-12-31 ceiling of a micros designated timestamp, yet far
+                    // below the nanos ceiling, so a guard keyed on CommonUtils.MAX_TIMESTAMP alone lets it
+                    // through to the writer
+                    long outOfRange = Micros.YEAR_10000;
+
+                    // the designated timestamp arrives as the line timestamp
+                    sender.table("tab")
+                            .longColumn("x", 1)
+                            .at(outOfRange, ChronoUnit.MICROS);
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "designated timestamp beyond 9999-12-31 is not allowed"
+                    );
+                    sender.reset();
+
+                    // the designated timestamp arrives as a named field, not as the line timestamp
+                    sender.table("tab")
+                            .longColumn("x", 2)
+                            .timestampColumn("ts", outOfRange, ChronoUnit.MICROS)
+                            .atNow();
+                    flushAndAssertError(
+                            sender,
+                            "Could not flush buffer",
+                            "http-status=400",
+                            "designated timestamp beyond 9999-12-31 is not allowed"
+                    );
+                    sender.reset();
+
+                    // the rejection is per message: the table writer survives it and the next row lands
+                    long inRange = MicrosTimestampDriver.floor("2024-01-01 00:00:00.000000");
+                    sender.table("tab")
+                            .longColumn("x", 3)
+                            .at(inRange, ChronoUnit.MICROS);
+                    sender.flush();
+                }
+
+                serverMain.awaitTable("tab");
+                serverMain.assertSql("SELECT ts, x FROM tab", """
+                        ts\tx
+                        2024-01-01T00:00:00.000000Z\t3
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testNegativeDesignatedTimestampDoesNotRetry() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (final TestServerMain serverMain = startWithEnvVariables(
@@ -3214,7 +3278,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                     flushAndAssertError(
                             sender,
                             "Could not flush buffer",
-                            "designated timestamp overflow, max[9214646399999999999]"
+                            "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed"
                     );
                 }
             }
@@ -3247,7 +3311,7 @@ public class LineHttpSenderTest extends AbstractBootstrapTest {
                             sender,
                             "Could not flush buffer",
                             "http-status=400",
-                            "designated timestamp overflow, max[9214646399999999999]"
+                            "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed"
                     );
                     sender.reset();
 
