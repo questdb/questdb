@@ -3934,11 +3934,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         // unable to place the file. It stands because FORMAT PARQUET is refused at CREATE for a
         // composite table and nothing else has been audited for an all-parquet composite table --
         // lifting the CREATE gate is what needs the audit, not this line.
-        if (tableWriter.isComposite()) {
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support FORMAT PARQUET [table=")
-                    .put(tableWriter.getTableToken().getTableName()).put(']');
-        }
+        // The composite refusal that stood here is gone. It was defence in depth for a path whose
+        // own paths were already cell-aware, kept only because "nothing else has been audited for an
+        // all-parquet composite table". That audit is now CompositeFormatParquetTest, and it found one
+        // real defect (four cellKey-0 setters in TableWriter#o3ConsumePartitionUpdateSink's brand-new
+        // parquet branch -- see there) rather than a wall of them.
+
 
         final TableRecordMetadata metadata = tableWriter.getMetadata();
         final long partitionRowCount = srcOooHi - srcOooLo + 1;

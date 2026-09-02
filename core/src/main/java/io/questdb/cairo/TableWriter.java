@@ -12314,13 +12314,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Brand-new parquet partition emitted by writeFreshParquetFromO3
                         // for a FORMAT PARQUET table. Insert it into the attached
                         // partitions list and mark it as parquet from inception.
+                        //
+                        // ALL FOUR calls below are (ts, cellKey)-resolving. They were keyed by
+                        // TIMESTAMP ALONE -- the cellKey-0 API class this branch has been bitten by
+                        // repeatedly -- while every sibling branch in this method already used the
+                        // ByRawIndex forms. On a composite table a day's cells are separate entries,
+                        // so the by-timestamp setters all resolved to the FIRST of them: cellKey 0
+                        // ended up holding whichever cell's parquet size was written last, and the
+                        // other cells held none.
+                        //
+                        // The reader validates a cell's _pm footer against the size recorded in _txn
+                        // (TableReader#openParquetMetadata -> resolveFooter), so the symptom was a
+                        // correctly written, correctly PLACED parquet cell that could not be read:
+                        //   invalid _pm file: failed to resolve footer [path=.../<day>/exch=E0/_pm]
+                        // with that file present and holding ~600 bytes of valid metadata. Worth
+                        // remembering when the next one of these shows up: the corrupt-looking
+                        // artifact was fine, and the wrong number was in _txn.
                         final long partitionNameTxn = txWriter.getTxn() - 1;
-                        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, partitionNameTxn);
-                        txWriter.setPartitionParquetGenerated(partitionTimestamp, true);
-                        txWriter.setPartitionParquet(partitionTimestamp, parquetFileSize);
+                        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, partitionNameTxn, cellKey);
+                        // Re-resolve: the insert above created this cell's entry, and an insert shifts
+                        // every later entry's raw index, so the stale partitionIndexRaw (negative --
+                        // it is the insertion-point encoding) cannot be reused.
+                        final int freshIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
+                        txWriter.setPartitionParquetGeneratedByRawIndex(freshIndexRaw, true);
+                        // setPartitionParquetByRawIndex, NOT setPartitionParquetFileSizeByRawIndex:
+                        // the by-timestamp setPartitionParquet this replaces sets the partition's
+                        // FORMAT as well as its size. Using the size-only setter dropped the parquet
+                        // flag, so the writer then treated a born-parquet partition as native and the
+                        // PLAIN twin died on an append-position assertion in VarcharTypeDriver -- a
+                        // reminder that "cell-aware equivalent" means same effects, not same noun.
+                        txWriter.setPartitionParquetByRawIndex(freshIndexRaw, parquetFileSize);
                         // writeFreshParquetFromO3 emits every column from row 0, so no
                         // column has a top here.
-                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
+                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, cellKey, srcDataNewPartitionSize, true);
                         txWriter.bumpPartitionTableVersion();
                     } else if (isParquet && parquetFileSize > -1) {
                         // Parquet rewrite: new file is in a txn-named directory.
@@ -14772,26 +14798,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final boolean isParquet = partitionIndexRaw > -1
                 ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
                 : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
-        if (isParquet && partitionIndexRaw < 0) {
-            // A brand-new partition on a FORMAT-PARQUET table, which reaches
-            // O3PartitionJob#writeFreshParquetFromO3 -- still cell-blind, and refused there too.
-            // FORMAT PARQUET is rejected at CREATE for composite, so this is defence in depth.
-            //
-            // An EXISTING parquet cell is no longer refused. That refusal was the cold-storage
-            // blocker: CONVERT PARTITION TO PARQUET already worked per cell, and the next
-            // late-arriving row then SUSPENDED the table and LOST the row (measured: plain
-            // count=4/not-suspended vs composite count=3/suspended). Pinned by
-            // CompositeParquetStateTest.
-            //
-            // Two things were needed. O3PartitionJob#processParquetPartition was cell-blind -- nine
-            // bare path builds and a cellKey-0 getPartitionIndexByTimestamp -- and the dispatch below
-            // hardcoded isParquet=false, which was only safe while this gate refused every parquet
-            // cell. Fixing the paths alone sent the write down the NATIVE path into a parquet cell and
-            // suspended the table with an EMPTY error message; both had to change together.
-            throw CairoException.critical(0)
-                    .put("composite partitioning does not yet support FORMAT PARQUET [table=")
-                    .put(tableToken.getTableName()).put(']');
-        }
+        // A BRAND-NEW partition on a FORMAT PARQUET table (partitionIndexRaw < 0) used to be refused
+        // here, as defence in depth while FORMAT PARQUET was rejected at CREATE for composite tables.
+        // Both gates are gone: writeFreshParquetFromO3's paths were already cell-aware, and the audit
+        // the refusal asked for is now CompositeFormatParquetTest -- born-parquet cells load, take an
+        // O3 merge, DROP PARTITION, DEDUP upsert, CONVERT TO NATIVE and ADD COLUMN, all matching a
+        // plain FORMAT PARQUET twin. It found one real defect, four cellKey-0 setters in
+        // o3ConsumePartitionUpdateSink's brand-new-parquet branch; see that branch's own comment.
+        //
+        // An EXISTING parquet cell was un-refused earlier, and that one WAS the cold-storage blocker:
+        // CONVERT PARTITION TO PARQUET already worked per cell, and the next late-arriving row then
+        // SUSPENDED the table and LOST the row (measured: plain count=4/not-suspended vs composite
+        // count=3/suspended). Pinned by CompositeParquetStateTest. Two things were needed there:
+        // O3PartitionJob#processParquetPartition was cell-blind -- nine bare path builds and a
+        // cellKey-0 getPartitionIndexByTimestamp -- and the dispatch below hardcoded isParquet=false,
+        // which was only safe while a gate refused every parquet cell. Fixing the paths alone sent the
+        // write down the NATIVE path into a parquet cell and suspended the table with an EMPTY error
+        // message; both had to change together.
 
         final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
         if (partitionIsReadOnly) {

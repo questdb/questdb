@@ -339,20 +339,18 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
             throw SqlException.$(partitionDimensionExprs.getQuick(0).position, "composite partitioning requires a WAL table");
         }
 
-        // Invariant 6, fixed 2026-08-26. FORMAT PARQUET was ACCEPTED at CREATE on a composite table and
-        // then suspended it on the first INSERT, through the writer-side gate in processO3Block --
-        // measured: "suspended=true, errorMessage=composite partitioning does not yet support FORMAT
-        // PARQUET", with the table left holding 0 rows and SHOW CREATE TABLE still advertising FORMAT
-        // PARQUET. A user got a successful DDL and a broken table, which is exactly the defect class
-        // wave 0 exists to close; the scope-closure index even records this gate as "DDL accepted, next
-        // commit suspends".
-        // The writer-side gate STAYS as the non-SQL backstop -- gates move rather than vanish -- and the
-        // message literal is reused verbatim so the audit's key set is unchanged.
-        if (dimCount > 0 && tableFormat == TableUtils.TABLE_FORMAT_PARQUET) {
-            throw SqlException.$(tableFormatPosition,
-                    "composite partitioning does not yet support FORMAT PARQUET [table=")
-                    .put(tableNameExpr.token).put(']');
-        }
+        // FORMAT PARQUET on a composite table is SUPPORTED, as of the audit this gate used to ask for.
+        //
+        // History worth keeping, because it is the shape of a whole defect class: this was originally
+        // ACCEPTED at CREATE and then suspended the table on the first INSERT, through a writer-side
+        // gate -- a user got a successful DDL and a broken table holding 0 rows, with SHOW CREATE TABLE
+        // still advertising FORMAT PARQUET. It was then refused HERE, at the statement, which is where
+        // a refusal belongs. Now the feature works and neither gate is needed: born-parquet cells load,
+        // take an O3 merge, DROP PARTITION, DEDUP upsert, CONVERT TO NATIVE and ADD COLUMN, all against
+        // a plain FORMAT PARQUET twin (CompositeFormatParquetTest). The audit found exactly one real
+        // defect -- four cellKey-0 setters in TableWriter#o3ConsumePartitionUpdateSink -- whose symptom
+        // was a correctly written parquet cell that could not be read back.
+
 
         // POSTING index on a DIMENSION column: refused. Narrowed 2026-08-26 from a blanket refusal.
         //

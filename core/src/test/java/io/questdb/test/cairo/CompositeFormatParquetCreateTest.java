@@ -29,51 +29,40 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * {@code FORMAT PARQUET} at CREATE on a composite table.
+ * {@code FORMAT PARQUET} at CREATE on a composite table -- the DDL entry point.
  * <p>
- * Composite tables do not support FORMAT PARQUET: partitions on such a table are BORN parquet, and the
- * composite ingestion path throws as soon as a cell resolves to a parquet partition (the cellKey-aware
- * {@code setPathForNativePartition} has no parquet counterpart). That refusal is correct.
+ * This class used to assert a REFUSAL, and its history is the more useful half. FORMAT PARQUET on a
+ * composite table was first ACCEPTED at CREATE and then suspended the table on the first INSERT
+ * through a writer-side gate: a user got a successful DDL and a table that held zero rows while
+ * {@code SHOW CREATE TABLE} still advertised FORMAT PARQUET. The fix at the time was to move the
+ * refusal to the statement, which is where a refusal belongs -- an apply-time throw on a WAL table
+ * arrives detached from the statement that caused it.
  * <p>
- * The question this class asks is WHERE the refusal happens. A gate that fires per-cell during
- * ingestion, rather than at CREATE, accepts the DDL and hands back a table that cannot take a single
- * row -- and on a WAL table an apply-time throw SUSPENDS the table, so the failure arrives detached
- * from the statement that caused it.
- * <p>
- * MEASURED: it is already correct. CREATE refuses with
- * {@code SqlException [111] composite partitioning does not yet support FORMAT PARQUET [table=c]},
- * carrying a statement position, and the writer-side guard remains underneath as defence in depth for
- * non-SQL paths. These tests are therefore REGRESSION COVER for a gate that was previously untested at
- * this entry point, not a fix.
- * <p>
- * The sibling ALTER entry point -- {@code ALTER TABLE c SET FORMAT PARQUET} -- is covered by
- * {@code CompositeEarliestRefusalTest}, which was written when that path DID accept the statement and
- * suspend the table on the next commit. CREATE was the one of the two that had no test.
+ * The feature is now supported, so the refusal is gone and this class asserts the DDL is accepted and
+ * the table actually takes rows. Deep behaviour over born-parquet cells -- O3 merge, DROP PARTITION,
+ * DEDUP upsert, CONVERT TO NATIVE, ADD COLUMN, each against a plain FORMAT PARQUET twin -- lives in
+ * {@link CompositeFormatParquetTest}. What is covered HERE is only that the statement is accepted and
+ * is not accepted vacuously.
  */
 public class CompositeFormatParquetCreateTest extends AbstractCairoTest {
 
     /**
-     * A composite table declared FORMAT PARQUET must be refused by the CREATE itself.
+     * A composite table declared FORMAT PARQUET is created and works.
      * <p>
-     * Asserted through the error surfacing at DDL time. If this instead succeeds and the table only
-     * fails later, the user gets a table that looks created and works for zero rows.
+     * The insert and count matter as much as the CREATE: accepting the DDL and then failing on the
+     * first row is the exact defect this class was originally written about, so "no exception from
+     * CREATE" alone would re-admit it.
      */
     @Test(timeout = 60_000)
-    public void testCreateCompositeWithFormatParquetIsRefusedAtCreate() throws Exception {
+    public void testCreateCompositeWithFormatParquetIsAcceptedAndWorks() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
-                        + "PARTITION BY DAY, exch LAYOUT PLAIN FORMAT PARQUET WAL");
-                Assert.fail("CREATE must refuse FORMAT PARQUET on a composite table rather than accept the "
-                        + "DDL and fail on the first insert");
-            } catch (Exception expected) {
-                final String message = String.valueOf(expected.getMessage());
-                // The exact message, not merely "contains FORMAT PARQUET": a syntax error mentioning
-                // the keyword would satisfy the looser check while proving nothing about the gate.
-                Assert.assertTrue(
-                        "the refusal must be the composite gate, naming the unsupported feature. Actual: " + message,
-                        message.contains("composite partitioning does not yet support FORMAT PARQUET"));
-            }
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch LAYOUT PLAIN FORMAT PARQUET WAL");
+            execute("INSERT INTO c VALUES ('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1',2.0)");
+            drainWalQueue();
+            printSql("SELECT count() FROM c");
+            Assert.assertEquals("count\n2\n", sink.toString());
         });
     }
 

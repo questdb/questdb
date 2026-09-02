@@ -30,50 +30,53 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Regression lock for the composite guard on {@code O3PartitionJob#writeFreshParquetFromO3}.
+ * {@code O3PartitionJob#writeFreshParquetFromO3} on a composite table -- the path that emits a fresh
+ * parquet file straight from the O3 buffers for a brand-new partition on a FORMAT PARQUET table.
  * <p>
- * That method emits a fresh parquet file straight from the O3 buffers for a brand-new partition on a
- * FORMAT PARQUET table. It builds its target with the bare {@code setPathForParquetPartition}
- * overload and never consults the {@code cellSegment} its own CALLER has in scope, so on a composite
- * table it would write at the bare day path -- the identical cell-blind shape that makes
- * {@code CONVERT PARTITION TO PARQUET} crash the JVM with a SIGBUS inside the native encoder.
+ * This class used to lock a REFUSAL, on the reasoning that the method built its target with the bare
+ * {@code setPathForParquetPartition} overload and never consulted the {@code cellSegment} its caller
+ * had in scope -- so on a composite table it would write at the bare day path, the same cell-blind
+ * shape that makes {@code CONVERT PARTITION TO PARQUET} crash the JVM with a SIGBUS in the encoder.
+ * Those paths were made cell-aware later, and the refusal outlived its reason: it stood only because
+ * "nothing else has been audited for an all-parquet composite table".
  * <p>
- * It is unreachable today only because FORMAT PARQUET is refused earlier, at CREATE. This test pins
- * BOTH halves of that claim, because a shadow is not a guarantee: the two gates lifted in this
- * session (ATTACH, DROP COLUMN) each exposed a site of exactly this kind the moment their outer gate
- * came off.
+ * That audit is {@link CompositeFormatParquetTest}. It found exactly one real defect -- four
+ * cellKey-0 setters in {@code TableWriter#o3ConsumePartitionUpdateSink}'s brand-new-parquet branch,
+ * whose symptom was a correctly written, correctly PLACED parquet cell that could not be read back --
+ * and with that fixed the feature works. So this class now locks the positive: a composite FORMAT
+ * PARQUET table drives the fresh-parquet write and reads its rows back.
  * <p>
- * {@link #testPlainFormatParquetStillWrites()} is the POSITIVE CONTROL. Without it the composite
- * assertion is vacuous -- it would pass simply because the shape never drives a fresh-parquet write
- * at all, which is precisely how an earlier probe in this area produced a green result against a
- * live defect.
+ * {@link #testPlainFormatParquetStillWrites()} remains the control on the other side: it proves the
+ * plain path still works, so a green composite result cannot come from FORMAT PARQUET having quietly
+ * stopped doing anything at all.
  */
 public class CompositeFreshParquetGateTest extends AbstractCairoTest {
 
     /**
-     * Invariant 6: FORMAT PARQUET must be refused AT THE STATEMENT on a composite table.
+     * A composite FORMAT PARQUET table takes the fresh-parquet write path and reads back.
      * <p>
-     * MEASURED 2026-08-26 before this was fixed: the CREATE was accepted and the table then SUSPENDED
-     * on the first INSERT via the writer-side gate in processO3Block --
-     * {@code suspended=true, errorMessage=composite partitioning does not yet support FORMAT PARQUET},
-     * table holding 0 rows, and SHOW CREATE TABLE still advertising FORMAT PARQUET. A successful DDL
-     * and a broken table.
+     * Two cells in one day, deliberately: the defect this replaced was a per-cell record being
+     * written by a by-timestamp setter, which is invisible with a single cell per day because there
+     * is then only one record for the timestamp to resolve to.
      */
     @Test
-    public void testCompositeFormatParquetRefusedAtCreate() throws Exception {
+    public void testCompositeFormatParquetWritesAndReadsBack() throws Exception {
         assertMemoryLeak(() -> {
-            try {
-                execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
-                        + "PARTITION BY DAY, exch FORMAT PARQUET WAL");
-                Assert.fail("FORMAT PARQUET must be refused on a composite table");
-            } catch (Exception e) {
-                TestUtils.assertContains(e.getMessage(),
-                        "composite partitioning does not yet support FORMAT PARQUET");
-            }
-            // the refusal is at the statement, so nothing was created to be broken
-            assertQuery("SELECT count() FROM tables() WHERE table_name = 'c'")
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch FORMAT PARQUET WAL");
+            execute("INSERT INTO c VALUES ('2023-01-01T01:00:00.000000Z','E0',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1',2.0),"
+                    + "('2023-01-01T03:00:00.000000Z','E0',3.0)");
+            drainWalQueue();
+            assertQuery("SELECT count() FROM c")
                     .noLeakCheck().noRandomAccess().expectSize()
-                    .returns("count\n0\n");
+                    .returns("count\n3\n");
+            // Read the VALUES back, not only the count: the defect this replaced left the rows on disk
+            // and intact while making the partition unreadable, so a count that comes from _txn rather
+            // than from the cells would not have caught it.
+            assertQuery("SELECT exch, sum(px) FROM c ORDER BY exch")
+                    .noLeakCheck().expectSize()
+                    .returns("exch\tsum\nE0\t4.0\nE1\t2.0\n");
         });
     }
 
