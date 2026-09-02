@@ -45,6 +45,15 @@ import org.junit.Test;
  * either step; this covers what changes once a translator actually moves a key.
  */
 public class LiveViewSymbolIdTranslationTest extends AbstractLiveViewTest {
+    private static final String FOOTPRINT_HEADER = "partition_key_dictionary_columns\tpartition_key_dictionary_size\t"
+            + "partition_key_live_count\tpartition_key_dictionary_forward_bytes\t"
+            + "partition_key_dictionary_reverse_bytes\tpartition_key_base_id_cache_bytes\t"
+            + "partition_key_dirty_band_bytes\tpartition_key_dictionary_interns\n";
+    private static final String FOOTPRINT_QUERY = "SELECT partition_key_dictionary_columns, partition_key_dictionary_size, "
+            + "partition_key_live_count, partition_key_dictionary_forward_bytes, "
+            + "partition_key_dictionary_reverse_bytes, partition_key_base_id_cache_bytes, "
+            + "partition_key_dirty_band_bytes, partition_key_dictionary_interns "
+            + "FROM live_views() WHERE view_name = 'lv'";
 
     @Test
     public void testAnO3CorrectionTheFilterRejectsNeverGrowsTheDictionary() throws Exception {
@@ -213,6 +222,101 @@ public class LiveViewSymbolIdTranslationTest extends AbstractLiveViewTest {
                             2024-01-01T00:00:03.000000Z\t\t6.0
                             """
             );
+        });
+    }
+
+    @Test
+    public void testLiveViewsReportsTheDictionaryFootprintAgainstItsLiveKeySet() throws Exception {
+        // The dictionary is durable and append-only, so the frontier sweep that bounds a
+        // view's partition maps does not bound it: a PARTITION BY over an unbounded key
+        // column grows one entry per distinct value the view has ever seen, across restarts.
+        // live_views() is where that becomes visible before it is a support ticket, and this
+        // pins the mirror the refresh worker publishes for it against the registry it mirrors,
+        // field by field - a mirror that drifts reports a footprint no structure holds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Anchored on purpose: the anchor map is the key set the frontier sweep bounds,
+            // and so the one partition_key_live_count reports. An unanchored view keeps an
+            // accumulator per key with no sweep behind it and reports NULL instead - see
+            // testLiveViewsSeparatesATranslatingViewFromOneThatTranslatesNothing.
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym, sum(x) OVER w AS s FROM base "
+                    + "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            // Nothing has compiled the SELECT, so the view holds no registry at all. That is
+            // NULL rather than zero: a view with no dictionary says something different from
+            // one whose dictionary is empty. A NULL LONG prints as "null".
+            assertQuery(FOOTPRINT_QUERY).noLeakCheck().noRandomAccess().noCircuitBreakerCheck().returns(
+                    FOOTPRINT_HEADER + "null\tnull\tnull\tnull\tnull\tnull\tnull\tnull\n");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:00.000000Z', 'a', 1), "
+                        + "('2024-01-01T00:00:01.000000Z', 'b', 2), "
+                        + "('2024-01-01T00:00:02.000000Z', null, 3)");
+                driveRefreshToQuiescence(job);
+
+                // One bound column, two ids handed out - NULL keeps SymbolTable.VALUE_IS_NULL
+                // and is never interned - and three live partition keys, because the anchor
+                // map does hold the NULL one. So the two counts the group exists to be read
+                // against each other genuinely differ here for a reason that is not eviction.
+                assertFootprintMirrorsRegistry(1, 2, 3, 2);
+
+                // A second turn brings a key the dictionary has never seen. The size and the
+                // intern counter both follow it, which is the growth an operator watches.
+                execute("INSERT INTO base VALUES ('2024-01-01T00:00:03.000000Z', 'c', 4)");
+                driveRefreshToQuiescence(job);
+                assertFootprintMirrorsRegistry(1, 3, 4, 3);
+            }
+        });
+    }
+
+    @Test
+    public void testLiveViewsSeparatesATranslatingViewFromOneThatTranslatesNothing() throws Exception {
+        // Every live-view compile creates a registry, including one for a view whose
+        // PARTITION BY translates nothing, so "no dictionary" and "an empty dictionary" have
+        // to be told apart by the column count rather than by the group being absent. A
+        // composite key reports the two columns it keys through; an expression-only key
+        // reports zero columns and zeroes throughout, which is a different answer from the
+        // NULLs an uncompiled view reports.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym1 SYMBOL, sym2 SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym1, sym2, sum(x) OVER (PARTITION BY sym1, sym2 ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+            execute("CREATE LIVE VIEW lv_expr FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym1, sum(x) OVER (PARTITION BY lower(sym1) ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:00.000000Z', 'a', 'p', 1), "
+                        + "('2024-01-01T00:00:01.000000Z', 'b', 'q', 2)");
+                driveRefreshToQuiescence(job);
+            }
+
+            // Two bound columns, two ids each. Neither view here is anchored, so both report
+            // NULL for the live key count: they keep an accumulator per partition key with no
+            // frontier sweep behind it, which is the one shape this column cannot report.
+            assertQuery(
+                    "SELECT partition_key_dictionary_columns, partition_key_dictionary_size, "
+                            + "partition_key_dictionary_interns, partition_key_live_count "
+                            + "FROM live_views() WHERE view_name = 'lv'"
+            ).noLeakCheck().noRandomAccess().noCircuitBreakerCheck().returns(
+                    "partition_key_dictionary_columns\tpartition_key_dictionary_size\t"
+                            + "partition_key_dictionary_interns\tpartition_key_live_count\n"
+                            + "2\t4\t4\tnull\n");
+
+            assertQuery(
+                    "SELECT partition_key_dictionary_columns, partition_key_dictionary_size, "
+                            + "partition_key_dictionary_forward_bytes, partition_key_dictionary_reverse_bytes, "
+                            + "partition_key_base_id_cache_bytes, partition_key_dirty_band_bytes, "
+                            + "partition_key_dictionary_interns, partition_key_live_count "
+                            + "FROM live_views() WHERE view_name = 'lv_expr'"
+            ).noLeakCheck().noRandomAccess().noCircuitBreakerCheck().returns(
+                    "partition_key_dictionary_columns\tpartition_key_dictionary_size\t"
+                            + "partition_key_dictionary_forward_bytes\tpartition_key_dictionary_reverse_bytes\t"
+                            + "partition_key_base_id_cache_bytes\tpartition_key_dirty_band_bytes\t"
+                            + "partition_key_dictionary_interns\tpartition_key_live_count\n"
+                            + "0\t0\t0\t0\t0\t0\t0\tnull\n");
         });
     }
 
@@ -573,5 +677,36 @@ public class LiveViewSymbolIdTranslationTest extends AbstractLiveViewTest {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
         return instance;
+    }
+
+    /**
+     * Asserts every column of the {@code partition_key_*} group against the registry it
+     * mirrors, so a mirror that stops tracking one of the three resident structures fails
+     * here rather than reporting a footprint no structure holds.
+     */
+    private void assertFootprintMirrorsRegistry(long columns, long dictionarySize, long liveCount, long interns)
+            throws Exception {
+        final LiveViewSymbolIdRegistry registry = viewInstance().getPartitionKeyTranslators();
+        Assert.assertNotNull("a translated view must hold a registry once it has compiled", registry);
+        Assert.assertTrue(
+                "the forward half is the one resident structure the durable format requires",
+                registry.getForwardDictionaryBytes() > 0
+        );
+        Assert.assertEquals(
+                "the live key count the catalogue reports is the anchor map's own size",
+                liveCount,
+                viewInstance().getAnchorWindow().getAnchorMapSize()
+        );
+        assertQuery(FOOTPRINT_QUERY).noLeakCheck().noRandomAccess().noCircuitBreakerCheck().returns(
+                FOOTPRINT_HEADER
+                        + columns + "\t"
+                        + dictionarySize + "\t"
+                        + liveCount + "\t"
+                        + registry.getForwardDictionaryBytes() + "\t"
+                        + registry.getReverseDictionaryBytes() + "\t"
+                        + registry.getBaseIdCacheBytes() + "\t"
+                        + registry.getDirtyBandBytes() + "\t"
+                        + interns + "\n"
+        );
     }
 }

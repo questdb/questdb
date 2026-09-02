@@ -13889,6 +13889,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     simulateStagingBufferCloseFaultForTest = false;
                     throw new AssertionError("injected staging-buffer close fault");
                 }
+                // Mirror what this turn left the LV-private partition-key dictionary holding,
+                // while the refresh latch still serialises it. live_views() reports the mirror,
+                // so the catalogue thread never walks a registry a worker is interning into.
+                // Last in the try on purpose: the staging buffer's release must not depend on
+                // this, and a turn the injected fault above aborts publishes nothing.
+                instance.recordPartitionKeyDictionaryStats();
             } finally {
                 executionContext.ofRefreshingInstance(null);
                 instance.unlockAfterRefresh();

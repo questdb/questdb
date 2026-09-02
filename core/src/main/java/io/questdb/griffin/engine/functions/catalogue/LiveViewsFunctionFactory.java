@@ -193,6 +193,41 @@ import io.questdb.std.ObjList;
  *     so the view keeps serving while a restart or an out-of-order correction rebuilds
  *     the recovery state from the base.</li>
  * </ul>
+ * <p>
+ * The {@code partition_key_*} group closes the set with the footprint of the view's own
+ * LV-private partition-key dictionary - the {@code lvId -> string} mapping a direct base
+ * SYMBOL term in the PARTITION BY keys through. That is a different structure from the SYMBOL
+ * dictionaries the view's output table keeps for its own symbol columns, which this catalogue
+ * does not report at all; every column below names the partition key it belongs to so the two
+ * footprints cannot be read as one. {@code partition_key_dictionary_columns} says how
+ * many base SYMBOL columns translate: NULL before the view compiles its SELECT, and zero for
+ * a compiled view whose PARTITION BY translates nothing, which the whole group then reads as
+ * zeroes rather than as NULL.
+ * <p>
+ * {@code partition_key_dictionary_size} is the ids those dictionaries have handed out. It only
+ * ever grows: the dictionary is durable and append-only for the life of the view's checkpoint
+ * history, so the frontier sweep that bounds the partition maps does not bound it, and a
+ * PARTITION BY over an unbounded key column (a session or request id) accumulates one entry per
+ * distinct value the view has ever seen, across restarts. {@code partition_key_live_count} is
+ * what to read it against: the keys the anchor map currently holds, which the sweep does evict
+ * from, NULL for a view with no anchored window. A size climbing away from a flat live count is
+ * exactly the growth this group exists to make visible before it is a support ticket.
+ * {@code partition_key_dictionary_interns} is the rate rather than the size - ids assigned since
+ * the instance was created, so a restart restores the dictionary but starts this at zero.
+ * <p>
+ * The three resident structures are reported apart because only the first is required by the
+ * durable format: {@code partition_key_dictionary_forward_bytes} is the {@code lvId -> string}
+ * half a restore must rebuild, {@code _reverse_bytes} the {@code string -> lvId} index it builds
+ * in the same pass and could build lazily instead, and {@code partition_key_base_id_cache_bytes}
+ * the {@code baseId -> lvId} accelerator a restart re-earns one resolve per distinct id.
+ * {@code partition_key_dirty_band_bytes} is the WAL scratch beside them. The last two are sized
+ * by the highest base id resolved and the widest transaction band a row reached rather than by
+ * the keys the view holds, so a bounded or filtered view over a wide base pays both in full for
+ * a key set it mostly rejects.
+ * <p>
+ * The group carries per-field freshness only. The refresh worker publishes the eight one at a
+ * time at the end of each turn, so a row can pair one turn's size with the next turn's byte
+ * totals; read a trend across rows rather than a ratio within one.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
 
@@ -304,6 +339,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
         private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 24;
         private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 22;
+        private static final int COLUMN_PARTITION_KEY_BASE_ID_CACHE_BYTES = 66;
+        private static final int COLUMN_PARTITION_KEY_DICTIONARY_COLUMNS = 61;
+        private static final int COLUMN_PARTITION_KEY_DICTIONARY_FORWARD_BYTES = 64;
+        private static final int COLUMN_PARTITION_KEY_DICTIONARY_INTERNS = 68;
+        private static final int COLUMN_PARTITION_KEY_DICTIONARY_REVERSE_BYTES = 65;
+        private static final int COLUMN_PARTITION_KEY_DICTIONARY_SIZE = 62;
+        private static final int COLUMN_PARTITION_KEY_DIRTY_BAND_BYTES = 67;
+        private static final int COLUMN_PARTITION_KEY_LIVE_COUNT = 63;
         private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
         private static final int COLUMN_SEGMENT_REPAIR_GATE = 53;
         private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
@@ -699,6 +742,40 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // below the late row. In-memory counter, resets on restart.
                         // Disjoint from o3_resume_replay_rows.
                         case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> o3BoundaryReplayRows;
+                        // What the view's LV-private partition-key dictionary holds, and
+                        // what it costs, as of the refresh turn that last published the
+                        // mirror. Every column of the group is NULL for a view that has
+                        // not compiled its SELECT, or whose runtime state has since been
+                        // freed; a compiled view whose PARTITION BY translates nothing
+                        // reports a column count of zero instead, which is a different
+                        // statement. The size is the ids the dictionaries have handed
+                        // out, and it only ever grows: the dictionary is durable and
+                        // append-only for the life of the checkpoint history, so a
+                        // PARTITION BY over an unbounded key column accumulates one
+                        // entry per distinct value the view has ever seen. Read it
+                        // against partition_key_live_count, the anchor map's key set,
+                        // which the frontier sweep does bound - a size that climbs away
+                        // from a flat live count is the growth this reporting exists for.
+                        case COLUMN_PARTITION_KEY_DICTIONARY_COLUMNS -> instance.getPartitionKeyDictionaryColumns();
+                        case COLUMN_PARTITION_KEY_DICTIONARY_SIZE -> instance.getPartitionKeyDictionarySize();
+                        case COLUMN_PARTITION_KEY_LIVE_COUNT -> instance.getPartitionKeyLiveCount();
+                        // The resident structures, reported apart because only the first
+                        // is required by the durable format. The reverse index is
+                        // rebuildable from the forward half, and the base-id cache and
+                        // the dirty band are pure accelerators a restart re-earns - and
+                        // are sized by the highest base id and the widest transaction
+                        // band the view has resolved rather than by the keys it holds,
+                        // so a selective view over a wide base pays for both in full.
+                        case COLUMN_PARTITION_KEY_DICTIONARY_FORWARD_BYTES ->
+                                instance.getPartitionKeyDictionaryForwardBytes();
+                        case COLUMN_PARTITION_KEY_DICTIONARY_REVERSE_BYTES ->
+                                instance.getPartitionKeyDictionaryReverseBytes();
+                        case COLUMN_PARTITION_KEY_BASE_ID_CACHE_BYTES -> instance.getPartitionKeyBaseIdCacheBytes();
+                        case COLUMN_PARTITION_KEY_DIRTY_BAND_BYTES -> instance.getPartitionKeyDirtyBandBytes();
+                        // Ids assigned since this instance was created. A restart
+                        // restores the dictionary but starts this at zero, so it is the
+                        // growth rate rather than the size.
+                        case COLUMN_PARTITION_KEY_DICTIONARY_INTERNS -> instance.getPartitionKeyDictionaryInterns();
                         // Every numeric column the metadata declares has an arm above.
                         // A column added without one reads as NULL rather than as 0,
                         // which for the TIMESTAMP columns would render 1970-01-01.
@@ -874,6 +951,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_effective_duration_micros", ColumnType.LONG)); // 58
             metadata.add(new TableColumnMetadata("checkpoint_last_correction_depth_micros", ColumnType.LONG)); // 59
             metadata.add(new TableColumnMetadata("checkpoint_correction_depth_sample_count", ColumnType.LONG)); // 60
+            metadata.add(new TableColumnMetadata("partition_key_dictionary_columns", ColumnType.LONG));    // 61
+            metadata.add(new TableColumnMetadata("partition_key_dictionary_size", ColumnType.LONG));       // 62
+            metadata.add(new TableColumnMetadata("partition_key_live_count", ColumnType.LONG));            // 63
+            metadata.add(new TableColumnMetadata("partition_key_dictionary_forward_bytes", ColumnType.LONG)); // 64
+            metadata.add(new TableColumnMetadata("partition_key_dictionary_reverse_bytes", ColumnType.LONG)); // 65
+            metadata.add(new TableColumnMetadata("partition_key_base_id_cache_bytes", ColumnType.LONG));   // 66
+            metadata.add(new TableColumnMetadata("partition_key_dirty_band_bytes", ColumnType.LONG));      // 67
+            metadata.add(new TableColumnMetadata("partition_key_dictionary_interns", ColumnType.LONG));    // 68
             METADATA = metadata;
         }
     }

@@ -15427,6 +15427,9 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // output. The two keyed open-segment execution counters are appended so
         // operators can distinguish a healthy checkpoint resume from a cold
         // bootstrap without binding to refresh-job test hooks.
+        // The partition_key_* group closes the set: what the view's LV-private
+        // partition-key dictionary holds, the anchor map's live key count to read
+        // that against, and the three resident structures apart.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -15459,7 +15462,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "o3_open_segment_cold_keyed_replay_count\t"
                         + "checkpoint_effective_duration_micros\t"
                         + "checkpoint_last_correction_depth_micros\t"
-                        + "checkpoint_correction_depth_sample_count\n");
+                        + "checkpoint_correction_depth_sample_count\t"
+                        + "partition_key_dictionary_columns\tpartition_key_dictionary_size\t"
+                        + "partition_key_live_count\tpartition_key_dictionary_forward_bytes\t"
+                        + "partition_key_dictionary_reverse_bytes\tpartition_key_base_id_cache_bytes\t"
+                        + "partition_key_dirty_band_bytes\tpartition_key_dictionary_interns\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }

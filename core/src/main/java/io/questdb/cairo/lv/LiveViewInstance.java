@@ -418,6 +418,24 @@ public class LiveViewInstance implements QuietCloseable {
     // dies with the cached refresh state and BEFORE memoryTracker, which its dictionaries
     // charge. Mutated only under the refresh latch.
     private LiveViewSymbolIdRegistry partitionKeyTranslators;
+    // Footprint mirror for the dictionaries above, published by the refresh worker at the end
+    // of every turn so the catalogue thread can report them without walking a registry the
+    // refresh latch - and nothing else - serialises. Numbers.LONG_NULL for the whole group
+    // until the view compiles its SELECT, and again once freeCachedRefreshState() drops the
+    // registry: a view that holds no dictionary says something different from a compiled view
+    // whose PARTITION BY translates nothing and reports zeroes.
+    //
+    // Each field carries its own freshness. The worker stores them one at a time rather than
+    // publishing one tuple, so a reader can pair one turn's dictionary size with the next
+    // turn's byte totals. Read a trend across turns, not a ratio within one.
+    private volatile long partitionKeyBaseIdCacheBytes = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionaryColumns = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionaryForwardBytes = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionaryInterns = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionaryReverseBytes = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionarySize = Numbers.LONG_NULL;
+    private volatile long partitionKeyDirtyBandBytes = Numbers.LONG_NULL;
+    private volatile long partitionKeyLiveCount = Numbers.LONG_NULL;
     // Restart-restore single-shot flag. The refresh worker flips it true on
     // the first cycle after CREATE / restart, regardless of whether a usable
     // timeline root was found - one attempt is the contract, no retries. Mutated only
@@ -1546,6 +1564,86 @@ public class LiveViewInstance implements QuietCloseable {
         return partitionKeyTranslators;
     }
 
+    /**
+     * @return bytes the {@code baseId -> lvId} caches held at the last refresh turn. A pure
+     * accelerator - the durable format needs none of it and a restart re-earns it one resolve
+     * per distinct id - but it is an IntList indexed by base id, so one resolve of a high base
+     * id sizes it to that id whatever else the view keys by. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyBaseIdCacheBytes() {
+        return partitionKeyBaseIdCacheBytes;
+    }
+
+    /**
+     * @return how many base SYMBOL columns this view's PARTITION BY terms key through an
+     * LV-private dictionary, as of the last refresh turn. Zero for a compiled view that
+     * translates nothing, NULL before the view compiles its SELECT. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionaryColumns() {
+        return partitionKeyDictionaryColumns;
+    }
+
+    /**
+     * @return bytes the {@code lvId -> string} halves held at the last refresh turn. This is
+     * the one resident structure the durable format requires. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionaryForwardBytes() {
+        return partitionKeyDictionaryForwardBytes;
+    }
+
+    /**
+     * @return ids the dictionaries have assigned since this instance was created, as of the
+     * last refresh turn. A restarted instance starts over at zero while the dictionary it
+     * restores does not, so this is the growth rate rather than the size. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionaryInterns() {
+        return partitionKeyDictionaryInterns;
+    }
+
+    /**
+     * @return bytes the {@code string -> lvId} reverse indexes held at the last refresh turn.
+     * Rebuildable from the forward half rather than required by the durable format. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionaryReverseBytes() {
+        return partitionKeyDictionaryReverseBytes;
+    }
+
+    /**
+     * @return ids every bound dictionary has handed out, as of the last refresh turn. The
+     * dictionary is durable and append-only, so this only ever grows for the life of the
+     * view's checkpoint history - read it against
+     * {@link #getPartitionKeyLiveCount()}, which the frontier sweep does bound. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionarySize() {
+        return partitionKeyDictionarySize;
+    }
+
+    /**
+     * @return bytes the WAL dirty-band scratch held at the last refresh turn. It grows to the
+     * widest transaction band a row has reached and is never released between transactions,
+     * which is what keeps arming a cursor O(1). See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDirtyBandBytes() {
+        return partitionKeyDirtyBandBytes;
+    }
+
+    /**
+     * @return partition keys the anchor map held at the last refresh turn, or NULL for a view
+     * with no anchored window. Unlike the dictionary beside it this is bounded: the frontier
+     * sweep evicts a key whose partition has aged out. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyLiveCount() {
+        return partitionKeyLiveCount;
+    }
+
     public long getO3BoundaryReplayRows() {
         return o3BoundaryReplayRows;
     }
@@ -2136,6 +2234,37 @@ public class LiveViewInstance implements QuietCloseable {
                     .put("live view checkpoint timeline WAL floor must be non-negative");
         }
         checkpointTimelineWalPurgeFloor = walPurgeFloor;
+    }
+
+    /**
+     * Mirrors what this view's LV-private partition-key dictionary costs to keep, and how many
+     * partition keys its anchor map holds to read that cost against. The refresh worker calls
+     * it at the end of every turn, under the refresh latch - the registry's only serialisation
+     * - so that the catalogue thread reads eight published longs instead of walking a registry
+     * another worker may be interning into or freeing.
+     * <p>
+     * A view holding no registry - one that has not compiled its SELECT, or whose cached
+     * refresh state has since been freed - reports NULL for the whole group, which says
+     * something different from a compiled view whose PARTITION BY translates nothing and
+     * reports a column count of zero. See {@link #partitionKeyDictionarySize}
+     */
+    public void recordPartitionKeyDictionaryStats() {
+        final LiveViewSymbolIdRegistry registry = partitionKeyTranslators;
+        if (registry == null) {
+            clearPartitionKeyDictionaryStats();
+            return;
+        }
+        partitionKeyDictionaryColumns = registry.getBoundSlotCount();
+        partitionKeyDictionarySize = registry.getTotalDictionarySize();
+        partitionKeyDictionaryForwardBytes = registry.getForwardDictionaryBytes();
+        partitionKeyDictionaryReverseBytes = registry.getReverseDictionaryBytes();
+        partitionKeyBaseIdCacheBytes = registry.getBaseIdCacheBytes();
+        partitionKeyDirtyBandBytes = registry.getDirtyBandBytes();
+        partitionKeyDictionaryInterns = registry.getInternCount();
+        // The anchor map is the key set the frontier sweep bounds. A view with no anchored
+        // window has no such set to report the unbounded dictionary against.
+        final LiveViewWindow window = anchorWindow;
+        partitionKeyLiveCount = window == null ? Numbers.LONG_NULL : window.getAnchorMapSize();
     }
 
     /**
@@ -2859,6 +2988,21 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Retires the partition-key footprint mirror to NULL, which is what a view holding no
+     * registry reports. See {@link #recordPartitionKeyDictionaryStats()}
+     */
+    private void clearPartitionKeyDictionaryStats() {
+        partitionKeyBaseIdCacheBytes = Numbers.LONG_NULL;
+        partitionKeyDictionaryColumns = Numbers.LONG_NULL;
+        partitionKeyDictionaryForwardBytes = Numbers.LONG_NULL;
+        partitionKeyDictionaryInterns = Numbers.LONG_NULL;
+        partitionKeyDictionaryReverseBytes = Numbers.LONG_NULL;
+        partitionKeyDictionarySize = Numbers.LONG_NULL;
+        partitionKeyDirtyBandBytes = Numbers.LONG_NULL;
+        partitionKeyLiveCount = Numbers.LONG_NULL;
+    }
+
+    /**
      * Full-teardown free in the one order {@link #memoryTracker} tolerates. The in-memory tier
      * AND the compiled artifacts (the factory's per-partition function maps, the anchor map) all
      * charge the tracker, so all must release before it is closed. Closing the tracker with a
@@ -2874,6 +3018,9 @@ public class LiveViewInstance implements QuietCloseable {
         // tracker, so they have to release before it closes, and they outlive a recompile,
         // so freeCompiledArtifacts() must not be the thing that takes them.
         partitionKeyTranslators = Misc.free(partitionKeyTranslators);
+        // The mirror named a registry that no longer exists. Retire it rather than leaving
+        // the catalogue reporting the footprint of a dictionary this view has already freed.
+        clearPartitionKeyDictionaryStats();
         memoryTracker = Misc.free(memoryTracker);
     }
 
