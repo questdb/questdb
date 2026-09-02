@@ -1545,9 +1545,9 @@ public final class FiberRuntime {
             localSelectionCount.increment();
             return fiber;
         }
-        // A due probe may have missed just before this attempt spent time checking orphaned and
-        // owner-local work. Recheck the injection queue so an arrival in that interval does not
-        // wait for another Worker-loop pass; only the scheduled probe above changes the cadence.
+        // Invariant: an empty local queue always checks the global queue. The scheduled probe
+        // counts down only on successful selections, so a Worker whose Jobs stay busy and whose
+        // local queue is empty would otherwise never select injected work.
         fiber = runQueue.tryDequeue();
         if (fiber != null) {
             onOwnedSelection(ownerShard);
@@ -1653,7 +1653,7 @@ public final class FiberRuntime {
             if (wakeSink.wakeOne(preferredWorkerId)) {
                 wakeClaimCount.increment();
             }
-        } catch (RuntimeException th) {
+        } catch (RuntimeException | Error th) {
             LOG.error().$("Fiber Worker wake failed after queue commit [error=").$(th).I$();
         }
     }
@@ -1661,7 +1661,7 @@ public final class FiberRuntime {
     private void wakeAllWorkers() {
         try {
             wakeSink.wakeAll();
-        } catch (RuntimeException th) {
+        } catch (RuntimeException | Error th) {
             LOG.error().$("Fiber Worker wake-all failed [error=").$(th).I$();
         }
     }

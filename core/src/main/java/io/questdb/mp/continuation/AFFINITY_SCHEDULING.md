@@ -92,9 +92,12 @@ selections, and initial countdowns are staggered across Workers so they do not
 all probe at once. This is bounded fairness, not strict FIFO ordering across
 the global and local queues.
 
-The second global check closes the interval between a scheduled global miss
-and the time spent checking local sources. Stealing only one rotating victim
-on the normal path bounds the cost of an unsuccessful selection.
+The unconditional global check after an empty local queue is a liveness
+requirement, not a latency refinement. The probe countdown advances only on
+successful selections and the pre-park scan runs only when a Worker idles, so
+a Worker whose Jobs stay busy and whose local queue is empty would otherwise
+never select injected work. Stealing only one rotating victim on the normal
+path bounds the cost of an unsuccessful selection.
 
 The final pre-park search is intentionally stronger. It checks the global
 queue, the owner's local queue, and every peer local queue. A detached drain,
@@ -245,6 +248,8 @@ entry cannot be ignored merely because its owner is no longer active.
 - Orphan bits are cleared only after the corresponding local queue is
   observed empty.
 - Global injection is probed periodically during continuous local traffic.
+- A Worker whose local queue is empty checks the global queue on every
+  selection.
 - Shutdown and detached drains account for every global and local queue.
 
 Queue availability, depth, ready count, and orphan count are discovery or
