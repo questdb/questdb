@@ -118,25 +118,6 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
         );
     }
 
-    static boolean consumeQueue(
-            RingQueue<PageFrameReduceTask> queue,
-            MCSequence subSeq,
-            PageFrameMemoryRecord record,
-            SqlExecutionCircuitBreakerWrapper circuitBreaker,
-            PageFrameSequence<?> stealingFrameSequence,
-            @Nullable PageFrameReduceDispatcher dispatcher
-    ) {
-        return consumeQueue(
-                -1,
-                queue,
-                subSeq,
-                record,
-                circuitBreaker,
-                stealingFrameSequence,
-                dispatcher
-        );
-    }
-
     public static void reduce(
             PageFrameMemoryRecord record,
             SqlExecutionCircuitBreakerWrapper circuitBreaker,
@@ -314,6 +295,25 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
         return true;
     }
 
+    static boolean consumeQueue(
+            RingQueue<PageFrameReduceTask> queue,
+            MCSequence subSeq,
+            PageFrameMemoryRecord record,
+            SqlExecutionCircuitBreakerWrapper circuitBreaker,
+            PageFrameSequence<?> stealingFrameSequence,
+            @Nullable PageFrameReduceDispatcher dispatcher
+    ) {
+        return consumeQueue(
+                -1,
+                queue,
+                subSeq,
+                record,
+                circuitBreaker,
+                stealingFrameSequence,
+                dispatcher
+        );
+    }
+
     static void reduce(
             int workerId,
             PageFrameMemoryRecord record,
@@ -328,9 +328,9 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
         final int cbState = frameSequence.isUninterruptible()
                 ? SqlExecutionCircuitBreaker.STATE_OK
                 : circuitBreaker.getStateOrYield(
-                        frameSequence.getStartTime(),
-                        frameSequence.getCircuitBreaker().getFd()
-                );
+                frameSequence.getStartTime(),
+                frameSequence.getCircuitBreaker().getFd()
+        );
 
         if (cbState == SqlExecutionCircuitBreaker.STATE_OK) {
             record.of(frameSequence.getSymbolTableSource());

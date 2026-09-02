@@ -223,6 +223,35 @@ public class QueryRegistry {
     }
 
     /**
+     * Mounts an existing protocol owner for another executable segment.
+     */
+    public void mountOwner(long queryId, SqlExecutionContext executionContext) {
+        final Entry entry = getOwnerEntry(queryId, executionContext);
+        final QuietCloseable executionLease = entry.executionLease;
+        if (executionLease instanceof SqlExecutionLease lease) {
+            lease.mount();
+        }
+        final MemoryTracker memoryTracker = entry.memoryTracker;
+        if (memoryTracker != null) {
+            executionContext.setMemoryTracker(memoryTracker);
+        }
+    }
+
+    /**
+     * Publishes a protocol owner's query text after secret classification. The first publication
+     * wins; retries therefore never mutate a StringSink already visible to query_activity().
+     */
+    public void publishOwnerQuery(long queryId, CharSequence query, boolean containsSecret) {
+        if (queryId < 0) {
+            return;
+        }
+        final Entry entry = registry.get(queryId);
+        if (entry == null || !entry.publishQuery(queryId, query, containsSecret)) {
+            throw new IllegalStateException("query registry owner is no longer active [id=" + queryId + ']');
+        }
+    }
+
+    /**
      * Add given command to registry.
      *
      * @param query            - query text
@@ -256,36 +285,14 @@ public class QueryRegistry {
         return register0(query, executionContext, true);
     }
 
-    /**
-     * Mounts an existing protocol owner for another executable segment.
-     */
-    public void mountOwner(long queryId, SqlExecutionContext executionContext) {
-        final Entry entry = getOwnerEntry(queryId, executionContext);
-        final QuietCloseable executionLease = entry.executionLease;
-        if (executionLease instanceof SqlExecutionLease lease) {
-            lease.mount();
-        }
-        final MemoryTracker memoryTracker = entry.memoryTracker;
-        if (memoryTracker != null) {
-            executionContext.setMemoryTracker(memoryTracker);
-        }
+    @TestOnly
+    public void setListener(Listener listener) {
+        this.listener = listener;
     }
 
     /**
-     * Publishes a protocol owner's query text after secret classification. The first publication
-     * wins; retries therefore never mutate a StringSink already visible to query_activity().
+     * Unmounts a protocol owner between executable segments.
      */
-    public void publishOwnerQuery(long queryId, CharSequence query, boolean containsSecret) {
-        if (queryId < 0) {
-            return;
-        }
-        final Entry entry = registry.get(queryId);
-        if (entry == null || !entry.publishQuery(queryId, query, containsSecret)) {
-            throw new IllegalStateException("query registry owner is no longer active [id=" + queryId + ']');
-        }
-    }
-
-    /** Unmounts a protocol owner between executable segments. */
     public void unmountOwner(long queryId, SqlExecutionContext executionContext) {
         final Entry entry = getOwnerEntry(queryId, executionContext);
         Throwable cleanupFailure = null;
@@ -319,6 +326,173 @@ public class QueryRegistry {
             }
         }
         CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    /**
+     * Remove query with given id from registry.
+     *
+     * @param queryId          - id of query to remove
+     * @param executionContext - execution context
+     */
+    public void unregister(long queryId, SqlExecutionContext executionContext) {
+        if (queryId < 0) {
+            // likely because query was already unregistered
+            return;
+        }
+
+        final Entry e = registry.get(queryId);
+        if (e != null) {
+            final int releaseResult = e.release(queryId, executionContext);
+            if (releaseResult == Entry.RELEASE_RETAINED) {
+                return;
+            }
+            if (releaseResult != Entry.RELEASE_FINAL) {
+                LOG.error().$("query lifecycle mismatch [id=").$(queryId).I$();
+                return;
+            }
+            Throwable cleanupFailure = null;
+            boolean detached = false;
+            try {
+                detached = registry.remove(queryId, e);
+                if (!detached) {
+                    cleanupFailure = appendCleanupFailure(
+                            cleanupFailure,
+                            new IllegalStateException("query registry could not detach retired entry [id=" + queryId + ']')
+                    );
+                }
+            } catch (Throwable th) {
+                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+            }
+            try {
+                clearStaleSignalBinding(e.previousCancelledBinding);
+            } catch (Throwable th) {
+                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+            }
+            try {
+                clearStaleSignalBinding(e.previousSimpleCancelledBinding);
+            } catch (Throwable th) {
+                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+            }
+            try {
+                executionContext.restoreCancelledFlag(
+                        e.cancelled,
+                        e.previousCancelledBinding,
+                        e.previousSimpleCancelledBinding
+                );
+            } catch (Throwable th) {
+                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+            }
+            // Release the per-workload memory tracker if this register() call
+            // acquired it. A null e.memoryTracker means the registration was
+            // nested under an outer workload that owns the tracker; in that
+            // case we must not touch the context's tracker reference.
+            final MemoryTracker memoryTracker = e.memoryTracker;
+            if (memoryTracker != null) {
+                // Clear the context slot only if it still points at our tracker. A
+                // concurrently-suspended sibling portal (sharing this context) may
+                // have rebound the slot to its own tracker after us; nulling it then
+                // would strand that sibling. Out-of-order portal close makes this
+                // conditional necessary -- see the inheritance note in register().
+                try {
+                    if (executionContext.getMemoryTracker() == memoryTracker) {
+                        executionContext.setMemoryTracker(null);
+                    }
+                } catch (Throwable th) {
+                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+                }
+                try {
+                    memoryTracker.close();
+                } catch (Throwable th) {
+                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+                } finally {
+                    e.memoryTracker = null;
+                }
+            }
+            final QuietCloseable executionLease = e.executionLease;
+            if (executionLease != null) {
+                try {
+                    executionLease.close();
+                } catch (Throwable th) {
+                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+                } finally {
+                    e.executionLease = null;
+                }
+            }
+            if (detached) {
+                try {
+                    recycle(e);
+                } catch (Throwable th) {
+                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
+                }
+            }
+            CairoException.rethrowCleanupFailure(cleanupFailure);
+        } else {
+            // this might happen if query was cancelled
+            LOG.error().$("query to unregister not found [id=").$(queryId).I$();
+        }
+    }
+
+    private static Throwable appendCleanupFailure(@Nullable Throwable primary, Throwable failure) {
+        if (primary == null) {
+            return failure;
+        }
+        if (primary != failure) {
+            try {
+                primary.addSuppressed(failure);
+            } catch (Throwable ignored) {
+                // Preserve forward cleanup progress when suppression itself cannot allocate.
+            }
+        }
+        return primary;
+    }
+
+    private static void clearStaleSignalBinding(CancellationBinding binding) {
+        final AtomicBoolean flag = binding.getFlag();
+        if (flag instanceof FiberCancellationSignal signal
+                && signal.getGeneration() != binding.getGeneration(flag)) {
+            binding.clear();
+        }
+    }
+
+    private Entry acquireEntry() {
+        final int carrierId = CarrierIdentity.current();
+        if (carrierId >= 0) {
+            final EntryHolder localPool = localQueryPool.get(carrierId);
+            final Entry entry = localPool.entry;
+            if (entry != null) {
+                localPool.entry = null;
+                return entry;
+            }
+        }
+        final Entry entry = queryPool.pop();
+        return entry != null ? entry : new Entry();
+    }
+
+    private Entry getOwnerEntry(long queryId, SqlExecutionContext executionContext) {
+        if (queryId < 0) {
+            throw new IllegalArgumentException("query registry owner ID must be non-negative");
+        }
+        final Entry entry = registry.get(queryId);
+        if (entry == null
+                || !Entry.isActiveLifecycle(queryId, entry.lifecycle)
+                || !entry.protocolOwner
+                || entry.executionContext != executionContext) {
+            throw new IllegalStateException("query registry owner is no longer active [id=" + queryId + ']');
+        }
+        return entry;
+    }
+
+    private void recycle(Entry entry) {
+        entry.clear();
+        final int carrierId = CarrierIdentity.current();
+        if (carrierId >= 0) {
+            final EntryHolder localPool = localQueryPool.get(carrierId);
+            if (localPool.entry == null) {
+                localPool.entry = entry;
+                return;
+            }
+        }
+        queryPool.tryPush(entry, queryPoolCapacity);
     }
 
     private long register0(CharSequence query, SqlExecutionContext executionContext, boolean deferQueryText) {
@@ -495,165 +669,6 @@ public class QueryRegistry {
         return queryId;
     }
 
-    @TestOnly
-    public void setListener(Listener listener) {
-        this.listener = listener;
-    }
-
-    /**
-     * Remove query with given id from registry.
-     *
-     * @param queryId          - id of query to remove
-     * @param executionContext - execution context
-     */
-    public void unregister(long queryId, SqlExecutionContext executionContext) {
-        if (queryId < 0) {
-            // likely because query was already unregistered
-            return;
-        }
-
-        final Entry e = registry.get(queryId);
-        if (e != null) {
-            final int releaseResult = e.release(queryId, executionContext);
-            if (releaseResult == Entry.RELEASE_RETAINED) {
-                return;
-            }
-            if (releaseResult != Entry.RELEASE_FINAL) {
-                LOG.error().$("query lifecycle mismatch [id=").$(queryId).I$();
-                return;
-            }
-            Throwable cleanupFailure = null;
-            boolean detached = false;
-            try {
-                detached = registry.remove(queryId, e);
-                if (!detached) {
-                    cleanupFailure = appendCleanupFailure(
-                            cleanupFailure,
-                            new IllegalStateException("query registry could not detach retired entry [id=" + queryId + ']')
-                    );
-                }
-            } catch (Throwable th) {
-                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-            }
-            try {
-                clearStaleSignalBinding(e.previousCancelledBinding);
-            } catch (Throwable th) {
-                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-            }
-            try {
-                clearStaleSignalBinding(e.previousSimpleCancelledBinding);
-            } catch (Throwable th) {
-                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-            }
-            try {
-                executionContext.restoreCancelledFlag(
-                        e.cancelled,
-                        e.previousCancelledBinding,
-                        e.previousSimpleCancelledBinding
-                );
-            } catch (Throwable th) {
-                cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-            }
-            // Release the per-workload memory tracker if this register() call
-            // acquired it. A null e.memoryTracker means the registration was
-            // nested under an outer workload that owns the tracker; in that
-            // case we must not touch the context's tracker reference.
-            final MemoryTracker memoryTracker = e.memoryTracker;
-            if (memoryTracker != null) {
-                // Clear the context slot only if it still points at our tracker. A
-                // concurrently-suspended sibling portal (sharing this context) may
-                // have rebound the slot to its own tracker after us; nulling it then
-                // would strand that sibling. Out-of-order portal close makes this
-                // conditional necessary -- see the inheritance note in register().
-                try {
-                    if (executionContext.getMemoryTracker() == memoryTracker) {
-                        executionContext.setMemoryTracker(null);
-                    }
-                } catch (Throwable th) {
-                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-                }
-                try {
-                    memoryTracker.close();
-                } catch (Throwable th) {
-                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-                } finally {
-                    e.memoryTracker = null;
-                }
-            }
-            final QuietCloseable executionLease = e.executionLease;
-            if (executionLease != null) {
-                try {
-                    executionLease.close();
-                } catch (Throwable th) {
-                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-                } finally {
-                    e.executionLease = null;
-                }
-            }
-            if (detached) {
-                try {
-                    recycle(e);
-                } catch (Throwable th) {
-                    cleanupFailure = appendCleanupFailure(cleanupFailure, th);
-                }
-            }
-            CairoException.rethrowCleanupFailure(cleanupFailure);
-        } else {
-            // this might happen if query was cancelled
-            LOG.error().$("query to unregister not found [id=").$(queryId).I$();
-        }
-    }
-
-    private static Throwable appendCleanupFailure(@Nullable Throwable primary, Throwable failure) {
-        if (primary == null) {
-            return failure;
-        }
-        if (primary != failure) {
-            try {
-                primary.addSuppressed(failure);
-            } catch (Throwable ignored) {
-                // Preserve forward cleanup progress when suppression itself cannot allocate.
-            }
-        }
-        return primary;
-    }
-
-    private static void clearStaleSignalBinding(CancellationBinding binding) {
-        final AtomicBoolean flag = binding.getFlag();
-        if (flag instanceof FiberCancellationSignal signal
-                && signal.getGeneration() != binding.getGeneration(flag)) {
-            binding.clear();
-        }
-    }
-
-    private Entry acquireEntry() {
-        final int carrierId = CarrierIdentity.current();
-        if (carrierId >= 0) {
-            final EntryHolder localPool = localQueryPool.get(carrierId);
-            final Entry entry = localPool.entry;
-            if (entry != null) {
-                localPool.entry = null;
-                return entry;
-            }
-        }
-        final Entry entry = queryPool.pop();
-        return entry != null ? entry : new Entry();
-    }
-
-    private Entry getOwnerEntry(long queryId, SqlExecutionContext executionContext) {
-        if (queryId < 0) {
-            throw new IllegalArgumentException("query registry owner ID must be non-negative");
-        }
-        final Entry entry = registry.get(queryId);
-        if (entry == null
-                || !Entry.isActiveLifecycle(queryId, entry.lifecycle)
-                || !entry.protocolOwner
-                || entry.executionContext != executionContext) {
-            throw new IllegalStateException("query registry owner is no longer active [id=" + queryId + ']');
-        }
-        return entry;
-    }
-
     private long retainOwner(long ownerId, SqlExecutionContext executionContext) {
         final Entry owner = registry.get(ownerId);
         if (owner != null && owner.protocolOwner && owner.executionContext == executionContext) {
@@ -676,19 +691,6 @@ public class QueryRegistry {
             return -1;
         }
         return retainOwner(ownerId, executionContext);
-    }
-
-    private void recycle(Entry entry) {
-        entry.clear();
-        final int carrierId = CarrierIdentity.current();
-        if (carrierId >= 0) {
-            final EntryHolder localPool = localQueryPool.get(carrierId);
-            if (localPool.entry == null) {
-                localPool.entry = entry;
-                return;
-            }
-        }
-        queryPool.tryPush(entry, queryPoolCapacity);
     }
 
     public interface Listener {
@@ -716,15 +718,14 @@ public class QueryRegistry {
      * with the rest of the entry.
      */
     public static class Entry implements Mutable {
-        private static final int RELEASE_FINAL = 1;
-        private static final int RELEASE_MISMATCH = -1;
-        private static final int RELEASE_RETAINED = 0;
         private static final long LIFECYCLE_IDLE = -1;
         private static final long LIFECYCLE_OFFSET = Unsafe.getFieldOffset(Entry.class, "lifecycle");
         private static final long LIFECYCLE_STATE_ACTIVE = 0;
         private static final long LIFECYCLE_STATE_CANCELLING = 1;
         private static final long LIFECYCLE_STATE_RETIRED = 2;
-
+        private static final int RELEASE_FINAL = 1;
+        private static final int RELEASE_MISMATCH = -1;
+        private static final int RELEASE_RETAINED = 0;
         private final FiberCancellationSignal cancelled = new FiberCancellationSignal();
         private final CancellationBinding previousCancelledBinding = new CancellationBinding();
         private final CancellationBinding previousSimpleCancelledBinding = new CancellationBinding();
@@ -732,12 +733,12 @@ public class QueryRegistry {
         private long cancelledGeneration;
         private long changedAtNs;
         private SqlExecutionContext executionContext;
+        private volatile QuietCloseable executionLease;
         private boolean isWAL;
         // Packs query id and state into one CAS word to guard pooled Entry reuse.
         // The id occupies bits 2-63, so the usable id space is 2^62; idSeq starts
         // at 0 on every server start and cannot realistically reach that.
         private volatile long lifecycle = LIFECYCLE_IDLE;
-        private volatile QuietCloseable executionLease;
         // Non-null only when this register() call acquired the tracker. Nested
         // registrations that inherit an outer tracker leave this null so that
         // the matching unregister() does not touch the context's tracker.
@@ -762,10 +763,6 @@ public class QueryRegistry {
 
         public static boolean isActiveLifecycle(long queryId, long lifecycle) {
             return lifecycle == lifecycle(queryId, LIFECYCLE_STATE_ACTIVE);
-        }
-
-        private static long lifecycle(long queryId, long state) {
-            return (queryId << 2) | state;
         }
 
         public void cancel() {
@@ -855,6 +852,23 @@ public class QueryRegistry {
             return isWAL;
         }
 
+        private static long lifecycle(long queryId, long state) {
+            return (queryId << 2) | state;
+        }
+
+        /**
+         * Moves the entry into the ACTIVE lifecycle state for the given query id.
+         * register() calls this to publish the entry before inserting it into the
+         * registry; cancel() calls it to release the CANCELLING state.
+         */
+        private void activate(long queryId) {
+            lifecycle = lifecycle(queryId, LIFECYCLE_STATE_ACTIVE);
+        }
+
+        private boolean beginCancel(long queryId) {
+            return transitionFromActive(queryId, LIFECYCLE_STATE_CANCELLING);
+        }
+
         private boolean publishQuery(long queryId, CharSequence queryText, boolean containsSecret) {
             if (!beginCancel(queryId)) {
                 return false;
@@ -917,19 +931,6 @@ public class QueryRegistry {
             } finally {
                 activate(queryId);
             }
-        }
-
-        /**
-         * Moves the entry into the ACTIVE lifecycle state for the given query id.
-         * register() calls this to publish the entry before inserting it into the
-         * registry; cancel() calls it to release the CANCELLING state.
-         */
-        private void activate(long queryId) {
-            lifecycle = lifecycle(queryId, LIFECYCLE_STATE_ACTIVE);
-        }
-
-        private boolean beginCancel(long queryId) {
-            return transitionFromActive(queryId, LIFECYCLE_STATE_CANCELLING);
         }
 
         private boolean retire(long queryId) {
