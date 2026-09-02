@@ -52,14 +52,14 @@ Apache Arrow keep the data open to any tool.
 QWP is a binary columnar protocol over WebSocket. The same connection writes
 rows in and streams query results out as Apache Arrow.
 
-| Measured on QuestDB 10.0 | Result | Source |
+| QuestDB 10.0 | Measured | Source |
 |---|---|---|
-| Ingestion over the network | 19M rows/sec per server | [QWP vs ILP ingestion benchmark](https://questdb.com/blog/qwp-vs-ilp-ingestion-benchmark/) |
+| Peak ingestion throughput per instance | 19M rows/sec over the network | [QWP vs ILP ingestion benchmark](https://questdb.com/blog/qwp-vs-ilp-ingestion-benchmark/) |
 | Query results streamed into Arrow | 220M rows/sec with eight readers | [Streaming 500 million rows into Arrow](https://questdb.com/blog/streaming-500-million-rows-into-apache-arrow/) |
 | Time to stream 500M rows | 2.3 seconds | same post |
 | First Arrow batch | 32 ms | same post |
 
-On the way in, QWP holds its rate from one thousand to one million series.
+On the way in, that peak holds from one thousand to one million series.
 On the way out, the first batch lands in milliseconds and client memory stays
 flat however large the result. The
 [QWP overview](https://questdb.com/blog/questdb-qwp-binary-wire-protocol/)
