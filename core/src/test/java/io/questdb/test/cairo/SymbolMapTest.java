@@ -1261,6 +1261,47 @@ public class SymbolMapTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolCountShrinkBoundsLookupAndCache() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                create(path, "x", 8, true);
+                try (
+                        SymbolMapWriter writer = new SymbolMapWriter(
+                                configuration,
+                                path,
+                                "x",
+                                COLUMN_NAME_TXN_NONE,
+                                0,
+                                -1,
+                                NOOP_COLLECTOR,
+                                -1
+                        )
+                ) {
+                    Assert.assertEquals(0, writer.put("first"));
+                    Assert.assertEquals(1, writer.put("second"));
+                }
+
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, 2)) {
+                    TestUtils.assertEquals("first", reader.valueOf(0));
+                    TestUtils.assertEquals("second", reader.valueOf(1));
+                    Assert.assertEquals(2, reader.getCacheSize());
+
+                    reader.updateSymbolCount(1);
+                    Assert.assertEquals(1, reader.getSymbolCount());
+                    Assert.assertEquals(1, reader.getCacheSize());
+                    Assert.assertEquals(0, reader.keyOf("first"));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("second"));
+
+                    reader.updateSymbolCount(0);
+                    Assert.assertEquals(0, reader.getSymbolCount());
+                    Assert.assertEquals(0, reader.getCacheSize());
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("first"));
+                }
+            }
+        });
+    }
+
+    @Test
     public void testTransactionalRead() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             int N = 1000000;

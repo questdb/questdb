@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultLifecycleManager;
 import io.questdb.cairo.EntityColumnFilter;
@@ -56,6 +57,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VacuumColumnVersions;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
+import io.questdb.cairo.mv.MatViewRefreshJob;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.mv.MatViewStateStore;
 import io.questdb.cairo.sql.BindVariableService;
@@ -1808,6 +1810,18 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .I$();
             ex.position(tableNamePosition);
             throw ex;
+        }
+        if (!executionContext.isValidationOnly()) {
+            try {
+                engine.getMatViewStateStore().reenqueuePendingOnResume(tableToken);
+            } catch (Throwable th) {
+                // The resume itself durably succeeded; a redelivery enqueue failure must not fail
+                // the statement. The store's retry flags keep the surviving facets discoverable by
+                // the next refresh-job tick.
+                LOG.error().$("could not redeliver pending materialized view work after resume [table=").$(tableToken)
+                        .$(", ex=").$(th)
+                        .I$();
+            }
         }
     }
 
@@ -3864,7 +3878,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         try {
                             viewState.refreshStats();
                         } finally {
-                            viewState.unlock();
+                            // This stats reset is a lock-holder like any refresh: its unlock must finalize an
+                            // invalidation that deferred during the hold. See MatViewRefreshJob#finalizeAndUnlock.
+                            // The finalize releases the latch before any wake enqueue, and the stats reset itself
+                            // durably succeeded, so a wake enqueue failure must not fail the statement (mirroring
+                            // ALTER TABLE RESUME WAL). The store's retry flags keep the deferred facets
+                            // discoverable by the next refresh-job tick.
+                            try {
+                                MatViewRefreshJob.finalizeAndUnlock(engine, matViewStateStore, matViewToken, viewState, false);
+                            } catch (Throwable th) {
+                                LOG.error().$("could not deliver deferred materialized view work after stats reset [view=").$(matViewToken)
+                                        .$(", ex=").$(th)
+                                        .I$();
+                            }
                         }
                     } else {
                         throw SqlException.$(lexer.lastTokenPosition(), "materialized view is currently refreshing, retry stats reset later");

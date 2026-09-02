@@ -1268,6 +1268,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.partition.checksum.block.size\tQDB_CAIRO_PARTITION_CHECKSUM_BLOCK_SIZE\t1048576\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.checksum.strict\tQDB_CAIRO_PARTITION_CHECKSUM_STRICT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.partition.checksum.scrub.bytes.per.second\tQDB_CAIRO_PARTITION_CHECKSUM_SCRUB_BYTES_PER_SECOND\t0\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.symbol.pattern.index.enabled\tQDB_CAIRO_SQL_SYMBOL_PATTERN_INDEX_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.sql.symbol.pattern.index.threshold\tQDB_CAIRO_SQL_SYMBOL_PATTERN_INDEX_THRESHOLD\t100\tdefault\tfalse\tfalse\n" +
                                     "griffin.query.continuation.wake.interval\tQDB_GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL\t1000\tdefault\tfalse\tfalse"
                     )
                             .split("\n");

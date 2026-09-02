@@ -58,7 +58,9 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.wal.TableWriterPressureControl;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
@@ -4063,6 +4065,119 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     .noLeakCheck().noRandomAccess().returns("view_status\ninvalid\n");
 
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testLiveViewAheadOfStaleSequencerCacheStaysValid() throws Exception {
+        // Replica counterpart to testLiveViewAheadOfBaseInvalidates (enterprise
+        // LiveViewReplicationTest replica restart). On a replica the downloader appends base txns
+        // to the on-disk txnlog and reconciles the cached sequencer only later; WAL apply and the
+        // refresh read the file, so the view can legitimately move past the cached head. The ahead
+        // guard must treat that as catch-up, not data loss: the base tracker's writerTxn covers
+        // the stale window. A second TableSequencerAPI plays the downloader. It shares the engine,
+        // so its commits also enqueue live-view refresh tasks, which the real downloader never
+        // does; the guard still runs on the fallback pass of the same drain, after those tasks are
+        // consumed. setCurrentMicros drives FLUSH EVERY so each drain flushes the lead. The tail
+        // pins the other operand: with writerTxn reset to -1 the guard must fall back to the
+        // cached head, not fire.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            execute("INSERT INTO base (ts, x) VALUES ('2027-06-01T00:00:01.000000Z', 1), ('2027-06-01T00:00:02.000000Z', 2)");
+            drainWalQueue();
+
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken baseToken = engine.verifyTableName("base");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(200_000);
+                drainJob(job);
+                Assert.assertFalse("view active after catching up to the base", instance.isInvalid());
+                Assert.assertEquals(1, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(baseToken));
+
+                // Append base seqTxns 2 and 3 to the txnlog file behind the engine's cached
+                // sequencer, as the downloader does.
+                try (
+                        TableSequencerAPI oobSequencers = new TableSequencerAPI(engine, engine.getConfiguration());
+                        WalWriter oobWriter = new WalWriter(
+                                engine.getConfiguration(),
+                                baseToken,
+                                oobSequencers,
+                                engine.getDdlListener(baseToken),
+                                engine.getWalDirectoryPolicy(),
+                                engine.getWalLocker(),
+                                engine.getRecentWriteTracker(),
+                                engine.getTelemetryWal()
+                        )
+                ) {
+                    appendRow(oobWriter, MicrosFormatUtils.parseUTCTimestamp("2027-06-01T00:00:03.000000Z"), 3);
+                    oobWriter.commit();
+                    appendRow(oobWriter, MicrosFormatUtils.parseUTCTimestamp("2027-06-01T00:00:04.000000Z"), 4);
+                    oobWriter.commit();
+                }
+                Assert.assertEquals(
+                        "the engine's cached sequencer must not have seen the out-of-band txns, or this test no longer constructs the stale-cache window",
+                        1, engine.getTableSequencerAPI().lastTxn(baseToken)
+                );
+
+                // The out-of-band commits already posted an apply notification through the shared
+                // engine. Post it explicitly anyway, as the downloader's callback does (enterprise
+                // WalEvents.registerTable) minus its sequencer reload, so the apply does not hinge
+                // on the out-of-band tracker's notify heuristic and the cache stays stale; the apply
+                // job reads the file and applies 2 and 3.
+                engine.notifyWalTxnCommitted(baseToken);
+                drainWalQueue();
+                Assert.assertEquals(3, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(baseToken));
+
+                // The refresh moves the watermark past the stale cached head of 1; the ahead
+                // guard must not invalidate the view.
+                setCurrentMicros(400_000);
+                drainJob(job);
+                Assert.assertFalse(
+                        "a transiently stale cached base head must not durably invalidate the live view",
+                        instance.isInvalid()
+                );
+                // The next FLUSH EVERY tick brings the watermark to the applied head while the
+                // cache still reads 1.
+                setCurrentMicros(500_000);
+                drainJob(job);
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertEquals(3, instance.getLastProcessedSeqTxn());
+                Assert.assertEquals(1, engine.getTableSequencerAPI().lastTxn(baseToken));
+
+                // The late reconcile catches the cache up; the view keeps refreshing.
+                engine.getTableSequencerAPI().reload(baseToken);
+                Assert.assertEquals(3, engine.getTableSequencerAPI().lastTxn(baseToken));
+                setCurrentMicros(600_000);
+                drainJob(job);
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertEquals(3, instance.getLastProcessedSeqTxn());
+
+                // A notification-queue overflow resets writerTxn to -1; the guard must then fall
+                // back to the cached head instead of reading the view as ahead.
+                engine.notifyWalTxnRepublisher(baseToken);
+                Assert.assertEquals(SeqTxnTracker.UNINITIALIZED_TXN, engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn());
+                setCurrentMicros(700_000);
+                drainJob(job);
+                Assert.assertFalse("an uninitialised base tracker must not invalidate the live view", instance.isInvalid());
+                Assert.assertEquals(3, instance.getLastProcessedSeqTxn());
+            }
+            assertNoRefreshFaults("lv");
+
+            assertQuery("SELECT view_status, last_processed_seqtxn FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck().noRandomAccess().returns("view_status\tlast_processed_seqtxn\nactive\t3\n");
+            assertQuery("SELECT x, rn FROM lv ORDER BY ts").noLeakCheck().expectSize().returns("x\trn\n" +
+                    "1\t1\n" +
+                    "2\t2\n" +
+                    "3\t3\n" +
+                    "4\t4\n");
+
+            execute("DROP LIVE VIEW lv");
+            execute("DROP TABLE base");
         });
     }
 
@@ -22306,6 +22421,25 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         e.getPosition()
                 );
             }
+        });
+    }
+
+    @Test
+    public void testAnchorExpressionWithParserRewrittenOperator() throws Exception {
+        // ANCHOR EXPRESSION is the one production position that SqlParser.rewriteKnownStatements
+        // skips, so the anchor node reaches LvAnchorSpec still carrying '||' as an OPERATION node.
+        // SqlParser.captureAnchoredWindow renders it back to SQL with toSink, and both consumers -
+        // the CREATE-time pass-2 validator in CairoEngine and LiveViewRefreshJob.ensureAnchorFunction
+        // - re-parse that text through the rewriting SqlParser.expr(...) overload, where
+        // rewriteConcat finally folds the chain into concat(). A maintainer who deletes that
+        // round-trip hands FunctionParser a '||' node no factory answers to, and this CREATE stops
+        // compiling. See core/src/main/java/io/questdb/griffin/CLAUDE.md.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, s STRING, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, s, x, sum(x) OVER w AS sm FROM base " +
+                    "WINDOW w AS (PARTITION BY x ORDER BY ts ANCHOR EXPRESSION length('a' || 'b' || s))");
+            execute("DROP LIVE VIEW lv");
         });
     }
 

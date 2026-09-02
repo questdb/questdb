@@ -569,11 +569,20 @@ public class SqlParser {
         }
 
         // Nested CONCAT. Expand it from CONCAT(x, CONCAT(y, z)) into CONCAT(x, y, z).
+        // A CONCAT with three or more arguments keeps them in args. Below that, the parser
+        // stores them in rhs (last argument) and lhs (first argument) instead, and a
+        // single-argument CONCAT sets rhs only, leaving lhs null.
         if (leaf.args.size() > 0) {
             args.addAll(leaf.args);
-        } else {
+        } else if (leaf.paramCount == 2) {
             args.add(leaf.rhs);
             args.add(leaf.lhs);
+        } else if (leaf.paramCount == 1) {
+            args.add(leaf.rhs);
+        } else {
+            // CONCAT() carries no operand to fold. Keep the node itself, so that FunctionParser
+            // rejects it at its own position rather than the parent silently swallowing it.
+            args.add(leaf);
         }
     }
 
@@ -6197,6 +6206,15 @@ public class SqlParser {
             if (node.paramCount > 2) {
                 node.rhs = null;
                 node.lhs = null;
+            } else {
+                // Both operands of '||' contribute at least one argument, so paramCount is 2 here.
+                // Move the folded arguments back into rhs/lhs, which is where the rest of the
+                // compiler looks for them below three, and drop the now stale args list. Without
+                // this, folding a single-argument CONCAT would leave rhs pointing at the nested
+                // call while args held the flattened pair.
+                node.rhs = node.args.getQuick(0);
+                node.lhs = node.args.getQuick(1);
+                node.args.clear();
             }
         }
     }

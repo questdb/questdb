@@ -1413,6 +1413,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getSymbolPatternIndexThreshold() {
+        return 100;
+    }
+
+    @Override
     public long getSymbolTableMaxAllocationPageSize() {
         return 8 * 1024 * 1024;
     }
@@ -1818,6 +1823,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isSqlWindowMapFusionEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isSymbolPatternIndexEnabled() {
         return true;
     }
 
