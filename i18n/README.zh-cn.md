@@ -108,12 +108,6 @@ QuestDB 开箱即用地支持 AI 编程智能体。安装
 [QuestDB 智能体技能](https://questdb.com/agents/)，60 秒内即可从提示词到生产环境：
 流式数据写入、物化视图和实时分析，无需手动编写代码。
 
-<div align="center">
-  <a href="https://questdb.com/agents/">
-    <img alt="AI 编程智能体将外汇数据流式写入 QuestDB 并分析流动性" src="../.github/agents-demo.jpg" width="600"/>
-  </a>
-</div>
-
 ## 快速开始
 
 使用 [Docker](https://www.docker.com/) 快速启动：

@@ -215,12 +215,6 @@ the agent directly, connect it to the
 Setup for each agent is in the
 [coding agents guide](https://questdb.com/docs/getting-started/ai-coding-agents/).
 
-<div align="center">
-  <a href="https://questdb.com/docs/getting-started/ai-coding-agents/">
-    <img alt="AI coding agent streaming FX data into QuestDB and analyzing liquidity" src=".github/agents-demo.jpg" width="600"/>
-  </a>
-</div>
-
 ## Connect and integrate
 
 ### First-party clients
