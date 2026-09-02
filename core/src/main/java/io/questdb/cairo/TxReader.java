@@ -638,7 +638,20 @@ public class TxReader implements Closeable, Mutable {
      * to be read - for a parquet partition, where the same word is the file size.
      */
     public long getGeometryRef(int partitionIndex) {
-        return getPartitionOffset3(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION);
+        final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
+        if (!isPartitionCompositeByRawIndex(rawIndex)) {
+            // -1 is the "no committed geometry record yet" sentinel PartitionGeometry.publish reads to
+            // start a partition's chain at generation 0, offset 0. It must NOT be confused with a real
+            // ref, which is why this cannot just hand back the raw word: since master took the offset-3
+            // value field for the native seqTxn stamp, a NON-composite partition's word is routinely
+            // non-zero, and returning it would read as a ref pointing into a _geometry file that was
+            // never written.
+            return -1L;
+        }
+        // Strip the flags that are not ours - REMOTE and SEQ_TXN_VALID share this word - so a ref only
+        // ever carries COMPOSITE, its generation and its offset.
+        return getPartitionOffset3(rawIndex)
+                & (PARTITION_COMPOSITE_FLAG | PARTITION_GEOMETRY_GENERATION_MASK | PARTITION_GEOMETRY_OFFSET_MASK);
     }
 
     /**
