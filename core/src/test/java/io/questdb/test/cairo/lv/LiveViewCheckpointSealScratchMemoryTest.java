@@ -302,7 +302,8 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                             LIFECYCLE_IDENTITY,
                             true,
                             1_500_000,
-                            0
+                            0,
+                            null
                     );
                     Assert.assertEquals(1, result.getRootsVersioned());
                 }
@@ -375,8 +376,8 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                         Assert.assertTrue("capture A must retain its tracker-bound scratch", trackerA.getUsed() > 0);
                         Assert.assertTrue("capture B must retain its tracker-bound scratch", trackerB.getUsed() > 0);
 
-                        writer.publishRepair(captureA, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_A, true, 1_500_000, 0);
-                        writer.publishRepair(captureB, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_B, true, 1_500_000, 0);
+                        writer.publishRepair(captureA, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_A, true, 1_500_000, 0, null);
+                        writer.publishRepair(captureB, DEFINITION_TXN, 2, 2, 0, LIFECYCLE_IDENTITY_B, true, 1_500_000, 0, null);
                     }
                 }
 
@@ -464,7 +465,7 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
             functions.add(partition);
             functions.add(scalar);
             reader.of(checkpointsDir);
-            reader.restore(entry.maxTimestamp, entry.checkpointId, DEFINITION_TXN, functions, null);
+            reader.restore(entry.maxTimestamp, entry.checkpointId, DEFINITION_TXN, functions, null, null);
             Assert.assertEquals(expectedPartitionState, partition.readState(11));
             Assert.assertArrayEquals(filled(64, expectedScalarByte), scalar.state);
         }
@@ -541,7 +542,8 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
                     seq,
                     seq * 1_000_000L,
                     Numbers.LONG_NULL,
-                    memoryTracker
+                    memoryTracker,
+                    null
             );
         }
     }

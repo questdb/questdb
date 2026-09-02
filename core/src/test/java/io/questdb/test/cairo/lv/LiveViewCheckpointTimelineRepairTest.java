@@ -1849,7 +1849,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                                     instance.getLifecycleIdentity(),
                                     true,
                                     ts(timestamp(50)),
-                                    0
+                                    0,
+                                    null
                             );
                             Assert.fail("expected a backward generation watermark rejection");
                         } catch (CairoException e) {
@@ -1907,6 +1908,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                                 0,
                                 Numbers.LONG_NULL,
                                 Numbers.LONG_NULL,
+                                null,
                                 null
                         );
                         Assert.fail("expected append definition identity mismatch");
@@ -1945,7 +1947,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                                     lifecycleIdentity,
                                     true,
                                     Long.MAX_VALUE,
-                                    0
+                                    0,
+                                    null
                             );
                             Assert.fail("expected repair definition identity mismatch");
                         } catch (CairoException e) {
@@ -3060,7 +3063,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 instance.getLifecycleIdentity(),
                 true,
                 highTsExclusive,
-                suffixRowDelta
+                suffixRowDelta,
+                instance.getPartitionKeyTranslators()
         );
     }
 
@@ -3135,7 +3139,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     checkpointId,
                     instance.getLiveViewToken().getTableId(),
                     functions,
-                    instance.getAnchorWindow()
+                    instance.getAnchorWindow(),
+                    instance.getPartitionKeyTranslators()
             );
         }
         return snapshotRuntime(functions);

@@ -10491,11 +10491,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // projector, and - through the compiled factory - the anchor window the refresh job
         // builds later. Null for an ordinary query, which keys a SYMBOL verbatim.
         //
-        // It binds no translator, so every term it admits still keys through its resolved
-        // string; what it records is which source columns would get a dictionary once one
-        // exists.
+        // The translator comes off the execution context, which only a live view's own
+        // refresh/repair compile arms (LiveViewRefreshJob.compileViewSelect). It has to be
+        // known here, at construction, because the classifier's translator field is final -
+        // every term it admits keys through the resolved string when the context carries none
+        // (CREATE-time validation and EXPLAIN compile on the caller's own plain context), and
+        // through the translator's id once one is bound.
         final LiveViewPartitionKeyClassifier lvPartitionKeyClassifier = executionContext.isLiveViewCompile()
-                ? new LiveViewPartitionKeyClassifier(null)
+                ? new LiveViewPartitionKeyClassifier(executionContext.getLivePartitionKeyTranslator())
                 : null;
         // One entry per SELECT-list index: the normalized window that index's function was
         // compiled under, or null for a non-window column and for a window shape the Map

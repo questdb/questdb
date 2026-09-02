@@ -55,7 +55,9 @@ import org.jetbrains.annotations.Nullable;
  *     <li><b>Resolved string.</b> A live view's SYMBOL term that no dictionary backs: the
  *     key type becomes STRING and the sink writes {@code getSymA}/{@code putStr}. A WAL
  *     segment's symbol ints are transaction-local, so the string is the only identity two
- *     refresh cycles agree on. This is every live-view SYMBOL term today.</li>
+ *     refresh cycles agree on. This is what a CREATE-time validation or EXPLAIN compile
+ *     keys through, and what a refresh/repair compile falls back to for a term stage 2
+ *     could not bind.</li>
  *     <li><b>LV-private id.</b> A translation candidate whose classifier has a translator
  *     bound: the key type stays SYMBOL and the sink writes the id
  *     {@link LiveViewSymbolIdTranslator#translate} returns for the raw one.</li>
@@ -220,6 +222,22 @@ public final class LiveViewPartitionKeyBinding {
     /**
      * The function-backed form, for a projector whose terms are compiled expressions rather
      * than columns of the record.
+     * <p>
+     * A translated term is not written by teaching {@code RecordSinkFactory}'s function-backed
+     * generator a translating mode - that generator dispatches purely on
+     * {@code keyFunctions.getQuick(i).getType()}, so it never needs one. Instead, the term at
+     * a translated position is wrapped in a {@link LiveViewTranslatingFunction}, which reports
+     * {@code ColumnType.INT} rather than SYMBOL and computes the translated id in its own
+     * {@code getInt}; the untouched generator routes that position to the plain
+     * {@code getInt}/{@code putInt} pair it already emits for any INT-typed key function. The
+     * wrapping happens on a throwaway copy of {@code keyFunctions} - the caller's own list, and
+     * the plain terms it still holds, are untouched and keep their existing owner.
+     * <p>
+     * Callers that need a sink which never translates - reader-local sinks must not, even when
+     * this binding would otherwise translate one of their terms - call
+     * {@code RecordSinkFactory.getInstance(configuration, asm, sourceTypes, columnFilter,
+     * keyFunctions, writeSymbolAsString)} directly instead of this method, exactly as the
+     * column-path's own reader-local sink already does.
      */
     public RecordSink compileKeySink(
             @NotNull CairoConfiguration configuration,
@@ -228,15 +246,31 @@ public final class LiveViewPartitionKeyBinding {
             @NotNull ColumnFilter columnFilter,
             @NotNull ObjList<Function> keyFunctions
     ) {
-        if (symbolIdSlotByColumn != null) {
-            // The translating generator reads its columns off the record, and a
-            // function-backed sink has none to read. Loud rather than silent: dropping the
-            // translation here would write the raw transaction-local id, which is in range
-            // for the dictionary and so passes every check downstream of it.
-            throw CairoException.critical(0)
-                    .put("live view cannot translate a function-backed partition key sink yet");
+        if (symbolIdSlotByColumn == null) {
+            return RecordSinkFactory.getInstance(configuration, asm, sourceTypes, columnFilter, keyFunctions, writeSymbolAsString);
         }
-        return RecordSinkFactory.getInstance(configuration, asm, sourceTypes, columnFilter, keyFunctions, writeSymbolAsString);
+        final LiveViewSymbolIdTranslator translator = classifier == null ? null : classifier.getTranslator();
+        if (translator == null) {
+            // Unreachable: a slot is recorded only while a translator is bound. An ordinary
+            // branch rather than an assert, because a sink built with a null translator
+            // would not fail here - it would fail per row, deep in a refresh.
+            throw CairoException.critical(0)
+                    .put("live view translated partition key has no translator bound");
+        }
+        final int n = keyFunctions.size();
+        final ObjList<Function> translatedFunctions = new ObjList<>(n);
+        for (int i = 0; i < n; i++) {
+            final int slot = i < symbolIdSlotByColumn.size()
+                    ? symbolIdSlotByColumn.getQuick(i)
+                    : LiveViewPartitionKeyClassifier.NOT_TRANSLATED;
+            final Function term = keyFunctions.getQuick(i);
+            translatedFunctions.add(
+                    slot == LiveViewPartitionKeyClassifier.NOT_TRANSLATED
+                            ? term
+                            : new LiveViewTranslatingFunction(term, slot, translator)
+            );
+        }
+        return RecordSinkFactory.getInstance(configuration, asm, sourceTypes, columnFilter, translatedFunctions, writeSymbolAsString);
     }
 
     public @NotNull ArrayColumnTypes getKeyColumnTypes() {

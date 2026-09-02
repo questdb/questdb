@@ -33,6 +33,7 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.lv.LiveViewSymbolIdTranslator;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -95,6 +96,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
     private int jitMode;
+    private LiveViewSymbolIdTranslator livePartitionKeyTranslator;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
     private long nowMicros;
@@ -286,6 +288,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public int getJitMode() {
         return jitMode;
+    }
+
+    @Override
+    public @Nullable LiveViewSymbolIdTranslator getLivePartitionKeyTranslator() {
+        return livePartitionKeyTranslator;
     }
 
     @Override
@@ -498,6 +505,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // but a reused per-connection context must never inherit a stale live-view flag.
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
+        // Same backstop as above, for the translator a live view compile arms alongside it.
+        this.livePartitionKeyTranslator = null;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;
@@ -552,6 +561,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setJitMode(int jitMode) {
         this.jitMode = jitMode;
+    }
+
+    @Override
+    public void setLivePartitionKeyTranslator(@Nullable LiveViewSymbolIdTranslator translator) {
+        this.livePartitionKeyTranslator = translator;
     }
 
     @Override

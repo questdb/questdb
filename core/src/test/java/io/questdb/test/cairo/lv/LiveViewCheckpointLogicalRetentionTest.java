@@ -31,6 +31,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
+import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
@@ -725,6 +726,14 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     // Truncates the newest logical root's first data segment by one byte, so the
     // reader rejects its state page on a length check - the cheapest structural
     // corruption a torn write can leave. Mirrors the seal test's corruption helper.
+    //
+    // A root's segmentIds list is the whole closure it names - state data segments beside
+    // the anchor, function-directory and key-dictionary metadata segments its own refs
+    // point at - sorted by id rather than grouped by kind, so getSegmentId(0) is only a data
+    // segment by accident of allocation order. createView's sym partition column now binds
+    // an LV-private dictionary, whose metadata segment can land ahead of the state data one
+    // in that ordering, so the scan below asks the directory each id's kind directly instead
+    // of assuming the lowest id is the state page.
     private void corruptNewestRootDataSegment(LiveViewInstance instance) {
         final long segmentId;
         final long fileLength;
@@ -740,8 +749,19 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             final LiveViewCheckpointTimelineEntry newest = new LiveViewCheckpointTimelineEntry();
             Assert.assertTrue("the timeline must hold a newest root", timeline.last(pin.getTimelineRootRef(), newest));
             root.of(checkpointsDir, newest.rootRef);
-            segmentId = root.getSegmentId(0);
             directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+            final LiveViewCheckpointSegmentDirectoryEntry entry = new LiveViewCheckpointSegmentDirectoryEntry();
+            long dataSegmentId = -1;
+            for (int i = 0, n = root.getSegmentIdCount(); i < n; i++) {
+                final long candidate = root.getSegmentId(i);
+                Assert.assertTrue("the root's segment closure must resolve in the directory", directory.find(candidate, entry));
+                if (!entry.isMetadata()) {
+                    dataSegmentId = candidate;
+                    break;
+                }
+            }
+            Assert.assertTrue("the newest root must reference a state data segment", dataSegmentId >= 0);
+            segmentId = dataSegmentId;
             fileLength = directory.getFileLength(segmentId);
         }
         try (Path checkpointsDir = checkpointsDir(instance); Path dataPath = new Path()) {

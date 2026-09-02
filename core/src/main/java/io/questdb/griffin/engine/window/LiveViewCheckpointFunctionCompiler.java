@@ -1133,7 +1133,30 @@ public final class LiveViewCheckpointFunctionCompiler {
                 // space is the key's own ordinals.
                 keyBinding.addClassifiedTerm(i, function, baseMetadata);
             }
-            final RecordSink keySink = keyBinding.compileKeySink(
+            // Reader-local: always the raw, unwrapped function list, bypassing the binding's
+            // own translation decision entirely - exactly as the column path's own reader-local
+            // keySink (:681 above) bypasses it. LiveViewCheckpointRowsBounds.createKey/findKey
+            // read this sink unconditionally against arbitrary base rows during a ROWS-bound
+            // repair, with no gate on key shape, so it must stay the reader's own table-local
+            // identity even when a term here would otherwise translate.
+            final RecordSink keySink = RecordSinkFactory.getInstance(
+                    configuration,
+                    asm,
+                    baseMetadata,
+                    new ListColumnFilter(),
+                    keyFunctions,
+                    keyBinding.getWriteSymbolAsString()
+            );
+            // The checkpoint sink writes the key a window function's partition map already
+            // holds instead. When no term here translates - still the common case, an
+            // expression-keyed view with no direct SYMBOL candidate or no translator bound -
+            // that key is the same resolved-string form the reader-local sink already
+            // produces, so one sink object serves both. A translated term needs a genuinely
+            // separate sink, not the same object under a different accessor: see the class
+            // comment on LiveViewTranslatingFunction for why sharing one here would be wrong.
+            final RecordSink checkpointKeySink = keyBinding.getSymbolIdSlotByColumn() == null
+                    ? keySink
+                    : keyBinding.compileKeySink(
                     configuration,
                     asm,
                     baseMetadata,
@@ -1145,11 +1168,11 @@ public final class LiveViewCheckpointFunctionCompiler {
                     keyFunctions,
                     keyColumnTypes,
                     keySink,
-                    // The expression projector already resolves a SYMBOL key function
-                    // through its string, which is what a window function's own map
-                    // holds, so the checkpoint form is the same projector.
+                    // The expression projector's checkpoint form shares the window map's own
+                    // key types even when it needs its own sink: a translated term is SYMBOL
+                    // in both domains, only the meaning of the 4-byte int differs.
                     keyColumnTypes,
-                    keySink,
+                    checkpointKeySink,
                     partitionSignature,
                     baseMetadata
             );

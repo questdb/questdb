@@ -42,6 +42,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -2560,10 +2561,12 @@ public class LiveViewWindow implements QuietCloseable {
      * The key rather than the argument, because this walk has no base row to evaluate the
      * argument against. The two agree by construction: the compiler admits the guarded
      * form only for a SYMBOL or VARCHAR argument, whose {@code count} contributes on a
-     * plain null test, and a SYMBOL partition column reaches the map as its resolved
-     * STRING - null for the null symbol. That agreement is what the type check below
-     * holds the two sides to; anything else means they have drifted apart, and reading
-     * some other type's null sentinel would silently answer for a different set of rows.
+     * plain null test, and a SYMBOL partition column reaches the map as either its
+     * resolved STRING (no translator bound) or its LV-private id (one bound) - null for
+     * the null symbol either way, {@link SymbolTable#VALUE_IS_NULL} in the translated
+     * case. That agreement is what the type check below holds the two sides to; anything
+     * else means they have drifted apart, and reading some other type's null sentinel
+     * would silently answer for a different set of rows.
      */
     private boolean isPartitionKeyPresent(@NotNull MapRecord record) {
         return isPartitionKeyPresent(record, activeKeyStartIndex);
@@ -2580,6 +2583,8 @@ public class LiveViewWindow implements QuietCloseable {
                 return record.getStrA(keyIndex) != null;
             case ColumnType.VARCHAR:
                 return record.getVarcharA(keyIndex) != null;
+            case ColumnType.SYMBOL:
+                return record.getInt(keyIndex) != SymbolTable.VALUE_IS_NULL;
             default:
                 throw CairoException.critical(0)
                         .put("live view window state cannot test a partition key of this type [type=")

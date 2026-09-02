@@ -63,6 +63,15 @@ import java.io.IOException;
  * The cost is also pinned as being paid <b>once</b>. The second restart restores off what
  * this branch sealed, so an upgraded instance does not recompute on every start.
  * <p>
+ * This fixture's view partitions by {@code account_id}, a SYMBOL column, which this branch
+ * keys as a translated LV-private id rather than the resolved STRING the released build
+ * sealed. That schema mismatch is checked ahead of the function directory on every restore,
+ * so it forces the same rebuild the state-format bump alone would have - and pre-empts the
+ * bump's own log line in the process, since every root in the released ladder shares the
+ * one legacy STRING schema. The rebuilds-from-the-base case below documents that ordering
+ * rather than the bump in isolation; the once-paid-then-restores case still exercises the
+ * bump on its own once this branch has resealed the ladder with its own schema.
+ * <p>
  * To regenerate the fixture, copy {@code /lv/LiveViewReleaseExtremaFixtureGenerator.java.txt}
  * into a clean {@code 10.0.1} checkout's {@code io.questdb.test.cairo.lv} package and run it;
  * the constants below are the values it prints.
@@ -143,7 +152,7 @@ public class LiveViewCheckpointReleaseExtremaCompatTest extends AbstractLiveView
     }
 
     @Test
-    public void testABumpedFunctionStateVersionRebuildsFromTheBaseRatherThanMisreading() throws Exception {
+    public void testAReleasedCheckpointWithASymbolKeyRebuildsFromTheBaseBeforeTheFunctionBumpIsEverChecked() throws Exception {
         assertMemoryLeak(() -> {
             openFixture();
 
@@ -174,20 +183,25 @@ public class LiveViewCheckpointReleaseExtremaCompatTest extends AbstractLiveView
                 driveRefreshToQuiescence(job);
             }
 
-            // The gate that fired, named. The directory lookup turned the released roots away
-            // because the compiled identity now carries /v2, and the message says which
-            // function asked and under which codec - the whole point of naming it, since this
-            // log line is the only place the retirement is ever mentioned.
+            // This fixture partitions by account_id, a SYMBOL column, and the released build
+            // sealed that key as a resolved STRING - this branch's compiled runtime keys it as
+            // a translated SYMBOL instead. validateState runs before validateFunctions inside
+            // the restore, so the schema check refuses the newest root - and every older one
+            // behind it, since a released build wrote every root in the ladder with the same
+            // STRING key - before the walk ever reaches the function directory the state-format
+            // bump (v1 -> v2 for max/min) would otherwise turn away on its own. The bump is still
+            // real and would force the same rebuild on its own merits, but this fixture cannot
+            // isolate that anymore: the schema mismatch pre-empts it, so the "root is missing a
+            // compiled function" line this case used to name never gets a chance to log.
             capture.drain();
             capture.assertLogged("could not restore live view from checkpoint timeline, rebuilding derived state");
-            capture.assertLogged(
-                    "root is missing a compiled function [function=max, codec=live-view-state-page/max(D)/v2]"
-            );
+            capture.assertLogged("anchor key schema does not match the compiled runtime");
+            capture.assertNotLogged("root is missing a compiled function");
             capture.assertLogged("live view restart rebuilding from applied base");
 
             final LiveViewInstance instance = instance(VIEW_NAME);
             Assert.assertFalse(
-                    VIEW_NAME + ": a bumped state version must not invalidate the view",
+                    VIEW_NAME + ": a schema-mismatched checkpoint must not invalidate the view",
                     instance.isInvalid()
             );
             Assert.assertTrue(
@@ -203,13 +217,13 @@ public class LiveViewCheckpointReleaseExtremaCompatTest extends AbstractLiveView
             assertNoRefreshFaults(VIEW_NAME);
             Assert.assertTrue(
                     VIEW_NAME + ": the released ladder must be retired rather than carried forward, "
-                            + "which is what a bump costs",
+                            + "which is what the schema mismatch costs",
                     countSealedBoundaries(VIEW_NAME) < RELEASED_BOUNDARIES
             );
 
             // And the rows are right anyway, which is exactly why this is worth a test: a
             // from-base replay lands on the same numbers a restore would have.
-            assertViewMatchesRecompute("after the rebuild the bump forced");
+            assertViewMatchesRecompute("after the rebuild the schema mismatch forced");
         });
     }
 

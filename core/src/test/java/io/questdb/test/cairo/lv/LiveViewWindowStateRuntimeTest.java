@@ -236,7 +236,12 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 Assert.assertTrue(window.bindCheckpointWindowStatePlan(plan));
                 final byte[] before = snapshotWindow(window);
                 restoreHead();
-                Assert.assertArrayEquals(
+                // The dump's entries come off an UnorderedMap cursor, whose order tracks
+                // insertion history rather than the key set alone - the hoist above and the
+                // restore just run replay the same two keys in different sequences, so a
+                // byte-exact comparison would fail on entry order even though every key's
+                // state agrees. See LiveViewWindowSnapshotAssert.
+                LiveViewWindowSnapshotAssert.assertEquals(
                         "the legacy head must restore into the fused value",
                         before,
                         snapshotWindow(window)
@@ -252,7 +257,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 insertAccount(job, DAILY_ANCHOR + "09:00:30.000000Z", "acct-1", 2.0);
                 final byte[] converted = snapshotWindow(window);
                 restoreHead();
-                Assert.assertArrayEquals(
+                LiveViewWindowSnapshotAssert.assertEquals(
                         "the converted head must restore independently",
                         converted,
                         snapshotWindow(window)
@@ -1087,7 +1092,10 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
             while (cursor.hasNext()) {
                 component.freezeStateInto(record.getValue(), 0, image, 0);
                 final StringBuilder line = new StringBuilder();
-                line.append(i).append('|').append(record.getStrA(keyIndex)).append('|');
+                // account_id is a direct SYMBOL partition column, which now keys the map
+                // as an int (a resolved-string id or an LV-private one) rather than a
+                // STRING - read accordingly, for comparison purposes only.
+                line.append(i).append('|').append(record.getInt(keyIndex)).append('|');
                 for (int b = 0; b < image.length; b++) {
                     line.append(String.format("%02x", image[b]));
                 }
@@ -1673,7 +1681,8 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
             reader.restoreLatest(
                     instance.getLiveViewToken().getTableId(),
                     unwrapWindowFunctions(instance),
-                    instance.getAnchorWindow()
+                    instance.getAnchorWindow(),
+                    null
             );
         }
     }

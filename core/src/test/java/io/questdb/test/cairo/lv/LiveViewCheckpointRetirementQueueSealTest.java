@@ -394,6 +394,7 @@ public class LiveViewCheckpointRetirementQueueSealTest extends AbstractCairoTest
                     seq,
                     seq * 1_000_000L,
                     Numbers.LONG_NULL,
+                    null,
                     null
             ).getGeneration();
         }

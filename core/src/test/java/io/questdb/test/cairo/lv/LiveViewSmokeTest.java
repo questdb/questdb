@@ -1797,6 +1797,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // guard themselves with the Windows Assume that
     // testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift explains: this helper asserts the
     // dictionary is gone, and on Windows the best-effort delete can no-op.
+    //
+    // The window partitions by sym::string, not the bare column: a direct SYMBOL partition term
+    // now keys its checkpoint through LiveViewSymbolIdRegistry, whose bound slot requires a
+    // reader pinned to a known base metadata version to stay interpretable. Partitioning by the
+    // resolved string instead keeps sym a plain referenced column - still the one this helper
+    // strands the WAL dictionary of, since it is still read and still needs resolving - without
+    // pulling the compiled factory's base reader onto that version-pinned path, which would let
+    // the capacity ALTER's metadata bump surface as a plain drift the ordinary drain recovers
+    // from directly, before the drain ever reaches the stranded dictionary this fixture exists
+    // to fault on. The cast changes no row this helper's callers observe: string equality groups
+    // the same rows sym's own equality would.
     private LiveViewInstance strandLaggingWalSymbolDictionary(AtomicBoolean failWalSymbolRelink) throws SqlException {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("""
@@ -1806,7 +1817,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         drainWalQueue();
         execute("""
                 CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
-                SELECT ts, x, sym, count(*) OVER (PARTITION BY sym ORDER BY ts
+                SELECT ts, x, sym, count(*) OVER (PARTITION BY sym::string ORDER BY ts
                                                   ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn
                 FROM base""");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -17191,15 +17202,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                     // Sanity-check the documented payload prefix:
                     //   STR windowName (INT len + len * CHAR), INT keyCount=1,
-                    //   INT keyType=STRING, INT anchorValueType=TIMESTAMP,
+                    //   INT keyType=SYMBOL, INT anchorValueType=TIMESTAMP,
                     //   INT componentStateBytes, LONG partitionCount=2.
                     // componentStateBytes is what the fused group's accumulators add per
                     // entry, and 8 here: the view's one sum(x) is a (sum, nonNullCount)
                     // component the window owns.
-                    // The persisted key column type is STRING (not SYMBOL):
-                    // LiveViewWindow.build rewrites SYMBOL partition columns as
-                    // STRING in the anchor map's key types so cross-WAL-segment
-                    // SYMBOL collisions can't corrupt the partition state.
+                    // The persisted key column type is SYMBOL, not STRING: a direct SYMBOL
+                    // partition term routes through this view's own LiveViewSymbolIdRegistry,
+                    // which assigns each base symbol a stable LV-private int id, so a raw
+                    // int key can no longer collide across WAL segments the way a raw
+                    // per-segment symbol id would.
                     long off = payloadStart;
                     final int nameLen = sink.getInt(off);
                     off += Integer.BYTES;
@@ -17208,7 +17220,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     off += (long) nameLen * Character.BYTES;
                     Assert.assertEquals("single key column", 1, sink.getInt(off));
                     off += Integer.BYTES;
-                    Assert.assertEquals("key column is STRING (SYMBOL columns route through resolved STRING)", ColumnType.STRING, sink.getInt(off));
+                    Assert.assertEquals("key column is SYMBOL (LV-private translated id)", ColumnType.SYMBOL, sink.getInt(off));
                     off += Integer.BYTES;
                     Assert.assertEquals("anchor value type is TIMESTAMP", ColumnType.TIMESTAMP, sink.getInt(off));
                     off += Integer.BYTES;

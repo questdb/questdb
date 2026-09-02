@@ -67,6 +67,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             new LiveViewCheckpointDataSegmentReader[DATA_READER_CACHE_SIZE];
     private final long[] dataSegmentIds = new long[DATA_READER_CACHE_SIZE];
     private final LiveViewCheckpointRowPositionDeltaReader deltaReader;
+    private final LiveViewCheckpointKeyDictionaryReader dictionaryReader;
+    private final LiveViewCheckpointPageRef dictionaryRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointFunctionDirectory functionDirectory;
     private final LiveViewCheckpointFunctionRoot functionRoot;
     private final RestoreAnchorVisitor restoreAnchorVisitor = new RestoreAnchorVisitor();
@@ -107,6 +109,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         this.configuration = configuration;
         anchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
         deltaReader = new LiveViewCheckpointRowPositionDeltaReader(configuration);
+        dictionaryReader = new LiveViewCheckpointKeyDictionaryReader(configuration);
         functionDirectory = new LiveViewCheckpointFunctionDirectory(configuration);
         functionRoot = new LiveViewCheckpointFunctionRoot(configuration);
         keyMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
@@ -129,6 +132,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             dataSegmentIds[i] = -1;
         }
         Misc.free(deltaReader);
+        Misc.free(dictionaryReader);
         Misc.free(functionDirectory);
         Misc.free(functionRoot);
         Misc.free(keyMemory);
@@ -165,6 +169,7 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         dataReaderClock = 0;
         anchorRoot.detach();
         deltaReader.detach();
+        dictionaryReader.detach();
         functionDirectory.detach();
         functionRoot.detach();
         metaStore.detach();
@@ -227,9 +232,10 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             long checkpointId,
             long expectedDefinitionTxn,
             @NotNull ObjList<WindowFunction> functions,
-            @Nullable LiveViewWindow anchorWindow
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable LiveViewSymbolIdRegistry partitionKeyRegistry
     ) {
-        return restore(maxTimestamp, checkpointId, expectedDefinitionTxn, functions, anchorWindow, false);
+        return restore(maxTimestamp, checkpointId, expectedDefinitionTxn, functions, anchorWindow, false, partitionKeyRegistry);
     }
 
     /**
@@ -256,7 +262,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             long expectedDefinitionTxn,
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
-            boolean asRepairBaseline
+            boolean asRepairBaseline,
+            @Nullable LiveViewSymbolIdRegistry partitionKeyRegistry
     ) {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
@@ -268,7 +275,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                     functions,
                     anchorWindow,
                     Numbers.LONG_NULL,
-                    asRepairBaseline
+                    asRepairBaseline,
+                    partitionKeyRegistry
             );
         }
     }
@@ -386,7 +394,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
     public Result restoreLatest(
             long expectedDefinitionTxn,
             @NotNull ObjList<WindowFunction> functions,
-            @Nullable LiveViewWindow anchorWindow
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable LiveViewSymbolIdRegistry partitionKeyRegistry
     ) {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
@@ -407,7 +416,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                     functions,
                     anchorWindow,
                     Numbers.LONG_NULL,
-                    false
+                    false,
+                    partitionKeyRegistry
             );
         }
     }
@@ -441,7 +451,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             long durableLvRowCount,
             long expectedDefinitionTxn,
             @NotNull ObjList<WindowFunction> functions,
-            @Nullable LiveViewWindow anchorWindow
+            @Nullable LiveViewWindow anchorWindow,
+            @Nullable LiveViewSymbolIdRegistry partitionKeyRegistry
     ) {
         ensureOpen();
         try (LiveViewCheckpointGenerationPin pin = metaStore.pin()) {
@@ -503,7 +514,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
                                 functions,
                                 anchorWindow,
                                 corruptCeilingMaxTs,
-                                false
+                                false,
+                                partitionKeyRegistry
                         );
                     } catch (CairoException e) {
                         if (e.getErrno() != CairoException.LV_CHECKPOINT_TIMELINE_INVALID) {
@@ -675,7 +687,8 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
             @NotNull ObjList<WindowFunction> functions,
             @Nullable LiveViewWindow anchorWindow,
             long corruptCeilingMaxTs,
-            boolean asRepairBaseline
+            boolean asRepairBaseline,
+            @Nullable LiveViewSymbolIdRegistry partitionKeyRegistry
     ) {
         final LiveViewCheckpointTimelineEntry entry = new LiveViewCheckpointTimelineEntry();
         if (!timelineReader.findExact(pin.getTimelineRootRef(), maxTimestamp, checkpointId, entry)) {
@@ -718,6 +731,19 @@ public class LiveViewCheckpointTimelineStoreReader implements Closeable {
         root.getFunctionDirectoryRef(functionDirectoryRef);
         functionDirectory.of(checkpointsDir, functionDirectoryRef);
         segmentDirectory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+
+        // Loads the dictionary before any partition map beneath this root, so a SYMBOL-typed
+        // key the walk below reads is already interpretable through the registry that
+        // assigned it - restoreDictionary replaces each bound slot's dictionary wholesale
+        // rather than merging, which is what makes an id from an abandoned rollback-fork
+        // root read as unresolved instead of as whatever the current numbering reuses it for.
+        if (partitionKeyRegistry != null) {
+            root.getKeyDictionaryRef(dictionaryRef);
+            if (!dictionaryRef.isNull()) {
+                dictionaryReader.of(checkpointsDir, dictionaryRef);
+                partitionKeyRegistry.restoreDictionary(dictionaryReader);
+            }
+        }
 
         validateState(anchorWindow);
         validateFunctions(functions, anchorWindow);

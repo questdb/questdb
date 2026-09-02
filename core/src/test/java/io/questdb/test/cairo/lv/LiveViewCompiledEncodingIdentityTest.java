@@ -469,8 +469,8 @@ public class LiveViewCompiledEncodingIdentityTest extends AbstractLiveViewTest {
         final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
         try (Path dir = checkpointsDir(instance); LiveViewCheckpointTimelineStoreReader reader = new LiveViewCheckpointTimelineStoreReader(configuration)) {
             reader.of(dir);
-            reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, instance.getAnchorWindow());
-            reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, instance.getAnchorWindow());
+            reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, instance.getAnchorWindow(), instance.getPartitionKeyTranslators());
+            reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, instance.getAnchorWindow(), instance.getPartitionKeyTranslators());
         }
     }
 

@@ -36,8 +36,10 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.lv.LiveViewPartitionKeyBinding;
 import io.questdb.cairo.lv.LiveViewPartitionKeyClassifier;
 import io.questdb.cairo.lv.LiveViewSymbolIdTranslator;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecordCursor;
+import io.questdb.cairo.map.OrderedMap;
 import io.questdb.cairo.map.Unordered4Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -47,6 +49,7 @@ import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.constants.SymbolConstant;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -123,30 +126,99 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFunctionBackedTranslationIsRefused() {
-        // The expression projector's sink reads compiled functions rather than the record's
-        // columns, and the translating generator has no such mode yet. Refusing is what
-        // keeps it from quietly writing the raw transaction-local id instead.
-        final GenericRecordMetadata metadata = metadata();
-        final LiveViewPartitionKeyClassifier classifier =
-                new LiveViewPartitionKeyClassifier(new OffsetTranslator());
-        final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
-        final ObjList<Function> keyFunctions = new ObjList<>();
-        keyFunctions.add(new SymbolColumn(0, true));
-        keyBinding.addClassifiedTerm(0, keyFunctions.getQuick(0), metadata);
+    public void testFunctionBackedMixedKeyTranslatesOnlyTheDirectTerm() throws Exception {
+        // PARTITION BY sym1, lower(sym2), reached through the function-backed sink: the
+        // direct term wraps and translates, the expression beside it keeps reading its own
+        // resolved string, and neither position disturbs the other - unlike the
+        // record-column generator, this one dispatches per column off each function's own
+        // type, so a translated term and a resolved-string term coexist in one key without
+        // needing a mixed-write guard.
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = metadata();
+            final LiveViewPartitionKeyClassifier classifier =
+                    new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+            final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
+            final ObjList<Function> keyFunctions = new ObjList<>();
+            keyFunctions.add(new SymbolColumn(0, true));
+            keyFunctions.add(new StrColumn(2));
+            keyBinding.addClassifiedTerm(0, keyFunctions.getQuick(0), metadata);
+            keyBinding.addClassifiedTerm(1, keyFunctions.getQuick(1), metadata);
+            assertKeyTypes(keyBinding, ColumnType.SYMBOL, ColumnType.STRING);
+            Assert.assertEquals(0, keyBinding.getSymbolIdSlotByColumn().getQuick(0));
 
-        try {
-            keyBinding.compileKeySink(
+            final RecordSink sink = keyBinding.compileKeySink(
                     configuration,
                     new BytecodeAssembler(),
                     metadata,
                     new ListColumnFilter(),
                     keyFunctions
             );
-            Assert.fail("expected a refusal");
-        } catch (CairoException e) {
-            Assert.assertTrue(e.getFlyweightMessage().toString(), e.getMessage().contains("function-backed partition key sink"));
-        }
+
+            final TestRecord record = new TestRecord();
+            record.ints[0] = 3;
+            record.strs[2] = "eu";
+            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.SYMBOL);
+            keyTypes.add(ColumnType.STRING);
+            try (OrderedMap map = new OrderedMap(64 * 1024, keyTypes, new SingleColumnType(ColumnType.LONG), 16, 0.7, Integer.MAX_VALUE)) {
+                put(map, record, sink);
+                Assert.assertEquals(1, map.size());
+                try (MapRecordCursor cursor = map.getCursor()) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final Record mapRecord = cursor.getRecord();
+                    // key columns follow the single LONG value column.
+                    // OffsetTranslator: translate(0, 3) = 1000 * (0 + 1) + 3.
+                    Assert.assertEquals(1003, mapRecord.getInt(1));
+                    Assert.assertEquals("eu", mapRecord.getStrA(2).toString());
+                }
+            }
+            Misc.freeObjList(keyFunctions);
+        });
+    }
+
+    @Test
+    public void testFunctionBackedSinkTranslatesADirectSymbolTerm() throws Exception {
+        // A translated term is not a new RecordSinkFactory mode: LiveViewTranslatingFunction
+        // reports INT rather than SYMBOL, and the untouched function-backed generator routes
+        // it to the same getInt/putInt pair it already emits for any INT-typed key function.
+        assertMemoryLeak(() -> {
+            final GenericRecordMetadata metadata = metadata();
+            final LiveViewPartitionKeyClassifier classifier =
+                    new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+            final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
+            final ObjList<Function> keyFunctions = new ObjList<>();
+            keyFunctions.add(new SymbolColumn(0, true));
+            keyBinding.addClassifiedTerm(0, keyFunctions.getQuick(0), metadata);
+            Assert.assertEquals(0, keyBinding.getSymbolIdSlotByColumn().getQuick(0));
+
+            final RecordSink sink = keyBinding.compileKeySink(
+                    configuration,
+                    new BytecodeAssembler(),
+                    metadata,
+                    new ListColumnFilter(),
+                    keyFunctions
+            );
+
+            final TestRecord record = new TestRecord();
+            try (Unordered4Map map = new Unordered4Map(
+                    ColumnType.SYMBOL,
+                    new SingleColumnType(ColumnType.LONG),
+                    16,
+                    0.7,
+                    Integer.MAX_VALUE
+            )) {
+                record.ints[0] = 3;
+                put(map, record, sink);
+                Assert.assertEquals(1, map.size());
+                try (MapRecordCursor cursor = map.getCursor()) {
+                    Assert.assertTrue(cursor.hasNext());
+                    // Key columns follow the single LONG value column.
+                    // OffsetTranslator: translate(0, 3) = 1000 * (0 + 1) + 3.
+                    Assert.assertEquals(1003, cursor.getRecord().getInt(1));
+                }
+            }
+            Misc.freeObjList(keyFunctions);
+        });
     }
 
     @Test
@@ -364,7 +436,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         return metadata;
     }
 
-    private static void put(Unordered4Map map, Record record, RecordSink sink) {
+    private static void put(Map map, Record record, RecordSink sink) {
         final MapKey key = map.withKey();
         key.put(record, sink);
         key.createValue();
@@ -389,10 +461,26 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
 
     private static class TestRecord implements Record {
         final int[] ints = new int[8];
+        final String[] strs = new String[8];
 
         @Override
         public int getInt(int col) {
             return ints[col];
+        }
+
+        @Override
+        public CharSequence getStrA(int col) {
+            return strs[col];
+        }
+
+        @Override
+        public CharSequence getStrB(int col) {
+            return strs[col];
+        }
+
+        @Override
+        public int getStrLen(int col) {
+            return strs[col] == null ? -1 : strs[col].length();
         }
     }
 }

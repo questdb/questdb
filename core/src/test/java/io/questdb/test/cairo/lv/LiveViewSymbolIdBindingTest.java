@@ -46,10 +46,12 @@ import org.junit.Test;
  * view: an id from another column's dictionary is in range for the one it lands in, so nothing
  * downstream rejects it.
  * <p>
- * No view translates yet. Every key here is still the resolved string it has always been, which
- * is why each test also asserts the view's own output: the binding must be recorded without
- * changing a single key. {@link LiveViewSymbolIdRegistryTest} covers what the recorded binding
- * will mean once a translator is bound to it.
+ * Every view here now translates: a direct SYMBOL partition term keys as this view's own
+ * LV-private id, both in the runtime maps and in the checkpoint domain, which is why each test
+ * also asserts the view's own output - the SELECT-list values a translated key resolves back
+ * through are what proves the binding changed a representation and not a result.
+ * {@link LiveViewSymbolIdRegistryTest} covers the translator contract these bindings read
+ * through, on its own.
  */
 public class LiveViewSymbolIdBindingTest extends AbstractLiveViewTest {
 
@@ -105,9 +107,8 @@ public class LiveViewSymbolIdBindingTest extends AbstractLiveViewTest {
             // The WAL drain armed it for every transaction it read, and left it unarmed after
             // releasing the segment.
             Assert.assertTrue("the WAL drain must arm the dictionaries it could key through", registry.getArmCount() > 0);
-            // Nothing has translated a row, so no id has been handed out and the dictionary is
-            // still empty - the keys are strings, exactly as before.
-            Assert.assertEquals(0, registry.getTotalDictionarySize());
+            // Both rows carry the same string, so translating them interns it exactly once.
+            Assert.assertEquals(1, registry.getTotalDictionarySize());
 
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").timestamp("ts").expectSize().returns(
                     """
@@ -198,10 +199,18 @@ public class LiveViewSymbolIdBindingTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
             }
 
-            Assert.assertNull(
-                    "an expression-keyed view must not build a dictionary it can never bind",
-                    viewInstance().getPartitionKeyTranslators()
+            // A live view's compile always ensures a registry exists - LiveViewRefreshJob
+            // .compileViewSelect needs one to hand its classifier a translator before it
+            // knows whether this compile has anything to bind - but an expression-keyed
+            // view's registry stays empty: stage 1 admits nothing, so stage 2 binds nothing.
+            final LiveViewSymbolIdRegistry registry = viewInstance().getPartitionKeyTranslators();
+            Assert.assertNotNull(registry);
+            Assert.assertEquals(
+                    "an expression-keyed view must not bind a dictionary it can never trace a source for",
+                    0,
+                    registry.getBoundSlotCount()
             );
+            Assert.assertEquals(0, registry.getTotalDictionarySize());
             assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").timestamp("ts").expectSize().returns(
                     """
                             ts\tsym\ts

@@ -392,7 +392,7 @@ public class LiveViewCheckpointInlineStateTest extends AbstractCairoTest {
             final ObjList<WindowFunction> functions = new ObjList<>();
             functions.add(stub);
             try {
-                reader.restoreLatest(DEFINITION_TXN, functions, null);
+                reader.restoreLatest(DEFINITION_TXN, functions, null, null);
                 Assert.fail("expected the entry shape to be rejected");
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "function partition entry shape invalid");
@@ -420,7 +420,7 @@ public class LiveViewCheckpointInlineStateTest extends AbstractCairoTest {
             reader.of(checkpointsDir(dir));
             final ObjList<WindowFunction> functions = new ObjList<>();
             functions.add(restored);
-            reader.restoreLatest(DEFINITION_TXN, functions, null);
+            reader.restoreLatest(DEFINITION_TXN, functions, null, null);
             for (int i = 0; i < keysAndStates.length; i += 2) {
                 Assert.assertEquals(
                         "key " + keysAndStates[i],
@@ -473,6 +473,7 @@ public class LiveViewCheckpointInlineStateTest extends AbstractCairoTest {
                     // seal compare a key against the entry the root below holds.
                     seq * 1_000_000L,
                     Numbers.LONG_NULL,
+                    null,
                     null
             );
         }

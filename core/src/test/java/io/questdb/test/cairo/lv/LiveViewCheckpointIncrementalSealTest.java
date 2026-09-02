@@ -2771,7 +2771,8 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                         checkpointId,
                         instance.getLiveViewToken().getTableId(),
                         windowFunctions(instance),
-                        instance.getAnchorWindow()
+                        instance.getAnchorWindow(),
+                        instance.getPartitionKeyTranslators()
                 ).generation;
             } finally {
                 reader.detach();

@@ -194,10 +194,10 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
      * @param baseKeyColumnIndex the key column's index in the base scan's metadata
      * @param baseSymbols        the base reader's symbol map for that column
      * @param checkpointKeyTypes the key shape a checkpoint partition map keys by: a single
-     *                           STRING column for every view today, or - once a term
-     *                           translates - a single SYMBOL one, which additionally
-     *                           requires {@code symbolIdRegistry} to have that view's
-     *                           dictionary bound at {@code symbolIdSlot}
+     *                           STRING column when no term translates, or - once one does -
+     *                           a single SYMBOL one, which additionally requires
+     *                           {@code symbolIdRegistry} to have that view's dictionary bound
+     *                           at {@code symbolIdSlot}
      * @param symbolIdRegistry   the view's LV-private symbol-id registry, or null while
      *                           nothing translates. Read only when {@code checkpointKeyTypes}
      *                           says SYMBOL; a repair over a STRING checkpoint key needs no
@@ -230,7 +230,7 @@ public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCurs
         final boolean translatedDomain;
         switch (ColumnType.tagOf(checkpointKeyTypes.getColumnType(0))) {
             case ColumnType.STRING:
-                // Every view today: a single SYMBOL partition column resolved to its
+                // No term translates: a single SYMBOL partition column resolved to its
                 // string. No dictionary is needed - the checkpoint key already is the
                 // logical value this repair's own keys carry.
                 translatedDomain = false;

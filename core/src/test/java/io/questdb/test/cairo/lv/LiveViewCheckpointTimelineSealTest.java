@@ -128,9 +128,14 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
 
     @Test
     public void testCrashAfterMetadataPublicationDoesNotExposeGenerationAndRetrySkipsOrphans() throws Exception {
+        // 6, not 5: createView partitions by sym, a SYMBOL column, so both the crashed attempt
+        // and its retry each write a key-dictionary directory page into its own metadata segment
+        // before the data segment. Segment ids are monotonic across both kinds, so the crashed
+        // attempt's dictionary segment consumes an id ahead of the retry's data segment, pushing
+        // the final data segment id one past what a view with no translated key would land on.
         assertCrashBeforeSuperblockPublish(
                 LiveViewCheckpointTimelineStoreWriter.TEST_FAIL_AFTER_METADATA_PUBLISH,
-                5
+                6
         );
     }
 
@@ -442,8 +447,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                                 new LiveViewCheckpointTimelineStoreReader(configuration)
                 ) {
                     reader.of(checkpointsDir);
-                    reader.restore(earlyMaxTs, 2, instance.getLiveViewToken().getTableId(), functions, null);
-                    reader.restore(newestMaxTs, DENSE_COMMITS - 1, instance.getLiveViewToken().getTableId(), functions, null);
+                    reader.restore(earlyMaxTs, 2, instance.getLiveViewToken().getTableId(), functions, null, null);
+                    reader.restore(newestMaxTs, DENSE_COMMITS - 1, instance.getLiveViewToken().getTableId(), functions, null, null);
                     assertRuntimeSnapshot(newestState, functions, null);
                 }
                 assertNoRefreshFaults("lv");
@@ -501,7 +506,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         firstGeneration = reader.restoreLatest(
                                 first.getLiveViewToken().getTableId(),
                                 firstFunctions,
-                                first.getAnchorWindow()
+                                first.getAnchorWindow(),
+                                null
                         ).generation;
                         assertRuntimeSnapshot(firstState, firstFunctions, first.getAnchorWindow());
                         // A bind that meets a reader still attached is a caller that
@@ -522,7 +528,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                         secondGeneration = reader.restoreLatest(
                                 second.getLiveViewToken().getTableId(),
                                 secondFunctions,
-                                second.getAnchorWindow()
+                                second.getAnchorWindow(),
+                                null
                         ).generation;
                         assertRuntimeSnapshot(secondState, secondFunctions, second.getAnchorWindow());
                         reader.detach();
@@ -542,7 +549,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                                 reader.restoreLatest(
                                         first.getLiveViewToken().getTableId(),
                                         firstFunctions,
-                                        first.getAnchorWindow()
+                                        first.getAnchorWindow(),
+                                        null
                                 ).generation
                         );
                         assertRuntimeSnapshot(firstState, firstFunctions, first.getAnchorWindow());
@@ -582,7 +590,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             0,
                             instance.getLiveViewToken().getTableId(),
                             functions,
-                            instance.getAnchorWindow()
+                            instance.getAnchorWindow(),
+                            null
                     );
                     Assert.assertEquals(4, oldest.generation);
                     Assert.assertEquals(1, oldest.effectiveLvRowPosition);
@@ -593,7 +602,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             3,
                             instance.getLiveViewToken().getTableId(),
                             functions,
-                            instance.getAnchorWindow()
+                            instance.getAnchorWindow(),
+                            null
                     );
                     Assert.assertEquals(4, newest.generation);
                     Assert.assertEquals(4, newest.effectiveLvRowPosition);
@@ -629,7 +639,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     final LiveViewCheckpointTimelineStoreReader.Result newest = reader.restoreLatest(
                             instance.getLiveViewToken().getTableId(),
                             functions,
-                            instance.getAnchorWindow()
+                            instance.getAnchorWindow(),
+                            null
                     );
                     Assert.assertEquals(
                             "restoreLatest must land on the newest boundary",
@@ -684,7 +695,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             1,
                             instance.getLiveViewToken().getTableId(),
                             functions,
-                            anchorWindow
+                            anchorWindow,
+                            null
                     );
                     assertRuntimeSnapshot(dayOne, functions, anchorWindow);
                     Assert.assertEquals(visitorIdentity, reader.getVisitorShellIdentityForTest());
@@ -695,7 +707,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             2,
                             instance.getLiveViewToken().getTableId(),
                             functions,
-                            anchorWindow
+                            anchorWindow,
+                            null
                     );
                     assertRuntimeSnapshot(dayTwo, functions, anchorWindow);
                     Assert.assertEquals(visitorIdentity, reader.getVisitorShellIdentityForTest());
@@ -736,6 +749,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                                 0,
                                 instance.getLiveViewToken().getTableId(),
                                 drifted,
+                                null,
                                 null
                         );
                         Assert.fail("expected function state format version rejection");
@@ -809,6 +823,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                                     0,
                                     instance.getLiveViewToken().getTableId(),
                                     functions,
+                                    null,
                                     null
                             );
                             Assert.fail("expected truncated logical-root data rejection");

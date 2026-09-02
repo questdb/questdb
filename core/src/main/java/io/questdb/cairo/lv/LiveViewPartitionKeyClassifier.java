@@ -58,9 +58,14 @@ import org.jetbrains.annotations.Nullable;
  *     its type is SYMBOL. That is decidable locally, and it is what fixes the key type and
  *     the sink.</li>
  *     <li><b>Stage 2</b>, once the plan exists: trace each admitted column to a base
- *     writer column and bind it to that column's dictionary. Not implemented yet - no
- *     translator is bound, so every candidate still keys through its resolved string, and
- *     {@link #isTranslationBound()} is what the sites read rather than candidacy alone.</li>
+ *     writer column and bind it to that column's dictionary
+ *     ({@code LiveViewRefreshJob.bindPartitionKeyTranslators}). A live view's own
+ *     refresh/repair compile arms this class's translator before stage 1 ever runs
+ *     ({@code LiveViewRefreshJob.compileViewSelect}), so {@link #isTranslationBound()} is
+ *     what the sites read rather than candidacy alone - it is true for that compile from
+ *     construction, and stays false for CREATE-time validation and EXPLAIN, which compile
+ *     on the caller's own plain context and so still key every admitted term through its
+ *     resolved string.</li>
  * </ul>
  *
  * <h2>The slot namespace</h2>
@@ -171,9 +176,10 @@ public final class LiveViewPartitionKeyClassifier {
     }
 
     /**
-     * Returns true when an admitted term actually keys as an LV-private id. False while no
-     * translator is bound, which is every view today: the classification is recorded, the
-     * inventory is built, and the key stays the resolved string it has always been.
+     * Returns true when an admitted term actually keys as an LV-private id. False for the
+     * CREATE-time validation and EXPLAIN compiles, which build no translator: the
+     * classification is recorded, the inventory is built, and the key stays the resolved
+     * string it has always been.
      */
     public boolean isTranslationBound() {
         return translator != null;

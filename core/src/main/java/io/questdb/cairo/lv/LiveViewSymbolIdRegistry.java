@@ -525,8 +525,15 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
      * wholesale rather than merging into it, so an id this run already assigned past the
      * restored root's frozen {@code symbolCount} - the case a rollback fork's abandoned root
      * left behind - is discarded along with it. The slot's {@code baseId -> lvId} cache and
-     * dirty band are cleared and its epoch is unarmed for the same reason: both name positions
-     * in a numbering the restore may have just replaced.
+     * dirty band are cleared for the same reason: both name positions in a numbering the
+     * restore may have just replaced.
+     * <p>
+     * The arming itself - {@code armedEpoch}, {@code resolver}, {@code cleanSymbolCount},
+     * {@code dirtyBandSize} - is left untouched. It names the base table's raw-id space, which
+     * a dictionary swap does not move, and a caller mid-scan (checkpoint restore runs inside an
+     * already-armed replay, to interpret a SYMBOL-typed key the walk below is about to read)
+     * relies on it surviving this call. Clearing it here would silently strand that scan
+     * unarmed with no arm call left to run before the next row.
      */
     public void restoreDictionary(@NotNull LiveViewCheckpointKeyDictionaryReader reader) {
         for (int i = 0, n = boundSlots.size(); i < n; i++) {
@@ -539,8 +546,6 @@ public final class LiveViewSymbolIdRegistry implements LiveViewSymbolIdTranslato
             slot.baseIdToLvId.clear();
             slot.dirtyToLvId.clear();
             slot.dirtyEpoch.clear();
-            slot.armedEpoch = UNARMED_EPOCH;
-            slot.resolver = null;
         }
     }
 

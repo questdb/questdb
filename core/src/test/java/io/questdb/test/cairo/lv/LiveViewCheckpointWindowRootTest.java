@@ -1066,7 +1066,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
             ) {
                 reader.of(dir);
                 try {
-                    reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, window);
+                    reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, window, null);
                     Assert.fail("expected persisted compiled-field mismatch");
                 } catch (CairoException e) {
                     Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
@@ -1118,11 +1118,17 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                         new LiveViewCheckpointTimelineStoreReader(configuration)
         ) {
             reader.of(checkpointsDir);
-            reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, window);
+            reader.restoreLatest(instance.getLiveViewToken().getTableId(), functions, window, null);
         }
         final byte[][] actual = snapshotRuntime(functions, window);
         Assert.assertEquals(expected.length, actual.length);
-        for (int i = 0; i < expected.length; i++) {
+        // Index 0 is the window's own anchor-map dump - an UnorderedMap cursor, whose
+        // order tracks insertion history rather than the key set alone, so a hoist or a
+        // restore that replays the same keys in a different sequence can produce a
+        // byte-different but logically identical dump. See LiveViewWindowSnapshotAssert
+        // for why that comparison ignores entry order.
+        LiveViewWindowSnapshotAssert.assertEquals("restored runtime state differs at index 0", expected[0], actual[0]);
+        for (int i = 1; i < expected.length; i++) {
             Assert.assertArrayEquals("restored runtime state differs at index " + i, expected[i], actual[i]);
         }
     }

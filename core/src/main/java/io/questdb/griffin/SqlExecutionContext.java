@@ -32,6 +32,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewSymbolIdTranslator;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -137,6 +138,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     int getJitMode();
+
+    /**
+     * Returns the translator a live view's own private symbol registry binds for the current
+     * compile, or null for every other compile. Set around the same window a live view compile
+     * arms {@link #isLiveViewCompile()}, so {@code SqlCodeGenerator} can hand it straight to the
+     * {@code LiveViewPartitionKeyClassifier} it constructs: the classifier's translator is final,
+     * so it must be known before the classifier exists rather than patched in afterward.
+     */
+    default @Nullable LiveViewSymbolIdTranslator getLivePartitionKeyTranslator() {
+        return null;
+    }
 
     /**
      * Returns the tracker bound to the currently active workload, or
@@ -346,6 +358,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     void setJitMode(int jitMode);
+
+    /**
+     * Sets the translator a live view compile hands to {@code SqlCodeGenerator}; see
+     * {@link #getLivePartitionKeyTranslator()}. Production callers arm it inside the same
+     * try/finally that arms {@link #setLiveViewCompile(boolean)} and disarm it (pass null) on
+     * the way out, so a reused context never carries one compile's translator into the next.
+     */
+    default void setLivePartitionKeyTranslator(@Nullable LiveViewSymbolIdTranslator translator) {
+    }
 
     default void setLiveViewCompile(boolean value) {
     }

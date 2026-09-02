@@ -1314,7 +1314,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.getLvRowsTotal(),
                     instance.getMinSeenTsSinceCheckpoint(),
                     seedCursorOffset,
-                    instance.getMemoryTracker()
+                    instance.getMemoryTracker(),
+                    instance.getPartitionKeyTranslators()
             );
         } finally {
             roleLock.unlock();
@@ -1817,6 +1818,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             TableReader localReader = acquireCompileReader(baseToken);
             boolean committed = false;
             try {
+                // Acquire the per-view tracker before the compile itself, not merely before
+                // any window machinery exists. The classifier's translator - this view's own
+                // LiveViewSymbolIdRegistry - has to already exist and carry a tracker before
+                // compileViewSelect runs, because generateSelectWindow constructs the
+                // classifier over a final translator field before LiveViewCompiledPlan exists
+                // to trace anything (see bindPartitionKeyTranslators below), and the registry
+                // binds its tracker once, at its own creation. The anchor map and the window
+                // functions' partition maps (bound through the execution context at cursor
+                // open) are still both charged from their first byte either way. This sits
+                // here, not in ensureAnchorFunction, because an UNANCHORED view has no anchor
+                // window at all - and so no frontier compaction either - yet still keeps one
+                // accumulator per partition key across cycles. It needs the cap most.
+                if (instance.getMemoryTracker() == null) {
+                    instance.setMemoryTracker(engine.getMemoryTrackerProvider().acquire(
+                            executionContext.getSecurityContext(),
+                            instance.getLiveViewToken().getTableId(),
+                            MemoryTrackerWorkload.LIVE_VIEW_REFRESH
+                    ));
+                }
                 factory = compileViewSelect(instance);
                 // Decompose once, here, and hand the same plan to everything below: the
                 // anchor build, the repair planner and every refresh cycle read the
@@ -1835,19 +1855,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // never dispatched. Leaving the factory uncached makes the next
                 // refresh recompile and retry; a persistent failure trips the
                 // flush-retry budget and invalidates the view.
-                // Acquire the per-view tracker before any window machinery exists, so the
-                // anchor map and the window functions' partition maps (bound through the
-                // execution context at cursor open) are both charged from their first byte.
-                // This sits here, not in ensureAnchorFunction, because an UNANCHORED view has
-                // no anchor window at all - and so no frontier compaction either - yet still
-                // keeps one accumulator per partition key across cycles. It needs the cap most.
-                if (instance.getMemoryTracker() == null) {
-                    instance.setMemoryTracker(engine.getMemoryTrackerProvider().acquire(
-                            executionContext.getSecurityContext(),
-                            instance.getLiveViewToken().getTableId(),
-                            MemoryTrackerWorkload.LIVE_VIEW_REFRESH
-                    ));
-                }
                 // Stage 2 of the partition-key classification: the compiler admitted each
                 // term locally, and only now - with a plan that can trace a window-input
                 // column back to the base scan - can the source column behind it be named
@@ -1909,15 +1916,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * Compiles the view's own SELECT into a fresh factory tree. The caller owns what comes
      * back and has to have a reader on the execution context - see
      * {@link #acquireCompileReader} - because the compile resolves against the base table's
-     * live metadata.
+     * live metadata, and a memory tracker already set on {@code instance} - see
+     * {@link LiveViewInstance#ensurePartitionKeyTranslators()} - because arming the translator
+     * below creates the view's registry on a first compile.
+     * <p>
+     * Every call site reaches this through {@link #ensureCompiledFactory} or
+     * {@link #buildRepairRuntime}, both of which only ever run for an {@code instance} whose
+     * registry - once created - outlives the compile, so a second or later call here rebinds
+     * the same object rather than creating another one.
      */
     private RecordCursorFactory compileViewSelect(LiveViewInstance instance) throws SqlException {
         executionContext.setLiveViewCompile(true);
+        // The classifier SqlCodeGenerator constructs is final over its translator, so the
+        // registry has to be reachable before generateSelectWindow runs rather than patched
+        // into an already-built classifier afterward - the per-slot binding still happens
+        // later, in bindPartitionKeyTranslators, once a compiled plan can trace a source
+        // column, but the registry object itself must exist here.
+        executionContext.setLivePartitionKeyTranslator(instance.ensurePartitionKeyTranslators());
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
             return cq.getRecordCursorFactory();
         } finally {
             executionContext.setLiveViewCompile(false);
+            executionContext.setLivePartitionKeyTranslator(null);
         }
     }
 
@@ -10423,7 +10444,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         instance.getLifecycleIdentity(),
                         true,
                         highTsExclusive,
-                        suffixRowDelta
+                        suffixRowDelta,
+                        instance.getPartitionKeyTranslators()
                 );
             } finally {
                 roleLock.unlock();
@@ -10870,7 +10892,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         instance.getLifecycleIdentity(),
                         true,
                         highTsExclusive,
-                        0
+                        0,
+                        instance.getPartitionKeyTranslators()
                 );
             } finally {
                 roleLock.unlock();
@@ -11122,7 +11145,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         instance.getLiveViewToken().getTableId(),
                         windowFactory.getWindowFunctions(),
                         instance.getAnchorWindow(),
-                        asRepairBaseline
+                        asRepairBaseline,
+                        instance.getPartitionKeyTranslators()
                 ).effectiveLvRowPosition;
             } finally {
                 reader.detach();
@@ -11369,7 +11393,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 final LiveViewCheckpointTimelineStoreReader.Result restored = reader.restoreLatest(
                         instance.getLiveViewToken().getTableId(),
                         windowFactory.getWindowFunctions(),
-                        instance.getAnchorWindow()
+                        instance.getAnchorWindow(),
+                        instance.getPartitionKeyTranslators()
                 );
                 if (restored.seedCursorOffset == Numbers.LONG_NULL) {
                     LOG.info().$("live view timeline holds no seed resume point [view=")
@@ -11572,7 +11597,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         durableLvRowCount,
                         instance.getLiveViewToken().getTableId(),
                         windowFactory.getWindowFunctions(),
-                        instance.getAnchorWindow()
+                        instance.getAnchorWindow(),
+                        instance.getPartitionKeyTranslators()
                 );
             } finally {
                 timelineReader.detach();
@@ -11603,7 +11629,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             durableLvRowCount,
                             instance.getLiveViewToken().getTableId(),
                             windowFactory.getWindowFunctions(),
-                            instance.getAnchorWindow()
+                            instance.getAnchorWindow(),
+                            instance.getPartitionKeyTranslators()
                     );
                 } finally {
                     healedReader.detach();
