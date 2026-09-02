@@ -850,7 +850,7 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         hookErrors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                         advanceDone.countDown();
                     }
                 }, "lv-base-advancer");
