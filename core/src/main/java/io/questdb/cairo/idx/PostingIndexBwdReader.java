@@ -267,9 +267,14 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long constantDeltaValue;
         private int currentBlock;
         private int currentGen;
+        private long efBlobOffset;
+        private int efBlobSize;
         private long efHighOffset;
         private int efHighWordIdx;
         private int efL;
+        private int efRankBeforeHighWord;
+        private int efRankedCheckpoint;
+        private boolean isEFRanked;
         private long efLowMask;
         private long efLowOffset;
         private int encodedBlockCount;
@@ -478,7 +483,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             this.blockBufferPos = -1;
             this.constantDeltaRemaining = 0;
             this.isEFMode = false;
+            this.isEFRanked = false;
             this.efHighWordIdx = -1;
+            this.efRankBeforeHighWord = 0;
+            this.efRankedCheckpoint = -1;
             this.isFlatMode = false;
             this.flatRemaining = 0;
             this.bufferRangeChecked = false;
@@ -546,11 +554,37 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long baseAddr = valueMem.addressOf(0);
             while (efHighWordIdx >= 0) {
                 long word = Unsafe.getLong(baseAddr + efHighOffset + (long) efHighWordIdx * 8);
+                final int rankBefore;
+                if (isEFRanked) {
+                    final int checkpoint = efHighWordIdx >>> PostingIndexUtils.EF_RANK_CHECKPOINT_SHIFT;
+                    if (checkpoint != efRankedCheckpoint) {
+                        efRankBeforeHighWord = PostingIndexUtils.efRankBeforeHighWord(
+                                baseAddr + efBlobOffset,
+                                efBlobSize,
+                                efHighWordIdx
+                        );
+                        if (efRankBeforeHighWord < 0) {
+                            throw CairoException.critical(0).put("corrupt ranked EF trailer");
+                        }
+                        efRankedCheckpoint = checkpoint;
+                    } else {
+                        efRankBeforeHighWord -= Long.bitCount(word);
+                        if (efRankBeforeHighWord < 0) {
+                            throw CairoException.critical(0).put("corrupt ranked EF trailer");
+                        }
+                    }
+                    rankBefore = efRankBeforeHighWord;
+                } else {
+                    if (word == 0) {
+                        efHighWordIdx--;
+                        continue;
+                    }
+                    rankBefore = Unsafe.getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
+                }
                 if (word == 0) {
                     efHighWordIdx--;
                     continue;
                 }
-                int rankBefore = Unsafe.getInt(efRankDirAddr + (long) efHighWordIdx * Integer.BYTES);
                 int bufIdx = 0;
                 long w = word;
                 while (w != 0) {
@@ -746,6 +780,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             }
             long offsetsBase = countsAddr + (long) ks * Integer.BYTES;
             long dataOffset = Unsafe.getLong(offsetsBase + (long) localKey * Long.BYTES);
+            long dataEndOffset = Unsafe.getLong(offsetsBase + (long) (localKey + 1) * Long.BYTES);
             int deltaHeaderSize = PostingIndexUtils.strideDeltaHeaderSize(ks);
             long encodedOffset = strideFileOffset + deltaHeaderSize + dataOffset;
 
@@ -759,7 +794,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // Set sidecar ordinal to just past the end for reverse iteration
             this.sidecarOrdinal = totalValueCount;
 
-            readDeltaBlockMetadata(encodedOffset, totalValueCount);
+            readDeltaBlockMetadata(encodedOffset, (int) (dataEndOffset - dataOffset), totalValueCount);
         }
 
         private void loadSparseGenByPrefixSum(int gen) {
@@ -825,6 +860,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             int totalValueCount = Unsafe.getInt(countsBase + (long) start * Integer.BYTES);
             long dataOffset = Unsafe.getLong(offsetsBase + (long) start * Long.BYTES);
+            long dataEndOffset = start + 1 < activeKeyCount
+                    ? Unsafe.getLong(offsetsBase + (long) (start + 1) * Long.BYTES)
+                    : genLookup.getGenPrefixSumOffset(gen, valueMem) - genFileOffset - headerSize;
             long encodedOffset = genFileOffset + headerSize + dataOffset;
 
             if (totalValueCount == 0) {
@@ -834,18 +872,22 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            // For sparse gens, compute sidecar base and set ordinal past the end
+            // For sparse gens, compute sidecar base and set ordinal past the end.
+            // The base = sum(counts[0..start)) is O(1) via the reader-scoped memo
+            // instead of an O(start) scan of counts[] on every cursor open;
+            // version-guarded on the gen snapshot. The bwd reader emits values in
+            // descending order, so it starts one past the key's last covered
+            // value and decrements — hence "+ totalValueCount".
+            // See SparseGenSidecarPrefixSum.
             if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < start; i++) {
-                    sidecarBase += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
+                int sidecarBase = sidecarPrefixSum.baseOrdinal(
+                        genLookup.getCacheVersion(), genCount, gen, start, countsBase, activeKeyCount, isFrozen());
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
             } else {
                 this.sidecarOrdinal = totalValueCount;
             }
 
-            readDeltaBlockMetadata(encodedOffset, totalValueCount);
+            readDeltaBlockMetadata(encodedOffset, (int) (dataEndOffset - dataOffset), totalValueCount);
         }
 
         private void loadSparseGenDirect(int gen, int idx) {
@@ -882,6 +924,9 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             long offsetsBase = countsBase + (long) activeKeyCount * Integer.BYTES;
             int totalValueCount = Unsafe.getInt(countsBase + (long) idx * Integer.BYTES);
             long dataOffset = Unsafe.getLong(offsetsBase + (long) idx * Long.BYTES);
+            long dataEndOffset = idx + 1 < activeKeyCount
+                    ? Unsafe.getLong(offsetsBase + (long) (idx + 1) * Long.BYTES)
+                    : genLookup.getGenPrefixSumOffset(gen, valueMem) - genFileOffset - headerSize;
             long encodedOffset = genFileOffset + headerSize + dataOffset;
 
             if (totalValueCount == 0) {
@@ -891,21 +936,22 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
 
-            // For sparse gens, compute sidecar base and set ordinal past the end
+            // For sparse gens, compute sidecar base and set ordinal past the end.
+            // O(1) via the reader-scoped memo instead of an O(idx) scan of counts[]
+            // on every cursor open; version-guarded on the gen snapshot. See the
+            // sibling loadSparseGenByPrefixSum and SparseGenSidecarPrefixSum.
             if (coverCount > 0) {
-                int sidecarBase = 0;
-                for (int i = 0; i < idx; i++) {
-                    sidecarBase += Unsafe.getInt(countsBase + (long) i * Integer.BYTES);
-                }
+                int sidecarBase = sidecarPrefixSum.baseOrdinal(
+                        genLookup.getCacheVersion(), genCount, gen, idx, countsBase, activeKeyCount, isFrozen());
                 this.sidecarOrdinal = sidecarBase + totalValueCount;
             } else {
                 this.sidecarOrdinal = totalValueCount;
             }
 
-            readDeltaBlockMetadata(encodedOffset, totalValueCount);
+            readDeltaBlockMetadata(encodedOffset, (int) (dataEndOffset - dataOffset), totalValueCount);
         }
 
-        private void readDeltaBlockMetadata(long encodedOffset, int totalValueCount) {
+        private void readDeltaBlockMetadata(long encodedOffset, int encodedSize, int totalValueCount) {
             long baseAddr = valueMem.addressOf(0);
             long pos = encodedOffset;
             int firstWord = Unsafe.getInt(baseAddr + pos);
@@ -922,21 +968,30 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 int lowBytes = PostingIndexUtils.efLowBytesAligned(efTotalCount, efL);
                 efHighOffset = pos + lowBytes;
                 int efNumHighWords = (int) ((efTotalCount + (u >>> efL) + 63) / 64);
-                // Build rank directory for reverse iteration
-                if (efNumHighWords > efRankDirCapacity) {
-                    int newCap = Math.max(efNumHighWords, efRankDirCapacity * 2);
-                    efRankDirAddr = Unsafe.realloc(
-                            efRankDirAddr,
-                            (long) efRankDirCapacity * Integer.BYTES,
-                            (long) newCap * Integer.BYTES,
-                            MemoryTag.NATIVE_INDEX_READER
-                    );
-                    efRankDirCapacity = newCap;
-                }
-                int cumulative = 0;
-                for (int w = 0; w < efNumHighWords; w++) {
-                    Unsafe.putInt(efRankDirAddr + (long) w * Integer.BYTES, cumulative);
-                    cumulative += Long.bitCount(Unsafe.getLong(baseAddr + efHighOffset + (long) w * 8));
+                efBlobOffset = encodedOffset;
+                efBlobSize = encodedSize;
+                efRankBeforeHighWord = 0;
+                efRankedCheckpoint = -1;
+                isEFRanked = PostingIndexUtils.hasEfRankTrailer(baseAddr + encodedOffset, encodedSize);
+                if (!isEFRanked) {
+                    // Legacy EF has no persisted rank metadata. Preserve compatibility with the
+                    // existing lazy directory; newly written ranked EF never takes this scan or
+                    // allocation path.
+                    if (efNumHighWords > efRankDirCapacity) {
+                        int newCap = Math.max(efNumHighWords, efRankDirCapacity * 2);
+                        efRankDirAddr = Unsafe.realloc(
+                                efRankDirAddr,
+                                (long) efRankDirCapacity * Integer.BYTES,
+                                (long) newCap * Integer.BYTES,
+                                MemoryTag.NATIVE_INDEX_READER
+                        );
+                        efRankDirCapacity = newCap;
+                    }
+                    int cumulative = 0;
+                    for (int w = 0; w < efNumHighWords; w++) {
+                        Unsafe.putInt(efRankDirAddr + (long) w * Integer.BYTES, cumulative);
+                        cumulative += Long.bitCount(Unsafe.getLong(baseAddr + efHighOffset + (long) w * 8));
+                    }
                 }
                 efHighWordIdx = efNumHighWords - 1;
                 isEFMode = true;
@@ -947,6 +1002,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 return;
             }
             isEFMode = false;
+            isEFRanked = false;
             if (firstWord < 0 || firstWord > (totalValueCount + PostingIndexUtils.BLOCK_CAPACITY - 1) / PostingIndexUtils.BLOCK_CAPACITY) {
                 throw CairoException.critical(0).put("corrupt posting index: invalid block count [blockCount=")
                         .put(firstWord).put(", totalValues=").put(totalValueCount).put(']');
