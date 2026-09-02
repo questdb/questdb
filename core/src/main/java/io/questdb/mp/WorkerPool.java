@@ -525,7 +525,8 @@ public class WorkerPool implements Closeable {
         }
     }
 
-    public void updateWorkerMetrics(long nowNanos) {
+    public void updateWorkerMetrics() {
+        final long nowNanos = System.nanoTime();
         WorkerMetrics workerMetrics = metrics.workerMetrics();
         long min = workerMetrics.getMinElapsedMicros();
         long max = workerMetrics.getMaxElapsedMicros();
@@ -580,6 +581,12 @@ public class WorkerPool implements Closeable {
         // Never hand SOCountDownLatch.await() a non-positive budget; parkNanos(<=0) returns
         // immediately, which is the intended behaviour once the overall deadline has passed.
         return Math.max(1, deadline - System.nanoTime());
+    }
+
+    private static void suppressCleanupFailure(Throwable primary, Throwable failure) {
+        if (primary != failure) {
+            primary.addSuppressed(failure);
+        }
     }
 
     // Polls at the same cadence SOCountDownLatch.await() parks at, so a lost unpark still
@@ -797,23 +804,23 @@ public class WorkerPool implements Closeable {
             try {
                 dynamicFiberConfiguration.setFiberConfigurationListener(null);
             } catch (Throwable th) {
-                addCleanupFailure(failure, th);
+                suppressCleanupFailure(failure, th);
             }
         }
         try {
             metrics.fiberMetrics().unregister(fiberRuntime);
         } catch (Throwable th) {
-            addCleanupFailure(failure, th);
+            suppressCleanupFailure(failure, th);
         }
         try {
             fiberRuntime.beginQuiesce();
         } catch (Throwable th) {
-            addCleanupFailure(failure, th);
+            suppressCleanupFailure(failure, th);
         }
         try {
             fiberRuntime.closeAfterDrained();
         } catch (Throwable th) {
-            addCleanupFailure(failure, th);
+            suppressCleanupFailure(failure, th);
         }
         if (workerWakeController != null) {
             workerWakeController.deactivate();

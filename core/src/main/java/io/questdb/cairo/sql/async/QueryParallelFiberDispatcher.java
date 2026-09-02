@@ -27,8 +27,8 @@ package io.questdb.cairo.sql.async;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateEntry;
 import io.questdb.mp.CountDownLatchSPI;
 import io.questdb.mp.MCSequence;
@@ -636,7 +636,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             GroupByLongTopKTask task,
             Throwable failure
     ) {
-        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final AsyncQueryProgressState progressState = task.getAtom() != null
@@ -664,7 +664,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             GroupByMergeShardTask task,
             Throwable failure
     ) {
-        final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+        final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
         final AtomicInteger startedCounter = task.getStartedCounter();
         final CountDownLatchSPI doneLatch = task.getDoneLatch();
         final AsyncQueryProgressState progressState = task.getShardingContext() != null
@@ -708,7 +708,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private void completeFailedCountedAcquisition(
             MCSequence subSeq,
             long cursor,
-            @Nullable AtomicBooleanCircuitBreaker circuitBreaker,
+            @Nullable PostAggregationCircuitBreaker circuitBreaker,
             @Nullable AtomicInteger startedCounter,
             @Nullable CountDownLatchSPI doneLatch,
             @Nullable AsyncQueryProgressState progressState,
@@ -716,7 +716,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     ) {
         try {
             if (circuitBreaker != null) {
-                circuitBreaker.cancel();
+                circuitBreaker.cancel(failure);
             }
         } catch (Throwable cleanupFailure) {
             addSuppressed(failure, cleanupFailure);
@@ -795,7 +795,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             final long cursor = subSeq.next();
             if (cursor > -1) {
                 final GroupByLongTopKTask task = queue.get(cursor);
-                final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+                final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
                 final AtomicInteger startedCounter = task.getStartedCounter();
                 final CountDownLatchSPI doneLatch = task.getDoneLatch();
                 final AsyncQueryProgressState progressState = task.getAtom() != null
@@ -833,7 +833,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             final long cursor = subSeq.next();
             if (cursor > -1) {
                 final GroupByMergeShardTask task = queue.get(cursor);
-                final AtomicBooleanCircuitBreaker circuitBreaker = task.getCircuitBreaker();
+                final PostAggregationCircuitBreaker circuitBreaker = task.getCircuitBreaker();
                 final AtomicInteger startedCounter = task.getStartedCounter();
                 final CountDownLatchSPI doneLatch = task.getDoneLatch();
                 final AsyncQueryProgressState progressState = task.getShardingContext() != null

@@ -24,9 +24,9 @@
 
 package io.questdb.cairo.sql.async;
 
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.griffin.engine.table.AsyncGroupByAtom;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -43,7 +43,7 @@ final class GroupByLongTopKFiberTask extends AbstractQueryParallelFiberTask {
     private static final Log LOG = LogFactory.getLog(GroupByLongTopKFiberTask.class);
     private AsyncGroupByAtom atom;
     private RingQueue<GroupByLongTopKTask> batchQueue;
-    private AtomicBooleanCircuitBreaker circuitBreaker;
+    private PostAggregationCircuitBreaker circuitBreaker;
     private long cursor = -1;
     private CountDownLatchSPI doneLatch;
     private Function function;

@@ -246,21 +246,6 @@ final class WorkerWakeController implements FiberWakeSink {
                 : -1;
     }
 
-    private int tryClaimWord(int wordIndex, long mask) {
-        for (int attempt = 0; attempt < Long.SIZE; attempt++) {
-            final long current = Unsafe.arrayGetVolatile(readyWords, wordIndex);
-            final long available = current & mask;
-            if (available == 0) {
-                return -1;
-            }
-            final long bit = Long.lowestOneBit(available);
-            if (Unsafe.cas(readyWords, wordIndex, current, current & ~bit)) {
-                return (wordIndex << 6) + Long.numberOfTrailingZeros(bit);
-            }
-        }
-        return -1;
-    }
-
     private int tryClaimRange(int fromWorkerId, int toWorkerId) {
         int currentWorkerId = fromWorkerId;
         while (currentWorkerId < toWorkerId) {
@@ -275,6 +260,21 @@ final class WorkerWakeController implements FiberWakeSink {
                 return claimedWorkerId;
             }
             currentWorkerId = wordEnd;
+        }
+        return -1;
+    }
+
+    private int tryClaimWord(int wordIndex, long mask) {
+        for (int attempt = 0; attempt < Long.SIZE; attempt++) {
+            final long current = Unsafe.arrayGetVolatile(readyWords, wordIndex);
+            final long available = current & mask;
+            if (available == 0) {
+                return -1;
+            }
+            final long bit = Long.lowestOneBit(available);
+            if (Unsafe.cas(readyWords, wordIndex, current, current & ~bit)) {
+                return (wordIndex << 6) + Long.numberOfTrailingZeros(bit);
+            }
         }
         return -1;
     }

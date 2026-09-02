@@ -287,7 +287,7 @@ public class Worker extends Thread {
             // Preserve an interrupt for at least one complete Worker iteration. If it arrives
             // after this snapshot, parkFiberHost() refuses to sleep and the next iteration gives
             // every Job and selected Fiber an opportunity to observe the status.
-            final boolean wasInterruptedAtLoopStart = Thread.currentThread().isInterrupted();
+            final boolean isInterruptedAtLoopStart = Thread.currentThread().isInterrupted();
             final WorkerLifecycle state = lifecycle.get();
             if (state == WorkerLifecycle.HALTED) {
                 break;
@@ -310,11 +310,11 @@ public class Worker extends Thread {
             }
             ticker++;
             if (ticker > sleepThreshold) {
-                if (parkFiberHost(sleepNanos, wasInterruptedAtLoopStart)) {
+                if (parkFiberHost(sleepNanos, isInterruptedAtLoopStart)) {
                     ticker = 0;
                 }
             } else if (ticker > napThreshold) {
-                if (parkFiberHost(1_000_000L, wasInterruptedAtLoopStart)) {
+                if (parkFiberHost(1_000_000L, isInterruptedAtLoopStart)) {
                     ticker = 0;
                 }
             } else if (ticker > yieldThreshold) {
@@ -431,13 +431,13 @@ public class Worker extends Thread {
         }
     }
 
-    private boolean parkFiberHost(long nanos, boolean wasInterruptedAtLoopStart) {
+    private boolean parkFiberHost(long nanos, boolean isInterruptedAtLoopStart) {
         if (nanos <= 0) {
             return false;
         }
 
         if (Thread.currentThread().isInterrupted()) {
-            if (!wasInterruptedAtLoopStart) {
+            if (!isInterruptedAtLoopStart) {
                 // The interrupt arrived after user work started this iteration. Keep the status
                 // set and run another complete iteration before considering a blocking park.
                 return false;

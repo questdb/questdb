@@ -91,6 +91,17 @@ public class FiberPoolSchedulingFuzzTest {
         return failure;
     }
 
+    private static void awaitKilledWorkerExit(FiberRuntime runtime, AtomicReference<Throwable> firstError) throws Exception {
+        final long deadline = System.nanoTime() + WAIT_TIMEOUT_MILLIS * 1_000_000L;
+        while (runtime.getOrphanedShardTransitionCount() == 0) {
+            throwIfThreadFailed(firstError);
+            if (System.nanoTime() >= deadline) {
+                Assert.fail("killed Worker did not exit before the halt");
+            }
+            Os.pause();
+        }
+    }
+
     private static void awaitLatch(
             CountDownLatch latch,
             AtomicReference<Throwable> firstError,
@@ -367,6 +378,10 @@ public class FiberPoolSchedulingFuzzTest {
                 awaitLatch(haltReady, firstError, "driver failed to reach the halt checkpoint");
             } else {
                 joinThreads(threads, 0, driverCount, firstError);
+            }
+            if (killedWorkerId != FiberRuntime.NO_WORKER) {
+                // an exit observed after the runtime closes stops the shard instead of orphaning it
+                awaitKilledWorkerExit(runtime, firstError);
             }
             haltPool(pool, isBoundedHalt);
             isStopRequested.set(true);
