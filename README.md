@@ -44,6 +44,19 @@ and Apache Parquet. In open source you convert partitions to Parquet with
 converts cold partitions automatically and tiers them to object storage.
 Parquet, Apache Iceberg, and Apache Arrow keep the data open to any tool.
 
+<table align="center">
+  <tr>
+    <td align="center" width="25%"><h3>19M</h3><sub>rows/sec peak ingestion<br/>per instance</sub></td>
+    <td align="center" width="25%"><h3>220M</h3><sub>rows/sec streamed<br/>to Arrow</sub></td>
+    <td align="center" width="25%"><h3>2.3s</h3><sub>to stream<br/>500M rows</sub></td>
+    <td align="center" width="25%"><h3>32ms</h3><sub>first Arrow<br/>batch</sub></td>
+  </tr>
+</table>
+
+<p align="center"><sub>QuestDB 10.0 over QWP. Sources:
+<a href="https://questdb.com/blog/qwp-vs-ilp-ingestion-benchmark/">QWP vs ILP ingestion benchmark</a> and
+<a href="https://questdb.com/blog/streaming-500-million-rows-into-apache-arrow/">Streaming 500 million rows into Arrow</a>.</sub></p>
+
 ## Get started
 
 Use [Docker](https://www.docker.com/) to start quickly:
@@ -93,16 +106,13 @@ rows in and streams query results back out as columns. The Python client
 returns those columns as Apache Arrow by default, and Rust and C/C++ can
 enable it with a flag.
 
-| QuestDB 10.0 | Measured | Source |
-|---|---|---|
-| Peak ingestion throughput per instance | 19M rows/sec over the network | [QWP vs ILP ingestion benchmark](https://questdb.com/blog/qwp-vs-ilp-ingestion-benchmark/) |
-| Query results streamed into Arrow | 220M rows/sec with eight readers | [Streaming 500 million rows into Arrow](https://questdb.com/blog/streaming-500-million-rows-into-apache-arrow/) |
-| Time to stream 500M rows | 2.3 seconds | same post |
-| First Arrow batch | 32 ms | same post |
-
-On the way in, that peak holds from one thousand to one million series.
-On the way out, the first batch lands in milliseconds and client memory stays
-flat however large the result. The
+On the way in, the
+[QWP vs ILP ingestion benchmark](https://questdb.com/blog/qwp-vs-ilp-ingestion-benchmark/)
+measures 19M rows/sec over the network, and that peak holds from one
+thousand to one million series. On the way out,
+[Streaming 500 million rows into Arrow](https://questdb.com/blog/streaming-500-million-rows-into-apache-arrow/)
+measures 220M rows/sec with eight readers, with the first batch after 32 ms
+and client memory flat however large the result. The
 [QWP overview](https://questdb.com/blog/questdb-qwp-binary-wire-protocol/)
 covers the protocol design.
 
