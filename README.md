@@ -95,15 +95,18 @@ QuestDB performs very well in performance benchmarks compared to alternatives.
 
 For deep dives into internals and performance, see the following blog posts:
 
-- [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
-- [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
+- [QuestDB vs InfluxDB](https://questdb.com/blog/influxdb-vs-questdb-comparison/)
+- [QuestDB vs InfluxDB 3](https://questdb.com/blog/influxdb3-core-benchmarks/)
+- [QuestDB vs ClickHouse](https://questdb.com/blog/clickhouse-vs-questdb-comparison/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 - [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
 As always, we encourage you to run your own benchmarks.
 
 <div align="center">
-  <img alt="A chart comparing the ingestion rate of QuestDB, InfluxDB and TimescaleDB." src=".github/readme-benchmark.webp" width="600"/>
+  <img alt="Bar chart of TSBS ingestion rates at 100,000 hosts: QuestDB 8.59M rows/sec, ClickHouse 1.75M, TigerData 1.08M, InfluxDB 541K." src=".github/readme-benchmark.webp" width="600"/>
+  <p><em>TSBS ingestion at 100,000 hosts with 32 workers on an AWS r8a.8xlarge (32 vCPU, 256 GB RAM). ClickHouse 26.7.5.10, TigerData (TimescaleDB 2.29.1) and InfluxDB 1.12.4, benchmarked August 2026. QuestDB 9.3.3 on the same instance.</em></p>
 </div>
 
 ## AI coding agents

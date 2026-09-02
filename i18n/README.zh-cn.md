@@ -89,15 +89,18 @@ QuestDB 尤其擅长处理：
 
 如需深入了解内部机制与性能表现，请参阅以下技术博客：
 
-- [QuestDB vs InfluxDB](https://questdb.com/blog/2024/02/26/questdb-versus-influxdb/)
-- [QuestDB vs Kdb+](https://questdb.com/compare/questdb-vs-kdb/)
+- [QuestDB vs InfluxDB](https://questdb.com/blog/influxdb-vs-questdb-comparison/)
+- [QuestDB vs InfluxDB 3](https://questdb.com/blog/influxdb3-core-benchmarks/)
+- [QuestDB vs ClickHouse](https://questdb.com/blog/clickhouse-vs-questdb-comparison/)
 - [QuestDB vs TimescaleDB](https://questdb.com/blog/timescaledb-vs-questdb-comparison/)
+- [QuestDB vs kdb+](https://questdb.com/compare/questdb-vs-kdb/)
 - [QuestDB vs MongoDB](https://questdb.com/blog/mongodb-time-series-benchmark-review/)
 
 我们推荐您亲自运行基准测试以获得最直观的性能体验。
 
 <div align="center">
-  <img alt="比较 QuestDB、InfluxDB 和 TimescaleDB 摄取速率的图表。" src="../.github/readme-benchmark.webp" width="600"/>
+  <img alt="TSBS 摄取速率对比图（100,000 台主机）：QuestDB 每秒 859 万行，ClickHouse 175 万行，TigerData 108 万行，InfluxDB 54.1 万行。" src="../.github/readme-benchmark.webp" width="600"/>
+  <p><em>TSBS 摄取基准测试：100,000 台主机，32 个 worker，运行于一台 AWS r8a.8xlarge（32 vCPU，256 GB 内存）。ClickHouse 26.7.5.10、TigerData（TimescaleDB 2.29.1）与 InfluxDB 1.12.4 于 2026 年 8 月测得，QuestDB 9.3.3 在同一实例上测得。</em></p>
 </div>
 
 ## AI 编程智能体
