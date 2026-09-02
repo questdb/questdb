@@ -529,8 +529,8 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
     }
 
     /**
-     * Stands in for the registry step 4 owns: one id space per slot, offset so a key written
-     * through the wrong slot is visible rather than plausible.
+     * Stands in for {@link io.questdb.cairo.lv.LiveViewSymbolIdRegistry}: one id space per
+     * slot, offset so a key written through the wrong slot is visible rather than plausible.
      */
     private static class OffsetTranslator implements LiveViewSymbolIdTranslator {
         @Override

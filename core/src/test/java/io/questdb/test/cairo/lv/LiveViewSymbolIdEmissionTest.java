@@ -325,7 +325,8 @@ public class LiveViewSymbolIdEmissionTest extends AbstractCairoTest {
 
     /**
      * A translator with one fully resolved forward array per slot, which is the steady state
-     * every id reaches once it has been interned. Interning itself is step 4's.
+     * every id reaches once it has been interned. Interning itself belongs to
+     * {@link io.questdb.cairo.lv.LiveViewSymbolIdRegistry} and is covered there.
      */
     private static class DictionaryTranslator implements LiveViewSymbolIdTranslator {
         private final ObjList<int[]> dictionaries = new ObjList<>();

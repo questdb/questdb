@@ -61,8 +61,11 @@ import java.nio.charset.StandardCharsets;
  * {@link LiveViewCheckpointKeyDictionaryReader} share, the append-only path-copy growth an
  * incremental seal requires, and {@link LiveViewCheckpointRoot}'s {@code keyDictionaryRef}.
  * <p>
- * Nothing in the live seal or restore path calls any of this yet, so every test here drives
- * the mechanism directly rather than through a live view.
+ * Every test here drives the mechanism directly rather than through a live view, so a case
+ * can build identities and growth patterns no single view would produce - a column that
+ * shrank, a duplicate string, a malformed chunk. What a real seal writes is audited on the
+ * bytes by {@link LiveViewCheckpointSymbolKeyWireFormatTest}, and what a real view does with
+ * the restored ids by {@link LiveViewSymbolIdTranslationTest}.
  */
 public class LiveViewCheckpointKeyDictionaryTest extends AbstractCairoTest {
 

@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyDictionaryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
@@ -68,8 +69,12 @@ import java.util.zip.CRC32;
  * What makes it a live concern is what this branch itself did. It added a fused window root
  * ({@code PAGE_KIND = 0x1d}) and a {@code _retirements} file <b>without</b> bumping
  * {@code LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION}, because neither addition made an
- * old page unreadable. A future release has every reason to extend the format the same way,
- * so the interesting failures are the ones the superblock version does not announce.
+ * old page unreadable. The LV-private partition key dictionary went further: it added two page
+ * kinds ({@code 0x2a}, {@code 0x2b}) and a third reference on the checkpoint root, and took
+ * the root's own format version to 2 while keeping version 1 decodable, so an upgrading
+ * instance keeps its checkpoints rather than rebuilding. A future release has every reason to
+ * extend the format the same way, so the interesting failures are the ones the superblock
+ * version does not announce.
  * <p>
  * Three gates decide the outcome, in this order, and the cases below cover all three:
  * <ol>
@@ -92,8 +97,9 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     // One boundary per commit, at ten-second intervals from the daily anchor.
     private static final int BOUNDARIES = 5;
     private static final String DAILY_ANCHOR = "2026-01-01T";
-    // The next metadata page kind a future release would allocate: this branch's own tags run
-    // 0x11..0x1d, so 0x1e is what an extension of the format looks like from here.
+    // A metadata page kind no build allocates: the roots run 0x11..0x1d, the state and key
+    // dictionary pages 0x21..0x2b, and 0x1e is the gap between them - which is what an
+    // extension of the format looks like from here.
     private static final int FUTURE_PAGE_KIND = 0x1e;
     // Every audited structure is at format version 1, so 2 is a future revision of one of them.
     private static final int FUTURE_STRUCTURE_FORMAT_VERSION = 2;
@@ -161,6 +167,71 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             assertViewMatchesRecompute();
 
             // The healed generation is a normal one: a further commit and restart restore off it.
+            assertRestartsCleanlyAfterwards();
+        });
+    }
+
+    @Test
+    public void testAFutureKeyDictionaryChunkFormatVersionRebuildsFromTheBase() throws Exception {
+        assertMemoryLeak(() -> {
+            seedFiveBoundaries();
+            final File checkpointsRoot = checkpointsRoot();
+            final ObjList<PageSite> chunks = keyDictionaryChunkSites();
+            shutdown();
+
+            // The dictionary is read in two passes, and this is the second one. Opening the
+            // directory validates only framing and identity - deliberately, so an incremental
+            // seal can path-copy a predecessor's chunk list without re-reading every string it
+            // holds - and the strings themselves are validated when a caller actually restores
+            // a column. A refusal that only the second pass can raise still has to reach the
+            // same recovery, or the restore fails somewhere with a dictionary half loaded.
+            for (int i = 0, n = chunks.size(); i < n; i++) {
+                rewriteMetaPageInt(
+                        checkpointsRoot,
+                        chunks.getQuick(i),
+                        LiveViewCheckpointLayout.PAGE_HEADER_SIZE,
+                        FUTURE_STRUCTURE_FORMAT_VERSION
+                );
+            }
+
+            restart();
+            assertTheDecoderGateRefused(
+                    "key dictionary chunk version or entry count invalid [version="
+                            + FUTURE_STRUCTURE_FORMAT_VERSION + ", entryCount=1]"
+            );
+            assertRebuiltFromTheBase();
+            assertRestartsCleanlyAfterwards();
+        });
+    }
+
+    @Test
+    public void testAFutureKeyDictionaryFormatVersionRebuildsFromTheBase() throws Exception {
+        assertMemoryLeak(() -> {
+            seedFiveBoundaries();
+            final File checkpointsRoot = checkpointsRoot();
+            final ObjList<PageSite> dictionaries = keyDictionarySites();
+            shutdown();
+
+            // The view partitions by a base SYMBOL column, so its keys are LV-private ids and
+            // the dictionary is the only thing that can say which string each id names. A
+            // restore that read the ids and skipped an unreadable dictionary would be worse
+            // than one that failed: every key would resolve to whatever the fresh numbering
+            // happened to hand out, with no corruption anywhere to explain the wrong sums.
+            for (int i = 0, n = dictionaries.size(); i < n; i++) {
+                rewriteMetaPageInt(
+                        checkpointsRoot,
+                        dictionaries.getQuick(i),
+                        LiveViewCheckpointLayout.PAGE_HEADER_SIZE,
+                        FUTURE_STRUCTURE_FORMAT_VERSION
+                );
+            }
+
+            restart();
+            assertTheDecoderGateRefused(
+                    "key dictionary version or column count invalid [version="
+                            + FUTURE_STRUCTURE_FORMAT_VERSION + ", columnCount=1]"
+            );
+            assertRebuiltFromTheBase();
             assertRestartsCleanlyAfterwards();
         });
     }
@@ -478,6 +549,96 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                 new File(engine.getConfiguration().getDbRoot(), instance("lv").getLiveViewToken().getDirName()),
                 LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
         );
+    }
+
+    /**
+     * Every distinct chunk page the sealed dictionaries reference, deduplicated. An
+     * incremental seal path-copies its predecessor's chunk list rather than rewriting it, so
+     * the same page is named by several boundaries and would otherwise be rewritten - and
+     * checksummed - more than once.
+     */
+    private ObjList<PageSite> keyDictionaryChunkSites() {
+        final LiveViewInstance instance = instance("lv");
+        final ObjList<PageSite> directories = keyDictionarySites();
+        final ObjList<PageSite> chunks = new ObjList<>();
+        final LongList seen = new LongList();
+        try (
+                Path checkpointsDir = checkpointsDir(instance);
+                LiveViewCheckpointKeyDictionaryReader reader =
+                        new LiveViewCheckpointKeyDictionaryReader(engine.getConfiguration())
+        ) {
+            for (int d = 0, dn = directories.size(); d < dn; d++) {
+                reader.of(checkpointsDir, directories.getQuick(d).ref());
+                for (int c = 0, cn = reader.getColumnCount(); c < cn; c++) {
+                    for (int k = 0, kn = reader.getChunkCount(c); k < kn; k++) {
+                        final LiveViewCheckpointPageRef ref = reader.getChunkRef(c, k);
+                        boolean known = false;
+                        for (int i = 0, n = seen.size(); i < n; i += 2) {
+                            known |= seen.getQuick(i) == ref.getSegmentId()
+                                    && seen.getQuick(i + 1) == ref.getOffset();
+                        }
+                        if (!known) {
+                            seen.add(ref.getSegmentId());
+                            seen.add(ref.getOffset());
+                            chunks.add(new PageSite(ref.getSegmentId(), ref.getOffset(), ref.getLength()));
+                        }
+                    }
+                }
+            }
+            reader.detach();
+        }
+        Assert.assertTrue("the sealed dictionaries must reference chunk pages", chunks.size() > 0);
+        return chunks;
+    }
+
+    /**
+     * Locates the key dictionary directory page of every sealed boundary, oldest first, for
+     * the reason {@link #stateRootSites()} takes two passes.
+     */
+    private ObjList<PageSite> keyDictionarySites() {
+        final LiveViewInstance instance = instance("lv");
+        final LongList boundaryRoots = new LongList();
+        try (
+                Path checkpointsDir = checkpointsDir(instance);
+                LiveViewCheckpointMetaStore store = openStore(instance);
+                LiveViewCheckpointTimelineReader timeline = openTimelineReader(instance);
+                LiveViewCheckpointGenerationPin pin = store.pin()
+        ) {
+            timeline.iterateAll(pin.getTimelineRootRef(), entry -> {
+                boundaryRoots.add(entry.rootRef.getSegmentId());
+                boundaryRoots.add(entry.rootRef.getOffset());
+                boundaryRoots.add(entry.rootRef.getLength());
+            });
+        }
+
+        final ObjList<PageSite> sites = new ObjList<>();
+        try (
+                Path checkpointsDir = checkpointsDir(instance);
+                LiveViewCheckpointRoot root = new LiveViewCheckpointRoot(engine.getConfiguration())
+        ) {
+            final LiveViewCheckpointPageRef boundaryRef = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef keyDictionaryRef = new LiveViewCheckpointPageRef();
+            for (int i = 0, n = boundaryRoots.size(); i < n; i += 3) {
+                boundaryRef.of(
+                        boundaryRoots.getQuick(i),
+                        boundaryRoots.getQuick(i + 1),
+                        (int) boundaryRoots.getQuick(i + 2)
+                );
+                root.of(checkpointsDir, boundaryRef);
+                root.getKeyDictionaryRef(keyDictionaryRef);
+                Assert.assertFalse(
+                        "a view whose partition key translates must seal a key dictionary per boundary",
+                        keyDictionaryRef.isNull()
+                );
+                sites.add(new PageSite(
+                        keyDictionaryRef.getSegmentId(),
+                        keyDictionaryRef.getOffset(),
+                        keyDictionaryRef.getLength()
+                ));
+            }
+        }
+        Assert.assertEquals("one key dictionary per sealed boundary", BOUNDARIES, sites.size());
+        return sites;
     }
 
     private File metaSegmentFile(File checkpointsRoot, long segmentId) {

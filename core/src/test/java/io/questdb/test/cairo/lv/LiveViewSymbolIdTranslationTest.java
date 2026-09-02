@@ -35,16 +35,119 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * The flip itself (section 12 step 7 of the untracked design doc) and the fix for the gap it
- * exposed (step 11): a live view's checkpoint key schema actually becomes SYMBOL once a
- * translator is bound, and a PARTITION BY mixing a direct SYMBOL term with an expression
- * term - which the checkpoint's function-backed sink could not translate before step 11 -
- * compiles, refreshes and repairs correctly instead of stalling silently.
+ * What changes once a live view's direct SYMBOL partition terms actually key by an LV-private
+ * id rather than by their resolved string: the checkpoint key schema becomes SYMBOL, a
+ * PARTITION BY mixing a direct SYMBOL term with an expression term keys the two in different
+ * domains, and every id survives a restart through the durable dictionary rather than being
+ * re-minted from zero.
  * <p>
  * {@link LiveViewSymbolIdBindingTest} covers stage-2 binding against real views, unaffected by
  * either step; this covers what changes once a translator actually moves a key.
  */
 public class LiveViewSymbolIdTranslationTest extends AbstractLiveViewTest {
+
+    @Test
+    public void testAnO3CorrectionTheFilterRejectsNeverGrowsTheDictionary() throws Exception {
+        // An out-of-order correction is decomposed into a change set before anything decides
+        // whether its rows survive the repair bounds and the view's own filter, and that walk
+        // deliberately interns nothing: a dictionary is durable and append-only, so an id
+        // spent on a key the repair never replays is spent for the life of the view. The
+        // correction below carries a symbol the view has never seen, on a row the filter
+        // rejects, which is the shape that would grow the dictionary by a key no map or root
+        // will ever hold.
+        //
+        // The second correction is the control. Without it a decomposition that interned
+        // nothing because it never ran at all would pass just as well.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s "
+                    + "FROM base WHERE x > 100");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:00.000000Z', 'a', 200), "
+                        + "('2024-01-01T00:00:04.000000Z', 'a', 400)");
+                driveRefreshToQuiescence(job);
+
+                final LiveViewSymbolIdRegistry registry = viewInstance().getPartitionKeyTranslators();
+                Assert.assertNotNull(registry);
+                Assert.assertEquals(1, registry.getTotalDictionarySize());
+
+                execute("INSERT INTO base VALUES ('2024-01-01T00:00:02.000000Z', 'rejected', 1)");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "a correction whose rows the filter rejects must not grow the dictionary",
+                        1,
+                        registry.getTotalDictionarySize()
+                );
+
+                execute("INSERT INTO base VALUES ('2024-01-01T00:00:03.000000Z', 'admitted', 800)");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "a correction whose rows the filter admits must intern its key exactly once",
+                        2,
+                        registry.getTotalDictionarySize()
+                );
+            }
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").timestamp("ts").expectSize().returns(
+                    """
+                            ts\tsym\ts
+                            2024-01-01T00:00:00.000000Z\ta\t200.0
+                            2024-01-01T00:00:03.000000Z\tadmitted\t800.0
+                            2024-01-01T00:00:04.000000Z\ta\t600.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testCompositeKeyAcrossManyTransactionsKeepsWalLocalIdsApart() throws Exception {
+        // The WAL writer restarts its local symbol numbering per transaction, so raw id 0
+        // names 'a' in the first transaction below and 'b' in the second. The translator's
+        // dirty band is stamped with the transaction that armed it for exactly this reason,
+        // and a band that leaked across the boundary would give both strings one lv id and
+        // merge two partitions' running sums with nothing to notice by - every row still
+        // present, every sum quietly wrong.
+        //
+        // The six transactions are drained in one refresh pass, which is the arrangement that
+        // exercises the boundary: a pass per transaction would re-arm from scratch each time
+        // and never carry a band forward at all.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym1 SYMBOL, sym2 SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym1, sym2, sum(x) OVER (PARTITION BY sym1, sym2 ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:00.000000Z', 'a', 'p', 1)");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:01.000000Z', 'b', 'q', 2)");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:02.000000Z', 'c', 'r', 4)");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:03.000000Z', 'a', 'p', 8)");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:04.000000Z', 'b', 'r', 16)");
+            execute("INSERT INTO base VALUES ('2024-01-01T00:00:05.000000Z', 'c', 'q', 32)");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            final LiveViewSymbolIdRegistry registry = viewInstance().getPartitionKeyTranslators();
+            Assert.assertNotNull(registry);
+            // Three distinct strings per bound column, each interned once however many
+            // transactions repeated it.
+            Assert.assertEquals(6, registry.getTotalDictionarySize());
+
+            assertQuery("SELECT ts, sym1, sym2, s FROM lv ORDER BY ts").timestamp("ts").expectSize().returns(
+                    """
+                            ts\tsym1\tsym2\ts
+                            2024-01-01T00:00:00.000000Z\ta\tp\t1.0
+                            2024-01-01T00:00:01.000000Z\tb\tq\t2.0
+                            2024-01-01T00:00:02.000000Z\tc\tr\t4.0
+                            2024-01-01T00:00:03.000000Z\ta\tp\t9.0
+                            2024-01-01T00:00:04.000000Z\tb\tr\t16.0
+                            2024-01-01T00:00:05.000000Z\tc\tq\t32.0
+                            """
+            );
+        });
+    }
 
     @Test
     public void testCompositeSymbolKeyCheckpointSchemaIsSymbolSymbol() throws Exception {
@@ -115,7 +218,7 @@ public class LiveViewSymbolIdTranslationTest extends AbstractLiveViewTest {
 
     @Test
     public void testMixedDirectAndExpressionKeyCompilesAndTranslatesOnlyTheDirectTerm() throws Exception {
-        // The regression this test guards: before step 11, this exact shape compiled at
+        // The regression this test guards: this exact shape used to compile at
         // CREATE time (validated on a plain context that never carries a translator) and
         // then failed every refresh cycle once a real translator was bound, retried forever,
         // and never advanced - all while live_views() kept reporting it as active. Driving a
@@ -161,7 +264,8 @@ public class LiveViewSymbolIdTranslationTest extends AbstractLiveViewTest {
 
     @Test
     public void testMixedKeyRepairKeepsReaderLocalSinkUntranslated() throws Exception {
-        // The concrete hazard section 12 step 11 exists to prevent: LiveViewCheckpointRowsBounds
+        // The concrete hazard the two sinks stay separate objects to prevent:
+        // LiveViewCheckpointRowsBounds
         // .createKey/findKey read the projector's reader-local sink unconditionally during a
         // ROWS-bound repair, and expressionKeyProjector used to compile one sink for both the
         // reader-local and checkpoint accessors. If that sink translated sym1, the repair would
@@ -196,6 +300,74 @@ public class LiveViewSymbolIdTranslationTest extends AbstractLiveViewTest {
                             2024-01-01T00:00:01.000000Z\ta\tp\t11.0
                             2024-01-01T00:00:02.000000Z\ta\tp\t13.0
                             2024-01-01T00:00:04.000000Z\ta\tq\t3.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testNullInEachPositionOfACompositeKeySurvivesARestart() throws Exception {
+        // NULL is not interned - it keeps SymbolTable.VALUE_IS_NULL through the translator,
+        // the runtime map, the checkpoint key and the durable dictionary - so a composite key
+        // has to carry it in either position, and in both at once, without either colliding
+        // with an interned id or being minted one of its own. Id 0 is what a NULL misread as
+        // an ordinary raw id would land on, and id 0 is exactly what the first interned string
+        // in each column holds, so a collision here merges ('a', 'p') with (null, 'p') rather
+        // than failing.
+        //
+        // The restart is what extends this past the runtime map: the encoded key travels
+        // through the checkpoint and comes back, and each of the four combinations continues
+        // its own running sum rather than starting over or continuing someone else's.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym1 SYMBOL, sym2 SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym1, sym2, sum(x) OVER (PARTITION BY sym1, sym2 ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:00.000000Z', null, 'p', 1), "
+                        + "('2024-01-01T00:00:01.000000Z', 'a', null, 2), "
+                        + "('2024-01-01T00:00:02.000000Z', null, null, 4), "
+                        + "('2024-01-01T00:00:03.000000Z', 'a', 'p', 8)");
+                driveRefreshToQuiescence(job);
+
+                final LiveViewSymbolIdRegistry registry = viewInstance().getPartitionKeyTranslators();
+                Assert.assertNotNull(registry);
+                // 'a' in one dictionary and 'p' in the other; the three NULLs intern nothing.
+                Assert.assertEquals(2, registry.getTotalDictionarySize());
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:04.000000Z', null, 'p', 16), "
+                        + "('2024-01-01T00:00:05.000000Z', 'a', null, 32), "
+                        + "('2024-01-01T00:00:06.000000Z', null, null, 64), "
+                        + "('2024-01-01T00:00:07.000000Z', 'a', 'p', 128)");
+                driveRefreshToQuiescence(job);
+
+                final LiveViewSymbolIdRegistry registry = viewInstance().getPartitionKeyTranslators();
+                Assert.assertNotNull(registry);
+                Assert.assertEquals(
+                        "the restored dictionary must hold the ids it held, and mint no new ones",
+                        2,
+                        registry.getTotalDictionarySize()
+                );
+            }
+
+            assertQuery("SELECT ts, sym1, sym2, s FROM lv ORDER BY ts").timestamp("ts").expectSize().returns(
+                    """
+                            ts\tsym1\tsym2\ts
+                            2024-01-01T00:00:00.000000Z\t\tp\t1.0
+                            2024-01-01T00:00:01.000000Z\ta\t\t2.0
+                            2024-01-01T00:00:02.000000Z\t\t\t4.0
+                            2024-01-01T00:00:03.000000Z\ta\tp\t8.0
+                            2024-01-01T00:00:04.000000Z\t\tp\t17.0
+                            2024-01-01T00:00:05.000000Z\ta\t\t34.0
+                            2024-01-01T00:00:06.000000Z\t\t\t68.0
+                            2024-01-01T00:00:07.000000Z\ta\tp\t136.0
                             """
             );
         });
@@ -257,6 +429,129 @@ public class LiveViewSymbolIdTranslationTest extends AbstractLiveViewTest {
                             2024-01-01T00:00:01.000000Z\tb\tq\t2.0
                             2024-01-01T00:00:02.000000Z\tb\tq\t22.0
                             2024-01-01T00:00:03.000000Z\tc\tr\t100.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testRowsTheResidualFilterRejectsNeverGrowTheDictionary() throws Exception {
+        // The dictionary is durable and append-only: nothing ever reclaims an id, so an id
+        // spent on a string no published map or root will ever hold is spent for the life of
+        // the view. A view whose residual filter admits a small share of a high-cardinality
+        // stream is the shape where that matters - interning at the base scan rather than at
+        // the key would grow the dictionary by every distinct value the base carries instead
+        // of by the ones the view keys by.
+        //
+        // Interning is lazy and happens where the key is written, which is above the filter,
+        // so a rejected row never reaches it. This pins that, in both directions: a
+        // transaction that is entirely rejected grows the dictionary by nothing, and a mixed
+        // one grows it only by what survived.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s "
+                    + "FROM base WHERE x > 100");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:00.000000Z', 'kept', 200), "
+                        + "('2024-01-01T00:00:01.000000Z', 'dropped-1', 1), "
+                        + "('2024-01-01T00:00:02.000000Z', 'dropped-2', 2)");
+                driveRefreshToQuiescence(job);
+
+                final LiveViewSymbolIdRegistry registry = viewInstance().getPartitionKeyTranslators();
+                Assert.assertNotNull(registry);
+                Assert.assertEquals(
+                        "only the key the filter admitted may be interned",
+                        1,
+                        registry.getTotalDictionarySize()
+                );
+
+                // A transaction the filter rejects whole.
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:03.000000Z', 'dropped-3', 3), "
+                        + "('2024-01-01T00:00:04.000000Z', 'dropped-4', 4)");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "a transaction whose rows are all rejected must not grow the dictionary",
+                        1,
+                        registry.getTotalDictionarySize()
+                );
+
+                // And one where a subset survives.
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:05.000000Z', 'dropped-5', 5), "
+                        + "('2024-01-01T00:00:06.000000Z', 'kept-2', 300)");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "a mixed transaction must grow the dictionary by what survived alone",
+                        2,
+                        registry.getTotalDictionarySize()
+                );
+            }
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").timestamp("ts").expectSize().returns(
+                    """
+                            ts\tsym\ts
+                            2024-01-01T00:00:00.000000Z\tkept\t200.0
+                            2024-01-01T00:00:06.000000Z\tkept-2\t300.0
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testTruncateOnTheBasePreservesTheDictionary() throws Exception {
+        // A WAL TRUNCATE applies through TableWriter.removeAllPartitions, which preserves the
+        // base's symbol files rather than resetting them, and the live view's own
+        // freeze-and-continue semantics keep its derived state
+        // (LiveViewSmokeTest.testTruncateOnBaseIsTransparentToLiveView is the end-to-end
+        // baseline for that). The durable ids have to follow: the runtime maps and every
+        // sealed root still hold keys in the pre-truncate numbering, so an id renumbered or
+        // re-minted here reads a partition it never named.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS "
+                    + "SELECT ts, sym, sum(x) OVER (PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM base");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES "
+                        + "('2024-01-01T00:00:00.000000Z', 'a', 1), "
+                        + "('2024-01-01T00:00:01.000000Z', 'b', 2)");
+                driveRefreshToQuiescence(job);
+
+                final LiveViewSymbolIdRegistry registry = viewInstance().getPartitionKeyTranslators();
+                Assert.assertNotNull(registry);
+                Assert.assertEquals(2, registry.getTotalDictionarySize());
+
+                execute("TRUNCATE TABLE base");
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse("a base TRUNCATE must not invalidate a translated view", viewInstance().isInvalid());
+                Assert.assertEquals(
+                        "a base TRUNCATE must leave the LV-private dictionary exactly as it was",
+                        2,
+                        registry.getTotalDictionarySize()
+                );
+
+                // The base's own symbol numbering starts over here as far as the WAL writer is
+                // concerned, but 'a' is a string the dictionary already holds, so it resolves
+                // to the id it already had and its running sum continues rather than restarts.
+                execute("INSERT INTO base VALUES ('2024-01-01T00:00:02.000000Z', 'a', 4)");
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(
+                        "a string the dictionary already holds must not be interned twice",
+                        2,
+                        registry.getTotalDictionarySize()
+                );
+            }
+
+            assertQuery("SELECT ts, sym, s FROM lv ORDER BY ts").timestamp("ts").expectSize().returns(
+                    """
+                            ts\tsym\ts
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-01T00:00:01.000000Z\tb\t2.0
+                            2024-01-01T00:00:02.000000Z\ta\t5.0
                             """
             );
         });

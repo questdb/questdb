@@ -131,6 +131,10 @@ import java.util.zip.ZipInputStream;
  * </ul>
  * The two census cases pin all of this, so a regenerated fixture that changed what is present
  * fails loudly rather than turning a case that reads it into a no-op.
+ * <p>
+ * The shapes this branch <i>adds</i> - the key dictionary's directory and chunk pages, and the
+ * checkpoint root field that addresses them - have no released bytes to check against, and are
+ * audited by {@link LiveViewCheckpointSymbolKeyWireFormatTest} instead.
  */
 public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
 
@@ -299,8 +303,12 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                     );
 
                     // The anchor value is a timestamp and the partition key a projected SYMBOL,
-                    // which the projector writes in the STRING space. Both travel as raw
-                    // ColumnType ids, so a renumbering of either would land here.
+                    // which the released build's projector wrote in the STRING space. Both
+                    // travel as raw ColumnType ids, so a renumbering of either would land
+                    // here. This branch keys the same column by an LV-private id and writes
+                    // SYMBOL in this field; the two readings together are what say the
+                    // upgrade is a schema change a restore has to notice rather than a silent
+                    // reinterpretation of the same bytes.
                     Assert.assertEquals(at + " [anchorValueType]", ColumnType.TIMESTAMP, anchorValueType);
                     Assert.assertEquals(at + " [windowName]", "w", new String(windowName, StandardCharsets.UTF_8));
                     // The key schema is big-endian - it is built by the identity encoder, not by
@@ -372,6 +380,12 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
 
                     // formatVersion INT, segmentCount INT, checkpointId LONG, maxTimestamp LONG,
                     // definitionTxn LONG, stateRootRef, functionDirectoryRef, segmentIds LONG[].
+                    // This branch writes a version-2 root, which carries a third reference -
+                    // the LV-private partition-key dictionary - between the function directory
+                    // and the segment ids. The released root has neither the version nor the
+                    // field, and the case pins both: the payload length below leaves no room
+                    // for a third reference, so a decoder that read one unconditionally would
+                    // take the first segment id for it.
                     Assert.assertEquals(at + " [formatVersion]", 1, leInt(payload, 0));
                     final int segmentCount = leInt(payload, 4);
                     final int fixedSize = 2 * Integer.BYTES + 3 * Long.BYTES + 2 * PAGE_REF_BYTES;
@@ -392,6 +406,17 @@ public class LiveViewCheckpointWireFormatTest extends AbstractLiveViewTest {
                     final LiveViewCheckpointPageRef functionDirectoryRef = new LiveViewCheckpointPageRef();
                     root.getFunctionDirectoryRef(functionDirectoryRef);
                     assertPageRef(at + " [functionDirectoryRef]", payload, 52, functionDirectoryRef);
+                    // A released root predates the key dictionary, so it decodes as having
+                    // none rather than being refused. Refusing it would be correct too - the
+                    // metastore falls back and the view rebuilds from base - but it would
+                    // cost every upgrading instance a full rebuild for a field the released
+                    // shape never needed.
+                    final LiveViewCheckpointPageRef keyDictionaryRef = new LiveViewCheckpointPageRef();
+                    root.getKeyDictionaryRef(keyDictionaryRef);
+                    Assert.assertTrue(
+                            at + ": a released root must decode as carrying no key dictionary",
+                            keyDictionaryRef.isNull()
+                    );
 
                     Assert.assertEquals(at + " [segmentIdCount]", segmentCount, root.getSegmentIdCount());
                     for (int i = 0; i < segmentCount; i++) {
