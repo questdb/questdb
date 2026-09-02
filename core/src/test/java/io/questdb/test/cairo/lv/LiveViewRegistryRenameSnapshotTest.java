@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewPartitionKeyDecision;
 import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -243,6 +244,7 @@ public class LiveViewRegistryRenameSnapshotTest {
                 null,
                 new ObjList<>(),
                 new IntList(),
+                LiveViewPartitionKeyDecision.NOTHING_TRANSLATES,
                 new GenericRecordMetadata()
         );
     }

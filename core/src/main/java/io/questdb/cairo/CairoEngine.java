@@ -40,6 +40,7 @@ import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewLifecycleState;
+import io.questdb.cairo.lv.LiveViewPartitionKeyDecision;
 import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateReader;
@@ -1492,6 +1493,12 @@ public class CairoEngine implements Closeable, WriterSource {
         // the server default for a column that does not project a base SYMBOL
         // column. See LiveViewTableStructure.
         final BoolList outputSymbolCacheFlags = new BoolList();
+        // Which PARTITION BY terms this view keys as LV-private symbol ids. The classification
+        // is a property of the build rather than of the SQL - it widens as the optimizer learns
+        // new projection shapes - and it decides a key type the checkpoint's schema records, so
+        // the view persists the answer it was created with and every later compile honors it
+        // rather than deriving one that may have moved.
+        LiveViewPartitionKeyDecision partitionKeyDecision = LiveViewPartitionKeyDecision.NOTHING_TRANSLATES;
         try (SqlCompiler compiler = getSqlCompiler()) {
             // Arm the shared non-determinism guard for the LV body, mirroring the
             // mat-view compile (SqlCompilerImpl.compileCreateMatView). With it armed,
@@ -1512,6 +1519,11 @@ public class CairoEngine implements Closeable, WriterSource {
             }
             try (RecordCursorFactory factory = cq.getRecordCursorFactory()) {
                 final LiveViewCompiledPlan plan = validateLiveViewFactory(factory, baseTableToken, op.getViewNamePosition());
+                // This compile carries no translator (only a refresh/repair compile does), so
+                // nothing here keys as an id yet; what it does carry is the classification and
+                // the plan that can trace each admitted term to a base column, which is the
+                // whole of the decision the first refresh would otherwise make on its own.
+                partitionKeyDecision = LiveViewPartitionKeyDecision.derive(plan);
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
                 validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
 
@@ -1710,6 +1722,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 op.getAnchorSpec(),
                 dependencyColumnNames,
                 dependencyColumnTypes,
+                partitionKeyDecision,
                 metadata
         );
         LiveViewTableStructure struct = new LiveViewTableStructure(

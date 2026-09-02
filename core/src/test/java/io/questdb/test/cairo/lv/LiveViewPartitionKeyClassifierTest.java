@@ -35,6 +35,7 @@ import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.lv.LiveViewPartitionKeyBinding;
 import io.questdb.cairo.lv.LiveViewPartitionKeyClassifier;
+import io.questdb.cairo.lv.LiveViewPartitionKeyDecision;
 import io.questdb.cairo.lv.LiveViewSymbolIdTranslator;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
@@ -77,7 +78,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         // one the compile admitted, and nothing else.
         final GenericRecordMetadata metadata = metadata();
         final LiveViewPartitionKeyClassifier classifier =
-                new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+                new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
         Assert.assertEquals(LiveViewPartitionKeyClassifier.NOT_TRANSLATED, classifier.slotOfSourceColumn(0));
 
         final LiveViewPartitionKeyBinding unclassified = binding(classifier);
@@ -100,7 +101,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         // which is in range for that dictionary and so passes every check downstream.
         final GenericRecordMetadata metadata = metadata();
         final LiveViewPartitionKeyClassifier classifier =
-                new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+                new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
         Assert.assertEquals(
                 LiveViewPartitionKeyClassifier.NOT_TRANSLATED,
                 classifier.classify(new SymbolColumn(9, true), metadata)
@@ -136,7 +137,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final GenericRecordMetadata metadata = metadata();
             final LiveViewPartitionKeyClassifier classifier =
-                    new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+                    new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
             final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
             final ObjList<Function> keyFunctions = new ObjList<>();
             keyFunctions.add(new SymbolColumn(0, true));
@@ -184,7 +185,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             final GenericRecordMetadata metadata = metadata();
             final LiveViewPartitionKeyClassifier classifier =
-                    new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+                    new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
             final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
             final ObjList<Function> keyFunctions = new ObjList<>();
             keyFunctions.add(new SymbolColumn(0, true));
@@ -227,13 +228,13 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         // identical. The direct term translates and the expression beside it does not, and
         // one term being an expression does not make the other one one.
         final GenericRecordMetadata metadata = metadata();
-        final LiveViewPartitionKeyClassifier unbound = new LiveViewPartitionKeyClassifier(null);
+        final LiveViewPartitionKeyClassifier unbound = new LiveViewPartitionKeyClassifier(null, null);
         final LiveViewPartitionKeyBinding stringKey = binding(unbound);
         stringKey.addClassifiedTerm(0, new SymbolColumn(0, true), metadata);
         stringKey.addClassifiedTerm(1, new StrColumn(2), metadata);
         assertKeyTypes(stringKey, ColumnType.STRING, ColumnType.STRING);
 
-        final LiveViewPartitionKeyClassifier bound = new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+        final LiveViewPartitionKeyClassifier bound = new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
         final LiveViewPartitionKeyBinding translatedKey = binding(bound);
         translatedKey.addClassifiedTerm(0, new SymbolColumn(0, true), metadata);
         translatedKey.addClassifiedTerm(1, new StrColumn(2), metadata);
@@ -250,7 +251,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         // only - and refused rather than left to a future shape.
         final GenericRecordMetadata metadata = metadata();
         final LiveViewPartitionKeyClassifier classifier =
-                new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+                new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
         final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
         keyBinding.addClassifiedTerm(0, new SymbolColumn(0, true), metadata);
         keyBinding.addClassifiedTerm(1, new SymbolConstant("acct-1", 0), metadata);
@@ -265,6 +266,91 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
                     e.getMessage().contains("mixes translated and resolved-string SYMBOL terms")
             );
         }
+    }
+
+    @Test
+    public void testPersistedDecisionKeepsANewlyAdmissibleTermOnItsString() {
+        // The flip this exists to stop: a build whose classifier would now admit sym1 meets a
+        // view created before it did. The persisted decision names nothing, so sym1 keys
+        // through its resolved string exactly as the view was created keying it - a slower
+        // key, and the only alternative is a key type the view's own checkpoint disagrees
+        // with, which costs it a rebuild from the base table.
+        final GenericRecordMetadata metadata = metadata();
+        final LiveViewPartitionKeyClassifier classifier = new LiveViewPartitionKeyClassifier(
+                new OffsetTranslator(),
+                LiveViewPartitionKeyDecision.admittedSourceColumns(
+                        LiveViewPartitionKeyDecision.NOTHING_TRANSLATES,
+                        metadata
+                )
+        );
+        final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
+        keyBinding.addClassifiedTerm(0, new SymbolColumn(0, true), metadata);
+        assertKeyTypes(keyBinding, ColumnType.STRING);
+        Assert.assertNull(keyBinding.getSymbolIdSlotByColumn());
+        Assert.assertEquals(0, classifier.getSourceColumnCount());
+    }
+
+    @Test
+    public void testPersistedDecisionNarrowsACompositeKeyPerTerm() {
+        // PARTITION BY sym1, sym2 created when only sym2 translated. The decision is honored
+        // per term rather than for the key as a whole, so sym1 stays on its string while sym2
+        // keeps the id it was created with - and the two coexist in one key.
+        final GenericRecordMetadata metadata = metadata();
+        final ObjList<String> names = new ObjList<>();
+        names.add("sym2");
+        final LiveViewPartitionKeyClassifier classifier = new LiveViewPartitionKeyClassifier(
+                new OffsetTranslator(),
+                LiveViewPartitionKeyDecision.admittedSourceColumns(
+                        LiveViewPartitionKeyDecision.of(names),
+                        metadata
+                )
+        );
+        final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
+        keyBinding.addClassifiedTerm(0, new SymbolColumn(0, true), metadata);
+        keyBinding.addClassifiedTerm(1, new SymbolColumn(1, true), metadata);
+        assertKeyTypes(keyBinding, ColumnType.STRING, ColumnType.SYMBOL);
+        Assert.assertTrue(keyBinding.getWriteSymbolAsString().get(0));
+        Assert.assertEquals(1, keyBinding.getSymbolIdSlotByColumn().getQuick(1));
+        // Only the admitted column claims a dictionary.
+        Assert.assertEquals(1, classifier.getSourceColumnCount());
+        Assert.assertEquals(1, classifier.getSourceColumn(0));
+    }
+
+    @Test
+    public void testPersistedDecisionResolvesOnlyNamesTheMetadataStillCarries() {
+        // A persisted name is resolved against the compile's own window input metadata, and a
+        // name that no longer answers - dropped, or answering with a column of another type -
+        // is left unresolved rather than resolved to whatever index it would land on. That
+        // index names a different column's dictionary, and an id from the wrong dictionary is
+        // in range for the one it lands in, so nothing downstream would reject it.
+        final GenericRecordMetadata metadata = metadata();
+        final ObjList<String> names = new ObjList<>();
+        names.add("sym1");
+        names.add("name");     // present, but STRING here
+        names.add("gone");     // no longer projected
+        final IntList admitted = LiveViewPartitionKeyDecision.admittedSourceColumns(
+                LiveViewPartitionKeyDecision.of(names),
+                metadata
+        );
+        Assert.assertNotNull(admitted);
+        Assert.assertEquals(1, admitted.size());
+        Assert.assertEquals(0, admitted.getQuick(0));
+    }
+
+    @Test
+    public void testViewWithNoPersistedDecisionClassifiesFromScratch() {
+        // A view created before the decision was persisted carries none, and null is not an
+        // empty allow-list: it means re-derive, which is what such a view has always done.
+        final GenericRecordMetadata metadata = metadata();
+        Assert.assertNull(LiveViewPartitionKeyDecision.admittedSourceColumns(null, metadata));
+        final LiveViewPartitionKeyClassifier classifier = new LiveViewPartitionKeyClassifier(
+                new OffsetTranslator(),
+                LiveViewPartitionKeyDecision.admittedSourceColumns(null, metadata)
+        );
+        final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
+        keyBinding.addClassifiedTerm(0, new SymbolColumn(0, true), metadata);
+        assertKeyTypes(keyBinding, ColumnType.SYMBOL);
+        Assert.assertEquals(0, keyBinding.getSymbolIdSlotByColumn().getQuick(0));
     }
 
     @Test
@@ -295,7 +381,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         // string whether or not a translator is bound, and it claims no dictionary.
         final GenericRecordMetadata metadata = metadata();
         final LiveViewPartitionKeyClassifier classifier =
-                new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+                new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
         final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
         keyBinding.addClassifiedTerm(0, new SymbolConstant("acct-1", 0), metadata);
         assertKeyTypes(keyBinding, ColumnType.STRING);
@@ -312,7 +398,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
             // fall back to OrderedMap the way today's STRING key does.
             final GenericRecordMetadata metadata = metadata();
             final LiveViewPartitionKeyClassifier classifier =
-                    new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+                    new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
             final LiveViewPartitionKeyBinding keyBinding = binding(classifier);
             keyBinding.addClassifiedTerm(0, new SymbolColumn(0, true), metadata);
             final RecordSink sink = keyBinding.compileKeySink(
@@ -360,7 +446,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         // written in one would not compare equal to the same key written in the other.
         final GenericRecordMetadata metadata = metadata();
         final LiveViewPartitionKeyClassifier classifier =
-                new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+                new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
         final int first = classifier.classify(new SymbolColumn(1, true), metadata);
         final int second = classifier.classify(new SymbolColumn(1, true), metadata);
         Assert.assertEquals(first, second);
@@ -386,7 +472,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
      */
     private static void assertShape(int[] unboundTypes, int[] boundTypes, int... sourceColumns) {
         final GenericRecordMetadata metadata = metadata();
-        final LiveViewPartitionKeyClassifier unbound = new LiveViewPartitionKeyClassifier(null);
+        final LiveViewPartitionKeyClassifier unbound = new LiveViewPartitionKeyClassifier(null, null);
         final LiveViewPartitionKeyBinding stringKey = binding(unbound);
         for (int i = 0; i < sourceColumns.length; i++) {
             stringKey.addClassifiedTerm(i, new SymbolColumn(sourceColumns[i], true), metadata);
@@ -398,7 +484,7 @@ public class LiveViewPartitionKeyClassifierTest extends AbstractCairoTest {
         // says which dictionaries the view would need.
         Assert.assertEquals(sourceColumns.length, unbound.getSourceColumnCount());
 
-        final LiveViewPartitionKeyClassifier bound = new LiveViewPartitionKeyClassifier(new OffsetTranslator());
+        final LiveViewPartitionKeyClassifier bound = new LiveViewPartitionKeyClassifier(new OffsetTranslator(), null);
         final LiveViewPartitionKeyBinding translatedKey = binding(bound);
         for (int i = 0; i < sourceColumns.length; i++) {
             translatedKey.addClassifiedTerm(i, new SymbolColumn(sourceColumns[i], true), metadata);

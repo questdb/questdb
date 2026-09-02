@@ -32,6 +32,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewPartitionKeyDecision;
 import io.questdb.cairo.lv.LiveViewSymbolIdTranslator;
 import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.sql.BindVariableService;
@@ -147,6 +148,17 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * so it must be known before the classifier exists rather than patched in afterward.
      */
     default @Nullable LiveViewSymbolIdTranslator getLivePartitionKeyTranslator() {
+        return null;
+    }
+
+    /**
+     * Returns the partition-key binding decision the live view being compiled was created
+     * with, or null for every other compile and for a view that predates the decision. Set
+     * alongside {@link #setLivePartitionKeyTranslator(LiveViewSymbolIdTranslator)}, and read
+     * at the same point: the classifier honors it from construction, so it has to be known
+     * before the first partition term is parsed.
+     */
+    default @Nullable LiveViewPartitionKeyDecision getLivePartitionKeyDecision() {
         return null;
     }
 
@@ -366,6 +378,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * the way out, so a reused context never carries one compile's translator into the next.
      */
     default void setLivePartitionKeyTranslator(@Nullable LiveViewSymbolIdTranslator translator) {
+    }
+
+    /**
+     * Sets the persisted partition-key decision a live view compile hands to
+     * {@code SqlCodeGenerator}; see {@link #getLivePartitionKeyDecision()}. Armed and
+     * disarmed in the same try/finally as the translator, so a reused context never carries
+     * one view's decision into another view's compile.
+     */
+    default void setLivePartitionKeyDecision(@Nullable LiveViewPartitionKeyDecision decision) {
     }
 
     default void setLiveViewCompile(boolean value) {

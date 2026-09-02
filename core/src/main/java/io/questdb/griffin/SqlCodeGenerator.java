@@ -56,6 +56,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewPartitionKeyBinding;
 import io.questdb.cairo.lv.LiveViewPartitionKeyClassifier;
+import io.questdb.cairo.lv.LiveViewPartitionKeyDecision;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -10497,9 +10498,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // every term it admits keys through the resolved string when the context carries none
         // (CREATE-time validation and EXPLAIN compile on the caller's own plain context), and
         // through the translator's id once one is bound.
-        final LiveViewPartitionKeyClassifier lvPartitionKeyClassifier = executionContext.isLiveViewCompile()
-                ? new LiveViewPartitionKeyClassifier(executionContext.getLivePartitionKeyTranslator())
-                : null;
+        //
+        // The same context carries the view's persisted key decision, which narrows what this
+        // build's classifier may admit down to what the view was created keying as an id. It
+        // resolves to column indexes here because this is where the window input metadata the
+        // persisted names address lives.
+        final LiveViewPartitionKeyClassifier lvPartitionKeyClassifier = !executionContext.isLiveViewCompile() ? null
+                : new LiveViewPartitionKeyClassifier(
+                        executionContext.getLivePartitionKeyTranslator(),
+                        LiveViewPartitionKeyDecision.admittedSourceColumns(
+                                executionContext.getLivePartitionKeyDecision(),
+                                baseMetadata
+                        )
+                );
         // One entry per SELECT-list index: the normalized window that index's function was
         // compiled under, or null for a non-window column and for a window shape the Map
         // group compiler does not admit. Null as a whole for a live-view compile - see the

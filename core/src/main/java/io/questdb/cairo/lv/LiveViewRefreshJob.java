@@ -1783,7 +1783,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewCompiledPlan plan
     ) throws SqlException {
         final LiveViewPartitionKeyClassifier classifier = plan.getWindowFactory().getLivePartitionKeyClassifier();
-        if (classifier == null || classifier.getSourceColumnCount() == 0) {
+        if (classifier == null) {
+            return;
+        }
+        reportShrunkPartitionKeyDecision(instance, plan, classifier);
+        if (classifier.getSourceColumnCount() == 0) {
             return;
         }
         final LiveViewSymbolIdRegistry registry = instance.ensurePartitionKeyTranslators();
@@ -1808,6 +1812,40 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 continue;
             }
             registry.bind(windowInputColumnIndex, scanColumnIndex, writerColumnIndex, baseToken.getTableId());
+        }
+    }
+
+    /**
+     * Logs a persisted partition-key decision this compile could not honor in full.
+     * <p>
+     * The decision is an allow-list: it can only narrow what this build's classifier would
+     * admit. So a term the view was created keying as an LV-private id, but which this
+     * compile does not admit - the classification rule narrowed, or the projection no longer
+     * carries a column of that name - silently reverts to keying through its resolved string.
+     * That is a correct key, and the checkpoint's own schema validation rejects the
+     * disagreement and rebuilds the view from the base table rather than misreading it. What
+     * it is not is cheap, and the rebuild has no other visible cause, so name the term here.
+     */
+    private void reportShrunkPartitionKeyDecision(
+            LiveViewInstance instance,
+            LiveViewCompiledPlan plan,
+            LiveViewPartitionKeyClassifier classifier
+    ) {
+        final LiveViewPartitionKeyDecision decision = instance.getDefinition().getPartitionKeyDecision();
+        if (decision == null || decision.getColumnCount() == classifier.getSourceColumnCount()) {
+            return;
+        }
+        final RecordMetadata windowInputMetadata = plan.getWindowInputMetadata();
+        for (int i = 0, n = decision.getColumnCount(); i < n; i++) {
+            final String columnName = decision.getColumnName(i);
+            final int index = windowInputMetadata.getColumnIndexQuiet(columnName);
+            if (classifier.slotOfSourceColumn(index) != LiveViewPartitionKeyClassifier.NOT_TRANSLATED) {
+                continue;
+            }
+            LOG.error().$("live view no longer keys a partition term as it was created, expect a rebuild [view=")
+                    .$(instance.getLiveViewToken().getTableName())
+                    .$(", column=").$safe(columnName)
+                    .I$();
         }
     }
 
@@ -1933,12 +1971,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // later, in bindPartitionKeyTranslators, once a compiled plan can trace a source
         // column, but the registry object itself must exist here.
         executionContext.setLivePartitionKeyTranslator(instance.ensurePartitionKeyTranslators());
+        // The decision the view was created with, which the classifier honors instead of
+        // re-deriving one this build might classify differently. Null for a view created
+        // before it was persisted, which classifies from scratch exactly as it always did.
+        executionContext.setLivePartitionKeyDecision(instance.getDefinition().getPartitionKeyDecision());
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             final CompiledQuery cq = compiler.compile(instance.getDefinition().getViewSql(), executionContext);
             return cq.getRecordCursorFactory();
         } finally {
             executionContext.setLiveViewCompile(false);
             executionContext.setLivePartitionKeyTranslator(null);
+            executionContext.setLivePartitionKeyDecision(null);
         }
     }
 

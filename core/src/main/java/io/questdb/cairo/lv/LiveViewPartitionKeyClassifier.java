@@ -68,6 +68,15 @@ import org.jetbrains.annotations.Nullable;
  *     resolved string.</li>
  * </ul>
  *
+ * <h2>The view's own decision outranks both stages</h2>
+ * Both stages answer with what this build can prove, and what a build can prove widens and
+ * narrows between releases. The key type they settle is persisted, so a term that flips
+ * makes a checkpoint's key schema disagree with the compiled runtime and costs the view a
+ * rebuild. A view therefore carries the decision it was created with
+ * ({@link LiveViewPartitionKeyDecision}), and this class admits a term only when that
+ * decision names its source column - so the persisted answer narrows what stage 1 would
+ * admit and never widens it. A view with no persisted decision classifies from scratch.
+ *
  * <h2>The slot namespace</h2>
  * A slot names one source column's dictionary. This class uses the term's <b>window-input
  * column index</b> as that slot rather than a dense ordinal assigned in classification
@@ -97,19 +106,30 @@ public final class LiveViewPartitionKeyClassifier {
      * Slot value for a term that keys the way it always did.
      */
     public static final int NOT_TRANSLATED = LiveViewTranslatingRecord.NOT_TRANSLATED;
+    // The window-input columns the view's persisted decision allows this compile to admit,
+    // or null when the view carries no decision and this compile derives its own. Empty is a
+    // decision too: it says the view translates nothing.
+    private final @Nullable IntList admittedSourceColumns;
     // Distinct window-input columns admitted by stage 1, in first-seen order. The slot IS
     // the column index; this list is the inventory stage 2 walks, not a lookup table.
     private final IntList sourceColumns = new IntList();
     private final LiveViewSymbolIdTranslator translator;
 
     /**
-     * @param translator the registry admitted terms translate through, or null while no
-     *                   dictionary exists - in which case every admitted term still keys
-     *                   through its resolved string and this class only records what it
-     *                   would have bound
+     * @param translator            the registry admitted terms translate through, or null
+     *                              while no dictionary exists - in which case every admitted
+     *                              term still keys through its resolved string and this class
+     *                              only records what it would have bound
+     * @param admittedSourceColumns the window-input columns the view's persisted decision
+     *                              allows, as {@link LiveViewPartitionKeyDecision#admittedSourceColumns}
+     *                              resolved them, or null to classify from scratch
      */
-    public LiveViewPartitionKeyClassifier(@Nullable LiveViewSymbolIdTranslator translator) {
+    public LiveViewPartitionKeyClassifier(
+            @Nullable LiveViewSymbolIdTranslator translator,
+            @Nullable IntList admittedSourceColumns
+    ) {
         this.translator = translator;
+        this.admittedSourceColumns = admittedSourceColumns;
     }
 
     /**
@@ -123,6 +143,15 @@ public final class LiveViewPartitionKeyClassifier {
      */
     public int classify(int sourceColumnIndex, int columnType) {
         if (sourceColumnIndex < 0 || !ColumnType.isSymbol(columnType)) {
+            return NOT_TRANSLATED;
+        }
+        // The view was created keying this term one way, and it keeps keying it that way for
+        // as long as its definition stands. A term the decision does not name keys through
+        // its resolved string even when this build would happily admit it, because the key
+        // type is what the checkpoint's persisted key schema records and a flip there costs
+        // the view a full rebuild from the base table.
+        if (admittedSourceColumns != null
+                && admittedSourceColumns.indexOf(sourceColumnIndex, 0, admittedSourceColumns.size()) < 0) {
             return NOT_TRANSLATED;
         }
         if (sourceColumns.indexOf(sourceColumnIndex, 0, sourceColumns.size()) < 0) {
