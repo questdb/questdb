@@ -6,8 +6,9 @@ package.
 ## Scheduler boundary
 
 `Worker.loopBody()` always runs as plain Java. A `FIBER_HOST` pool owns one
-`FiberRuntime`; each worker drains that runtime after running its ordinary
-jobs. A `LEGACY` pool owns no runtime.
+`FiberRuntime`; each worker calls `drainOwned()` with its owner context after
+running its ordinary jobs. Only a non-Worker carrier, such as the halting
+thread, calls the detached `drain()`. A `LEGACY` pool owns no runtime.
 
 Only `Fiber` mounts a continuation. Production code must not wrap a
 `Worker`, `Job`, or page-frame reducer in its own continuation.
@@ -50,7 +51,7 @@ flowchart TB
         subgraph W["carrier workers - plain Java"]
             L["Worker.loopBody()<br/>never suspends"]
             J["runJobs()"]
-            D["call fiberRuntime.drain(mountBudget)"]
+            D["call fiberRuntime.drainOwned(ownerContext, mountBudget)"]
             L --> J
             L --> D
         end
@@ -167,7 +168,7 @@ sequenceDiagram
 
     Note over A,B: A resume may use the same or another carrier
     R->>F: stage Task A and enqueue
-    A->>R: drain()
+    A->>R: drainOwned()
     R->>F: RUNNABLE to MOUNTED
     F->>C: continuation.run()
     C->>T1: runStep()
@@ -176,7 +177,7 @@ sequenceDiagram
         C-->>R: Continuation.yield() and unmount
         Note over A,R: Carrier A returns to the plain worker loop
         Note over R,F: A source makes the same Fiber runnable
-        B->>R: drain()
+        B->>R: drainOwned()
         R->>F: mount
         F->>C: resume the same continuation
         C-->>T1: continue with the frozen Java stack
@@ -187,7 +188,7 @@ sequenceDiagram
     Note over F,C: When retained, the Fiber and enlarged stack chunk stay allocated
 
     R->>F: stage Task B on the same Fiber and enqueue
-    B->>R: drain()
+    B->>R: drainOwned()
     R->>F: mount
     F->>C: resume the same continuation
     C->>T2: runStep()

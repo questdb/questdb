@@ -673,7 +673,7 @@ public class WorkerPoolBootFailureTest {
      * The {@code /metrics} scrape calls {@code updateWorkerMetrics()} on its own thread, unserialized
      * against {@code start()}'s add-loop and {@code halt()}'s clear(). With the workers-list iteration
      * unguarded, a scrape that lands while {@code start()} is mid-add reads the list torn - a null slot
-     * ({@code getQuick(i)} returns null, then {@code getJobStartMicros()} NPEs) or a half-published
+     * ({@code getQuick(i)} returns null, then {@code getJobStartNanos()} NPEs) or a half-published
      * non-volatile pos/buffer.
      *
      * <p>Same observable proxy as the add-loop halt test: the {@code beforeWorkerAddedForTesting} seam
@@ -743,7 +743,7 @@ public class WorkerPoolBootFailureTest {
         final Thread scraper = new Thread(() -> {
             scrapeStarted.countDown();
             try {
-                pool.updateWorkerMetrics(System.nanoTime() / 1000);
+                pool.updateWorkerMetrics(System.nanoTime());
             } catch (Throwable t) {
                 scrapeError.set(t);
             } finally {
@@ -785,7 +785,7 @@ public class WorkerPoolBootFailureTest {
         }
         if (scrapeError.get() != null) {
             throw new AssertionError("updateWorkerMetrics() threw reading the workers list torn while "
-                    + "start() was mid-add (a null slot NPEs on getJobStartMicros): "
+                    + "start() was mid-add (a null slot NPEs on getJobStartNanos): "
                     + scrapeError.get().getClass().getSimpleName() + ": " + scrapeError.get().getMessage(),
                     scrapeError.get());
         }

@@ -81,7 +81,8 @@ final class WorkerWakeController implements FiberWakeSink {
             return false;
         }
         if (targets.getQuick(workerId) == null) {
-            reportInvariant("Worker registered before publishing its wake target", workerId);
+            LOG.critical().$("Worker registered before publishing its wake target [value=").$(workerId).I$();
+            assert false : "Worker registered before publishing its wake target";
             return false;
         }
         readyCount.incrementAndGet();
@@ -91,7 +92,8 @@ final class WorkerWakeController implements FiberWakeSink {
             final long current = Unsafe.arrayGetVolatile(readyWords, wordIndex);
             if ((current & bit) != 0) {
                 decrementReadyCount();
-                reportInvariant("Worker registered an existing ready bit", workerId);
+                LOG.critical().$("Worker registered an existing ready bit [value=").$(workerId).I$();
+                assert false : "Worker registered an existing ready bit";
                 return false;
             }
             if (Unsafe.cas(readyWords, wordIndex, current, current | bit)) {
@@ -138,42 +140,34 @@ final class WorkerWakeController implements FiberWakeSink {
 
     @Override
     public void wakeAll() {
-        try {
-            if (isActive) {
-                claimAllReadyBits();
-            }
-        } catch (Throwable th) {
-            reportFailure("could not wake Fiber-host Workers", th);
+        if (isActive) {
+            claimAllReadyBits();
         }
     }
 
     @Override
     public boolean wakeOne(int preferredWorkerId) {
-        try {
-            if (!isActive) {
-                return false;
-            }
-            final int count = readyCount.get();
-            if (count == 0) {
-                return false;
-            }
-            if (count < 0) {
-                reportInvariant("ready Worker count is negative", preferredWorkerId);
-            }
-            int claimedWorkerId = tryClaimPreferred(preferredWorkerId);
-            if (claimedWorkerId < 0) {
-                claimedWorkerId = tryClaimFromCursor();
-            }
-            if (claimedWorkerId < 0) {
-                return false;
-            }
-            decrementReadyCount();
-            unpark(claimedWorkerId);
-            return true;
-        } catch (Throwable th) {
-            reportFailure("could not wake a Fiber-host Worker", th);
+        if (!isActive) {
             return false;
         }
+        final int count = readyCount.get();
+        if (count == 0) {
+            return false;
+        }
+        if (count < 0) {
+            LOG.critical().$("ready Worker count is negative [value=").$(preferredWorkerId).I$();
+            assert false : "ready Worker count is negative";
+        }
+        int claimedWorkerId = tryClaimPreferred(preferredWorkerId);
+        if (claimedWorkerId < 0) {
+            claimedWorkerId = tryClaimFromCursor();
+        }
+        if (claimedWorkerId < 0) {
+            return false;
+        }
+        decrementReadyCount();
+        unpark(claimedWorkerId);
+        return true;
     }
 
     @TestOnly
@@ -222,26 +216,13 @@ final class WorkerWakeController implements FiberWakeSink {
     private void decrementReadyCount(int delta) {
         final int count = readyCount.addAndGet(-delta);
         if (count < 0) {
-            reportInvariant("ready Worker count underflow", count);
+            LOG.critical().$("ready Worker count underflow [value=").$(count).I$();
+            assert false : "ready Worker count underflow";
         }
     }
 
     private boolean isValidWorkerId(int workerId) {
         return workerId >= 0 && workerId < workerCount;
-    }
-
-    private void reportFailure(CharSequence message, Throwable th) {
-        try {
-            LOG.error().$(message).$(" [error=").$(th).I$();
-        } catch (Throwable ignore) {
-        }
-    }
-
-    private void reportInvariant(CharSequence message, int value) {
-        try {
-            LOG.critical().$(message).$(" [value=").$(value).I$();
-        } catch (Throwable ignore) {
-        }
     }
 
     private int tryClaimFromCursor() {
@@ -301,7 +282,8 @@ final class WorkerWakeController implements FiberWakeSink {
     private void unpark(int workerId) {
         final Thread target = targets.getQuick(workerId);
         if (target == null) {
-            reportInvariant("claimed ready Worker has no wake target", workerId);
+            LOG.critical().$("claimed ready Worker has no wake target [value=").$(workerId).I$();
+            assert false : "claimed ready Worker has no wake target";
             return;
         }
         LockSupport.unpark(target);

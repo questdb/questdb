@@ -129,12 +129,13 @@ fixed Workers in one Fiber-host pool. A ready bit means that a Worker has
 entered the idle protocol and may be selected for one wake; it does not imply
 that the thread has already blocked.
 
-The bit is a single-use wake claim. `wakeOne()` atomically clears either the
-preferred bit or one selected from the rotating cursor. The caller that clears
-the bit owns the corresponding `LockSupport.unpark()`. Concurrent publishers
-therefore do not repeatedly select the same ready Worker. The count avoids a
-bitmap scan when no Worker is ready; the bitmap remains the authority for an
-individual claim.
+A ready bit can satisfy at most one wake claim. `wakeOne()` atomically clears
+either the preferred bit or one selected from the rotating cursor. The wake
+path that claims the bit owns the corresponding `LockSupport.unpark()`. A
+Worker may instead clear its own bit to withdraw readiness. Concurrent
+publishers therefore do not repeatedly select the same ready Worker. The count
+avoids a bitmap scan when no Worker is ready; the bitmap remains the authority
+for an individual claim.
 
 A Worker parks through this handshake:
 
@@ -239,7 +240,7 @@ entry cannot be ignored merely because its owner is no longer active.
 - Queue commit precedes every wake attempt.
 - A Worker publishes its ready bit before its final work search.
 - A Worker clears its ready bit before mounting a Fiber.
-- Clearing a ready bit transfers ownership of exactly one unpark operation.
+- A wake path that claims a ready bit owns exactly one unpark operation.
 - Owner exit revokes local production before orphan work is advertised.
 - Orphan bits are cleared only after the corresponding local queue is
   observed empty.

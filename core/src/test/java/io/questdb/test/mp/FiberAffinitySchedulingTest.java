@@ -42,6 +42,7 @@ import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.Os;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.DirectUtf8Sink;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -62,12 +63,11 @@ public class FiberAffinitySchedulingTest {
     public void testExternalPublicationRacesIdleRegistrationStress() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final int roundCount = 10_000;
-            final long scheduleSeed = 0x51A7_E5E2_77C3_4D19L;
+            final Rnd rnd = TestUtils.generateRandom(null);
             final WorkerPool pool = new WorkerPool(fiberConfiguration("fiber-pre-ready-stress", 1));
             final FiberRuntime runtime = pool.getFiberRuntime();
             final AtomicInteger taskRunCount = new AtomicInteger();
             final AtomicReference<Throwable> taskError = new AtomicReference<>();
-            long schedule = scheduleSeed;
             pool.start();
             try {
                 for (int round = 0; round < roundCount; round++) {
@@ -90,13 +90,10 @@ public class FiberAffinitySchedulingTest {
                             }
                         }));
                         if (!triggerStarted.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
-                            Assert.fail("trigger did not run [seed=" + scheduleSeed + ", round=" + currentRound + ']');
+                            Assert.fail("trigger did not run [round=" + currentRound + ']');
                         }
 
-                        schedule ^= schedule << 13;
-                        schedule ^= schedule >>> 7;
-                        schedule ^= schedule << 17;
-                        final int pauseCount = (int) (schedule & 1_023);
+                        final int pauseCount = rnd.nextInt(1_024);
                         isTriggerReleased.set(true);
                         for (int i = 0; i < pauseCount; i++) {
                             Os.pause();
@@ -116,8 +113,7 @@ public class FiberAffinitySchedulingTest {
                             }
                         }));
                         if (!victimRan.await(AWAIT_SECONDS, TimeUnit.SECONDS)) {
-                            Assert.fail("victim made no progress [seed=" + scheduleSeed
-                                    + ", round=" + currentRound
+                            Assert.fail("victim made no progress [round=" + currentRound
                                     + ", pauses=" + pauseCount
                                     + ", ready=" + pool.getReadyWorkerCountForTesting()
                                     + ", queued=" + runtime.getQueuedCount() + ']');
@@ -408,13 +404,13 @@ public class FiberAffinitySchedulingTest {
             final FiberRuntime runtime = new FiberRuntime(1, 1, 1, 0, new FiberWakeSink() {
                 @Override
                 public void wakeAll() {
-                    throw new AssertionError("injected wake-all failure");
+                    throw new IllegalStateException("injected wake-all failure");
                 }
 
                 @Override
                 public boolean wakeOne(int preferredWorkerId) {
                     wakeAttempts.incrementAndGet();
-                    throw new AssertionError("injected wake failure");
+                    throw new IllegalStateException("injected wake failure");
                 }
             });
             final AtomicBoolean hasRun = new AtomicBoolean();
