@@ -195,16 +195,24 @@ As always, we encourage you to run your own benchmarks.
 
 ## AI coding agents
 
-QuestDB works out of the box with Claude Code, Codex, Cursor, and any MCP
-client. Install the agent skills, then let the agent discover the schema, write
-the SQL, and build notebooks and live dashboards in the Web Console through the
-[QuestDB MCP server](https://questdb.com/docs/getting-started/web-console/mcp-server/).
+QuestDB works with Claude Code, Codex, Cursor, and any MCP client. There are
+two ways in.
+
+**Run SQL against the database from your agent.** Install the
+[QuestDB skill](https://github.com/questdb/skills). It teaches the agent
+QuestDB's SQL dialect and how to inspect a schema. The agent then executes SQL
+through the
+[REST API](https://questdb.com/docs/connect/compatibility/rest-api/).
 
 ```bash
 npx skills add questdb/skills
 ```
 
-See the
+**Prototype in the Web Console.** For notebooks and SQL prototyping driven by
+the agent directly, connect it to the
+[Web Console MCP server](https://questdb.com/docs/getting-started/web-console/mcp-server/).
+
+Setup for each agent is in the
 [coding agents guide](https://questdb.com/docs/getting-started/ai-coding-agents/).
 
 <div align="center">
