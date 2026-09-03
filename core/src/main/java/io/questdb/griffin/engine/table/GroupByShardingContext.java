@@ -29,13 +29,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
-import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.ExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.WorkStealingStrategy;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByMergeShardJob;
+import io.questdb.griffin.engine.groupby.PostAggregationCircuitBreaker;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
@@ -367,7 +367,7 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
             MessageBus messageBus,
             WorkStealingStrategy workStealingStrategy,
             SqlExecutionCircuitBreaker circuitBreaker,
-            AtomicBooleanCircuitBreaker postAggregationCircuitBreaker,
+            PostAggregationCircuitBreaker postAggregationCircuitBreaker,
             SOUnboundedCountDownLatch postAggregationDoneLatch,
             AtomicInteger postAggregationStartedCounter
     ) {
