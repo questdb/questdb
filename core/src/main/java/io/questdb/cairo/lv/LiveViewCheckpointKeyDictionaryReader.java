@@ -84,14 +84,6 @@ public class LiveViewCheckpointKeyDictionaryReader implements Closeable {
     private final LiveViewCheckpointMetaSegmentReader directoryReader;
     private final IntList symbolCounts = new IntList();
     private int chunkSegmentClock;
-    /**
-     * Scratch UTF-16 output for {@link #decodeUtf8Strict}, grown on demand and reused across
-     * entries. A byte-for-byte decode never produces more chars than input bytes (the widest
-     * ratio is one ASCII byte to one char; every multi-byte sequence produces fewer chars than
-     * bytes, including the two-char surrogate pair four bytes encode), so sizing it to the
-     * entry's byte length is always enough.
-     */
-    private char[] utf8DecodeChars = new char[64];
 
     public LiveViewCheckpointKeyDictionaryReader(@NotNull CairoConfiguration configuration) {
         this.configuration = configuration;
@@ -317,10 +309,31 @@ public class LiveViewCheckpointKeyDictionaryReader implements Closeable {
         target.clear();
         final int start = chunkStart.getQuick(columnIndex);
         final int count = chunkCounts.getQuick(columnIndex);
-        for (int k = 0; k < count; k++) {
-            loadChunkInto(chunkRefs.getQuick(start + k), target, columnIndex);
-        }
         final int expected = symbolCounts.getQuick(columnIndex);
+        // Size every structure once, up front. The directory says how many ids the column
+        // holds and the chunk refs say how many UTF-8 bytes they take; the UTF-16 image is
+        // at most twice the UTF-8 bytes plus a length prefix per entry, so this over-reserves
+        // only for non-ASCII content and never grows again during the load.
+        long payloadBytes = 0;
+        for (int k = 0; k < count; k++) {
+            payloadBytes += chunkRefs.getQuick(start + k).getLength();
+        }
+        target.ensureCapacity(expected, 2L * payloadBytes + 4L * expected);
+        try {
+            for (int k = 0; k < count; k++) {
+                loadChunkInto(chunkRefs.getQuick(start + k), target, columnIndex);
+            }
+            final int duplicateId = target.buildReverseIndex();
+            if (duplicateId >= 0) {
+                throw LiveViewCheckpointMetadata.invalid("key dictionary column has a duplicate string")
+                        .put(" [columnIndex=").put(columnIndex).put(", id=").put(duplicateId).put(']');
+            }
+        } catch (Throwable th) {
+            // Never leave the caller a half-loaded dictionary: entries appended without an
+            // index would refuse every intern, and a partial column would answer wrongly.
+            target.clear();
+            throw th;
+        }
         if (target.size() != expected) {
             throw LiveViewCheckpointMetadata.invalid("key dictionary column symbol count mismatch")
                     .put(" [columnIndex=").put(columnIndex)
@@ -360,78 +373,6 @@ public class LiveViewCheckpointKeyDictionaryReader implements Closeable {
         return cmp != 0 ? cmp : Integer.compare(baseWriterColumnIndexes.getQuick(columnIndex), baseWriterColumnIndex);
     }
 
-    /**
-     * Decodes {@code bytes} as UTF-8 into {@link #utf8DecodeChars}, rejecting anything a strict
-     * decoder would: a truncated or invalid continuation-byte sequence, an overlong encoding, a
-     * UTF-8-encoded surrogate, or a code point outside the Unicode range. Hand-rolled rather
-     * than {@code java.nio.charset.CharsetDecoder} - a chunk page is opened in the restore path
-     * of a package this build's own {@code LiveViewNoGcSourceHygieneTest} keeps
-     * {@code ByteBuffer}-free, and {@link LiveViewCheckpointMetadata#putUtf8} is this decoder's
-     * write-side counterpart in the same style.
-     */
-    private CharSequence decodeUtf8Strict(byte[] bytes) {
-        final int len = bytes.length;
-        if (utf8DecodeChars.length < len) {
-            utf8DecodeChars = new char[len];
-        }
-        int out = 0;
-        int i = 0;
-        while (i < len) {
-            final int b0 = bytes[i] & 0xff;
-            if (b0 < 0x80) {
-                utf8DecodeChars[out++] = (char) b0;
-                i++;
-            } else if ((b0 & 0xe0) == 0xc0) {
-                final int cp = decodeContinuation(bytes, len, i, 1, b0 & 0x1f);
-                if (cp < 0x80) {
-                    throw malformedUtf8();
-                }
-                utf8DecodeChars[out++] = (char) cp;
-                i += 2;
-            } else if ((b0 & 0xf0) == 0xe0) {
-                final int cp = decodeContinuation(bytes, len, i, 2, b0 & 0x0f);
-                if (cp < 0x800 || (cp >= 0xd800 && cp <= 0xdfff)) {
-                    throw malformedUtf8();
-                }
-                utf8DecodeChars[out++] = (char) cp;
-                i += 3;
-            } else if ((b0 & 0xf8) == 0xf0) {
-                final int cp = decodeContinuation(bytes, len, i, 3, b0 & 0x07);
-                if (cp < 0x10000 || cp > 0x10ffff) {
-                    throw malformedUtf8();
-                }
-                final int adjusted = cp - 0x10000;
-                utf8DecodeChars[out++] = (char) (0xd800 + (adjusted >> 10));
-                utf8DecodeChars[out++] = (char) (0xdc00 + (adjusted & 0x3ff));
-                i += 4;
-            } else {
-                throw malformedUtf8();
-            }
-        }
-        return new String(utf8DecodeChars, 0, out);
-    }
-
-    /**
-     * Decodes {@code continuationCount} trailing bytes of a multi-byte sequence starting at
-     * {@code i}, folding them into {@code leadBits} (the lead byte's payload bits). Every
-     * continuation byte must carry the {@code 10} high bits; anything else - including running
-     * past {@code len} - is malformed.
-     */
-    private int decodeContinuation(byte[] bytes, int len, int i, int continuationCount, int leadBits) {
-        if (i + continuationCount >= len) {
-            throw malformedUtf8();
-        }
-        int codePoint = leadBits;
-        for (int k = 1; k <= continuationCount; k++) {
-            final int b = bytes[i + k] & 0xff;
-            if ((b & 0xc0) != 0x80) {
-                throw malformedUtf8();
-            }
-            codePoint = (codePoint << 6) | (b & 0x3f);
-        }
-        return codePoint;
-    }
-
     private static CairoException malformedUtf8() {
         return LiveViewCheckpointMetadata.invalid("key dictionary entry is not valid UTF-8");
     }
@@ -463,15 +404,13 @@ public class LiveViewCheckpointKeyDictionaryReader implements Closeable {
             if (offset > payloadLength - length) {
                 throw LiveViewCheckpointMetadata.invalid("key dictionary chunk entry body truncated");
             }
-            final byte[] raw = LiveViewCheckpointMetadata.readBytes(reader, offset, length);
-            offset += length;
-            final CharSequence value = decodeUtf8Strict(raw);
-            final int before = target.size();
-            final int id = target.intern(value);
-            if (id != before) {
-                throw LiveViewCheckpointMetadata.invalid("key dictionary column has a duplicate string")
-                        .put(" [columnIndex=").put(columnIndex).put(", id=").put(id).put(']');
+            // Decoded straight into the dictionary, which validates the UTF-8 as it goes and
+            // appends without a probe: restoreInto indexes the whole column in one sorted pass
+            // once every chunk is in, and that pass makes the duplicate check.
+            if (target.appendUtf8ForRestore(reader.payloadAddressOf(offset, length), length) < 0) {
+                throw malformedUtf8();
             }
+            offset += length;
         }
         if (offset != payloadLength) {
             throw LiveViewCheckpointMetadata.invalid("key dictionary chunk payload has trailing bytes");
