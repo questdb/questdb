@@ -230,6 +230,72 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNullTimestampArgIsABoundaryUnderRespectNulls() throws Exception {
+        // The timestamp argument is any TIMESTAMP expression, not the designated timestamp, so
+        // it can be NULL. Such a row has no position on the time axis and cannot join a
+        // corridor; RESPECT NULLS keeps it as a boundary and starts a new series after it.
+        assertQuery("select id from (select id, sdt(ats, val, 0.0) over (order by ts) keep from tab) where keep")
+                .ddl("create table tab (id int, val double, ats timestamp, ts timestamp) timestamp(ts)",
+                        """
+                                insert into tab values
+                                (0, 0.0,  '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                                (1, 0.0,  null,                          '2024-01-01T00:00:01.000000Z'),
+                                (2, 0.0,  '2024-01-01T00:00:02.000000Z', '2024-01-01T00:00:02.000000Z'),
+                                (3, 10.0, '2024-01-01T00:00:03.000000Z', '2024-01-01T00:00:03.000000Z'),
+                                (4, 20.0, '2024-01-01T00:00:04.000000Z', '2024-01-01T00:00:04.000000Z'),
+                                (5, 30.0, '2024-01-01T00:00:05.000000Z', '2024-01-01T00:00:05.000000Z')""")
+                .returns("""
+                        id
+                        0
+                        1
+                        2
+                        5
+                        """);
+    }
+
+    @Test
+    public void testNullTimestampArgSkippedUnderIgnoreNulls() throws Exception {
+        // IGNORE NULLS drops the row outright and leaves the corridor untouched, so the series
+        // spans the gap: 0,0,0 is flat, then the 10/20/30 ramp keeps only its endpoints.
+        assertQuery("select id from (select id, sdt(ats, val, 0.0) ignore nulls over (order by ts) keep from tab) where keep")
+                .ddl("create table tab (id int, val double, ats timestamp, ts timestamp) timestamp(ts)",
+                        """
+                                insert into tab values
+                                (0, 0.0,  '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                                (1, 0.0,  null,                          '2024-01-01T00:00:01.000000Z'),
+                                (2, 0.0,  '2024-01-01T00:00:02.000000Z', '2024-01-01T00:00:02.000000Z'),
+                                (3, 10.0, '2024-01-01T00:00:03.000000Z', '2024-01-01T00:00:03.000000Z'),
+                                (4, 20.0, '2024-01-01T00:00:04.000000Z', '2024-01-01T00:00:04.000000Z'),
+                                (5, 30.0, '2024-01-01T00:00:05.000000Z', '2024-01-01T00:00:05.000000Z')""")
+                .returns("""
+                        id
+                        0
+                        2
+                        5
+                        """);
+    }
+
+    @Test
+    public void testNanosBackwardJumpWiderThanLongMaxIsABoundary() throws Exception {
+        // No NULLs: a long holds only 292 years of nanoseconds, so the 2100 -> 1700 step is a
+        // backward span wider than Long.MAX. The subtraction wraps positive and reads as a
+        // forward step, and the flat corridor then drops row 1 as interior.
+        assertQuery("select id from (select id, sdt(ats, val, 0.0) over (order by ts) keep from tab) where keep")
+                .ddl("create table tab (id int, val double, ats timestamp_ns, ts timestamp) timestamp(ts)",
+                        """
+                                insert into tab values
+                                (0, 0.0, '2100-01-01T00:00:00.000000000Z', '2024-01-01T00:00:00.000000Z'),
+                                (1, 0.0, '1700-01-01T00:00:00.000000000Z', '2024-01-01T00:00:01.000000Z'),
+                                (2, 0.0, '2150-01-01T00:00:00.000000000Z', '2024-01-01T00:00:02.000000Z')""")
+                .returns("""
+                        id
+                        0
+                        1
+                        2
+                        """);
+    }
+
+    @Test
     public void testPartitionedSingleRowPerPartitionKept() throws Exception {
         assertQuery("select ts, sym, val, sdt(ts, val, 0.5) over (partition by sym order by ts) keep from tab")
                 .ddl("create table tab (ts timestamp, sym symbol, val double) timestamp(ts)",

@@ -293,7 +293,9 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             long ts = tsArg.getTimestamp(record);
             double value = arg.getDouble(record);
-            boolean isNull = Numbers.isNull(value); // Double NaN sentinel
+            // A row with a NULL timestamp has no position on the time axis, so it can no more
+            // join a corridor than a NULL value can; both follow the function's nulls mode.
+            boolean isNull = Numbers.isNull(value) || ts == Numbers.LONG_NULL;
             sd.accept(appendOffset, ts, value, isNull, ignoreNulls, this);
             appendOffset += RECORD_SIZE;
         }
@@ -481,7 +483,9 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
             long ts = tsArg.getTimestamp(record);
             double v = arg.getDouble(record);
-            boolean isNull = Numbers.isNull(v); // Double NaN sentinel
+            // A row with a NULL timestamp has no position on the time axis, so it can no more
+            // join a corridor than a NULL value can; both follow the function's nulls mode.
+            boolean isNull = Numbers.isNull(v) || ts == Numbers.LONG_NULL;
             scratch.accept(appendOffset, ts, v, isNull, ignoreNulls, this);
             appendOffset += RECORD_SIZE;
 

@@ -127,6 +127,38 @@ public class SwingingDoorTest {
     }
 
     @Test
+    public void testBackwardSpanWiderThanLongMaxIsABoundary() {
+        // A backward jump wider than Long.MAX wraps ts - anchorTs POSITIVE, so it reads as a
+        // forward step unless the guard compares the timestamps themselves. Reachable with
+        // valid nanosecond timestamps, which span only 292 years: 2100 -> 1700 -> 2150.
+        // Without the ordering test the middle point is folded into the corridor and dropped.
+        boolean[] k = run(new long[]{4_102_444_800_000_000_000L, -8_520_336_000_000_000_000L, 5_681_318_400_000_000_000L},
+                new double[]{0, 0, 0}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testForwardSpanWiderThanLongMaxIsABoundary() {
+        // The opposite wrap: a forward span over Long.MAX always wraps negative, so dt <= 0
+        // already sees it. The corridor cannot represent such a span, so the points stay put
+        // rather than being reconstructed from a wrapped denominator - keeping data is the
+        // safe direction for a lossy filter. Collinear points would otherwise drop the middle.
+        boolean[] k = run(new long[]{-9_000_000_000_000_000_000L, 0, 9_000_000_000_000_000_000L},
+                new double[]{0, 50, 100}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testNullSentinelTimestampIsABoundary() {
+        // Long.MIN_VALUE is the NULL timestamp sentinel. SdtWindowFunctionFactory folds a NULL
+        // timestamp into the isNull flag before it reaches accept(), but the state machine is
+        // engine-independent and must not mistake the sentinel for a forward step on its own.
+        boolean[] k = run(new long[]{1_704_067_200_000_000L, Long.MIN_VALUE, 1_704_067_202_000_000L},
+                new double[]{0, 0, 0}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
     public void testEqualTimestampsKeptAndReset() {
         // duplicate timestamp against the anchor -> dt<=0 branch: point is kept
         // and re-anchors, without dividing by zero.

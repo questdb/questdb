@@ -79,8 +79,13 @@ public class SwingingDoor {
         }
 
         long dt = ts - anchorTs;
-        if (dt <= 0) {
-            // equal / non-increasing timestamp: treat as a hard boundary
+        // Two tests, because ts - anchorTs can wrap and each direction wraps the other way.
+        // ts <= anchorTs states the ordering rule, and catches a backward span wider than
+        // Long.MAX, which always wraps positive and so reads as a forward step to dt alone:
+        // a NULL timestamp arrives as Long.MIN_VALUE, and a nanosecond column spans only 292
+        // years. dt <= 0 then catches the opposite wrap, since a forward span over Long.MAX
+        // always wraps negative. No corridor spans any of these, so restart the series here.
+        if (ts <= anchorTs || dt <= 0) {
             anchor(index, ts, value);
             sink.mark(index, true);
             return;
@@ -92,7 +97,11 @@ public class SwingingDoor {
         double nLo = sL > slopeLo ? sL : slopeLo;
 
         if (hasInterval && nLo > nHi) {
-            // doors crossed: the pending point is archived (kept) and becomes the new anchor
+            // doors crossed: the pending point is archived (kept) and becomes the new anchor.
+            // dt2 cannot wrap: the guard above leaves ts - anchorTs positive and representable,
+            // and pending() only ever runs on a ts that cleared that same guard, so
+            // anchorTs <= pendingTs and dt2 is bounded by dt. It can still go non-positive when
+            // the ts argument itself moves backwards (1, 5, 3), which the check below handles.
             long dt2 = ts - pendingTs;
             anchorIndex = pendingIndex;
             anchorTs = pendingTs;
