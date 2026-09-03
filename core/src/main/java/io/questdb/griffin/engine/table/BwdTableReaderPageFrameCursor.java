@@ -263,6 +263,7 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
         highestOpenPartitionIndex = -1;
+        remainingRowsInInterval = 0;
         cachedRowGroupIndex = -1;
         cachedRowGroupStartRow = 0;
         filterBufEnd = -1;

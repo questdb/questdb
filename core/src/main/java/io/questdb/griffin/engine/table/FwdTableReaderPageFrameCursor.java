@@ -266,6 +266,7 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         reenterPartitionFrame = false;
         reenterParquetDecoder = null;
         lowestOpenPartitionIndex = 0;
+dont        remainingRowsInInterval = 0;
         cachedRowGroupIndex = 0;
         cachedRowGroupStartRow = 0;
         filterBufEnd = -1;
