@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -180,8 +181,9 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private SqlExecutionCircuitBreaker circuitBreaker;
         private long count;          // running non-null row counter during pass1; becomes bufferSize.
         // Rows with a NULL ts or a null/NaN value are dropped from the buffer entirely (never
-        // appended, never counted) - a null seeding a bucket's min/max would otherwise poison it forever
-        // (NaN comparisons are always false, so minVal/maxVal, once NaN, never update again).
+        // appended, never counted in `count`) - a null seeding a bucket's min/max would otherwise poison
+        // it forever (NaN comparisons are always false, so minVal/maxVal, once NaN, never update again).
+        // They still count toward the SUBSAMPLE row cap, which pass1 checks against rowCount.
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
         @Nullable
         private MemoryTracker memoryTracker;
@@ -197,7 +199,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // same order).
         private long pass2Ordinal;   // running non-null row counter during pass2 (same traversal order as pass1)
         private long pass2Row;       // running ALL-row counter during pass2 (index into nullBits, same order as pass1)
-        private long rowCount;       // running ALL-row counter during pass1 (null + non-null); number of bits in nullBits
+        private long rowCount;       // running ALL-row counter during pass1 (null + non-null); number of bits in nullBits; drives the SUBSAMPLE row cap
         private long selIdx;         // monotonic cursor into `selected` during pass2
         private long target;         // resolved in init() from targetArg for the current execution
         // Resolved once at construction (valueArg's type never changes across rows), used by
@@ -371,9 +373,18 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
+            // The cap counts physical input rows. A NULL row never reaches the buffer, but it still
+            // costs a base row id, a sort entry and a null bit in the window cursor, so it counts too,
+            // exactly as every row does for uniform/cadence (which have no value column to be NULL).
+            if (isSubsampleKeepFlag() && rowCount >= maxRows) {
+                throw CairoException.nonCritical().position(functionPosition)
+                        .put("SUBSAMPLE input exceeds maximum of ").put(maxRows).put(" rows (raise ")
+                        .put(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath()).put(')');
+            }
             final long ts = tsArg.getTimestamp(record);
             if (ts == Numbers.LONG_NULL) {
-                // Dropped: not appended to the buffer, not counted - mirrors bufferInput().
+                // Dropped: not appended to the buffer, not counted in `count` (the row cap above has
+                // already counted it) - mirrors bufferInput().
                 // Record the drop in the per-row null bitset so pass2 need not re-read the record.
                 appendNullFlag(true);
                 return;
@@ -384,10 +395,6 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 // min/max - mirrors bufferInput()'s "if (Double.isNaN(value)) continue;".
                 appendNullFlag(true);
                 return;
-            }
-            if (isSubsampleKeepFlag() && count >= maxRows) {
-                throw CairoException.nonCritical().position(functionPosition)
-                        .put("SUBSAMPLE input exceeds maximum of ").put(maxRows).put(" rows");
             }
             if (count >= Integer.MAX_VALUE) {
                 throw CairoException.nonCritical()

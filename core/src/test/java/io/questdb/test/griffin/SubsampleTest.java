@@ -107,6 +107,53 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConfiguredRowCapCountsNullRows() throws Exception {
+        // The cap counts physical input rows. m4/minmax/lttb drop NULL-valued rows from their buffers,
+        // but every row still costs a base row id, a sort entry and a null bit in the window cursor,
+        // so NULL rows count the same way every row does for uniform/cadence. A WHERE below SUBSAMPLE
+        // runs before the window, so rows it filters out never reach the cap.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS, 5L);
+            execute("CREATE TABLE at_cap_nulls AS (" +
+                    "SELECT CASE WHEN x % 2 = 0 THEN null::double ELSE x::double END price, timestamp_sequence(0, 1) ts FROM long_sequence(5)) TIMESTAMP(ts)");
+            execute("CREATE TABLE over_cap_all_null AS (" +
+                    "SELECT null::double price, timestamp_sequence(0, 1) ts FROM long_sequence(6)) TIMESTAMP(ts)");
+            execute("CREATE TABLE over_cap_one_null AS (" +
+                    "SELECT CASE WHEN x = 6 THEN null::double ELSE x::double END price, timestamp_sequence(0, 1) ts FROM long_sequence(6)) TIMESTAMP(ts)");
+            // Sparse-table shape: 1000 physical rows, five of them carrying a value.
+            execute("CREATE TABLE sparse_prices AS (" +
+                    "SELECT CASE WHEN x <= 5 THEN x::double ELSE null::double END price, timestamp_sequence(0, 1) ts FROM long_sequence(1000)) TIMESTAMP(ts)");
+
+            final String[] methods = {
+                    "uniform(2)",
+                    "cadence(2)",
+                    "cadence(2, 7)",
+                    "m4(price, 2)",
+                    "minmax(price, 2)",
+                    "lttb(price, 2)",
+                    "lttb(price, 2, '1h')"
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String method : methods) {
+                    // Five physical rows, NULLs included, sit exactly at the cap.
+                    assertSubsampleCompletes(compiler, "SELECT price, ts FROM at_cap_nulls SUBSAMPLE " + method);
+                    // The sixth physical row breaches the cap whether or not its value is NULL.
+                    assertSubsampleRowCapBreach(compiler, "SELECT price, ts FROM over_cap_all_null SUBSAMPLE ", method);
+                    assertSubsampleRowCapBreach(compiler, "SELECT price, ts FROM over_cap_one_null SUBSAMPLE ", method);
+                    assertSubsampleRowCapBreach(compiler, "SELECT price, ts FROM sparse_prices SUBSAMPLE ", method);
+                    // Filtering the NULL rows below SUBSAMPLE keeps them out of the window and the cap.
+                    assertSubsampleCompletes(compiler, "SELECT price, ts FROM sparse_prices WHERE price IS NOT NULL SUBSAMPLE " + method);
+                }
+            }
+            assertQuery("SELECT price, ts FROM sparse_prices WHERE price IS NOT NULL SUBSAMPLE lttb(price, 2)")
+                    .timestamp("ts")
+                    .returns("price\tts\n" +
+                            "1.0\t1970-01-01T00:00:00.000000Z\n" +
+                            "5.0\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
     public void testLttbBasic() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -3671,6 +3718,34 @@ public class SubsampleTest extends AbstractCairoTest {
             Assert.assertTrue("SUBSAMPLE m4 must still fuse into the row-selecting node: " + subsamplePlan,
                     subsamplePlan.contains("CachedWindowLightSelect"));
         });
+    }
+
+    private void assertSubsampleCompletes(SqlCompiler compiler, String query) throws SqlException {
+        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue("expected rows for " + query, cursor.hasNext());
+            while (cursor.hasNext()) {
+                // drain
+            }
+        }
+    }
+
+    private void assertSubsampleRowCapBreach(SqlCompiler compiler, String queryPrefix, String method) throws SqlException {
+        final String query = queryPrefix + method;
+        try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory()) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                while (cursor.hasNext()) {
+                    // drain until cap breach
+                }
+                Assert.fail("expected row-cap breach for " + query);
+            } catch (CairoException e) {
+                TestUtils.assertContains(
+                        e.getFlyweightMessage(),
+                        "SUBSAMPLE input exceeds maximum of 5 rows (raise cairo.sql.subsample.max.rows)"
+                );
+                Assert.assertEquals(query.indexOf(method.substring(0, method.indexOf('('))), e.getPosition());
+            }
+        }
     }
 
     private void assertFusedMatchesNonFused(String subsampleCall, String windowCall) throws SqlException {

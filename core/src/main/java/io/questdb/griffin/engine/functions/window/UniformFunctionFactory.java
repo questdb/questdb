@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -244,7 +245,8 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
             if (isSubsampleKeepFlag() && count >= maxRows) {
                 throw CairoException.nonCritical().position(functionPosition)
-                        .put("SUBSAMPLE input exceeds maximum of ").put(maxRows).put(" rows");
+                        .put("SUBSAMPLE input exceeds maximum of ").put(maxRows).put(" rows (raise ")
+                        .put(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath()).put(')');
             }
             count++;
         }
