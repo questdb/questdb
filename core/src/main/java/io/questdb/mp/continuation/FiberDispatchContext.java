@@ -30,15 +30,6 @@ package io.questdb.mp.continuation;
  */
 public interface FiberDispatchContext {
     /**
-     * Returns an incarnation token captured before a dispatch ticket mounts. The runtime passes it
-     * back to {@link #onDispatchContextReleased(long)} so pooled contexts can reject delayed
-     * notifications from an earlier incarnation. Implementations must not throw.
-     */
-    default long getDispatchReleaseToken() {
-        return 0;
-    }
-
-    /**
      * Returns the dispatch context inherited by query-parallel child work. Controllers that do
      * not distinguish coordinator work from its parallel children retain the current context.
      */
@@ -53,13 +44,5 @@ public interface FiberDispatchContext {
      */
     default long getQueryRegistryOwnerId() {
         return -1;
-    }
-
-    /**
-     * Invoked after the dispatch ticket was settled, its request was completed, and the Fiber no
-     * longer retains this context. Failures are contained by FiberRuntime and must remain local to
-     * the context-owned state.
-     */
-    default void onDispatchContextReleased(long releaseToken) {
     }
 }

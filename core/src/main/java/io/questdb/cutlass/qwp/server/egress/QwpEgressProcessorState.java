@@ -225,7 +225,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private volatile boolean streamingCancelRequested;
     private int streamingColumnCount;
-    private short streamingCompiledQueryType;
     /**
      * Credit-flow state for the in-flight query.
      * <p>
@@ -260,7 +259,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private int streamingPageFrameIndex;
     private long streamingPageFrameRow;
     private long streamingPageFrameRowHi;
-    private boolean streamingQueryCacheable;
+    private boolean streamingFactoryCacheable;
     /**
      * {@code volatile}: the CANCEL handler compares the current request id
      * against the incoming target; see the note on {@link #streamingActive}.
@@ -407,26 +406,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             RecordCursor cursor,
             int columnCount,
             long initialCredit,
-            CharSequence sqlText
-    ) {
-        beginStreaming(
-                requestId,
-                factory,
-                cursor,
-                columnCount,
-                initialCredit,
-                sqlText,
-                CompiledQuery.NONE,
-                false
-        );
-    }
-
-    public void beginStreaming(
-            long requestId,
-            RecordCursorFactory factory,
-            RecordCursor cursor,
-            int columnCount,
-            long initialCredit,
             CharSequence sqlText,
             short compiledQueryType,
             boolean queryCacheable
@@ -442,7 +421,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingFactory = factory;
         this.streamingCursor = cursor;
         this.streamingColumnCount = columnCount;
-        this.streamingCompiledQueryType = compiledQueryType;
         this.streamingBatchSeq = 0;
         this.streamingBatchSeqCommitted = false;
         this.streamingCancelRequested = false;
@@ -450,7 +428,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingCreditRemaining.set(initialCredit);
         this.streamingCreditSuspended = false;
         this.streamingRowsEmitted = 0;
-        this.streamingQueryCacheable = queryCacheable;
+        this.streamingFactoryCacheable = compiledQueryType == CompiledQuery.SELECT && queryCacheable;
         this.streamingSqlText = sqlText != null ? Chars.toString(sqlText) : null;
         this.streamingActive = true;
         // Native symbol keys are per-cursor: clear the per-column native-key -> conn-id
@@ -467,26 +445,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * query. The cursor is owned by the state from this point on and is freed by
      * {@link #endStreaming}.
      */
-    public void beginStreamingPageFrame(
-            long requestId,
-            RecordCursorFactory factory,
-            PageFrameCursor pageFrameCursor,
-            int columnCount,
-            long initialCredit,
-            CharSequence sqlText
-    ) {
-        beginStreamingPageFrame(
-                requestId,
-                factory,
-                pageFrameCursor,
-                columnCount,
-                initialCredit,
-                sqlText,
-                CompiledQuery.NONE,
-                false
-        );
-    }
-
     public void beginStreamingPageFrame(
             long requestId,
             RecordCursorFactory factory,
@@ -516,7 +474,6 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingFactory = factory;
         this.streamingPageFrameCursor = pageFrameCursor;
         this.streamingColumnCount = columnCount;
-        this.streamingCompiledQueryType = compiledQueryType;
         this.streamingBatchSeq = 0;
         this.streamingBatchSeqCommitted = false;
         this.streamingCancelRequested = false;
@@ -524,7 +481,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingCreditRemaining.set(initialCredit);
         this.streamingCreditSuspended = false;
         this.streamingRowsEmitted = 0;
-        this.streamingQueryCacheable = queryCacheable;
+        this.streamingFactoryCacheable = compiledQueryType == CompiledQuery.SELECT && queryCacheable;
         this.streamingPageFrameIndex = 0;
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
@@ -752,11 +709,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditInitial = 0;
         streamingCreditRemaining.set(0);
         streamingCreditSuspended = false;
-        streamingCompiledQueryType = CompiledQuery.NONE;
+        streamingFactoryCacheable = false;
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
-        streamingQueryCacheable = false;
         streamingSqlText = null;
         try {
             endSqlExecutionOwner();
@@ -945,7 +901,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     public boolean isStreamingFactoryCacheable() {
-        return streamingCompiledQueryType == CompiledQuery.SELECT && streamingQueryCacheable;
+        return streamingFactoryCacheable;
     }
 
     /**

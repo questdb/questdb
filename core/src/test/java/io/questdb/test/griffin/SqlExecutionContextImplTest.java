@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.DenyAllSecurityContext;
 import io.questdb.cairo.sql.BindVariableService;
@@ -75,6 +76,27 @@ public class SqlExecutionContextImplTest extends AbstractCairoTest {
             } finally {
                 context.setQueryRegistryOwnerId(-1);
             }
+            context.reset();
+        });
+    }
+
+    @Test
+    public void testResetClearsFixedClock() throws Exception {
+        assertMemoryLeak(() -> {
+            final SqlExecutionContextImpl context = (SqlExecutionContextImpl) sqlExecutionContext;
+            context.setNowAndFixClock(1_000, ColumnType.TIMESTAMP_NANO);
+            Assert.assertEquals(1, context.getMicrosecondTimestamp());
+            Assert.assertEquals(1_000, context.getNanosecondTimestamp());
+            Assert.assertEquals(ColumnType.TIMESTAMP_NANO, context.getNowTimestampType());
+
+            context.reset();
+            Assert.assertTrue(context.getMicrosecondTimestamp() > 1_000_000);
+            Assert.assertTrue(context.getNanosecondTimestamp() > 1_000_000);
+            Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, context.getNowTimestampType());
+
+            context.setNowAndFixClock(2_000, ColumnType.TIMESTAMP_MICRO);
+            context.with(AllowAllSecurityContext.INSTANCE, null, null, 17, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+            Assert.assertTrue(context.getMicrosecondTimestamp() > 1_000_000);
             context.reset();
         });
     }

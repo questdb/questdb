@@ -350,7 +350,9 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
 
     private boolean hasActiveSqlExecutionWork() {
         if (!exportModel.isParquetFormat()) {
-            return cursor != null || pageFrameCursor != null;
+            return (cursor != null || pageFrameCursor != null)
+                    && queryState != ExportQueryProcessor.QUERY_SEND_ERROR
+                    && queryState != ExportQueryProcessor.QUERY_DONE;
         }
         // TEMP_TABLE and the exporter-owned cursor modes may not expose a cursor on this state.
         // They still execute query work through EXPORT_DATA. FILE_SEND_COMPLETE, DONE, and ERROR

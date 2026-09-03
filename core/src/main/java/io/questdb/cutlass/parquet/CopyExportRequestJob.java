@@ -63,6 +63,9 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
     private final @Nullable FiberRuntime fiberRuntime;
     private final StringSink fileName = new StringSink();
     private final @NotNull MicrosecondClock microsecondClock;
+    private @Nullable MemoryTracker activeLegacyMemoryTracker;
+    private @Nullable SqlExecutionContextImpl activeOwnerContext;
+    private long activeOwnerId = -1;
     private boolean isClosed;
     private volatile boolean isFiberActive;
     private volatile boolean isRequestLoaded;
@@ -219,7 +222,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     localTaskCopy.getCopyID()
             );
         } finally {
-            releaseRequest(-1, null, null);
+            releaseRequest();
         }
     }
 
@@ -239,7 +242,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     localTaskCopy.getCopyID()
             );
         } finally {
-            releaseRequest(-1, null, null);
+            releaseRequest();
         }
     }
 
@@ -292,9 +295,6 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         final CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         final SqlExecutionCircuitBreaker circuitBreaker = localTaskCopy.getCircuitBreaker();
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.WAITING;
-        SqlExecutionContextImpl executionContext = null;
-        MemoryTracker legacyMemoryTracker = null;
-        long ownerId = -1;
         try {
             if (entry.isCancellationRequested()) {
                 throw CopyExportException.instance(phase, -1)
@@ -303,8 +303,10 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                         .setCancellation(true);
             }
             serialExporter.of(localTaskCopy);
-            executionContext = serialExporter.getSqlExecutionContext();
-            ownerId = engine.beginSqlExecution(entry.getSqlText(), executionContext);
+            final SqlExecutionContextImpl executionContext = serialExporter.getSqlExecutionContext();
+            final long ownerId = engine.beginSqlExecution(entry.getSqlText(), executionContext);
+            activeOwnerContext = executionContext;
+            activeOwnerId = ownerId;
             final MemoryTracker memoryTracker;
             if (ownerId > -1) {
                 memoryTracker = executionContext.getMemoryTracker();
@@ -314,12 +316,12 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                 localTaskCopy.setMemoryTracker(memoryTracker);
                 engine.publishSqlExecutionQuery(ownerId, entry.getSqlText(), entry.containsSecret(), executionContext);
             } else {
-                legacyMemoryTracker = engine.getMemoryTrackerProvider().acquire(
+                memoryTracker = engine.getMemoryTrackerProvider().acquire(
                         localTaskCopy.getSecurityContext(),
                         localTaskCopy.getCopyID(),
                         MemoryTrackerWorkload.QUERY
                 );
-                memoryTracker = legacyMemoryTracker;
+                activeLegacyMemoryTracker = memoryTracker;
                 localTaskCopy.setMemoryTracker(memoryTracker);
                 executionContext.setMemoryTracker(memoryTracker);
             }
@@ -379,7 +381,7 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
                     localTaskCopy.getCopyID()
             );
         } finally {
-            releaseRequest(ownerId, executionContext, legacyMemoryTracker);
+            releaseRequest();
         }
     }
 
@@ -402,14 +404,16 @@ public class CopyExportRequestJob extends AbstractQueueConsumerJob<CopyExportReq
         }
     }
 
-    private void releaseRequest(
-            long ownerId,
-            @Nullable SqlExecutionContextImpl executionContext,
-            @Nullable MemoryTracker legacyMemoryTracker
-    ) {
+    private void releaseRequest() {
         if (!isRequestLoaded) {
             return;
         }
+        final long ownerId = activeOwnerId;
+        final SqlExecutionContextImpl executionContext = activeOwnerContext;
+        final MemoryTracker legacyMemoryTracker = activeLegacyMemoryTracker;
+        activeLegacyMemoryTracker = null;
+        activeOwnerContext = null;
+        activeOwnerId = -1;
         final CopyExportContext.ExportTaskEntry entry = localTaskCopy.getEntry();
         Throwable cleanupFailure = null;
         try {

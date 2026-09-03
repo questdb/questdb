@@ -62,7 +62,16 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
                     QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)
             ) {
                 state.beginSqlExecutionOwner("SELECT 1", executionContext, CompiledQuery.SELECT);
-                state.beginStreaming(1, null, new TrackingRecordCursor(engine.events), 0, 0, "SELECT 1");
+                state.beginStreaming(
+                        1,
+                        null,
+                        new TrackingRecordCursor(engine.events),
+                        0,
+                        0,
+                        "SELECT 1",
+                        CompiledQuery.SELECT,
+                        false
+                );
                 state.parkSqlExecutionOwner();
 
                 state.endStreaming();
@@ -92,7 +101,16 @@ public class QwpEgressResourceLifecycleTest extends AbstractTest {
                     QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)
             ) {
                 state.beginSqlExecutionOwner("SELECT 1", executionContext, CompiledQuery.SELECT);
-                state.beginStreaming(1, null, new TrackingRecordCursor(engine.events), 0, 0, "SELECT 1");
+                state.beginStreaming(
+                        1,
+                        null,
+                        new TrackingRecordCursor(engine.events),
+                        0,
+                        0,
+                        "SELECT 1",
+                        CompiledQuery.SELECT,
+                        false
+                );
 
                 state.parkSqlExecutionOwner();
                 Assert.assertEquals(

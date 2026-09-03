@@ -42,6 +42,7 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
@@ -109,7 +110,7 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
                 try (TestableContext context = new TestableContext(httpConfig, new MockRawSocket(sendBuf, SEND_BUFFER_SIZE))) {
                     QwpEgressProcessorState state = setupState(context);
                     TimerSpyRecordCursor cursor = new TimerSpyRecordCursor();
-                    state.beginStreaming(1, null, cursor, 0, 1, null);
+                    state.beginStreaming(1, null, cursor, 0, 1, null, CompiledQuery.NONE, false);
                     state.consumeStreamingCredit(1);
                     state.suspendStreamingTimer();
                     context.setResumeSendThrowsPeerSlow(true);
@@ -155,7 +156,7 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
                 try (TestableContext context = new TestableContext(httpConfig, rawSocket)) {
                     QwpEgressProcessorState state = setupState(context);
                     TimerSpyRecordCursor cursor = new TimerSpyRecordCursor();
-                    state.beginStreaming(1, null, cursor, 0, 1, null);
+                    state.beginStreaming(1, null, cursor, 0, 1, null, CompiledQuery.NONE, false);
                     state.suspendStreamingTimer();
 
                     try {
@@ -191,7 +192,16 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
                     );
                     Assert.assertNotNull(pageFrameCursor);
                     TimerSpyPageFrameCursor cursor = new TimerSpyPageFrameCursor(pageFrameCursor);
-                    state.beginStreamingPageFrame(1, factory, cursor, 2, 0, "SELECT * FROM qwp_timer_page");
+                    state.beginStreamingPageFrame(
+                            1,
+                            factory,
+                            cursor,
+                            2,
+                            0,
+                            "SELECT * FROM qwp_timer_page",
+                            CompiledQuery.NONE,
+                            false
+                    );
                     factory = null;
                     pageFrameCursor = null;
 

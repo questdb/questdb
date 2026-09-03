@@ -827,6 +827,9 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // restore is ever bypassed.
         this.readerPoolSupervisor = null;
         this.resourceGroupBypassed = false;
+        this.clockUseNow = false;
+        this.nowTimestampType = ColumnType.TIMESTAMP_MICRO;
+        this.intervalFunctionType = IntervalUtils.getIntervalType(nowTimestampType);
         this.timestampRequiredStack.clear();
         this.hasIntervalStack.clear();
         this.intervalModelObjStack.clear();

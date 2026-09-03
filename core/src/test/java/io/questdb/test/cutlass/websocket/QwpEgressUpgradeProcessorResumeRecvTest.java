@@ -38,6 +38,7 @@ import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.log.Log;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.network.PeerIsSlowToReadException;
@@ -146,7 +147,7 @@ public class QwpEgressUpgradeProcessorResumeRecvTest extends AbstractCairoTest {
                             rawSocket.setThrowPeerSlow(true);
                             QwpEgressProcessorState state = setupState(context);
                             TimerSpyRecordCursor cursor = new TimerSpyRecordCursor();
-                            state.beginStreaming(1, null, cursor, 0, 1, null);
+                            state.beginStreaming(1, null, cursor, 0, 1, null, CompiledQuery.NONE, false);
                             state.consumeStreamingCredit(1);
                             state.markStreamingCreditSuspended();
                             state.suspendStreamingTimer();

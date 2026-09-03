@@ -426,7 +426,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         // A cursor means resumeSend can still pull/serialize query results. Confirmation and error
         // responses have no query work left, so flushing them must not re-admit an already-completed
         // CTAS/INSERT AS SELECT (or an unmanaged control statement).
-        if (cursor != null) {
+        if (cursor != null && queryState != QUERY_ERROR) {
             mountSqlExecutionOwner();
         }
     }

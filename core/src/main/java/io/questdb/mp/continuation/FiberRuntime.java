@@ -1506,9 +1506,6 @@ public final class FiberRuntime {
         }
         boolean hasFiberOwnership = true;
         boolean isTerminated = false;
-        FiberDispatchContext mountedDispatchContext = null;
-        boolean mountedDispatchReleaseNotified = false;
-        long mountedDispatchReleaseToken = 0;
         Fiber.Outcome outcome = fiber.getOutcomeScratch();
         outcome.clear();
         try {
@@ -1520,10 +1517,6 @@ public final class FiberRuntime {
                     return PROCESS_OWNED;
                 }
                 final FiberDispatchRequest request = requireDispatchRequest(fiber);
-                mountedDispatchContext = request.getDispatchContext();
-                if (mountedDispatchContext != null) {
-                    mountedDispatchReleaseToken = mountedDispatchContext.getDispatchReleaseToken();
-                }
                 final FiberDispatchTicket ticket = request.consume();
                 runControlledMount(fiber, ownerContext, request, ticket);
             }
@@ -1531,38 +1524,18 @@ public final class FiberRuntime {
                 fiber.takeOutcome(outcome);
                 fiber.beginRetirement();
                 fiber.markRetired();
-                mountedDispatchReleaseNotified = notifyDispatchContextReleased(
-                        fiber,
-                        mountedDispatchContext,
-                        mountedDispatchReleaseToken
-                );
                 finishFiberRetirement(fiber);
                 hasFiberOwnership = false;
                 finalizeOutcome(outcome);
             } else if (fiber.getYieldReason() == Fiber.YIELD_WAIT) {
-                mountedDispatchReleaseNotified = notifyDispatchContextReleased(
-                        fiber,
-                        mountedDispatchContext,
-                        mountedDispatchReleaseToken
-                );
                 fiber.publishWaiting();
             } else if (fiber.getYieldReason() == Fiber.YIELD_DISPATCH) {
-                mountedDispatchReleaseNotified = notifyDispatchContextReleased(
-                        fiber,
-                        mountedDispatchContext,
-                        mountedDispatchReleaseToken
-                );
                 fiber.publishDispatchYield();
             } else {
                 fiber.takeOutcome(outcome);
                 if (!fiber.transitionMountedToFree()) {
                     throw new IllegalStateException("fiber did not unmount to free");
                 }
-                mountedDispatchReleaseNotified = notifyDispatchContextReleased(
-                        fiber,
-                        mountedDispatchContext,
-                        mountedDispatchReleaseToken
-                );
                 if (outcome.type == Fiber.OUTCOME_PARKED) {
                     hasFiberOwnership = finalizePark(fiber, outcome.task);
                 } else {
@@ -1587,33 +1560,10 @@ public final class FiberRuntime {
                     LOG.critical().$("fiber terminal notification finalization failed [error=").$(th).I$();
                 }
             }
-            if (!mountedDispatchReleaseNotified) {
-                notifyDispatchContextReleased(fiber, mountedDispatchContext, mountedDispatchReleaseToken);
-            }
         }
         return isTerminated
                 ? PROCESS_TERMINATED
                 : hasFiberOwnership ? PROCESS_OWNED : PROCESS_RELEASED;
-    }
-
-    private static boolean notifyDispatchContextReleased(
-            Fiber fiber,
-            @Nullable FiberDispatchContext mountedDispatchContext,
-            long mountedDispatchReleaseToken
-    ) {
-        if (mountedDispatchContext == null
-                || fiber.getDispatchContextForDispatch() == mountedDispatchContext) {
-            return false;
-        }
-        try {
-            // Ticket settlement and request completion happened in runControlledMount(). Notify
-            // before publishing the Fiber whenever possible, so its request state cannot be reused
-            // first. The token additionally rejects delayed callbacks after pooled-context reuse.
-            mountedDispatchContext.onDispatchContextReleased(mountedDispatchReleaseToken);
-        } catch (Throwable th) {
-            LOG.error().$("fiber dispatch-context release callback failed [error=").$(th).I$();
-        }
-        return true;
     }
 
     private boolean prepareDirectDispatch(
