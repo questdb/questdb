@@ -43,13 +43,26 @@ import io.questdb.griffin.engine.functions.eq.EqSymStrFunctionFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import static io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory.symbolMatches;
 
 public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrFunctionFactory {
+
+    // Counts the full O(symbolCount) dictionary regex scans extractSymbolKeys() performs. The
+    // per-worker clones of a non-thread-safe pattern predicate inherit the owner's matched key set
+    // (offerStateTo -> isStateInherited) precisely so that a cursor open costs ONE scan, not one per
+    // clone, and only a counter can tell an inherited key set from a re-derived one - both produce
+    // the same rows. A plain static boolean guards it: the JIT folds the always-false production
+    // branch away, and the tests that flip it drive their queries on the calling thread.
+    @TestOnly
+    public static boolean isSymbolKeyScanCounterEnabled = false;
+    @TestOnly
+    public static final AtomicLong testSymbolKeyScans = new AtomicLong();
 
     @Override
     public Function newInstance(
@@ -141,6 +154,9 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         assert symbolTable != null;
         symbolKeys.clear();
         if (matcher != null) {
+            if (isSymbolKeyScanCounterEnabled) {
+                testSymbolKeyScans.incrementAndGet();
+            }
             for (int i = 0, n = symbolTable.getSymbolCount(); i < n; i++) {
                 if (matcher.reset(symbolTable.valueOf(i)).matches()) {
                     symbolKeys.add(i);
@@ -151,13 +167,17 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
 
     protected abstract boolean isCaseInsensitive();
 
-    private static class BindLikeStaticSymbolTableFunction extends BooleanFunction implements BinaryFunction {
+    private static class BindLikeStaticSymbolTableFunction extends BooleanFunction implements BinaryFunction, SymbolKeySetProvider {
         private final boolean caseInsensitive;
         private final Function pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
         private String lastPattern = null;
-        private boolean stateInherited = false;
+        private int lastSymbolCount = -1;
+        private StaticSymbolTable lastSymbolTable;
+        private long lastSymbolTableGeneration = StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION;
+        private Matcher matcher;
+        private boolean isStateInherited = false;
         private boolean stateShared = false;
 
         public BindLikeStaticSymbolTableFunction(SymbolFunction value, Function pattern, boolean caseInsensitive) {
@@ -169,6 +189,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public boolean getBool(Record rec) {
             return symbolMatches(value, rec, symbolKeys);
+        }
+
+        @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
         }
 
         @Override
@@ -184,28 +209,58 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             BinaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
+            if (isStateInherited) {
+                // A per-worker clone: the owner ran this method against the CURRENT bind value earlier
+                // in this same init cycle and donated its key set (offerStateTo), so re-deriving it
+                // here would only repeat the owner's O(symbolCount) dictionary scan. The donation is
+                // what re-arms the shortcut - every open of every donating atom offers state to each
+                // clone immediately before initializing it - so a re-bound variable cannot leave a
+                // clone holding the previous pattern's keys.
+                isStateInherited = false;
                 return;
             }
             this.stateShared = false;
-            // this is bind variable, we can use it as constant
             final CharSequence patternValue = pattern.getStrA(null);
             if (patternValue != null && patternValue.length() > 0) {
-                // lastPattern is used to avoid recompiling the same regex multiple times on
-                // different cursor invocations
                 String p = escapeSpecialChars(patternValue, lastPattern);
                 if (p != null) {
                     int flags = Pattern.DOTALL;
+                    // Keep the escaped spelling for allocation-free exact hits, but invalidate only
+                    // when the normalized matcher source changes.
+                    lastPattern = p;
                     if (caseInsensitive) {
                         flags |= Pattern.CASE_INSENSITIVE;
                         p = p.toLowerCase();
+                        if (matcher != null && p.equals(matcher.pattern().pattern())) {
+                            p = null;
+                        }
                     }
-                    Matcher matcher = Pattern.compile(p, flags).matcher("");
-                    this.lastPattern = p;
+                    if (p != null) {
+                        matcher = Pattern.compile(p, flags).matcher("");
+                    }
+                }
+
+                final StaticSymbolTable symbolTable = value.getStaticSymbolTable();
+                assert symbolTable != null;
+                final int symbolCount = symbolTable.getSymbolCount();
+                final long symbolTableGeneration = symbolTable.getSymbolTableGeneration();
+                if (p != null
+                        || symbolTableGeneration == StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION
+                        || symbolTable != lastSymbolTable
+                        || symbolCount != lastSymbolCount
+                        || symbolTableGeneration != lastSymbolTableGeneration) {
                     extractSymbolKeys(value, symbolKeys, matcher);
+                    lastSymbolCount = symbolCount;
+                    lastSymbolTable = symbolTable;
+                    lastSymbolTableGeneration = symbolTableGeneration;
                 }
             } else {
                 lastPattern = null;
+                lastSymbolCount = -1;
+                lastSymbolTable = null;
+                lastSymbolTableGeneration = StaticSymbolTable.NO_SYMBOL_TABLE_GENERATION;
+                matcher = null;
+                symbolKeys.clear();
             }
         }
 
@@ -219,7 +274,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (that instanceof BindLikeStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
-                thatP.stateInherited = this.stateShared = true;
+                thatP.isStateInherited = this.stateShared = true;
             }
             BinaryFunction.super.offerStateTo(that);
         }
@@ -240,11 +295,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
-        private boolean stateInherited = false;
+        private boolean isStateInherited = false;
         private boolean stateShared = false;
 
         public ConstContainsStaticSymbolTableFunction(SymbolFunction value, String pattern) {
@@ -263,9 +318,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
+            if (isStateInherited) {
                 return;
             }
             this.stateShared = false;
@@ -289,7 +349,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (that instanceof ConstContainsStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
-                thatP.stateInherited = this.stateShared = true;
+                thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
@@ -307,11 +367,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
-        private boolean stateInherited = false;
+        private boolean isStateInherited = false;
         private boolean stateShared = false;
 
         public ConstEndsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
@@ -330,9 +390,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
+            if (isStateInherited) {
                 return;
             }
             this.stateShared = false;
@@ -356,7 +421,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (that instanceof ConstEndsWithStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
-                thatP.stateInherited = this.stateShared = true;
+                thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
@@ -373,11 +438,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstIContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstIContainsStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
-        private boolean stateInherited = false;
+        private boolean isStateInherited = false;
         private boolean stateShared = false;
 
         public ConstIContainsStaticSymbolTableFunction(SymbolFunction value, String pattern) {
@@ -396,9 +461,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
+            if (isStateInherited) {
                 return;
             }
             this.stateShared = false;
@@ -422,7 +492,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (that instanceof ConstIContainsStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
-                thatP.stateInherited = this.stateShared = true;
+                thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
@@ -440,11 +510,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstIEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstIEndsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
-        private boolean stateInherited = false;
+        private boolean isStateInherited = false;
         private boolean stateShared = false;
 
         public ConstIEndsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
@@ -463,9 +533,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
+            if (isStateInherited) {
                 return;
             }
             this.stateShared = false;
@@ -489,7 +564,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (that instanceof ConstIEndsWithStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
-                thatP.stateInherited = this.stateShared = true;
+                thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
@@ -506,11 +581,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstIStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstIStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
-        private boolean stateInherited = false;
+        private boolean isStateInherited = false;
         private boolean stateShared = false;
 
         public ConstIStartsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
@@ -529,9 +604,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
+            if (isStateInherited) {
                 return;
             }
             this.stateShared = false;
@@ -555,7 +635,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (that instanceof ConstIStartsWithStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
-                thatP.stateInherited = this.stateShared = true;
+                thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
@@ -572,11 +652,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstLikeStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstLikeStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final Matcher matcher;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
-        private boolean stateInherited = false;
+        private boolean isStateInherited = false;
         private boolean stateShared = false;
 
         public ConstLikeStaticSymbolTableFunction(SymbolFunction value, Matcher matcher) {
@@ -595,9 +675,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
+            if (isStateInherited) {
                 return;
             }
             this.stateShared = false;
@@ -614,7 +699,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (that instanceof ConstLikeStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
-                thatP.stateInherited = this.stateShared = true;
+                thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }
@@ -635,11 +720,11 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
     }
 
-    private static class ConstStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction {
+    private static class ConstStartsWithStaticSymbolTableFunction extends BooleanFunction implements UnaryFunction, SymbolKeySetProvider {
         private final String pattern;
         private final IntList symbolKeys = new IntList();
         private final SymbolFunction value;
-        private boolean stateInherited = false;
+        private boolean isStateInherited = false;
         private boolean stateShared = false;
 
         public ConstStartsWithStaticSymbolTableFunction(SymbolFunction value, String pattern) {
@@ -658,9 +743,14 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
         }
 
         @Override
+        public IntList getMatchedSymbolKeys() {
+            return symbolKeys;
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             UnaryFunction.super.init(symbolTableSource, executionContext);
-            if (stateInherited) {
+            if (isStateInherited) {
                 return;
             }
             this.stateShared = false;
@@ -684,7 +774,7 @@ public abstract class AbstractLikeSymbolFunctionFactory extends AbstractLikeStrF
             if (that instanceof ConstStartsWithStaticSymbolTableFunction thatP) {
                 thatP.symbolKeys.clear();
                 thatP.symbolKeys.addAll(this.symbolKeys);
-                thatP.stateInherited = this.stateShared = true;
+                thatP.isStateInherited = this.stateShared = true;
             }
             UnaryFunction.super.offerStateTo(that);
         }

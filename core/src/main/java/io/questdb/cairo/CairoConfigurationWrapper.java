@@ -1415,6 +1415,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getSymbolPatternIndexThreshold() {
+        return getDelegate().getSymbolPatternIndexThreshold();
+    }
+
+    @Override
     public long getSymbolTableMaxAllocationPageSize() {
         return getDelegate().getSymbolTableMaxAllocationPageSize();
     }
@@ -1847,6 +1852,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlWindowMapFusionEnabled() {
         return getDelegate().isSqlWindowMapFusionEnabled();
+    }
+
+    @Override
+    public boolean isSymbolPatternIndexEnabled() {
+        return getDelegate().isSymbolPatternIndexEnabled();
     }
 
     @Override

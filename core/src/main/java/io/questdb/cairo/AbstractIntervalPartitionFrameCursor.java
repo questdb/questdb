@@ -73,10 +73,12 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     protected int runResume;
     protected TableReader reader;
     protected long sizeSoFar = 0;
+    private long frameCountUpperBound = -1;
     private int initialIntervalsHi;
     private int initialIntervalsLo;
     private int initialPartitionHi;
     private int initialPartitionLo;
+    private boolean isFrameCountUpperBoundComputed;
 
     public AbstractIntervalPartitionFrameCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         assert timestampIndex > -1;
@@ -92,6 +94,23 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         Misc.free(parquetDecoder);
         nativeTimestampFinder.clear();
         reader = Misc.free(reader);
+    }
+
+    /**
+     * At most one frame per (interval, partition) pair whose timestamp ranges overlap, counted
+     * over the culled bounds {@link #calculateRanges} resolved. The walk can only skip pairs (an
+     * intersection that holds no rows emits no frame), never add them, so this never
+     * under-counts. Empty partitions inside an interval over-count, which is the safe direction
+     * for eager-rejection callers. Two partition binary searches per culled interval, no I/O,
+     * computed on first call and cached until the next {@link #of}/{@link #reload}.
+     */
+    @Override
+    public long getFrameCountUpperBound() {
+        if (!isFrameCountUpperBoundComputed) {
+            frameCountUpperBound = computeFrameCountUpperBound();
+            isFrameCountUpperBoundComputed = true;
+        }
+        return frameCountUpperBound;
     }
 
     /**
@@ -261,6 +280,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     }
 
     private void calculateRanges(TableReader reader, LongList intervals) {
+        isFrameCountUpperBoundComputed = false;
         if (intervals.size() > 0) {
             if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
                 cullIntervals(reader, intervals);
@@ -280,6 +300,39 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
             initialPartitionHi = 0;
         }
         toTop();
+    }
+
+    private long computeFrameCountUpperBound() {
+        final TableReader reader = this.reader;
+        if (reader == null || intervals == null) {
+            return -1;
+        }
+        if (initialIntervalsLo >= initialIntervalsHi || initialPartitionLo >= initialPartitionHi) {
+            return 0;
+        }
+        final long minTimestamp = reader.getMinTimestamp();
+        final long maxTimestamp = reader.getMaxTimestamp();
+        long pairs = 0;
+        for (int i = initialIntervalsLo; i < initialIntervalsHi; i++) {
+            // Clamp to the reader's data range, mirroring cullPartitions(): an open-ended or
+            // over-reaching interval must not walk the partition search off either end.
+            final long intervalLo = Math.max(intervals.getQuick(2 * i), minTimestamp);
+            final long intervalHi = Math.min(intervals.getQuick(2 * i + 1), maxTimestamp);
+            if (intervalLo > intervalHi) {
+                continue;
+            }
+            final int partitionLo = Math.max(reader.getPartitionIndexByTimestamp(intervalLo), initialPartitionLo);
+            // ScanDown for the HIGH boundary, for the same reason cullPartitions() below uses it: on a
+            // composite table a timestamp names a whole DAY of cells, and the plain lookup resolves to
+            // the FIRST of them. Using it here made this an upper bound that under-counts a multi-cell
+            // day -- the one direction an upper bound must never be wrong in. Byte-identical to the
+            // plain lookup for a one-cell-per-day table, so plain planning is unchanged.
+            final int partitionHi = Math.min(reader.getPartitionIndexByTimestampScanDown(intervalHi), initialPartitionHi - 1);
+            if (partitionLo <= partitionHi) {
+                pairs += partitionHi - partitionLo + 1;
+            }
+        }
+        return pairs;
     }
 
     private void cullIntervals(TableReader reader, LongList intervals) {

@@ -104,18 +104,6 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
     TableToken getTableToken();
 
     /**
-     * Returns {@code true} if the table has any parquet-format partitions.
-     * <p>
-     * The check is table-level rather than query-level: even for
-     * {@code IntervalPartitionFrameCursorFactory} with static intervals, we do not
-     * narrow the check to only the partitions the query will touch. The table-level
-     * flag is a single cached boolean read under the metadata cache read lock (O(1),
-     * zero IO), whereas a partition-level check would require opening a
-     * {@code TxReader} at compile time.
-     */
-    boolean hasParquetFormatPartitions(SqlExecutionContext executionContext);
-
-    /**
      * Returns {@code true} when the factory restricts the scan to a set of
      * designated-timestamp intervals (i.e. an {@code IntervalPartitionFrameCursorFactory}).
      * The interval predicate lives in the frame cursor and never surfaces as a residual
@@ -126,7 +114,10 @@ public interface PartitionFrameCursorFactory extends Sinkable, Closeable, Planna
         return false;
     }
 
-    void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions);
+    void setPushdownFilterCondition(
+            long partitionTableVersion,
+            @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
+    );
 
     boolean supportsTableRowId(TableToken tableToken);
 

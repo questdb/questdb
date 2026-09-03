@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -52,6 +53,7 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     // SqlCodeGenerator; null (default) means "no pruning" -- see setAllowedCellKeys's own doc.
     protected @Nullable IntHashSet allowedCellKeys;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
+    private long pushdownPartitionTableVersion = -1;
 
     AbstractPartitionFrameCursorFactory(
             TableToken tableToken,
@@ -89,18 +91,14 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
         return tableToken;
     }
 
-    @Override
-    public boolean hasParquetFormatPartitions(SqlExecutionContext executionContext) {
-        // The token is resolved from the synchronously loaded registry, but the metadata
-        // cache is hydrated lazily; hydrate on demand so parquet row-group pruning is not
-        // silently skipped for a registered-but-not-yet-cached table during the startup
-        // hydration window.
-        executionContext.getCairoEngine().getMetadataCache().hydrateTableOnDemand(tableToken);
-        try (MetadataCacheReader metadataRO = executionContext.getCairoEngine().getMetadataCache().readLock()) {
-            CairoTable table = metadataRO.getTable(tableToken);
-            return table != null && table.hasParquetPartitions();
-        }
-    }
+    // hasParquetFormatPartitions was removed here with the merge of origin/master. It overrode a
+    // PartitionFrameCursorFactory method that master DELETED: parquet-partition presence is now
+    // tracked on TableReader (hasParquetPartitions) rather than asked of the metadata cache, so the
+    // on-demand hydration this override existed for -- covering the startup window where a table is
+    // registered but not yet cached, during which parquet row-group pruning was silently skipped --
+    // is no longer reachable through this path. Recorded rather than silently dropped, because the
+    // hazard it addressed is a property of the cache, not of this class.
+
 
     @Override
     public void setAllowedCellKeys(@Nullable IntHashSet allowedCellKeys) {
@@ -108,7 +106,11 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     @Override
-    public void setPushdownFilterCondition(ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions) {
+    public void setPushdownFilterCondition(
+            long partitionTableVersion,
+            @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions
+    ) {
+        this.pushdownPartitionTableVersion = partitionTableVersion;
         this.pushdownFilterConditions = pushdownFilterConditions;
     }
 
@@ -176,9 +178,22 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     }
 
     TableReader getReader(SqlExecutionContext executionContext) {
-        return executionContext.getReader(
+        final TableReader reader = executionContext.getReader(
                 tableToken,
                 metadataVersion
         );
+        if (pushdownPartitionTableVersion > -1) {
+            final long currentPartitionTableVersion = reader.getTxFile().getPartitionTableVersion();
+            if (currentPartitionTableVersion != pushdownPartitionTableVersion) {
+                final boolean hasParquetPushdown = pushdownFilterConditions != null;
+                if (!executionContext.isPartitionFormatChangeTolerated()
+                        && reader.hasParquetPartitions() != hasParquetPushdown) {
+                    Misc.free(reader);
+                    throw TableReferenceOutOfDateException.ofPartitionFormatChange(tableToken);
+                }
+                pushdownPartitionTableVersion = currentPartitionTableVersion;
+            }
+        }
+        return reader;
     }
 }
