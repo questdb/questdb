@@ -108,6 +108,16 @@ public class CoveringIndexFastPathFailureFuzzTest extends AbstractFuzzTest {
         runFailureFuzz(generateRandom(LOG, 0x7ab3e10c9d2f45L, 0x3e9c7b16a80d52L), true);
     }
 
+    @Test
+    public void testFastPathFailureFuzzRegressionStaleIndexedTail() throws Exception {
+        // A value.d fault fails the second partition of a two-partition commit after the first
+        // partition's merge-append already published a covered generation. The retry of that same
+        // seqTxn re-encodes the head to evict the stale tail, and a covered generation appended on
+        // top of the re-encode used to read back NULL - permanently, since no later commit to the
+        // partition repairs it.
+        runFailureFuzz(generateRandom(LOG, 93202001599750L, 1788446411951L), true);
+    }
+
     private void applyBatch(String table, Op op, int symbolCardinality) throws Exception {
         final String valueExpr = "(" + op.v0 + " + x)::DOUBLE";
         execute("INSERT INTO " + table
@@ -336,11 +346,17 @@ public class CoveringIndexFastPathFailureFuzzTest extends AbstractFuzzTest {
             }
             switch (targetKind) {
                 case 0:
-                    return Utf8s.endsWithAscii(name, ".pc");
+                    // Cover data files carry the generation in the name:
+                    // <col>.pc<includeIdx>.<postingColumnNameTxn>[.<coveredColumnNameTxn>].<sealTxn>
+                    // so they never end with ".pc". ".pci" is the cover info file, not cover data.
+                    return Utf8s.containsAscii(name, ".pc") && !Utf8s.containsAscii(name, ".pci");
                 case 1:
-                    return Utf8s.endsWithAscii(name, ".pv");
+                    // Sealed value files: <col>.pv[.<postingColumnNameTxn>].<sealTxn>
+                    return Utf8s.containsAscii(name, ".pv");
                 default:
-                    return Utf8s.endsWithAscii(name, "value.d");
+                    // The base column data file also carries a column-name txn when the column
+                    // has been rewritten: value.d, value.d.<txn>.
+                    return Utf8s.containsAscii(name, "value.d");
             }
         }
     }

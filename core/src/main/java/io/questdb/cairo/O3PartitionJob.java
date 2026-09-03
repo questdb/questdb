@@ -772,7 +772,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // incomplete: the seal sweep's rebuild then migrates the head to the current format.
                 final boolean isLegacyHead = indexWriter instanceof PostingIndexWriter
                         && ((PostingIndexWriter) indexWriter).isHeadCoveringFormatLegacy();
-                if (!isLegacyHead) {
+                // An earlier attempt at this very commit already indexed rows at or above lo and then
+                // failed. rollbackConditionally below re-encodes the head to evict them, and a covered
+                // generation appended on top of that fresh re-encode reads back NULL. Index the rows
+                // without covered values, exactly as a legacy head does, and let the seal sweep's
+                // rebuild republish the partition's sidecars.
+                final boolean hasStaleIndexedTail = indexWriter instanceof PostingIndexWriter
+                        && ((PostingIndexWriter) indexWriter).hasIndexedRowsAtOrAbove(lo);
+                final boolean isCoveredPublishUnsafe = isLegacyHead || hasStaleIndexedTail;
+                if (!isCoveredPublishUnsafe) {
                     indexWriter.configureCovering(
                             coverNames, coverNameTxns, coverTops, coverShifts,
                             coverIndices, coverTypes, metadata.getTimestampIndex()
@@ -814,7 +822,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // throw after the purge was recorded. Idempotent on an empty outbox.
                     tableWriter.deferParquetPostingSealPurges(indexWriter, tableWriter.getTxn());
                 }
-                if (isLegacyHead) {
+                if (isCoveredPublishUnsafe) {
                     // One legacy column is enough to send the whole partition through the sweep's
                     // rebuild. Rebuilding a column this pass already published is only wasted work,
                     // never wrong, so there is no need to report per column.

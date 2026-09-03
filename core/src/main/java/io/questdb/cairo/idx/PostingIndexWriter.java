@@ -1713,6 +1713,22 @@ public class PostingIndexWriter implements IndexWriter {
         closeSidecarMems();
     }
 
+    /**
+     * True when {@link #rollbackConditionally(long)} at {@code row} would evict entries, i.e. the
+     * index already holds rows at or above {@code row} - a stale tail an earlier failed attempt at
+     * the same commit left behind. Mirrors that method's own predicate.
+     * <p>
+     * The eviction re-encodes the head, and a covered generation appended straight on top of that
+     * fresh re-encode reads back NULL, so the O3 composite executor uses this to fall back to a
+     * plain index plus a seal-sweep rebuild.
+     */
+    public boolean hasIndexedRowsAtOrAbove(long row) {
+        if (row < 0 || (genCount == 0 && !hasPendingData)) {
+            return false;
+        }
+        return row == 0 || getMaxValue() >= row;
+    }
+
     @Override
     public void rollbackConditionally(long row) {
         checkNotPoisoned();
