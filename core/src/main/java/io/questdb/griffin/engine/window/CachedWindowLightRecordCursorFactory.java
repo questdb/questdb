@@ -256,7 +256,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
      * Returns the sole window function iff this factory has EXACTLY one window function and it is a
      * row-selecting keep flag ({@link WindowFunction#isRowSelecting()}); otherwise {@code null}.
      * The keep-flag filter fusion in code generation uses this to decide whether the exact single
-     * keep-flag shape is present before enabling {@link #enableRowSelecting()}.
+     * keep-flag shape is present before enabling {@link #enableRowSelecting(WindowFunction)}.
      */
     public WindowFunction getSingleRowSelectingFunction() {
         if (allFunctions != null && allFunctions.size() == 1) {

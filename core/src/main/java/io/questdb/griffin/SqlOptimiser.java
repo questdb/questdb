@@ -10611,7 +10611,9 @@ public class SqlOptimiser implements Mutable {
                     // so a non-migrable sdt node must NOT fall through to codegen (which would only emit
                     // the misleading "unknown subsample method: sdt"). Every sdt shape therefore either
                     // MIGRATES to the sdt(ts, value, compdev) keep-flag window function, or throws a
-                    // specific SqlException at the subsample position here.
+                    // specific SqlException here. Clause-level errors (join, arity, aggregation
+                    // context, missing designated timestamp) point at the sdt token; argument errors
+                    // point at the offending argument node.
                     //
                     // Migrate when: not in a join context; a designated timestamp is present; exactly 2
                     // arguments (value, compdev); not an aggregation context; the value arg (arg 0) is a
@@ -10634,11 +10636,18 @@ public class SqlOptimiser implements Mutable {
                     }
                     final ExpressionNode valueNode = subsample.args.getQuick(0);
                     if (valueNode == null || valueNode.type != ExpressionNode.LITERAL) {
-                        throw SqlException.$(subsample.position, "SUBSAMPLE sdt requires a plain column as its first argument");
+                        throw SqlException.$(
+                                valueNode == null ? subsample.position : valueNode.position,
+                                "SUBSAMPLE sdt requires a plain column as its first argument"
+                        );
                     }
                     final QueryColumn valueColumn = resolveVisibleSubsampleColumnOrThrow(model, valueNode);
-                    if (!isConstantSdtCompdev(subsample.args.getQuick(1), sqlExecutionContext)) {
-                        throw SqlException.$(subsample.position, "SUBSAMPLE sdt requires a constant, non-negative compdev");
+                    final ExpressionNode compdevNode = subsample.args.getQuick(1);
+                    if (!isConstantSdtCompdev(compdevNode, sqlExecutionContext)) {
+                        throw SqlException.$(
+                                compdevNode == null ? subsample.position : compdevNode.position,
+                                "SUBSAMPLE sdt requires a constant, non-negative finite compdev"
+                        );
                     }
                     model = desugarValueInspectingSubsample(
                             model, nested, subsample, timestamp, windowTsToken, valueColumn.getAlias(), subsample.token
@@ -11005,7 +11014,7 @@ public class SqlOptimiser implements Mutable {
      * non-negative and finite - the sole sdt compdev shape the {@code sdt(NDd)} keep-flag window
      * function accepts (it re-validates the same way at runtime).
      * A non-constant (bind-variable / runtime), non-numeric, negative, NaN, or infinite compdev returns
-     * false, so the total sdt gate throws a specific "constant, non-negative compdev" error instead of
+     * false, so the total sdt gate throws a specific "constant, non-negative finite compdev" error instead of
      * migrating (sdt has no cursor fallback).
      */
     private boolean isConstantSdtCompdev(ExpressionNode compdevNode, SqlExecutionContext sqlExecutionContext) {

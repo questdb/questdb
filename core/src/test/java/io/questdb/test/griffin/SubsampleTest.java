@@ -4277,8 +4277,8 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertException(
                     "SELECT ts, price FROM x SUBSAMPLE sdt(price, $1)",
-                    34,
-                    "SUBSAMPLE sdt requires a constant, non-negative compdev"
+                    45,
+                    "SUBSAMPLE sdt requires a constant, non-negative finite compdev"
             );
         });
     }
@@ -4289,8 +4289,20 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertException(
                     "SELECT ts, price FROM x SUBSAMPLE sdt(price, -1.0)",
-                    34,
-                    "SUBSAMPLE sdt requires a constant, non-negative compdev"
+                    45,
+                    "SUBSAMPLE sdt requires a constant, non-negative finite compdev"
+            );
+        });
+    }
+
+    @Test
+    public void testSdtInfiniteCompdev() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            assertException(
+                    "SELECT ts, price FROM x SUBSAMPLE sdt(price, 1.0/0.0)",
+                    48,
+                    "SUBSAMPLE sdt requires a constant, non-negative finite compdev"
             );
         });
     }
@@ -4378,7 +4390,7 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertException(
                     "SELECT ts, price FROM x SUBSAMPLE sdt(price * 2, 0.5)",
-                    34,
+                    44,
                     "SUBSAMPLE sdt requires a plain column as its first argument"
             );
         });

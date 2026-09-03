@@ -63,7 +63,7 @@ import org.jetbrains.annotations.Nullable;
  * re-homed here over a per-partition native buffer of {@code (ordinal, ts, value)} entries built during
  * pass1 rather than SUBSAMPLE's whole-cursor buffer. Unlike the position-only {@code uniform}/{@code
  * cadence} window functions, m4 must inspect the value column to compute per-bucket min/max, so it
- * materializes every row before {@link #preparePass2()} runs the bucketing selection.
+ * materializes every row before {@link BucketSelectWindowFunction#preparePass2()} runs the bucketing selection.
  * <p>
  * {@link BucketSelectWindowFunction} is intentionally algorithm-agnostic (it is handed a {@link
  * SubsampleAlgorithm} instance to drive the actual bucket selection): the minmax window function is
