@@ -6083,13 +6083,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         pendingChecksumSeals.clear();
         syncColumns();
-        // Checksum trails data. syncColumns() is the covering barrier: it makes every column file
-        // durable, and only then may the sidecar claiming to describe those bytes become durable.
-        // The reverse order lets a crash leave a sidecar covering bytes that never landed, which
-        // reports corruption on a partition that is merely behind -- a false positive that fails a
-        // healthy table. This also sits BEFORE _cv/_txn, so the commit pointer is still published
-        // last.
-        syncPartitionChecksums();
+        // No per-commit sidecar flush. _chk is maintained only under ADAPTIVE
+        // (maintainsPartitionChecksums), and ADAPTIVE never satisfies appliesColumnSync, so the
+        // former syncPartitionChecksums() call could not execute: a reachability probe over the
+        // crash package and every PartitionChecksum* suite (138 classes, 1743 tests) hit it zero
+        // times. Its durability comes from the durable epoch, which flushes the sidecar together
+        // with the columns it covers and only then publishes the epoch anchor -- so the
+        // "checksum trails data" ordering this call used to provide is now a property of the
+        // epoch's publish step, not of the commit path.
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriterAndPublishPendingPostingSealPurges();
@@ -15987,27 +15988,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void syncPartitionChecksums() {
-        if (!configuration.isPartitionChecksumEnabled() || !partitionChecksumSidecar.isOpen()) {
-            return;
-        }
-        if (!appliesColumnSync(effectiveCommitMode)) {
-            // Nothing above it was synced either, so there is no ordering to preserve. Under NOSYNC
-            // and ADAPTIVE the table files are a rebuildable cache and recovery re-derives coverage.
-            return;
-        }
-        try {
-            partitionChecksumSidecar.sync(effectiveCommitMode == CommitMode.ASYNC);
-        } catch (Throwable th) {
-            if (configuration.isPartitionChecksumStrict()) {
-                throw CairoException.critical(0).put("partition checksum sync failed [table=")
-                        .put(tableToken.getTableName()).put("]: ").put(th.getMessage());
-            }
-            LOG.error().$("partition checksum sync failed, coverage dropped [table=").$(tableToken)
-                    .$(", error=").$(th.getMessage()).I$();
-            partitionChecksumSidecar.invalidate();
-        }
-    }
 
     private void syncColumns() {
         final int commitMode = effectiveCommitMode;
