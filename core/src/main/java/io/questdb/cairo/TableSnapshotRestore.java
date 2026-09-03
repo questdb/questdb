@@ -107,7 +107,7 @@ public class TableSnapshotRestore implements QuietCloseable {
     // removePartitionDirsNotAttached (C2: day-dir cleanup must ask "is this day live at all", not a
     // cellKey-0-only nameTxn match, once the table root holds bare day-dir CONTAINERS rather than real
     // leaf partitions) and by the residual column-index restore guard (both below).
-    private final CellSegmentResolver cellSegmentResolver = new CellSegmentResolver();
+    private final CellSegmentResolver cellSegmentResolver;
     private boolean isRoutedComposite;
     private MemoryCMARW memFile = Vm.getCMARWInstance();
     private Path partitionCleanPath;
@@ -119,6 +119,7 @@ public class TableSnapshotRestore implements QuietCloseable {
 
     public TableSnapshotRestore(CairoConfiguration configuration) {
         this.configuration = configuration;
+        this.cellSegmentResolver = new CellSegmentResolver(configuration);
         this.ff = configuration.getFilesFacade();
         this.threadCount = Math.max(
                 configuration.getCheckpointRecoveryThreadpoolMin(),
@@ -1156,122 +1157,6 @@ public class TableSnapshotRestore implements QuietCloseable {
     }
 
     /**
-     * Renders a composite cell's on-disk SEGMENT name from its cellKey, so a restore can map an
-     * attached-partition RECORD to the DIRECTORY it describes.
-     * <p>
-     * That mapping is what previously blocked cell-aware restore. Directories are named
-     * {@code <segment>.<nameTxn>} and CONVERT stamps one name-txn across every cell of a day, so the
-     * suffix cannot tell {@code E0.5} from {@code E1.5}; only the segment does. Producing it needs the
-     * cell registry plus a reader per dimension -- the interner stack {@link TableReader} builds at
-     * open -- which this stands up directly from the restored files instead.
-     * <p>
-     * Opened lazily and only for a routed composite table. Everything here is READ-ONLY and owned by
-     * this object, so {@link #close()} frees it; contrast {@code CompositeDictionaries#cellRegistry()}
-     * on a live reader, which is non-owning.
-     */
-    private class CellSegmentResolver implements QuietCloseable {
-        private final ObjList<SymbolMapReader> dimReaders = new ObjList<>();
-        private CellRegistry registry;
-        private SymbolMapReader registryReader;
-        private CompositeInternerLayout layout;
-        private int[] tuple;
-
-        @Override
-        public void close() {
-            registry = Misc.free(registry);
-            registryReader = Misc.freeIfCloseable(registryReader);
-            for (int i = 0, n = dimReaders.size(); i < n; i++) {
-                Misc.freeIfCloseable(dimReaders.getQuick(i));
-            }
-            dimReaders.clear();
-        }
-
-        /**
-         * @return false when the table is not a routed composite one, in which case nothing is opened
-         */
-        boolean of(Path tableDir, TableReaderMetadata metadata, TxReader txReader, ColumnVersionReader cvReader) {
-            close();
-            final PartitionSpec spec = metadata.getPartitionSpec();
-            final int dimCount = spec.getDimensionCount();
-            if (dimCount <= 0) {
-                return false;
-            }
-            layout = CompositeInternerLayout.of(spec);
-            tuple = new int[dimCount];
-
-            // Interner slots sit AFTER the real symbol columns: the registry is the LAST symbol
-            // column and the dedicated dicts immediately precede it. Same derivation
-            // rebuildCompositeInternerFiles uses; layout.registrySlot()/dedicatedDictSlot() are dense
-            // within the interner block, so they need this base added. Passing the raw slot tripped
-            // SymbolMapReaderImpl's "charSize > 0 || symbolCount == 0" assert on an EXPRESSION
-            // dimension -- a count read from the wrong column against an empty char file.
-            final int registrySlot = txReader.getSymbolColumnCount() - 1;
-            final int dedicatedBase = registrySlot - layout.dedicatedCount();
-            registryReader = new SymbolMapReaderImpl(
-                    configuration,
-                    tableDir,
-                    CompositeInternerLayout.REGISTRY_NAME,
-                    CompositeInternerLayout.REGISTRY_TXN,
-                    txReader.getSymbolValueCount(registrySlot)
-            );
-            registry = new CellRegistry(registryReader);
-
-            for (int i = 0; i < dimCount; i++) {
-                final PartitionDimension dim = spec.getDimension(i);
-                if (dim.getKind() == PartitionDimension.KIND_HASH) {
-                    // A bucket cannot be un-hashed and does not need to be: the ordinal IS the name.
-                    dimReaders.add(null);
-                } else if (layout.needsDedicatedDict(i)) {
-                    dimReaders.add(new SymbolMapReaderImpl(
-                            configuration,
-                            tableDir,
-                            layout.dictName(i),
-                            layout.dictColumnNameTxn(i),
-                            txReader.getSymbolValueCount(dedicatedBase + layout.dedicatedDictSlot(i))
-                    ));
-                } else {
-                    final int denseIndex = denseIndexOfDimensionSource(metadata, dim);
-                    dimReaders.add(new SymbolMapReaderImpl(
-                            configuration,
-                            tableDir,
-                            metadata.getColumnName(denseIndex),
-                            cvReader.getDefaultColumnNameTxn(metadata.getWriterIndex(denseIndex)),
-                            txReader.getSymbolValueCount(metadata.getDenseSymbolIndex(denseIndex))
-                    ));
-                }
-            }
-            return true;
-        }
-
-        /**
-         * Byte-identical to {@link TableReader#renderCellSegment}, which is what named the directory.
-         */
-        void render(CharSink<?> sink, TableReaderMetadata metadata, int cellKey) {
-            final PartitionSpec spec = metadata.getPartitionSpec();
-            registry.getTuple(cellKey, tuple);
-            final byte namingMode = spec.getNamingMode();
-            for (int i = 0, n = spec.getDimensionCount(); i < n; i++) {
-                if (i > 0) {
-                    sink.put('/');
-                }
-                final PartitionDimension dim = spec.getDimension(i);
-                if (namingMode == PartitionSpec.MODE_HIVE) {
-                    if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
-                        sink.put(dim.getAlias()).put('=');
-                    } else {
-                        sink.put(metadata.getColumnName(denseIndexOfDimensionSource(metadata, dim))).put('=');
-                    }
-                }
-                if (dim.getKind() == PartitionDimension.KIND_HASH) {
-                    sink.put(tuple[i]);
-                } else {
-                    TableUtils.putCellSegmentPathSafe(sink, tuple[i], dimReaders.getQuick(i).valueOf(tuple[i]));
-                }
-            }
-        }
-    }
-
-    /**
      * Positions {@code path} at the ON-DISK directory of one attached-partition record.
      * <p>
      * Plain: {@code <day>.<nameTxn>}. Composite: {@code <day>/<segment>.<nameTxn>}, where the segment
@@ -1313,16 +1198,6 @@ public class TableSnapshotRestore implements QuietCloseable {
         return false;
     }
 
-    private static int denseIndexOfDimensionSource(TableReaderMetadata metadata, PartitionDimension dim) {
-        final int writerIndex = dim.getColumnIndex();
-        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-            if (metadata.getWriterIndex(i) == writerIndex) {
-                return i;
-            }
-        }
-        throw CairoException.critical(0)
-                .put("composite dimension source column not found [writerIndex=").put(writerIndex).put(']');
-    }
 
     private void rebuildBitmapIndexForNativePartitionColumn(
             Path path,
