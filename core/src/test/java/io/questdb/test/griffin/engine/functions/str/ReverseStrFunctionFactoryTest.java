@@ -38,8 +38,6 @@ public class ReverseStrFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select reverse('')").expectSize().returns("reverse\n\n");
         // Unicode (BMP) characters
         assertQuery("select reverse('café')").expectSize().returns("reverse\néfac\n");
-        // VARCHAR overload
-        assertQuery("select reverse('abc'::varchar)").expectSize().returns("reverse\ncba\n");
     }
 
     @Test
@@ -55,5 +53,31 @@ public class ReverseStrFunctionFactoryTest extends AbstractCairoTest {
                                 "\t\n" +
                                 "\t\n"
                 );
+    }
+
+    @Test
+    public void testVarcharColumn() throws Exception {
+        // per-row VARCHAR path decodes UTF8 to UTF16 before reversing
+        assertQuery("select v, reverse(v) from t")
+                .ddl("create table t (v varchar)",
+                        "insert into t values ('abc'), ('café'), (null), ('')")
+                .expectSize()
+                .returns(
+                        "v\treverse\n" +
+                                "abc\tcba\n" +
+                                "café\téfac\n" +
+                                "\t\n" +
+                                "\t\n"
+                );
+    }
+
+    @Test
+    public void testVarcharConstants() throws Exception {
+        assertQuery("select reverse('abc'::varchar)").expectSize().returns("reverse\ncba\n");
+        // non-ASCII (BMP) input
+        assertQuery("select reverse('café'::varchar)").expectSize().returns("reverse\néfac\n");
+        // empty VARCHAR stays empty, NULL VARCHAR returns NULL
+        assertQuery("select reverse(''::varchar)").expectSize().returns("reverse\n\n");
+        assertQuery("select reverse(null::varchar)").expectSize().returns("reverse\n\n");
     }
 }
