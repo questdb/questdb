@@ -159,6 +159,34 @@ public class PartitionChecksumReadPathTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The same truncation on a NON-WAL table must NOT be condemned.
+     * <p>
+     * {@code CommitMode.appliesColumnSync} documents that ADAPTIVE on a non-WAL table degrades to
+     * nosync-grade apply durability: there is no durable WAL to replay and no epoch, so nothing orders
+     * the sidecar against the columns it covers and nothing re-derives coverage afterwards. The
+     * configured token still reads ADAPTIVE, so a check keyed on the token alone treats a short file
+     * as corruption and takes the partition offline for behaving exactly as the mode allows.
+     * <p>
+     * Found by the adaptive soak, not by this suite: build 267126,
+     * {@code FrameAppendFuzzTest#testSimple} on a {@code BYPASS WAL} table --
+     * {@code new_col_4.d.31, recorded=44112, actual=8192}. The WAL sibling above still throws, which
+     * is what keeps this pair honest: the relaxation is scoped to the tables that cannot order their
+     * own coverage, not applied to every table that happens to be short.
+     */
+    @Test
+    public void testTruncatedColumnFileOnNonWalTableReadsUnverified() throws Exception {
+        assertMemoryLeak(() -> {
+            createSealedNonWal("r6");
+            truncateFirstCoveredFile("r6", "2024-01-01");
+            engine.releaseInactive();
+            // Must not throw. The row total is deliberately not asserted: the truncation removed real
+            // bytes, so a short read is a correct outcome for a mode with no durability contract over
+            // them. What must not happen is a corruption verdict.
+            sumV("r6");
+        });
+    }
+
     @Test
     public void testUncoveredPartitionOpensCleanly() throws Exception {
         // Upgrade-on-write: a partition sealed by an older binary has no sidecar and must open normally.
@@ -192,6 +220,21 @@ public class PartitionChecksumReadPathTest extends AbstractCairoTest {
     /**
      * 12 rows in 2024-01-01 so covered files are big enough to truncate, then a later partition seals it.
      */
+    /**
+     * As {@link #createSealed(String)} but BYPASS WAL, so the table takes the non-WAL apply path while
+     * the configured commit mode is still the suite default (adaptive). No drainWalQueue: a non-WAL
+     * table applies inline.
+     */
+    private void createSealedNonWal(String table) throws Exception {
+        execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day bypass wal");
+        for (int i = 0; i < 12; i++) {
+            execute("insert into " + table + " values ('2024-01-01T0" + (i % 10) + ":00:0" + (i % 10)
+                    + ".00000" + i + "Z', " + i + ")");
+        }
+        execute("insert into " + table + " values ('2024-01-02T00:00:00.000000Z', 99)");
+        engine.releaseInactive();
+    }
+
     private void createSealed(String table) throws Exception {
         execute("create table " + table + " (ts timestamp, v long) timestamp(ts) partition by day wal");
         for (int i = 0; i < 12; i++) {

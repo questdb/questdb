@@ -302,6 +302,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final LongList partitionChecksumLengths = new LongList();
     private final StringSink partitionChecksumNameSink = new StringSink();
     private final LongList pendingChecksumSeals = new LongList();
+    /**
+     * Partitions whose checksum sidecar was written since the last durable epoch. A seal changes no
+     * row data, so neither {@code txWriter} nor {@code columnVersionWriter} marks the partition dirty
+     * -- yet the epoch's non-syncfs sweep is bounded by those two dirty sets. This is the third
+     * member of that write set, so a just-sealed {@code _chk} is fsynced by the epoch that follows
+     * it. Cleared with the other two when an epoch publishes.
+     */
+    private final LongHashSet checksumEpochWriteSet = new LongHashSet();
     private final Path path;
     // Adaptive durable-epoch marker + its scratch path, lazily created on the first
     // advanceDurableEpoch() call (only adaptive WAL tables ever advance an epoch).
@@ -15819,6 +15827,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         try {
             sealPartitionChecksums0(partitionTimestamp);
+            // Sealing writes _chk into a partition that the txn/cv dirty sets do NOT name -- a seal
+            // changes no row data, so neither writer marks it. The non-syncfs epoch sweep
+            // (fsyncAttachedPartitionFiles) is bounded by exactly those two sets, so without this the
+            // epoch immediately after a seal skips the partition and the sidecar it just wrote is
+            // never fsynced. Verified before the fix: the barrier list for that epoch contained no
+            // file from the sealed partition at all. Harmless in itself (torn or missing coverage
+            // reads as ABSENT, i.e. unverified, never as corruption) but it silently costs the
+            // detection the sidecar exists to provide, on every platform that lacks a
+            // filesystem-wide syncfs.
+            checksumEpochWriteSet.add(partitionTimestamp);
         } catch (Throwable th) {
             if (configuration.isPartitionChecksumStrict()) {
                 throw CairoException.critical(0).put("partition checksum seal failed [table=")
@@ -16361,6 +16379,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // epoch never flushed, and nothing would revisit them. Clearing the incomplete flag here is what
         // narrows every subsequent epoch of this writer's life to the write set.
         txWriter.clearDirtyPartitions();
+        // Cleared HERE, with the other two, and for the same reason: a FAILED epoch must leave the
+        // sealed partitions in the write set so the next one revisits them.
+        checksumEpochWriteSet.clear();
         columnVersionWriter.clearDirtyPartitions();
         epochWriteSetIncomplete = false;
 
@@ -16567,7 +16588,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             if (!scanAll) {
                 final long ts = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                if (txnDirty.excludes(ts) && cvDirty.excludes(ts)) {
+                if (txnDirty.excludes(ts) && cvDirty.excludes(ts) && checksumEpochWriteSet.excludes(ts)) {
                     continue;
                 }
             }

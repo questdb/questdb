@@ -66,14 +66,13 @@ public class PartitionChecksumOrderTest extends AbstractCairoTest {
         // Force an epoch on every apply batch; at the default 60s cadence none would run inside the
         // test and the barrier list would be empty.
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "0");
-        // Deliberately the DEFAULT batched path, i.e. the one that ships on Linux. Forcing the
-        // per-file fallback instead does NOT work and the reason is worth recording: that sweep is
-        // filtered to txn/cv-dirty partitions, and sealing a partition writes its _chk without
-        // marking it dirty, so the epoch right after a seal skips it entirely (verified -- the
-        // barrier list contained no 2024-01-01 file at all). Coverage then simply reads as absent
-        // after a crash, which is the safe degradation, but it means the fallback cannot witness
-        // this property. The batched path flushes the whole filesystem, which covers _chk by
-        // construction.
+        // The DEFAULT batched path, which is the only one reachable here: fsyncAttachedPartitionFiles
+        // -- the per-file sweep that would name _chk individually -- runs solely under
+        // `else` of `if (ff.isSyncfsFileSystemWide())`, and that predicate is `Os.isLinux()`. Setting
+        // cairo.adaptive.epoch.column.sync.batched=false does NOT reach it on Linux; the epoch still
+        // finishes with a filesystem-wide syncfs. So on this platform _chk is always covered by
+        // syncfs, and the absence of a per-file _chk barrier means "one call covered everything",
+        // not "the partition was skipped".
         assertMemoryLeak(FF, () -> {
             execute("create table ord (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into ord values ('2024-01-01T00:00:00.000000Z', 1)");

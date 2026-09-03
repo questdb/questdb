@@ -1471,6 +1471,34 @@ public class TableReader implements Closeable, SymbolTableSource {
         return slash < 0 ? full : full.substring(slash + 1);
     }
 
+    /**
+     * Whether a covered file being SHORTER than its recorded length is trustworthy evidence of
+     * corruption rather than of coverage that simply ran ahead of the data.
+     * <p>
+     * It is trustworthy in exactly two cases:
+     * <ul>
+     *   <li>{@code SYNC}/{@code ASYNC} — the sidecar is flushed under the same
+     *       {@link CommitMode#appliesColumnSync} predicate as the columns it covers, so their relative
+     *       order survives a crash;</li>
+     *   <li>{@code ADAPTIVE} on a WAL table — the sidecar is not flushed per commit, but the columns
+     *       are not either, and recovery rolls back to a validated epoch and re-derives coverage.</li>
+     * </ul>
+     * Everything else leaves the sidecar unordered against its data with nothing to re-derive it, so a
+     * shortfall is indistinguishable from the tail simply never having landed. That covers plain
+     * {@code NOSYNC}, and it covers <b>{@code ADAPTIVE} on a non-WAL table</b>, which
+     * {@link CommitMode#appliesColumnSync} documents as degrading to nosync-grade apply durability --
+     * there is no durable WAL to replay and no epoch, so the configured token says ADAPTIVE while the
+     * actual guarantee is nosync's. Keying this off the configured token alone condemned a healthy
+     * {@code BYPASS WAL} partition in {@code FrameAppendFuzzTest#testSimple}
+     * ({@code new_col_4.d.31, recorded=44112, actual=8192}).
+     */
+    private boolean coverageIsOrdered() {
+        final int resolved = CommitMode.effectiveCommitMode(
+                metadata.getCommitMode(), configuration.getCommitMode());
+        return CommitMode.appliesColumnSync(resolved)
+                || (resolved == CommitMode.ADAPTIVE && metadata.isWalEnabled());
+    }
+
     private void verifyPartitionStructure(Path partitionPath) {
         if (!configuration.isPartitionChecksumEnabled()) {
             return;
@@ -1521,9 +1549,9 @@ public class TableReader implements Closeable, SymbolTableSource {
                     // partition unqueryable (PartitionChecksumCrashTest
                     // #testNosyncCrashIsNotReportedAsCorruption). Degrade to uncovered instead: the
                     // partition reads unverified and the next seal re-covers it against real contents.
-                    if (CommitMode.effectiveCommitMode(
-                            metadata.getCommitMode(), configuration.getCommitMode()) == CommitMode.NOSYNC) {
-                        LOG.info().$("partition checksum coverage is behind its data under nosync, reading unverified [path=")
+                    if (!coverageIsOrdered()) {
+                        LOG.info().$("partition checksum coverage is behind its data and nothing orders or"
+                                        + " re-derives it, reading unverified [path=")
                                 .$(partitionPath).$(", recorded=").$(recorded).$(", actual=").$(actual).I$();
                         return;
                     }
