@@ -94,26 +94,6 @@ jobs:
           shouldRun: and(succeeded(), eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true'))
       - bash: |
           set -eux
-          # The checkout task keeps no credentials (persistCredentials defaults to
-          # false), so this clone would reach github.com anonymously, and GitHub
-          # throttles anonymous git-over-HTTPS from the agents' shared egress IP
-          # with a 401 that git reports as
-          #   fatal: could not read Username for 'https://github.com'
-          # even though the submodule repos are public. `gh auth setup-git`
-          # registers gh as git's credential helper for github.com; gh reads the
-          # token from this step's environment, so the clone git runs for each
-          # submodule authenticates and no token is written to the agent.
-          #
-          # Azure leaves an undefined variable as its literal macro text, so drop
-          # anything that is not token-shaped rather than handing gh a "$(GH_TOKEN)"
-          # string to authenticate with. Pipelines differ on which name they define.
-          [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
-          [[ ${GITHUB_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GITHUB_TOKEN
-          if [[ -n "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
-            gh auth setup-git --hostname github.com
-          else
-            echo "No usable token or no gh; cloning submodules anonymously"
-          fi
           # gcc is already present (the core and Rust builds need it); add cmake and nasm (the
           # x86-64 asmlib) only when missing, as the client native build does.
           if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
@@ -123,9 +103,9 @@ jobs:
           # The library embeds jni.h from JAVA_HOME.
           export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-25-openjdk-amd64}"
           # This job checks out without submodules; the questdb library the tests link needs these.
-          # --depth 1 is safe even though two of the four pin a SHA that is not a branch tip:
-          # GitHub serves a fetch of an unadvertised object, verified against all four.
-          git submodule update --init --depth 1 \
+          # No --depth: two of the four pin a SHA that is not a branch tip, and a shallow fetch of an
+          # unadvertised object is not guaranteed to be served.
+          git submodule update --init \
             core/src/main/c/share/zlib \
             core/src/main/c/share/fsst \
             core/src/main/c/share/simdjson \
@@ -139,9 +119,6 @@ jobs:
           cmake --build build/jittest --target jittests --parallel "$(nproc)"
           ./target/classes/io/questdb/bin-local/jittests
         displayName: "Build and run native JIT tests (jittests)"
-        env:
-          GH_TOKEN: $(GH_TOKEN)
-          GITHUB_TOKEN: $(GITHUB_TOKEN)
         condition: and(succeeded(), eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true'))
       - bash: |
           set -ux
