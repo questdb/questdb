@@ -94,25 +94,6 @@ jobs:
           shouldRun: and(succeeded(), eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true'))
       - bash: |
           set -eux
-          # The checkout task keeps no credentials (persistCredentials defaults to
-          # false), so this clone would reach github.com anonymously, and GitHub
-          # throttles anonymous git-over-HTTPS from the agents' shared egress IP
-          # with a 401 that git reports as
-          #   fatal: could not read Username for 'https://github.com'
-          # even though the submodule repos are public. `gh auth setup-git`
-          # registers gh as git's credential helper for github.com; gh reads the
-          # token from this step's environment, so the clone git runs for each submodule
-          # authenticates and no token is written to the agent.
-          #
-          # Azure leaves an undefined variable as its literal macro text, so drop
-          # GH_TOKEN when it is not token-shaped rather than handing gh a
-          # "$(GIT_GITHUB_TOKEN)" string to authenticate with.
-          [[ ${GH_TOKEN:-} =~ ^[A-Za-z0-9_-]+$ ]] || unset GH_TOKEN
-          if [[ -n "${GH_TOKEN:-}" ]] && command -v gh >/dev/null 2>&1; then
-            gh auth setup-git --hostname github.com
-          else
-            echo "No usable token or no gh; cloning submodules anonymously"
-          fi
           # gcc is already present (the core and Rust builds need it); add cmake and nasm (the
           # x86-64 asmlib) only when missing, as the client native build does.
           if ! command -v cmake >/dev/null 2>&1 || ! command -v nasm >/dev/null 2>&1; then
@@ -122,9 +103,11 @@ jobs:
           # The library embeds jni.h from JAVA_HOME.
           export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-25-openjdk-amd64}"
           # This job checks out without submodules; the questdb library the tests link needs these.
-          # No --depth: two of the four pin a SHA that is not a branch tip, and a shallow fetch of an
-          # unadvertised object is not guaranteed to be served.
-          git submodule update --init \
+          # ci/submodule-update.sh authenticates the clones when it can (GH_TOKEN, or
+          # the checkout task's persisted credential) and retries with backoff when
+          # it cannot; fork PR builds never receive GIT_GITHUB_TOKEN because Azure
+          # withholds secret variables from forks.
+          bash ci/submodule-update.sh \
             core/src/main/c/share/zlib \
             core/src/main/c/share/fsst \
             core/src/main/c/share/simdjson \
