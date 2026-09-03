@@ -1090,6 +1090,8 @@ public interface CairoConfiguration {
 
     int getStrFunctionMaxBufferLength();
 
+    int getSymbolPatternIndexThreshold();
+
     long getSymbolTableMaxAllocationPageSize();
 
     long getSymbolTableMinAllocationPageSize();
@@ -1537,6 +1539,8 @@ public interface CairoConfiguration {
      * is the cheaper direction: a legacy root upgrades into the fused shape in place.
      */
     boolean isSqlWindowMapFusionEnabled();
+
+    boolean isSymbolPatternIndexEnabled();
 
     boolean isTableTypeConversionEnabled();
 

@@ -315,6 +315,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     boolean isParquetRowGroupPruningEnabled();
 
+    /**
+     * Returns whether cached table scans may retain their compiled optimization state across
+     * partition-format changes. A tolerant context accepts that Parquet row-group pruning may no
+     * longer match the current table format; the ordinary row filter still preserves SQL semantics.
+     */
+    default boolean isPartitionFormatChangeTolerated() {
+        return false;
+    }
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
