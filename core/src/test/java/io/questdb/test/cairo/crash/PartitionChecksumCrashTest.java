@@ -134,15 +134,21 @@ public class PartitionChecksumCrashTest extends AbstractCrashConsistencyTest {
         // which models the kernel writing back one file's dirty mmap pages while its neighbours stay
         // lost -- precisely what nosync permits and what no msync from QuestDB orders.
         runWithCrashFacade(() -> {
+            // Seal UNDER ADAPTIVE first, then flip to nosync. Since the sidecar is only maintained
+            // under adaptive (TableWriter#maintainsPartitionChecksums), a table that is nosync from
+            // birth never gets one and cannot reach this hazard at all. The reachable path is a
+            // table that earned coverage while adaptive and was later moved off it -- the coverage
+            // stays on disk, and from then on nothing orders it against the columns it describes.
             execute("create table pchkns (ts timestamp, v long) timestamp(ts) partition by day wal");
-            // Per-table override rather than a global one: this is the effective-mode path an
-            // operator actually takes, and it leaves the rest of the harness on its own default.
-            execute("alter table pchkns set param commit_mode='nosync'");
             execute("insert into pchkns values ('2024-01-01T00:00:00.000000Z', 1)");
             drainWalQueue();
             // A partition is only sealed once a later one is written, so 2024-01-02 is what gives
             // 2024-01-01 a sidecar at all.
             execute("insert into pchkns values ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            // Per-table override rather than a global one: this is the effective-mode path an
+            // operator actually takes, and it leaves the rest of the harness on its own default.
+            execute("alter table pchkns set param commit_mode='nosync'");
             drainWalQueue();
             markDurableBaseline();
 

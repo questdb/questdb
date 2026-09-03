@@ -235,6 +235,14 @@ public class Overrides {
 
     private static void resetToDefaultTestProperties(Properties properties) {
         properties.clear();
+        // The suite runs ADAPTIVE even though the SHIPPED default is nosync, matching
+        // DefaultCairoConfiguration#getCommitMode. Without this the two config paths disagree: a
+        // test that sets no property at all gets DefaultCairoConfiguration (adaptive), but the
+        // moment it sets ANY property it switches to PropServerConfiguration and silently inherits
+        // the production nosync default. That is how flipping the product default knocked out the
+        // partition-checksum suites -- coverage is maintained only under adaptive, so those tables
+        // stopped getting sidecars for a reason that had nothing to do with the code under test.
+        properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), "adaptive");
         properties.setProperty(PropertyKey.DEBUG_ALLOW_TABLE_REGISTRY_SHARED_WRITE.getPropertyPath(), "true");
         properties.setProperty(PropertyKey.CIRCUIT_BREAKER_THROTTLE.getPropertyPath(), "5");
         properties.setProperty(PropertyKey.QUERY_TIMEOUT.getPropertyPath(), "0");

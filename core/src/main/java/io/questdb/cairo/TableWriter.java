@@ -10902,6 +10902,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Invalidating first turns that window from WRONG coverage into ABSENT coverage,
                     // which every consumer already treats as "unverified". The seal armed below
                     // re-covers the partition once the write is done.
+                    // Gated on the config flag ALONE, not on maintainsPartitionChecksums(): a
+                    // partition carrying coverage written while the table was adaptive must still be
+                    // invalidated when it is rewritten under another mode. Mode-gating the cleanup
+                    // as well would let stale-but-present coverage outlive the data it describes,
+                    // which is precisely the wrong-coverage state this block exists to prevent.
                     if (!last && configuration.isPartitionChecksumEnabled()) {
                         final Path chkPath = Path.getThreadLocal(configuration.getDbRoot()).concat(tableToken);
                         TableUtils.setPathForNativePartition(
@@ -15762,14 +15767,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Whether this writer should CREATE and maintain partition checksum coverage. The sidecar is an
+     * adaptive-mode artifact, so gating it on the effective mode keeps the legacy modes free of work
+     * they never asked for: under nosync/sync/async, block hashing plus an extra file per partition
+     * buys detection their durability contract does not rest on, and nosync additionally cannot
+     * order the sidecar against the columns it covers (see
+     * {@code TableReader.verifyPartitionStructure}).
+     * <p>
+     * Deliberately NOT used for the drop/invalidate paths, which stay gated on the config flag
+     * alone: coverage written while a table was adaptive must still be cleaned up when that table is
+     * later rewritten under another mode, or stale-but-present coverage outlives the data it
+     * describes. Reads are ungated for the same reason -- an existing sidecar is still verified.
+     */
+    private boolean maintainsPartitionChecksums() {
+        if (!configuration.isPartitionChecksumEnabled()) {
+            return false;
+        }
+        // Resolve the CONFIGURED mode rather than reading effectiveCommitMode. That field is
+        // deliberately SYNC while adaptiveEnrollmentPending -- a not-yet-enrolled table runs eager
+        // until its durable baseline is published -- so keying off it silently drops coverage for
+        // every newly enrolled adaptive table. A first attempt did exactly that and took out all of
+        // PartitionChecksumInvalidationTest. Resolving fresh also picks up ALTER SET PARAM.
+        return CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode())
+                == CommitMode.ADAPTIVE;
+    }
+
     private void armChecksumSeal(long partitionTimestamp) {
-        if (configuration.isPartitionChecksumEnabled() && pendingChecksumSeals.indexOf(partitionTimestamp) < 0) {
+        if (maintainsPartitionChecksums() && pendingChecksumSeals.indexOf(partitionTimestamp) < 0) {
             pendingChecksumSeals.add(partitionTimestamp);
         }
     }
 
     private void sealPartitionChecksums(long partitionTimestamp) {
-        if (!configuration.isPartitionChecksumEnabled() || !PartitionBy.isPartitioned(partitionBy)) {
+        if (!maintainsPartitionChecksums() || !PartitionBy.isPartitioned(partitionBy)) {
             return;
         }
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);

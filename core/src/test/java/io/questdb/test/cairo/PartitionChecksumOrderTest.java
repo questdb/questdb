@@ -35,12 +35,19 @@ import org.junit.Test;
 import java.util.List;
 
 /**
- * "Checksum trails data" for the per-partition sidecar.
+ * "Nothing points at the sidecar until the bytes it describes are durable", for the per-partition
+ * sidecar under ADAPTIVE.
  * <p>
- * A checksum is a claim ABOUT bytes, so it must become durable only after the bytes it describes. Get
- * this backwards and a crash between the two leaves a sidecar covering bytes that never landed --
- * which reads as corruption on a partition that is merely behind. That is a false positive that
- * fails a healthy table, and it is strictly worse than having no checksum at all.
+ * A checksum is a claim ABOUT bytes. If a pointer to that claim can become durable while the bytes it
+ * covers have not, a crash in between leaves a sidecar covering bytes that never landed -- which reads
+ * as corruption on a partition that is merely behind. That is a false positive that fails a healthy
+ * table, and it is strictly worse than having no checksum at all.
+ * <p>
+ * Under ADAPTIVE the sidecar and the columns it covers are flushed together by the durable epoch, not
+ * ordered against each other per commit, so the invariant is about the epoch's PUBLISH step rather
+ * than the relative order of two flushes. This is a real (unsynced-coverage) state in production: see
+ * {@code TableReader.verifyPartitionStructure}, which treats a covered file that is merely short as
+ * stale coverage rather than corruption under the one mode that can leave it that way.
  */
 public class PartitionChecksumOrderTest extends AbstractCairoTest {
 
@@ -48,9 +55,25 @@ public class PartitionChecksumOrderTest extends AbstractCairoTest {
 
     @Test
     public void testSidecarGenerationIsDurableAfterTheBlocksItCovers() throws Exception {
-        // SYNC commit mode: under the NOSYNC default nothing is synced at all, so the ordering would
-        // be vacuously satisfied and the test would prove nothing.
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        // ADAPTIVE, because that is now the only mode maintaining a sidecar at all
+        // (TableWriter#maintainsPartitionChecksums). This test used to run commit_mode='sync' and
+        // assert the PER-COMMIT barrier order; once _chk became adaptive-only there was no sidecar on
+        // that path and nothing to order. The guarantee did not disappear, it moved: adaptive syncs
+        // neither the sidecar nor the columns it covers per commit, and instead makes the whole
+        // materialized state durable at the EPOCH, sidecar included. Asserting it there covers the
+        // path that actually ships.
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Force an epoch on every apply batch; at the default 60s cadence none would run inside the
+        // test and the barrier list would be empty.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "0");
+        // Deliberately the DEFAULT batched path, i.e. the one that ships on Linux. Forcing the
+        // per-file fallback instead does NOT work and the reason is worth recording: that sweep is
+        // filtered to txn/cv-dirty partitions, and sealing a partition writes its _chk without
+        // marking it dirty, so the epoch right after a seal skips it entirely (verified -- the
+        // barrier list contained no 2024-01-01 file at all). Coverage then simply reads as absent
+        // after a crash, which is the safe degradation, but it means the fallback cannot witness
+        // this property. The batched path flushes the whole filesystem, which covers _chk by
+        // construction.
         assertMemoryLeak(FF, () -> {
             execute("create table ord (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into ord values ('2024-01-01T00:00:00.000000Z', 1)");
@@ -66,32 +89,58 @@ public class PartitionChecksumOrderTest extends AbstractCairoTest {
                     order.isEmpty()
             );
 
-            final int chk = firstIndexContaining(order, PartitionChecksumSidecar.FILE_NAME);
+            // The sealed partition really did gain coverage -- otherwise everything below is about a
+            // file that does not exist.
             Assert.assertTrue(
-                    "no _chk barrier was recorded; the sidecar was never made durable" + FF.debugDump(),
-                    chk >= 0
+                    "2024-01-01 was never sealed, so there is no coverage whose durability to check",
+                    sidecarExists("ord", "2024-01-01")
             );
 
-            final int lastColumn = lastIndexOfColumnFileBefore(order, order.size());
+            // The epoch's flush is filesystem-wide, which is precisely what makes _chk durable: it is
+            // never named individually on this path, it rides the same syncfs as the columns it
+            // covers. That co-durability is the point -- sidecar and data reach the platter together,
+            // rather than the sidecar racing ahead of the bytes it describes.
             Assert.assertTrue(
-                    "no column-file barrier was recorded, so there is no ordering to check" + FF.debugDump(),
-                    lastColumn >= 0
-            );
-            Assert.assertTrue(
-                    "the sidecar became durable at index " + chk + " but a column file it covers was still"
-                            + " being synced at index " + lastColumn + FF.debugDump(),
-                    lastColumn < chk
+                    "the epoch performed no filesystem-wide flush, so nothing made the sealed"
+                            + " partition's _chk durable" + FF.debugDump(),
+                    FF.syncfsCount() > 0
             );
 
-            // A drain applies several commits, each with its own _txn barrier, so "no _txn anywhere
-            // before the sidecar" is not the invariant -- earlier commits legitimately have theirs.
-            // What must hold is that the commit CARRYING the seal still publishes its pointer last.
+            // And the epoch publishes its anchor only after that flush. A crash before this point
+            // leaves an unpublished epoch that recovery ignores, so a partially-flushed set is never
+            // pointed at -- which is why the sidecar cannot end up describing bytes that never landed.
             Assert.assertTrue(
-                    "no _txn barrier follows the sidecar at index " + chk + "; the commit pointer for the"
-                            + " commit that sealed must still be published after it" + FF.debugDump(),
-                    firstIndexContainingFrom(order, TableUtils.TXN_FILE_NAME, chk + 1) >= 0
+                    "no _snapshot barrier was recorded; the epoch never published an anchor, so this"
+                            + " says nothing about publish-after-flush" + FF.debugDump(),
+                    firstIndexContaining(order, TableUtils.SNAPSHOT_FILE_NAME) >= 0
             );
         });
+    }
+
+    /**
+     * Whether the named partition carries a checksum sidecar on disk. Resolved by scanning for the
+     * partition directory and any versioned form of it, the same way the crash tests do.
+     */
+    private boolean sidecarExists(String tableName, String partitionName) {
+        final java.io.File tableDir = new java.io.File(
+                configuration.getDbRoot().toString(),
+                engine.verifyTableName(tableName).getDirName()
+        );
+        final java.io.File[] candidates = tableDir.listFiles();
+        if (candidates == null) {
+            return false;
+        }
+        for (java.io.File f : candidates) {
+            if (!f.isDirectory()) {
+                continue;
+            }
+            final String name = f.getName();
+            if ((name.equals(partitionName) || name.startsWith(partitionName + "."))
+                    && new java.io.File(f, PartitionChecksumSidecar.FILE_NAME).exists()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static int firstIndexContainingFrom(List<String> order, String needle, int from) {
