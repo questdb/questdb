@@ -42,8 +42,6 @@ public class InitCapFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select initcap('CAFÉ crème')").expectSize().returns("initcap\nCafé Crème\n");
         // empty string stays empty
         assertQuery("select initcap('')").expectSize().returns("initcap\n\n");
-        // VARCHAR overload
-        assertQuery("select initcap('hELLO wORLD'::varchar)").expectSize().returns("initcap\nHello World\n");
     }
 
     @Test
@@ -60,5 +58,31 @@ public class InitCapFunctionFactoryTest extends AbstractCairoTest {
                                 "\t\n" +
                                 "\t\n"
                 );
+    }
+
+    @Test
+    public void testVarcharColumn() throws Exception {
+        // per-row VARCHAR path decodes UTF8 to UTF16 before title-casing
+        assertQuery("select v, initcap(v) from t")
+                .ddl("create table t (v varchar)",
+                        "insert into t values ('hELLO wORLD'), ('CAFÉ crème'), (null), ('')")
+                .expectSize()
+                .returns(
+                        "v\tinitcap\n" +
+                                "hELLO wORLD\tHello World\n" +
+                                "CAFÉ crème\tCafé Crème\n" +
+                                "\t\n" +
+                                "\t\n"
+                );
+    }
+
+    @Test
+    public void testVarcharConstants() throws Exception {
+        assertQuery("select initcap('hELLO wORLD'::varchar)").expectSize().returns("initcap\nHello World\n");
+        // non-ASCII (BMP) input
+        assertQuery("select initcap('CAFÉ crème'::varchar)").expectSize().returns("initcap\nCafé Crème\n");
+        // empty VARCHAR stays empty, NULL VARCHAR returns NULL
+        assertQuery("select initcap(''::varchar)").expectSize().returns("initcap\n\n");
+        assertQuery("select initcap(null::varchar)").expectSize().returns("initcap\n\n");
     }
 }
