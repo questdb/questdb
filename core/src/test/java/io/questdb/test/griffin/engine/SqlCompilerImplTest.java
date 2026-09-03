@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.ops.CreateMatViewOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateTableOperationBuilder;
 import io.questdb.griffin.engine.ops.CreateViewOperationBuilder;
 import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.IQueryModel;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -8436,6 +8437,96 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUseExpireRowsBoundaryExtensionGrammar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table erb_base (k symbol, owned int, v double, ts timestamp) " +
+                    "timestamp(ts) partition by day wal");
+
+            final String[][] cases = {
+                    {"when_v", "WHEN v < 2", "v < 2", "1h", " OWNED BY 'group'"},
+                    {"latest", "KEEP LATEST PARTITION BY k", "KEEP LATEST PARTITION BY k", "1h", " OWNED BY 'group'"},
+                    {"latest_on", "KEEP LATEST ON ts PARTITION BY k", "KEEP LATEST ON ts PARTITION BY k", "1h", " OWNED BY 'group'"},
+                    {"highest", "KEEP HIGHEST v PARTITION BY k", "KEEP HIGHEST v PARTITION BY k", "1h", " OWNED BY 'group'"},
+                    {"lowest", "KEEP LOWEST v PARTITION BY k", "KEEP LOWEST v PARTITION BY k", "1h", " OWNED BY 'group'"},
+                    {"top_n", "KEEP 2 HIGHEST v PARTITION BY k", "KEEP 2 HIGHEST v PARTITION BY k", "1h", " OWNED BY 'group'"},
+                    {"no_keys", "KEEP HIGHEST v", "KEEP HIGHEST v", "1h", " OWNED BY 'group'"},
+                    {"owned_col", "WHEN owned < 2", "owned < 2", "1h", " OWNED BY 'group'"},
+                    {"owned_key", "KEEP LATEST PARTITION BY owned", "KEEP LATEST PARTITION BY owned", "1h", " OWNED BY 'group'"},
+                    {"owned_first_key", "KEEP LATEST PARTITION BY owned, k", "KEEP LATEST PARTITION BY owned, k", "1h", " OWNED BY 'group'"},
+                    {"owned_when_eof", "WHEN v < owned", "v < owned", "1h", ""},
+                    {"owned_last_key_eof", "KEEP LATEST PARTITION BY k, owned", "KEEP LATEST PARTITION BY k, owned", "1h", ""},
+                    {"cleanup", "WHEN v < 2 CLEANUP EVERY 30m", "v < 2", "30m", " OWNED BY 'group'"}
+            };
+
+            try (OwnedByExpireRowsCompilerWrapper compiler = new OwnedByExpireRowsCompilerWrapper(engine)) {
+                for (String[] testCase : cases) {
+                    compiler.ownedBy = null;
+                    execute(
+                            compiler,
+                            "create materialized view " + testCase[0] + " as (select * from erb_base) " +
+                                    "expire rows " + testCase[1] + testCase[4],
+                            sqlExecutionContext
+                    );
+                    Assert.assertEquals(testCase[0], testCase[4].isEmpty() ? null : "group", compiler.ownedBy);
+                    assertQuery("select expire_clause, expire_cleanup_every from tables() where table_name = '" +
+                            testCase[0] + "'")
+                            .noRandomAccess()
+                            .noLeakCheck()
+                            .returns("expire_clause\texpire_cleanup_every\n" + testCase[2] + "\t" + testCase[3] + "\n");
+                }
+
+                if (!Os.isWindows()) {
+                    compiler.ownedBy = null;
+                    final ExecutionModel model = compiler.generateExecutionModel(
+                            "create materialized view in_volume as (select * from erb_base) " +
+                                    "expire rows when v < 2 in volume vol1 owned by 'group'",
+                            sqlExecutionContext
+                    );
+                    Assert.assertEquals(ExecutionModel.CREATE_MAT_VIEW, model.getModelType());
+                    Assert.assertEquals("group", compiler.ownedBy);
+                }
+
+                assertExpireRowsExtensionRejected(
+                        compiler,
+                        "create materialized view malformed as (select * from erb_base) " +
+                                "expire rows when v < 2 owned something",
+                        "invalid EXPIRE ROWS predicate"
+                );
+                assertExpireRowsExtensionRejected(
+                        compiler,
+                        "create materialized view injected as (select * from erb_base) " +
+                                "expire rows keep highest v partition by k) and (1=0 owned by 'group'",
+                        "invalid EXPIRE ROWS KEEP HIGHEST PARTITION BY column"
+                );
+
+                execute(
+                        compiler,
+                        "create materialized view alter_control as (select * from erb_base) owned by 'group'",
+                        sqlExecutionContext
+                );
+                assertExpireRowsExtensionRejected(
+                        compiler,
+                        "alter materialized view alter_control set expire rows when v < 2 owned by 'group'",
+                        "invalid EXPIRE ROWS predicate"
+                );
+            }
+        });
+    }
+
+    private void assertExpireRowsExtensionRejected(
+            OwnedByExpireRowsCompilerWrapper compiler,
+            String sql,
+            String expectedMessage
+    ) throws Exception {
+        try {
+            execute(compiler, sql, sqlExecutionContext);
+            Assert.fail();
+        } catch (SqlException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), expectedMessage);
+        }
+    }
+
     private void assertCast(String expectedData, String expectedMeta, String ddl) throws Exception {
         assertMemoryLeak(() -> {
             execute(ddl);
@@ -8796,6 +8887,53 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
                 return super.parseCreateLiveViewExt(lexer, executionContext, builder, SqlUtil.fetchNext(lexer));
             }
             return super.parseCreateLiveViewExt(lexer, executionContext, builder, tok);
+        }
+    }
+
+    // Emulates an edition whose CREATE MATERIALIZED VIEW suffix is OWNED BY '<principal>'. The boundary
+    // callback deliberately recognizes the complete two-token prefix so a projected column called owned
+    // remains ordinary EXPIRE ROWS predicate content.
+    static class OwnedByExpireRowsCompilerWrapper extends SqlCompilerImpl {
+        String ownedBy;
+
+        OwnedByExpireRowsCompilerWrapper(CairoEngine engine) {
+            super(engine);
+        }
+
+        @Override
+        public boolean isExpireRowsClauseBoundary(GenericLexer lexer, CharSequence tok) throws SqlException {
+            if (!Chars.equalsLowerCaseAscii(tok, "owned")) {
+                return false;
+            }
+            final CharSequence next = SqlUtil.fetchNext(lexer);
+            if (next == null) {
+                return false;
+            }
+            final boolean ownedBy = SqlKeywords.isByKeyword(next);
+            lexer.unparseLast();
+            return ownedBy;
+        }
+
+        @Override
+        public CreateMatViewOperationBuilder parseCreateMatViewExt(
+                GenericLexer lexer,
+                SqlExecutionContext executionContext,
+                CreateMatViewOperationBuilder builder,
+                @Nullable CharSequence tok
+        ) throws SqlException {
+            if (tok != null && Chars.equalsLowerCaseAscii(tok, "owned")) {
+                final CharSequence by = SqlUtil.fetchNext(lexer);
+                if (by == null || !SqlKeywords.isByKeyword(by)) {
+                    throw SqlException.$(lexer.lastTokenPosition(), "BY expected");
+                }
+                final CharSequence principal = SqlUtil.fetchNext(lexer);
+                if (principal == null) {
+                    throw SqlException.$(lexer.getPosition(), "principal expected");
+                }
+                ownedBy = Chars.toString(GenericLexer.unquote(principal));
+                return super.parseCreateMatViewExt(lexer, executionContext, builder, SqlUtil.fetchNext(lexer));
+            }
+            return super.parseCreateMatViewExt(lexer, executionContext, builder, tok);
         }
     }
 

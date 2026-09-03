@@ -501,9 +501,10 @@ public class SqlParser {
      */
     private CharSequence parseCreateTableExpireRows(
             GenericLexer lexer,
-            CreateTableOperationBuilderImpl builder
+            CreateTableOperationBuilderImpl builder,
+            SqlParserCallback sqlParserCallback
     ) throws SqlException {
-        final ExpireRowsClause clause = parseExpireRowsClause(lexer, true);
+        final ExpireRowsClause clause = parseExpireRowsClause(lexer, true, sqlParserCallback);
         builder.setExpiryPredicate(clause.predicate);
         builder.setExpiryCleanupIntervalMicros(clause.cleanupIntervalMicros);
         return clause.nextTok;
@@ -516,11 +517,20 @@ public class SqlParser {
      * <p>
      * The predicate is captured as raw SQL text: everything between WHEN and the next boundary,
      * tracking parenthesis depth so a boundary keyword inside parentheses doesn't terminate it.
-     * {@link #expireRowsClauseBoundary} decides what ends the body, for this capture and for the KEEP
-     * column-list one alike; a boundary that belongs to the CREATE TABLE tail is returned to the caller
-     * in {@link ExpireRowsClause#nextTok}. Cleanup interval defaults to 1 hour when omitted.
+     * {@link #expireRowsClauseBoundary} decides what ends the body. The WHEN capture consults it only at
+     * parenthesis depth zero; the KEEP column-list capture consults it for every token because that grammar
+     * accepts only a flat list of column names. A boundary that belongs to the CREATE TABLE tail is returned
+     * to the caller in {@link ExpireRowsClause#nextTok}. Cleanup interval defaults to 1 hour when omitted.
      */
     public ExpireRowsClause parseExpireRowsClause(GenericLexer lexer, boolean inCreateTable) throws SqlException {
+        return parseExpireRowsClause(lexer, inCreateTable, null);
+    }
+
+    private ExpireRowsClause parseExpireRowsClause(
+            GenericLexer lexer,
+            boolean inCreateTable,
+            @Nullable SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         expectTok(lexer, "rows");
         CharSequence tok = tok(lexer, "'when' or 'keep'");
         final int predicateStart;
@@ -547,7 +557,7 @@ public class SqlParser {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partition' expected");
                 }
                 expectTok(lexer, "by");
-                final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable);
+                final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable, sqlParserCallback);
                 if (cap.csv.isEmpty()) {
                     throw SqlException.$(cap.startPos, "EXPIRE ROWS KEEP LATEST requires a PARTITION BY column list");
                 }
@@ -578,7 +588,7 @@ public class SqlParser {
                 String keysCsv = "";
                 if (tok != null && isPartitionKeyword(tok)) {
                     expectTok(lexer, "by");
-                    final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable);
+                    final ColumnListCapture cap = captureKeepColumnList(lexer, inCreateTable, sqlParserCallback);
                     if (cap.csv.isEmpty()) {
                         throw SqlException.$(cap.startPos, "EXPIRE ROWS KEEP ... PARTITION BY requires a column list");
                     }
@@ -609,7 +619,7 @@ public class SqlParser {
                     // expireRowsClauseBoundary moves what tok reads. Copy it first: tok is the token the
                     // caller parses next, and for IN VOLUME / DEDUP UPSERT that is the half the tail needs.
                     tok = GenericLexer.immutableOf(tok);
-                    final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable);
+                    final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable, sqlParserCallback);
                     if (boundary != EXPIRE_BOUNDARY_NONE) {
                         predicateEnd = tokPos;
                         foundCleanup = boundary == EXPIRE_BOUNDARY_CLEANUP;
@@ -665,10 +675,15 @@ public class SqlParser {
 
     /**
      * Captures the raw column-list text after {@code PARTITION BY} in a KEEP clause, up to ';' / EOF or the
-     * next clause boundary {@link #expireRowsClauseBoundary} recognises, which is the rule the WHEN
-     * capture follows too. Shared by KEEP LATEST and KEEP HIGHEST/LOWEST.
+     * next clause boundary {@link #expireRowsClauseBoundary} recognises. Unlike the WHEN capture, this
+     * method checks every token: KEEP accepts a flat comma-separated column list, and later validation
+     * rejects expressions or parenthesised text. Shared by KEEP LATEST and KEEP HIGHEST/LOWEST.
      */
-    private ColumnListCapture captureKeepColumnList(GenericLexer lexer, boolean inCreateTable) throws SqlException {
+    private ColumnListCapture captureKeepColumnList(
+            GenericLexer lexer,
+            boolean inCreateTable,
+            @Nullable SqlParserCallback sqlParserCallback
+    ) throws SqlException {
         final int startPos = lexer.getPosition();
         int end;
         boolean foundCleanup = false;
@@ -681,7 +696,7 @@ public class SqlParser {
             }
             final int tokPos = lexer.lastTokenPosition();
             tok = GenericLexer.immutableOf(tok);
-            final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable);
+            final int boundary = expireRowsClauseBoundary(lexer, tok, inCreateTable, sqlParserCallback);
             if (boundary != EXPIRE_BOUNDARY_NONE) {
                 end = tokPos;
                 foundCleanup = boundary == EXPIRE_BOUNDARY_CLEANUP;
@@ -1814,9 +1829,10 @@ public class SqlParser {
     }
 
     /**
-     * Decides what {@code tok}, read at paren depth 0 while capturing an EXPIRE ROWS clause body, does to
-     * that body: it either ends it (CLEANUP starts the cadence sub-clause; WITH / IN VOLUME / DEDUP UPSERT
-     * belong to the CREATE TABLE tail) or is content of it.
+     * Decides what {@code tok}, read while capturing an EXPIRE ROWS clause body, does to that body: it
+     * either ends it (CLEANUP starts the cadence sub-clause; WITH / IN VOLUME / DEDUP UPSERT or an
+     * edition-specific suffix belong to the CREATE TABLE tail) or is content of it. The WHEN caller only
+     * invokes this method at parenthesis depth zero; the KEEP column-list caller invokes it for every token.
      * <p>
      * Three of the four words are ambiguous where they appear, so each is a boundary only in the pair the
      * grammar continues with, confirmed by one token of lookahead: {@code CLEANUP} and {@code DEDUP} are
@@ -1833,9 +1849,14 @@ public class SqlParser {
      * @return one of {@link #EXPIRE_BOUNDARY_NONE}, {@link #EXPIRE_BOUNDARY_CLEANUP},
      * {@link #EXPIRE_BOUNDARY_TAIL}
      */
-    private int expireRowsClauseBoundary(GenericLexer lexer, CharSequence tok, boolean inCreateTable) throws SqlException {
-        if (isCleanupKeyword(tok)) {
-            return isNextTokKeyword(lexer, "every") ? EXPIRE_BOUNDARY_CLEANUP : EXPIRE_BOUNDARY_NONE;
+    private int expireRowsClauseBoundary(
+            GenericLexer lexer,
+            CharSequence tok,
+            boolean inCreateTable,
+            @Nullable SqlParserCallback sqlParserCallback
+    ) throws SqlException {
+        if (isCleanupKeyword(tok) && isNextTokKeyword(lexer, "every")) {
+            return EXPIRE_BOUNDARY_CLEANUP;
         }
         if (!inCreateTable) {
             return EXPIRE_BOUNDARY_NONE;
@@ -1843,11 +1864,14 @@ public class SqlParser {
         if (isWithKeyword(tok)) {
             return EXPIRE_BOUNDARY_TAIL;
         }
-        if (isInKeyword(tok)) {
-            return isNextTokKeyword(lexer, "volume") ? EXPIRE_BOUNDARY_TAIL : EXPIRE_BOUNDARY_NONE;
+        if (isInKeyword(tok) && isNextTokKeyword(lexer, "volume")) {
+            return EXPIRE_BOUNDARY_TAIL;
         }
-        if (isDedupKeyword(tok) || isDeduplicateKeyword(tok)) {
-            return isNextTokKeyword(lexer, "upsert") ? EXPIRE_BOUNDARY_TAIL : EXPIRE_BOUNDARY_NONE;
+        if ((isDedupKeyword(tok) || isDeduplicateKeyword(tok)) && isNextTokKeyword(lexer, "upsert")) {
+            return EXPIRE_BOUNDARY_TAIL;
+        }
+        if (sqlParserCallback != null && sqlParserCallback.isExpireRowsClauseBoundary(lexer, tok)) {
+            return EXPIRE_BOUNDARY_TAIL;
         }
         return EXPIRE_BOUNDARY_NONE;
     }
@@ -3846,7 +3870,7 @@ public class SqlParser {
         // The predicate is captured here as raw text and validated structurally before the view is
         // created (SqlCompilerImpl.validateCreateExpiryPredicate, against the SELECT's output columns).
         if (tok != null && isExpireKeyword(tok)) {
-            tok = parseCreateTableExpireRows(lexer, tableOpBuilder);
+            tok = parseCreateTableExpireRows(lexer, tableOpBuilder, sqlParserCallback);
         }
 
         if (tok != null && isInKeyword(tok)) {
