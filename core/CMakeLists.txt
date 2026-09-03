@@ -194,7 +194,7 @@ if (OS_LINUX)
     MESSAGE("Downloading io_uring")
     ExternalProject_Add(
             liburing_git
-            GIT_REPOSITORY http://github.com/axboe/liburing.git
+            GIT_REPOSITORY https://github.com/axboe/liburing.git
             GIT_TAG liburing-2.2
             BUILD_IN_SOURCE 1
             BUILD_BYPRODUCTS "<SOURCE_DIR>/src/liburing.a"

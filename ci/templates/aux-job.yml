@@ -122,24 +122,28 @@ jobs:
           cd core
           # The static-library link step writes here and does not create the directory itself.
           mkdir -p target/classes/io/questdb/bin-local
-          # Anonymous fallback (fork PRs): FetchContent's three instant clone retries
-          # all land inside the same throttle window, so back off and reconfigure
-          # from scratch instead. A failed configure can leave a half-populated
-          # FetchContent cache behind, hence the rm.
-          configured=""
+          # Anonymous fallback (fork PRs): FetchContent's and ExternalProject's own
+          # instant clone retries land inside the same throttle window, so back off
+          # and retry here instead. The configure clones asmjit (FetchContent); the
+          # liburing_git target clones and builds liburing (ExternalProject), which
+          # would otherwise happen mid-build with no retry around it. After this
+          # loop the jittests build needs no network. rm -rf: a failed configure
+          # can leave a half-populated FetchContent cache behind.
+          fetched=""
           for delay in 0 15 30 60 120; do
             if [[ "$delay" -gt 0 ]]; then
-              echo "cmake configure failed; retrying in ${delay}s"
+              echo "fetching JIT build dependencies failed; retrying in ${delay}s"
               sleep "$delay"
               rm -rf build/jittest
             fi
-            if cmake -B build/jittest -DCMAKE_BUILD_TYPE=Release -DJIT_TEST=TRUE; then
-              configured=1
+            if cmake -B build/jittest -DCMAKE_BUILD_TYPE=Release -DJIT_TEST=TRUE \
+                && cmake --build build/jittest --target liburing_git; then
+              fetched=1
               break
             fi
           done
-          if [[ -z "$configured" ]]; then
-            echo "cmake configure failed after all retries" >&2
+          if [[ -z "$fetched" ]]; then
+            echo "fetching JIT build dependencies failed after all retries" >&2
             exit 1
           fi
           # An explicit job count: a bare --parallel passes make an unbounded -j, and this graph is
