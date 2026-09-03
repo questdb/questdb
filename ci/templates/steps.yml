@@ -152,12 +152,15 @@ steps:
       restoreKeys: |
         "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
-    condition: |
-      and(
-        ne(variables['poolName'], 'hetzner-incus'),
-        ne(variables['poolName'], 'hetzner-incus-arm'),
-        ne(variables['poolName'], 'hetzner-incus-zfs')
-      )
+    # Allowlist, not a hetzner-pool denylist: this cache only serves the hosted
+    # (Microsoft) agents, which cannot reach the Reposilite cache. The denylist
+    # failed open on the fuzz pipeline, which sets pool.name directly and defines
+    # no poolName variable, so ne('') passed and the task ran on its Hetzner
+    # agents -- harmless while the static key froze saves after the first one,
+    # but the pom-hashed key would have started re-saving the shared $HOME/.m2
+    # there on every pom change. A consumer without poolName now gets no cache
+    # instead of a surprise one.
+    condition: eq(variables['poolName'], 'Azure Pipelines')
   - task: Cache@2
     displayName: "Cache .cargo/registry"
     continueOnError: true
