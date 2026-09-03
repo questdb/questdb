@@ -144,7 +144,13 @@ steps:
     displayName: "Cache .m2/repository"
     continueOnError: true
     inputs:
-      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
+      # The pom hash in the key makes a dependency change save an updated cache
+      # (Azure skips the save on an exact key hit, so a static key freezes the
+      # cache at its first save); restoreKeys still restores the newest previous
+      # cache on a pom change, so only the delta comes from Maven Central.
+      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven" | **/pom.xml'
+      restoreKeys: |
+        "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
     condition: |
       and(
@@ -168,10 +174,10 @@ steps:
         ne(variables['poolName'], 'hetzner-incus-arm'),
         ne(variables['poolName'], 'hetzner-incus-zfs')
       )
-  - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
+  - pwsh: New-Item -Path "$(MAVEN_CACHE_FOLDER)" -ItemType Directory -Force
     displayName: "Ensure .m2/repository exists (PowerShell)"
     condition: eq(variables['os'], 'Windows')
-  - bash: mkdir -p "$HOME/.m2/repository"
+  - bash: mkdir -p "$(MAVEN_CACHE_FOLDER)"
     displayName: "Ensure .m2/repository exists (bash)"
     condition: ne(variables['os'], 'Windows')
   - script: "wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip"
