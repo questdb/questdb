@@ -202,7 +202,11 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
-        Assert.assertEquals(CommitMode.ADAPTIVE, configuration.getCairoConfiguration().getCommitMode());
+        // The PRODUCTION default stays nosync: adaptive ships opt-in, so an upgrade does not move a
+        // user's durability and throughput profile for them. Deliberately the opposite of the TEST
+        // default in DefaultCairoConfiguration, which returns ADAPTIVE so the suite keeps exercising
+        // the new path.
+        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
