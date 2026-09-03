@@ -261,6 +261,7 @@ public abstract class WorkerPoolManager implements Target {
         VIEW_COMPILER("view-compiler"),
         MAT_VIEW_REFRESH("mat-view-refresh"),
         LIVE_VIEW_REFRESH("live-view-refresh"),
+        PARTITION_COMPACTION("partition-compaction"),
         EXPORT("export");
 
         private final String requester;

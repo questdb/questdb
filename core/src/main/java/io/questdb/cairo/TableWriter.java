@@ -14937,21 +14937,73 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Reclaims a composite partition REWRITE's staging directory once no swap can accept it any more.
+     * PartitionCompactionScanJob builds one off a reader snapshot and
+     * {@link #swapCompactedCompositePartition} either renames it in or deletes it, so a directory whose
+     * partition still matches is work in flight and must stay. A crash or OOM between the
+     * {@code createDirsOrFail} and the rename leaves behind a full copy of the partition that nothing
+     * else ever looks at - its name carries a writer txn rather than a partition name txn, so no later
+     * sweep reuses it either. This applies swapCompactedCompositePartition's own staleness test: when the
+     * swap would reject the directory, nothing will ever adopt it, so delete it.
+     */
+    private void removeCompactingPartitionDirIfStale(long pUtf8NameZ) {
+        final int markerLo = Utf8s.indexOfAscii(utf8Sink, 0, utf8Sink.size(), COMPACTING_DIR_MARKER);
+        final boolean stale;
+        try {
+            final long writerTxn = Numbers.parseLong(utf8Sink, markerLo + COMPACTING_DIR_MARKER.length(), utf8Sink.size());
+            final long srcNameTxn;
+            int txnSep = Utf8s.indexOfAscii(utf8Sink, 0, markerLo, '.');
+            if (txnSep < 0) {
+                txnSep = markerLo;
+                srcNameTxn = -1;
+            } else {
+                srcNameTxn = Numbers.parseLong(utf8Sink, txnSep + 1, markerLo);
+            }
+            final long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
+            final int partitionIndex = txWriter.getPartitionIndex(dirTimestamp);
+            stale = partitionIndex < 0
+                    || !txWriter.isPartitionComposite(partitionIndex)
+                    || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn
+                    || getGeometry().getWriterTxn(partitionIndex) != writerTxn;
+        } catch (NumericException ignore) {
+            // Not a name this writer's compaction produced; leave the directory rather than guess.
+            path.trimTo(pathSize);
+            path.concat(pUtf8NameZ).$();
+            LOG.error().$("invalid staging partition directory inside table folder: ").$(path).$();
+            path.trimTo(pathSize);
+            return;
+        }
+        if (stale) {
+            path.trimTo(pathSize);
+            path.concat(pUtf8NameZ);
+            LOG.info().$("removing abandoned composite partition rewrite [path=").$substr(pathRootSize, path.$()).I$();
+            if (!ff.rmdir(path, false)) {
+                LOG.error().$("could not remove abandoned composite partition rewrite [path=").$substr(pathRootSize, path.$())
+                        .$(", errno=").$(ff.errno()).I$();
+            }
+            path.trimTo(pathSize);
+        }
+    }
+
     private void removePartitionDirsNotAttached(long pUtf8NameZ, int type) {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
-        // Do not remove a composite partition REWRITE's staging directory - PartitionCompactionScanJob
-        // builds one off a reader snapshot and swapCompactedCompositePartition renames or deletes it,
-        // so one standing here is work in flight, not a stray. Its name carries a writer txn after the
-        // marker rather than a partition name txn, which is why it must be skipped before the parse
-        // below rather than left to fail it.
         int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, pathSize, pUtf8NameZ, type, utf8Sink);
-        if (checkedType != Files.DT_UNKNOWN &&
-                !CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
+        if (checkedType == Files.DT_UNKNOWN) {
+            return;
+        }
+        if (Utf8s.containsAscii(utf8Sink, COMPACTING_DIR_MARKER)) {
+            // A composite partition REWRITE's staging directory. Its name carries a writer txn after the
+            // marker rather than a partition name txn, so the parse below would reject it; it needs its
+            // own liveness test instead.
+            removeCompactingPartitionDirIfStale(pUtf8NameZ);
+            return;
+        }
+        if (!CairoKeywords.isDetachedDirMarker(pUtf8NameZ) &&
                 !CairoKeywords.isWal(pUtf8NameZ) &&
                 !CairoKeywords.isTxnSeq(pUtf8NameZ) &&
                 !CairoKeywords.isSeq(pUtf8NameZ) &&
-                !Utf8s.containsAscii(utf8Sink, COMPACTING_DIR_MARKER) &&
                 !CairoKeywords.isLiveViewCheckpoints(pUtf8NameZ) &&
                 !Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())
         ) {
@@ -16400,7 +16452,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // repaired afterward (its geometry ref is cleared once the append has physically extended past
         // it); a composite SOURCE folded in this way would corrupt the merged directory silently. Skip the
         // whole squash and let a later pass retry once compaction has resolved every partition in range.
-        for (int i = partitionIndexLo; i < partitionIndexHi; i++) {
+        //
+        // A FORCED squash never takes this exit. detachPartition and parquet conversion need exactly one
+        // plain directory when this returns, and giving up here would silently hand them an unsquashed
+        // partition set. The force path handles a composite target and every composite source explicitly
+        // instead - compactPartitionToPlain flattens each one right before it is read, see below. Note
+        // txWriter.isPartitionComposite over-approximates geometry.isComposite (a partition stays flagged
+        // after folding back to a single piece), so this loop would also pre-empt the force-aware checks
+        // further down for partitions that are no longer really composite.
+        for (int i = partitionIndexLo; !force && i < partitionIndexHi; i++) {
             if (txWriter.isPartitionComposite(i)) {
                 LOG.info().$("skipping partition squash, partition is composite [table=").$(tableToken)
                         .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))

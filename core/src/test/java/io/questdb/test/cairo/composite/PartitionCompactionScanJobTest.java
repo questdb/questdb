@@ -28,11 +28,13 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.PartitionCompactionScanJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -103,6 +105,70 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                 setCurrentMicros(currentMicros + 10 * interval);
                 job.run();
                 Assert.assertTrue("expected a third sweep to have run", counter.get() > afterSecondTrigger);
+            }
+        });
+    }
+
+    /**
+     * A composite partition REWRITE stages its copy in a {@code .compacting<writerTxn>} directory that
+     * {@link TableWriter#swapCompactedCompositePartition} either renames in or deletes. A crash between
+     * the two leaves a full copy of the partition on disk that nothing ever adopts: its name carries a
+     * writer txn rather than a partition name txn, so no later sweep reuses it. The writer's stray-dir
+     * purge reclaims exactly the ones a swap could no longer accept, and leaves a build still in flight
+     * (one whose writer txn still matches the live partition) alone.
+     */
+    @Test
+    public void testPurgeReclaimsAbandonedStagingDirectoryButKeepsAnInFlightOne() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE cx AS (SELECT x::INT i," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2020-01-01 is never the active partition and the backfill below
+            // goes through the O3 path instead of an append.
+            execute("INSERT INTO cx SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cx SELECT x::INT + 70000 i," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("cx");
+            final String inFlightDir;
+            final String abandonedDir;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader txReader = reader.getTxFile();
+                Assert.assertTrue("2020-01-01 should be composite", txReader.isPartitionComposite(0));
+                final long partitionTimestamp = txReader.getPartitionTimestampByIndex(0);
+                final long nameTxn = txReader.getPartitionNameTxn(0);
+                final long writerTxn = reader.getGeometry().getWriterTxn(0);
+                final int timestampType = reader.getMetadata().getTimestampType();
+                final int partitionBy = reader.getPartitionedBy();
+                inFlightDir = stagingDir(token, timestampType, partitionBy, partitionTimestamp, nameTxn, writerTxn);
+                // A writer txn the live partition no longer carries: this build's swap would be rejected
+                // as stale, so nothing can ever adopt the directory.
+                abandonedDir = stagingDir(token, timestampType, partitionBy, partitionTimestamp, nameTxn, writerTxn - 1);
+            }
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            stageWithContent(ff, inFlightDir);
+            stageWithContent(ff, abandonedDir);
+
+            // The stray-partition-dir purge runs when a writer opens the table.
+            engine.releaseInactive();
+            try (TableWriter ignore = engine.getWriter(token, "test")) {
+                Assert.assertNotNull(ignore);
+            }
+
+            Assert.assertFalse("abandoned staging directory survived the purge", dirExists(ff, abandonedDir));
+            Assert.assertTrue("in-flight staging directory was purged", dirExists(ff, inFlightDir));
+
+            // Leave nothing behind for the suite's own checks.
+            try (Path path = new Path()) {
+                ff.rmdir(path.of(inFlightDir), false);
             }
         });
     }
@@ -910,5 +976,36 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     " AND s IS NOT NULL AND s <> ('v' || i)::varchar")
                     .noRandomAccess().expectSize().returns("c\n0\n");
         });
+    }
+
+    private static boolean dirExists(FilesFacade ff, String dir) {
+        try (Path path = new Path()) {
+            return ff.exists(path.of(dir).$());
+        }
+    }
+
+    /** The directory name PartitionCompactionScanJob stages a REWRITE into. */
+    private static String stagingDir(
+            TableToken token,
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp,
+            long nameTxn,
+            long writerTxn
+    ) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token.getDirName());
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
+            path.put(TableUtils.COMPACTING_DIR_MARKER).put(writerTxn);
+            return path.toString();
+        }
+    }
+
+    /** A staging directory holds a full copy of the partition, so give it a file to make the purge recurse. */
+    private static void stageWithContent(FilesFacade ff, String dir) {
+        try (Path path = new Path()) {
+            TableUtils.createDirsOrFail(ff, path.of(dir).slash(), configuration.getMkDirMode());
+            Assert.assertTrue(ff.touch(path.of(dir).concat("i.d").$()));
+        }
     }
 }

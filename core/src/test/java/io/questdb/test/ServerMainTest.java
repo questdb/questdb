@@ -689,6 +689,8 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.o3.max.lag\tQDB_CAIRO_O3_MAX_LAG\t600000\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.min.lag\tQDB_CAIRO_O3_MIN_LAG\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.open.column.queue.capacity\tQDB_CAIRO_O3_OPEN_COLUMN_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.merge.append.enabled\tQDB_CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +
+                                    "cairo.o3.partition.presplit.max.cuts\tQDB_CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS\t7\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.purge.list.initial.capacity\tQDB_CAIRO_O3_PARTITION_PURGE_LIST_INITIAL_CAPACITY\t1\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.queue.capacity\tQDB_CAIRO_O3_PARTITION_QUEUE_CAPACITY\t128\tdefault\tfalse\tfalse\n" +
                                     "cairo.o3.partition.split.min.size\tQDB_CAIRO_O3_PARTITION_SPLIT_MIN_SIZE\t52428800\tdefault\tfalse\tfalse\n" +
@@ -701,6 +703,19 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.page.frame.shard.count\tQDB_CAIRO_PAGE_FRAME_SHARD_COUNT\t2\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.index.threshold\tQDB_CAIRO_PARALLEL_INDEX_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.parallel.indexing.enabled\tQDB_CAIRO_PARALLEL_INDEXING_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.avg.rows.piece.lim\tQDB_CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM\t4096\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.check.interval\tQDB_CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL\t120000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.dead.min.size\tQDB_CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE\t52428800\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.dead.rows.ratio\tQDB_CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO\t1.0\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.decline.backoff.max\tQDB_CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX\t3600000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.idle.timeout\tQDB_CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT\t3600000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.piece.threshold\tQDB_CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD\t20\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.prefix.min.percent\tQDB_CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT\t50\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.stop.percent\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT\t10\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.threshold\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD\t52428800\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.threshold.percent\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT\t50\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.table.dead.trigger\tQDB_CAIRO_PARTITION_COMPACTION_TABLE_DEAD_TRIGGER\t10737418240\tdefault\tfalse\tfalse\n" +
+                                    "cairo.partition.compaction.time.budget\tQDB_CAIRO_PARTITION_COMPACTION_TIME_BUDGET\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.auto.include.timestamp\tQDB_CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.indexer.spill.bytes.max\tQDB_CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX\t268435456\tdefault\tfalse\tfalse\n" +
                                     "cairo.posting.index.row.id.encoding\tQDB_CAIRO_POSTING_INDEX_ROW_ID_ENCODING\tadaptive\tdefault\tfalse\tfalse\n" +
