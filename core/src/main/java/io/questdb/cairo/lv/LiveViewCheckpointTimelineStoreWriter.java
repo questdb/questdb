@@ -2475,54 +2475,87 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         final int keyStartIndex = function.getCheckpointKeyStartIndex();
         final int tombstoneIndex = function.getTombstoneValueIndex();
         final Map scanMap = isIncremental ? dirtyMap : map;
+        // Pass one names the keys this freeze will image and reads no predecessor at
+        // all. The lookups pass two makes land in a tree whose leaves are laid out in
+        // the key's own byte order, and the reader memoises one decoded node per depth,
+        // so taking them in a map cursor's order - hash-slot order, once the key is
+        // narrow enough for an unordered map - decodes a leaf per key rather than a leaf
+        // per leaf. The keys have to be in hand before that order can be computed.
+        final ObjList<byte[]> keys = activeScratch.functionFreezeKeys;
+        final IntList dirtyTombstones = activeScratch.functionFreezeDirtyTombstones;
+        keys.clear();
+        dirtyTombstones.clear();
         final MapRecordCursor cursor = scanMap.getCursor();
         final MapRecord record = scanMap.getRecord();
+        while (cursor.hasNext()) {
+            if (!isIncremental) {
+                // A full scan walks the state map itself and so has the value in hand,
+                // which is what lets it drop a tombstoned key before paying for the key
+                // image at all.
+                if (tombstoneIndex >= 0 && record.getValue().getByte(tombstoneIndex) == 1) {
+                    continue;
+                }
+            }
+            final int keyLength = encodeCheckpointKey(record, keyTypes, keyStartIndex);
+            keys.add(activeScratch.frozenByteArrays.copy(activeScratch.keyBuffer, 0, keyLength));
+            // The dirty map carries keys and nothing but the eviction marker the frontier
+            // sweep writes into the borrowed tombstone slot, and that marker is the one
+            // thing pass two cannot recover for itself: the key it belongs to is already
+            // gone from the live map.
+            dirtyTombstones.add(isIncremental && tombstoneIndex >= 0
+                    ? record.getValue().getByte(tombstoneIndex)
+                    : 0);
+        }
+
+        // Pass two does every lookup, seal and charge, walking the keys in the
+        // predecessor tree's own order instead of the cursor's. The order is a walk
+        // order and nothing else - the root builder sorts the puts it is handed - so it
+        // changes only which leaves this seal decodes and the order its state pages land
+        // in the data segment. It costs one live-map probe per key: the incremental arm
+        // was already paying for one to tell a live key from an evicted one, and a
+        // complete scan was getting its value from the cursor for free.
+        final int keyCount = keys.size();
+        LiveViewCheckpointMetadata.sortKeyOrdinals(
+                keys,
+                activeScratch.keyLookupPairs,
+                activeScratch.keyLookupOrder
+        );
         final LiveViewCheckpointPartitionMapEntry ringEntry =
                 isRingShaped ? new LiveViewCheckpointPartitionMapEntry() : null;
-        while (cursor.hasNext()) {
-            // The dirty map carries keys and nothing else, so an incremental scan has
-            // to image the key before it can read the state the key names. A full scan
-            // walks the state map itself and gets the value for free, which is what
-            // lets it skip a tombstone before paying for the key image, the domain
-            // test and the predecessor probe below.
-            int keyLength = isIncremental ? encodeCheckpointKey(record, keyTypes, keyStartIndex) : 0;
-            final MapValue value;
+        for (int o = 0; o < keyCount; o++) {
+            final int i = activeScratch.keyLookupOrder.getQuick(o);
+            final byte[] key = keys.getQuick(i);
+            final int keyLength = key.length;
+            activeScratch.keyBuffer.jumpTo(0);
+            LiveViewCheckpointMetadata.putBytes(activeScratch.keyBuffer, key);
+            final MapKey liveKey = map.withKey();
+            LiveViewSnapshotKeyCodec.readKey(liveKey, activeScratch.keyBuffer, 0, keyTypes);
+            final MapValue value = liveKey.findValue();
             boolean isEvicted = false;
-            if (isIncremental) {
-                final MapKey liveKey = map.withKey();
-                LiveViewSnapshotKeyCodec.readKey(liveKey, activeScratch.keyBuffer, 0, keyTypes);
-                value = liveKey.findValue();
-                if (value == null) {
-                    // The frontier sweep marks the key it drops in this very dirty map,
-                    // reusing the tombstone slot the borrowed state layout already
-                    // carries. The probe above read the state map, which leaves the dirty
-                    // map's own record flyweight where the cursor put it.
-                    final boolean isRecordedEviction = tombstoneIndex >= 0
-                            && record.getValue().getByte(tombstoneIndex) == 1;
-                    if (!isRecordedEviction) {
-                        // The frontier sweep is the only thing that removes a key from a
-                        // function's state map, and it records every key it drops, so a
-                        // dirty key the live map does not hold and that carries no
-                        // eviction marker is a broken invariant rather than a removal.
-                        // Reading it as one would delete live window state from the root,
-                        // and the wrong result would only surface after a restart.
-                        throw CairoException.critical(0)
-                                .put("live view checkpoint dirty partition key is missing from function state");
-                    }
-                    isEvicted = true;
+            if (value == null) {
+                // The frontier sweep is the only thing that removes a key from a
+                // function's state map, and it records every key it drops, so a dirty key
+                // the live map does not hold and that carries no eviction marker is a
+                // broken invariant rather than a removal. Reading it as one would delete
+                // live window state from the root, and the wrong result would only
+                // surface after a restart. A complete scan reaches this only when a key
+                // it took out of that same map fails to find itself through its own
+                // image, which is the same class of breakage and earns the same refusal.
+                // The check runs ahead of the output-key filter below because a key
+                // outside the replay's domain is no less broken for being outside it.
+                if (!isIncremental || dirtyTombstones.getQuick(i) != 1) {
+                    throw CairoException.critical(0)
+                            .put("live view checkpoint partition key is missing from function state");
                 }
-            } else {
-                value = record.getValue();
+                isEvicted = true;
             }
-            // An evicted key has no live value left, so there is no tombstone bit to read.
-            final boolean isTombstoned = !isEvicted && tombstoneIndex >= 0 && value.getByte(tombstoneIndex) == 1;
-            if (isTombstoned && !isIncremental) {
-                continue;
-            }
-            if (!isIncremental) {
-                keyLength = encodeCheckpointKey(record, keyTypes, keyStartIndex);
-            }
-            final byte[] key = activeScratch.frozenByteArrays.copy(activeScratch.keyBuffer, 0, keyLength);
+            // An evicted key has no live value left, so there is no tombstone bit to
+            // read, and a complete scan dropped its tombstoned keys in pass one rather
+            // than carrying them here - so only an incremental walk still holds one.
+            final boolean isTombstoned = isIncremental
+                    && !isEvicted
+                    && tombstoneIndex >= 0
+                    && value.getByte(tombstoneIndex) == 1;
             if (outputKeys != null && !outputKeys.contains(key)) {
                 // Outside the replay's key domain: the state the runtime holds here was
                 // reconstructed from whatever rows happened to fall inside [L, H), so
@@ -3022,6 +3055,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final ObjList<FrozenPartition> frozenPartitionPool = new ObjList<>();
         private final ObjList<LiveViewCheckpointStatePageRef> frozenStateRefPool = new ObjList<>();
         private final ObjList<FrozenWindowState> frozenWindowStatePool = new ObjList<>();
+        // One function freeze's two passes. The keys the cursor named, and - for an
+        // incremental walk only - the eviction marker each dirty record carried, which
+        // the second pass cannot read back off a key the sweep has already dropped. The
+        // arrays are the pool's and the list only borrows them, so it is emptied with
+        // the rest of the operation's scratch rather than left holding one view's key
+        // domain against the next view's work.
+        private final IntList functionFreezeDirtyTombstones = new IntList();
+        private final ObjList<byte[]> functionFreezeKeys = new ObjList<>();
         private final ObjList<byte[]> groupedFreezeKeys = new ObjList<>();
         private final LongList groupedFreezeLogicalBytes = new LongList();
         private final ObjList<byte[]> groupedFreezeRemovedKeys = new ObjList<>();
@@ -3083,6 +3124,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         private void release() {
+            functionFreezeDirtyTombstones.clear();
+            functionFreezeKeys.clear();
             keyBuffer.clear();
             keyBuffer.setMemoryTracker(null);
             keyLookupOrder.clear();
