@@ -190,21 +190,29 @@ flowchart TD
 
     ROOT --> TBLF["_meta · _txn · _cv"]
     ROOT --> SYMF["&lt;col&gt;.o · &lt;col&gt;.c · &lt;col&gt;.k · &lt;col&gt;.v  (symbol maps, table root)"]
-    ROOT --> EPO["_snapshot · _meta/_txn/_cv.epoch.{0,1} · _epoch.manifest.{0,1}  (adaptive recovery)"]
+    ROOT --> EPO["_snapshot · _meta/_txn/_cv.epoch.{0,1} · _epoch.manifest.{0,1} · _epoch.enrol  (adaptive recovery)"]
     ROOT --> PART["YYYY-MM-DD[.&lt;ver&gt;]/  (partition dirs)"]
-    PART --> PCOL["&lt;col&gt;.d (+ .i var-size) · &lt;col&gt;.k / .v (indexed cols)"]
+    PART --> PCOL["&lt;col&gt;.d (+ .i var-size) · &lt;col&gt;.k / .v (indexed cols) · _chk (checksum sidecar)"]
 
     ROOT --> SEQD["txn_seq/"]
-    SEQD --> SEQF["_txnlog · _txn_parts/&lt;part&gt; (V2) · _meta · _wal_index.d"]
+    SEQD --> SEQF["_txnlog · _txn_parts/&lt;part&gt; (V2) · _meta · _wal_index.d · _txnlog.c (CRC sidecar)"]
 
     ROOT --> WALD["wal&lt;id&gt;/"]
     WALD --> SEGD["&lt;segmentId&gt;/"]
-    SEGD --> SEGF["&lt;col&gt;.d (+ .i) · _event · _event.i · _meta"]
+    SEGD --> SEGF["&lt;col&gt;.d (+ .i) · _event · _event.i · _event.c (checksum) · _meta"]
 ```
 
 The **table root + partitions** are the materialized state (written lazily by apply). The
 **`txn_seq/` + `wal<id>/`** trees are the durable WAL (written eagerly by commit). The
 **`_snapshot` / `.epoch`** trio is the adaptive recovery anchor (written by the epoch).
+
+Three of these are **detection-only sidecars** — `_chk` (partition blocks), `_event.c` (WAL
+segment events) and `_txnlog.c` (sequencer log). They carry no durability claim and are fully
+re-derivable, so their loss must cost detection, never data or ingestion; that is why
+`cairo.partition.checksum.strict` defaults to `false`. `_epoch.enrol` is left in a table dir by a
+restore that cleared the table's epoch artifacts, to say the cleared state is a *trustworthy
+restored cut* rather than a lost anchor; it is consumed once the baseline is republished, so a
+crash before that point simply re-enrols on the next start instead of losing the signal.
 
 ---
 

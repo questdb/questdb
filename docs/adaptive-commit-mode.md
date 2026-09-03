@@ -532,6 +532,29 @@ Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
 | `cairo.adaptive.epoch.interval` | `60000` | Min interval between durable epochs per table. `0` = every apply batch. Negative = epochs disabled (also disables the row cap below). |
 | `cairo.adaptive.epoch.max.rows` | `5_000_000` | Forces an epoch once this many rows are applied to a table since its last one, independent of the interval. Bounds WAL retention + recovery replay under active ingest. `<= 0` disables the cap (interval-only). |
 | `cairo.adaptive.recovery.roll.forward.enabled` | `true` | Run durable-epoch recovery at boot. `false` refuses startup when an adaptive table is present. |
+| `cairo.adaptive.epoch.flush.on.close` | `true` | A clean writer close flushes a final epoch over any un-epoched tail, so a restart after an orderly shutdown has nothing to roll forward. `false` leaves the tail for the next boot's WAL replay (bounded by the epoch cadence above). |
+| `cairo.adaptive.epoch.column.sync.batched` | `true` | Epoch column-flush strategy: one batched `syncfs` vs a per-file `msync` walk. Operator override / safety valve. The batched path is Linux-only. |
+| `cairo.wal.commit.writeback.drain` | `true` | Drain writeback (`sync_file_range`) across the whole WAL segment *before* the per-file `fdatasync` barriers, so the device works on every file at once. Advisory only — every barrier still runs, so this moves throughput, never durability. |
+
+### Partition checksums
+
+Detection-only state, written as a `_chk` sidecar per partition. It carries **no durability
+claim** and is fully re-derivable from the partition contents, so losing it costs detection,
+never data.
+
+| Key | Default | Semantics |
+|---|---|---|
+| `cairo.partition.checksum.enabled` | `true` | Maintain the `_chk` block-hash sidecar per partition. |
+| `cairo.partition.checksum.block.size` | `1048576` (1 MiB) | Bytes covered per block hash. **Must be a power of two**; startup fails otherwise. |
+| `cairo.partition.checksum.strict` | `false` | When `true`, failing to write or sync a sidecar is fatal (fail-stop). Default `false` is deliberate: the sidecar is re-derivable, so losing it must cost *detection*, not ingestion. |
+| `cairo.partition.checksum.scrub.bytes.per.second` | `0` (off) | Background scrub rate. Off by default — the job holds a pooled reader and perturbs the engine's resource accounting (shutdown can report "table is left behind on pool shutdown"; an off-pool reader fails fd accounting instead). A diagnostic whose failure mode is taking healthy data offline has to earn being on. Enable it against tables that are not being actively written, where those problems vanish. |
+
+The `_chk` sidecar is deliberately **not** carried by BACKUP, and `ATTACH PARTITION` drops it.
+Coverage describes the exact bytes it was sealed against, so a sidecar that travels with a
+partition into a directory assembled elsewhere is not merely stale, it is wrong, and the read
+path would report a healthy partition as corrupt. Absent coverage is a defined state — the
+partition reads unverified and the next seal re-covers it against real contents — whereas wrong
+coverage is a false corruption verdict.
 
 Per-table override (wins over the global): `WITH commit_mode='…'` at `CREATE TABLE`,
 or `ALTER TABLE … SET PARAM commit_mode='…'`. Tokens: `nosync`, `sync`, `async`,
