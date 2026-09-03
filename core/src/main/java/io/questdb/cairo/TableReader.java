@@ -1505,6 +1505,28 @@ public class TableReader implements Closeable, SymbolTableSource {
                 }
                 final long recorded = checksumSidecar.fileLength(i);
                 if (actual < recorded) {
+                    // A short covered file is normally a torn write at the tail -- the one corruption
+                    // this structural check catches for free (PartitionChecksumReadPathTest
+                    // #testTruncatedColumnFileIsDetectedOnOpen), so it stays fatal in every mode that
+                    // orders the sidecar against the columns it covers. SYNC/ASYNC flush both under
+                    // the same appliesColumnSync predicate; ADAPTIVE flushes neither per commit but
+                    // recovery rolls back to a validated epoch and re-derives coverage, so a shortfall
+                    // that survives into a reader is genuine there too.
+                    //
+                    // NOSYNC is the exception, and the only one: it orders nothing and re-derives
+                    // nothing, so writeback can land the sidecar's recorded length while the column's
+                    // last pages never reach the platter. There the shortfall is indistinguishable
+                    // from the data loss nosync explicitly permits, and condemning it takes a table
+                    // offline for behaving as documented -- a one-byte-short ts.d made a whole
+                    // partition unqueryable (PartitionChecksumCrashTest
+                    // #testNosyncCrashIsNotReportedAsCorruption). Degrade to uncovered instead: the
+                    // partition reads unverified and the next seal re-covers it against real contents.
+                    if (CommitMode.effectiveCommitMode(
+                            metadata.getCommitMode(), configuration.getCommitMode()) == CommitMode.NOSYNC) {
+                        LOG.info().$("partition checksum coverage is behind its data under nosync, reading unverified [path=")
+                                .$(partitionPath).$(", recorded=").$(recorded).$(", actual=").$(actual).I$();
+                        return;
+                    }
                     throw CairoException.critical(0)
                             .put("covered file is shorter than recorded [path=").put(partitionPath)
                             .put(", recorded=").put(recorded)
