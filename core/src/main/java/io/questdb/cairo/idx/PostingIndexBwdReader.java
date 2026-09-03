@@ -1146,10 +1146,13 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         // over that same row range -- so the covered read for these synthetic rows
         // cannot use the sidecar (built only from the chain's real postings): it must
         // read the INCLUDEd column's own .d/.i files directly, honouring THAT column's
-        // own column top. Opened lazily, once per checkout; freed in
+        // own column top. Opened lazily, once per checkout; released in
         // closeCoveringResources() (called on every close, pooled or final -- see
         // Cursor.close()/releaseResources()), so a reused cursor always re-resolves
-        // against whatever partition the outer reader is currently bound to.
+        // against whatever partition the outer reader is currently bound to. The
+        // arrays themselves outlive the checkout: the cursor is pooled, and
+        // reallocating seven of them per checkout is a GC allocation on the query
+        // path for nothing.
         private long[] npAuxAddrs;
         private long[] npAuxFds;
         private long[] npAuxSizes;
@@ -1158,6 +1161,11 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         private long[] npColSizes;
         private long[] npColTops;
         private boolean npColumnsOpened;
+        // True while the arrays above describe this checkout's partition: set once
+        // ensureNullPrefixColumnsOpen() has populated them, cleared whenever
+        // closeNullPrefixColumns() releases what they point at. A null array no
+        // longer means "nothing mapped", since the arrays are kept across checkouts.
+        private boolean hasNullPrefixColumns;
         // The cover-column subset this checkout's caller declared it reads (the query
         // projection), captured at getCursor()/getDetachedCursor().
         // ensureNullPrefixColumnsOpen() maps only these columns, mirroring
@@ -1394,38 +1402,33 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
 
         /**
          * Unmaps every null-prefix raw-column region this cursor currently owns and
-         * drops the arrays. Shared by closeCoveringResources() and by
-         * ensureNullPrefixColumnsOpen()'s failure path, which must not leave a
-         * half-mapped set behind.
+         * closes its fds, keeping the arrays for the next checkout. Shared by
+         * closeCoveringResources() and by ensureNullPrefixColumnsOpen()'s failure
+         * path, which must not leave a half-mapped set behind.
          */
         private void closeNullPrefixColumns() {
-            if (npColAddrs != null) {
-                for (int i = 0; i < npColAddrs.length; i++) {
-                    if (npColAddrs[i] != 0) {
-                        ff.munmap(npColAddrs[i], npColSizes[i], MemoryTag.MMAP_INDEX_READER);
-                        npColAddrs[i] = 0;
-                    }
-                    if (npColFds[i] != -1) {
-                        ff.close(npColFds[i]);
-                        npColFds[i] = -1;
-                    }
-                    if (npAuxAddrs[i] != 0) {
-                        ff.munmap(npAuxAddrs[i], npAuxSizes[i], MemoryTag.MMAP_INDEX_READER);
-                        npAuxAddrs[i] = 0;
-                    }
-                    if (npAuxFds[i] != -1) {
-                        ff.close(npAuxFds[i]);
-                        npAuxFds[i] = -1;
-                    }
+            hasNullPrefixColumns = false;
+            if (npColAddrs == null) {
+                return;
+            }
+            for (int i = 0; i < npColAddrs.length; i++) {
+                if (npColAddrs[i] != 0) {
+                    ff.munmap(npColAddrs[i], npColSizes[i], MemoryTag.MMAP_INDEX_READER);
+                    npColAddrs[i] = 0;
+                }
+                if (npColFds[i] != -1) {
+                    ff.close(npColFds[i]);
+                    npColFds[i] = -1;
+                }
+                if (npAuxAddrs[i] != 0) {
+                    ff.munmap(npAuxAddrs[i], npAuxSizes[i], MemoryTag.MMAP_INDEX_READER);
+                    npAuxAddrs[i] = 0;
+                }
+                if (npAuxFds[i] != -1) {
+                    ff.close(npAuxFds[i]);
+                    npAuxFds[i] = -1;
                 }
             }
-            npAuxAddrs = null;
-            npAuxFds = null;
-            npAuxSizes = null;
-            npColAddrs = null;
-            npColFds = null;
-            npColSizes = null;
-            npColTops = null;
         }
 
         /**
@@ -1454,7 +1457,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
          */
         private boolean ensureNullPrefixColumnsOpen() {
             if (npColumnsOpened) {
-                return npColAddrs != null;
+                return hasNullPrefixColumns;
             }
             npColumnsOpened = true;
             if (coverCount <= 0 || metadata == null || columnVersionReader == null) {
@@ -1464,16 +1467,25 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // loop publishes only on success: openRawColumnFile throws when mmap
             // fails, and a var-size column alone issues two mmaps (.d then .i), so
             // buffering in locals orphans every region the loop already mapped --
-            // closeCoveringResources() would see a null npColAddrs and free none of
-            // them. PostingIndexWriter#mapColumnFile targets its persistent array
-            // for the same reason.
-            npAuxAddrs = new long[coverCount];
-            npAuxFds = new long[coverCount];
-            npAuxSizes = new long[coverCount];
-            npColAddrs = new long[coverCount];
-            npColFds = new long[coverCount];
-            npColSizes = new long[coverCount];
-            npColTops = new long[coverCount];
+            // closeCoveringResources() would find nothing to free.
+            // PostingIndexWriter#mapColumnFile targets its persistent array for the
+            // same reason. The arrays are kept across checkouts and only ever grow,
+            // so a reused cursor resets them instead of allocating seven more.
+            if (npColAddrs == null || npColAddrs.length < coverCount) {
+                npAuxAddrs = new long[coverCount];
+                npAuxFds = new long[coverCount];
+                npAuxSizes = new long[coverCount];
+                npColAddrs = new long[coverCount];
+                npColFds = new long[coverCount];
+                npColSizes = new long[coverCount];
+                npColTops = new long[coverCount];
+            } else {
+                Arrays.fill(npAuxAddrs, 0);
+                Arrays.fill(npAuxSizes, 0);
+                Arrays.fill(npColAddrs, 0);
+                Arrays.fill(npColSizes, 0);
+                Arrays.fill(npColTops, 0);
+            }
             Arrays.fill(npAuxFds, -1);
             Arrays.fill(npColFds, -1);
             Path p = Path.getThreadLocal(sidecarBasePath);
@@ -1540,6 +1552,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             } finally {
                 p.trimTo(pLen);
             }
+            hasNullPrefixColumns = true;
             return true;
         }
 
