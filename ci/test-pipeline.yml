@@ -309,7 +309,11 @@ stages:
 
           - task: Maven@3
             displayName: "Compile with Maven"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
+            # succeeded() explicitly: a bare variable condition replaces Azure's
+            # implicit succeeded() guard; without it this step runs after e.g. a
+            # failed submodule clone and dies on the never-populated
+            # $(MAVEN_SETTINGS_FILE), burying the real error.
+            condition: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               mavenPomFile: "pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
@@ -319,7 +323,8 @@ stages:
 
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
+            # succeeded() explicitly: see "Compile with Maven" above.
+            condition: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
@@ -411,7 +416,9 @@ stages:
                 $COVER_ARGS --repo "questdb/questdb" --pr "$PR_NUMBER" \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
             displayName: "Post combined report to GitHub"
-            condition: eq(variables['SHOULD_RUN'], 'true')
+            # succeeded() explicitly: without it a failed merge step upstream does
+            # not stop this step from posting a report built from stale inputs.
+            condition: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'))
             env:
               BUILD_SOURCEBRANCH: $(Build.SourceBranch)
               PR_NUMBER_MACRO: $(System.PullRequest.PullRequestNumber)

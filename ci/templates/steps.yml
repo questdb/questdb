@@ -220,10 +220,17 @@ steps:
       goals: "compile"
       options: "-s $(MAVEN_SETTINGS_FILE) $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
+    # succeeded() explicitly: a bare variable condition replaces Azure's implicit
+    # succeeded() guard, so without it this step runs after an earlier step (e.g.
+    # the submodule clone in detect-local-client) failed, and dies on the
+    # never-populated $(MAVEN_SETTINGS_FILE) -- burying the real error.
     condition: |
-      or(
-        eq(variables['testset'], 'none'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'false')
+      and(
+        succeeded(),
+        or(
+          eq(variables['testset'], 'none'),
+          eq(variables['SOURCE_CODE_CHANGED'], 'false')
+        )
       )
   - task: Maven@3
     displayName: "Run tests"
@@ -244,8 +251,10 @@ steps:
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
     timeoutInMinutes: 55
+    # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
+        succeeded(),
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
@@ -269,8 +278,10 @@ steps:
         -P build-web-console
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
+    # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
+        succeeded(),
         startsWith(variables['testset'], 'coverage'),
         ne(variables['System.PullRequest.IsFork'], 'true'),
         or(
@@ -296,8 +307,10 @@ steps:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
     timeoutInMinutes: 55
+    # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
+        succeeded(),
         startsWith(variables['testset'], 'coverage'),
         ne(variables['System.PullRequest.IsFork'], 'true'),
         or(
