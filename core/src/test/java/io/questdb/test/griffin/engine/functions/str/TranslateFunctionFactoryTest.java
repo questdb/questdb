@@ -43,8 +43,6 @@ public class TranslateFunctionFactoryTest extends AbstractCairoTest {
         assertQuery("select translate('café', 'é', 'e')").expectSize().returns("translate\ncafe\n");
         // duplicate char in 'from' uses the first mapping
         assertQuery("select translate('aaa', 'aa', 'xy')").expectSize().returns("translate\nxxx\n");
-        // VARCHAR overload
-        assertQuery("select translate('12345'::varchar, '143'::varchar, 'ax'::varchar)").expectSize().returns("translate\na2x5\n");
     }
 
     @Test
@@ -61,5 +59,31 @@ public class TranslateFunctionFactoryTest extends AbstractCairoTest {
                                 "\t\n" +
                                 "\t\n"
                 );
+    }
+
+    @Test
+    public void testVarcharColumn() throws Exception {
+        // all-VARCHAR args resolve translate(OOO); the column path decodes UTF8 to UTF16 per row
+        assertQuery("select v, translate(v, 'lé'::varchar, 'LE'::varchar) from t")
+                .ddl("create table t (v varchar)",
+                        "insert into t values ('hello'), ('café'), (null), ('')")
+                .expectSize()
+                .returns(
+                        "v\ttranslate\n" +
+                                "hello\theLLo\n" +
+                                "café\tcafE\n" +
+                                "\t\n" +
+                                "\t\n"
+                );
+    }
+
+    @Test
+    public void testVarcharConstants() throws Exception {
+        assertQuery("select translate('12345'::varchar, '143'::varchar, 'ax'::varchar)").expectSize().returns("translate\na2x5\n");
+        // non-ASCII input
+        assertQuery("select translate('café'::varchar, 'é'::varchar, 'e'::varchar)").expectSize().returns("translate\ncafe\n");
+        // empty value stays empty, any NULL argument returns NULL
+        assertQuery("select translate(''::varchar, 'a'::varchar, 'b'::varchar)").expectSize().returns("translate\n\n");
+        assertQuery("select translate(null::varchar, 'a'::varchar, 'b'::varchar)").expectSize().returns("translate\n\n");
     }
 }
