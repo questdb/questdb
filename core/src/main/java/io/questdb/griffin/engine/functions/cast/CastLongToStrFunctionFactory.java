@@ -43,8 +43,12 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
+            final long value = func.getLong(null);
+            if (value == Numbers.LONG_NULL) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
-            sink.put(func.getLong(null));
+            sink.put(value);
             return new StrConstant(Chars.toString(sink));
         }
         return new Func(args.getQuick(0));

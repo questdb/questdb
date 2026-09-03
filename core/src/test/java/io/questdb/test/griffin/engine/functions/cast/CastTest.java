@@ -3618,6 +3618,20 @@ public class CastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIntToStrConstNull() throws Exception {
+        assertQuery("select a from tab")
+                .ddl("create table tab (a string)")
+                .mutateWith("insert into tab select cast(cast(null as int) as string) from long_sequence(3)")
+                .expectSize()
+                .returns("a\n", """
+                        a
+
+
+
+                        """);
+    }
+
+    @Test
     public void testIntToStrSort() throws Exception {
         assertQuery("select cast(a as string) x from tt order by x")
                 .ddl("create table tt as (select rnd_int(1,200,1) a from long_sequence(20))")
@@ -4308,6 +4322,34 @@ public class CastTest extends AbstractCairoTest {
                         334
                         334
                         334
+                        """);
+    }
+
+    @Test
+    public void testLongToStrConstNull() throws Exception {
+        assertQuery("select a from tab")
+                .ddl("create table tab (a string)")
+                .mutateWith("insert into tab select cast(cast(null as long) as string) from long_sequence(3)")
+                .expectSize()
+                .returns("a\n", """
+                        a
+
+
+
+                        """);
+    }
+
+    @Test
+    public void testLongToStrNullColumn() throws Exception {
+        assertQuery("select cast(a as string) x from tab")
+                .ddl("create table tab (a long)")
+                .mutateWith("insert into tab select cast(null as long) from long_sequence(3)")
+                .expectSize()
+                .returns("x\n", """
+                        x
+
+
+
                         """);
     }
 
