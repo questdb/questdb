@@ -48,10 +48,14 @@ import org.junit.Test;
  * trailing-space escapes REVERTED, all three tests here still pass, while
  * {@code CompositeWindowsUnsafeDimensionTest} goes three red. That is not a weakness to fix -- it is
  * inherent. Linux accepts a directory called {@code CON} and preserves a trailing space, so the
- * hazard simply does not exist on the platform CI runs on. These tests lock the writer, reader and
- * pruning render sites into AGREEMENT through whatever the escaper emits; the escaper unit test is
- * what pins the escaping itself. Anyone tempted to read this file as Windows coverage should stop
- * here: only a Windows run, or the enterprise pipeline, is that.
+ * hazard simply does not exist on Linux. These tests lock the writer, reader and pruning render sites
+ * into AGREEMENT through whatever the escaper emits; the escaper unit test is what pins the escaping
+ * itself. Anyone tempted to read this file as Windows coverage should stop here.
+ * <p>
+ * The actual Windows signal is the {@code macwin} CI check on the pull request. It had not run as of
+ * this commit, because the PR is a draft and drafts skip CI -- so the reserved-name and trailing-space
+ * behaviour is reasoned from Windows' documented rules, not observed. Marking the PR ready is what
+ * turns that reasoning into evidence.
  */
 public class CompositeWindowsUnsafeRoundTripTest extends AbstractCairoTest {
 
