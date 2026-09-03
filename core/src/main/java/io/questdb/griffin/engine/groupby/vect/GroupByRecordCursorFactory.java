@@ -701,7 +701,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                                         sharedCircuitBreaker,
                                         progressState
                                 );
-                                queue.get(cursor).entry = entry;
+                                queue.get(cursor).of(entry);
                                 pubSeq.done(cursor);
                                 queuedCount++;
                                 total++;

@@ -352,6 +352,23 @@ public interface RecordCursor extends RecordRandomAccess, Closeable, SymbolTable
     }
 
     /**
+     * Notifies the cursor that the consumer stops pulling rows for reasons
+     * unrelated to query execution, such as network backpressure or a
+     * suspended PGWire portal. Timing-aware cursors exclude the interval
+     * until {@link #resumeTimer()} from active execution time. No-op by
+     * default. Both methods are idempotent.
+     */
+    default void suspendTimer() {
+    }
+
+    /**
+     * Ends the wait interval started by {@link #suspendTimer()}. No-op by
+     * default and when the cursor is not suspended.
+     */
+    default void resumeTimer() {
+    }
+
+    /**
      * Returns the total number of records available in this cursor.
      * <p>
      * Not all record cursor implementations can determine their size efficiently.

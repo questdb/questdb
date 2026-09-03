@@ -25,8 +25,10 @@
 package io.questdb.metrics;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -36,6 +38,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.SynchronizedJob;
+import io.questdb.std.Numbers;
 import io.questdb.std.ValueHolderList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Utf8StringSink;
@@ -44,9 +47,12 @@ import java.io.Closeable;
 import java.io.IOException;
 
 public class QueryTracingJob extends SynchronizedJob implements Closeable {
+    public static final String COLUMN_CLIENT_WAIT_MICROS = "client_wait_micros";
     public static final String COLUMN_EXECUTION_MICROS = "execution_micros";
+    public static final String COLUMN_FIRST_ROW_MICROS = "first_row_micros";
     public static final String COLUMN_PRINCIPAL = "principal";
     public static final String COLUMN_QUERY_TEXT = "query_text";
+    public static final String COLUMN_RESOURCE_GROUP_CPU_WAIT_MICROS = "resource_group_cpu_wait_micros";
     public static final String COLUMN_TS = "ts";
     public static final String TABLE_NAME = "_query_trace";
     // Writer lock reason used when the query-tracing job acquires its own table writer.
@@ -55,8 +61,14 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
     private static final int INITIAL_CAPACITY = 128;
     private static final Log LOG = LogFactory.getLog(QueryTracingJob.class.getName());
     private final ValueHolderList<QueryTrace> buffer;
+    private final int clientWaitMicrosColumnIndex;
     private final CairoEngine engine;
+    private final int executionMicrosColumnIndex;
+    private final int firstRowMicrosColumnIndex;
+    private final int principalColumnIndex;
+    private final int queryTextColumnIndex;
     private final ConcurrentQueue<QueryTrace> queue;
+    private final int resourceGroupCpuWaitMicrosColumnIndex;
     private final SqlExecutionContextImpl sqlExecutionContext;
     private final TableWriter tableWriter;
     private final QueryTrace trace = new QueryTrace();
@@ -72,7 +84,32 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                 null,
                 null
         );
-        this.tableWriter = acquireTableWriter();
+        TableWriter writer = null;
+        try {
+            writer = acquireTableWriter();
+            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_CLIENT_WAIT_MICROS) < 0) {
+                writer.addColumn(COLUMN_CLIENT_WAIT_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
+            }
+            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_FIRST_ROW_MICROS) < 0) {
+                writer.addColumn(COLUMN_FIRST_ROW_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
+            }
+            if (writer.getMetadata().getColumnIndexQuiet(COLUMN_RESOURCE_GROUP_CPU_WAIT_MICROS) < 0) {
+                writer.addColumn(COLUMN_RESOURCE_GROUP_CPU_WAIT_MICROS, ColumnType.LONG, sqlExecutionContext.getSecurityContext());
+            }
+            final TableRecordMetadata metadata = writer.getMetadata();
+            queryTextColumnIndex = metadata.getColumnIndex(COLUMN_QUERY_TEXT);
+            executionMicrosColumnIndex = metadata.getColumnIndex(COLUMN_EXECUTION_MICROS);
+            principalColumnIndex = metadata.getColumnIndex(COLUMN_PRINCIPAL);
+            clientWaitMicrosColumnIndex = metadata.getColumnIndex(COLUMN_CLIENT_WAIT_MICROS);
+            firstRowMicrosColumnIndex = metadata.getColumnIndex(COLUMN_FIRST_ROW_MICROS);
+            resourceGroupCpuWaitMicrosColumnIndex = metadata.getColumnIndex(COLUMN_RESOURCE_GROUP_CPU_WAIT_MICROS);
+        } catch (Throwable th) {
+            if (writer != null) {
+                writer.close();
+            }
+            throw th;
+        }
+        this.tableWriter = writer;
     }
 
     @Override
@@ -91,7 +128,10 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
                         .$(COLUMN_TS).$(" TIMESTAMP, ")
                         .$(COLUMN_QUERY_TEXT).$(" VARCHAR, ")
                         .$(COLUMN_EXECUTION_MICROS).$(" LONG, ")
-                        .$(COLUMN_PRINCIPAL).$(" VARCHAR")
+                        .$(COLUMN_PRINCIPAL).$(" VARCHAR, ")
+                        .$(COLUMN_CLIENT_WAIT_MICROS).$(" LONG, ")
+                        .$(COLUMN_FIRST_ROW_MICROS).$(" LONG, ")
+                        .$(COLUMN_RESOURCE_GROUP_CPU_WAIT_MICROS).$(" LONG")
                         .$(") TIMESTAMP(").$(COLUMN_TS).$(") PARTITION BY HOUR TTL 1 DAY BYPASS WAL")
                         .compile(sqlExecutionContext);
                 query.getOperation().execute(sqlExecutionContext, null);
@@ -120,9 +160,20 @@ public class QueryTracingJob extends SynchronizedJob implements Closeable {
             for (int n = buffer.size(), i = 0; i < n; i++) {
                 buffer.moveQuick(i, trace);
                 final TableWriter.Row row = tableWriter.newRow(trace.timestamp);
-                putVarchar(row, 1, trace.queryText);
-                row.putLong(2, trace.executionNanos / Micros.MICRO_NANOS);
-                putVarchar(row, 3, trace.principal);
+                putVarchar(row, queryTextColumnIndex, trace.queryText);
+                row.putLong(executionMicrosColumnIndex, trace.executionNanos / Micros.MICRO_NANOS);
+                putVarchar(row, principalColumnIndex, trace.principal);
+                row.putLong(clientWaitMicrosColumnIndex, trace.clientWaitNanos / Micros.MICRO_NANOS);
+                row.putLong(
+                        firstRowMicrosColumnIndex,
+                        trace.firstRowNanos < 0 ? Numbers.LONG_NULL : trace.firstRowNanos / Micros.MICRO_NANOS
+                );
+                row.putLong(
+                        resourceGroupCpuWaitMicrosColumnIndex,
+                        trace.resourceGroupCpuWaitNanos == Numbers.LONG_NULL
+                                ? Numbers.LONG_NULL
+                                : trace.resourceGroupCpuWaitNanos / Micros.MICRO_NANOS
+                );
                 row.append();
             }
             tableWriter.commit();

@@ -32,6 +32,8 @@ import io.questdb.cairo.sql.async.AsyncQueryErrorState;
 import io.questdb.cairo.sql.async.AsyncQueryProgressState;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
 import io.questdb.mp.CountDownLatchSPI;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
@@ -42,6 +44,7 @@ public class LatestByTask implements QuietCloseable, Mutable {
     private long argsAddress;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private boolean completed;
+    private FiberDispatchContext dispatchContext;
     private CountDownLatchSPI doneLatch;
     private int frameIndex;
     private int hashColumnIndex;
@@ -66,6 +69,7 @@ public class LatestByTask implements QuietCloseable, Mutable {
 
     @Override
     public void clear() {
+        dispatchContext = null;
         frameMemoryPool.clear();
     }
 
@@ -84,6 +88,10 @@ public class LatestByTask implements QuietCloseable, Mutable {
 
     public SqlExecutionCircuitBreaker getCircuitBreaker() {
         return circuitBreaker;
+    }
+
+    public FiberDispatchContext getDispatchContext() {
+        return dispatchContext;
     }
 
     public AsyncQueryProgressState getProgressState() {
@@ -128,6 +136,7 @@ public class LatestByTask implements QuietCloseable, Mutable {
         this.prefixesCount = prefixesCount;
         this.doneLatch = doneLatch;
         this.circuitBreaker = circuitBreaker;
+        this.dispatchContext = Fiber.captureParallelDispatchContext();
         this.progressState = progressState;
         this.scanError = scanError;
         this.completed = false;

@@ -694,7 +694,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     ) {
         final VectorAggregateEntry entry = task.entry;
         final AsyncQueryProgressState progressState = entry != null ? entry.getProgressState() : null;
-        task.entry = null;
+        task.clear();
         try {
             if (entry != null) {
                 entry.abort(false);
@@ -880,7 +880,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
                 final VectorAggregateTask task = queue.get(cursor);
                 final VectorAggregateEntry entry = task.entry;
                 final AsyncQueryProgressState progressState = entry != null ? entry.getProgressState() : null;
-                task.entry = null;
+                task.clear();
                 try {
                     if (entry != null) {
                         entry.abort(false);

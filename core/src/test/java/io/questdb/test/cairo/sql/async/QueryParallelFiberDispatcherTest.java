@@ -59,6 +59,7 @@ import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberEventWaitQueue;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
@@ -1829,6 +1830,95 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
                     Assert.assertEquals(ownerBProgressBefore + 1, progressB.getVersion());
                     Assert.assertEquals(pubSeq.current(), subSeq.current());
                     Assert.assertEquals(1, dispatcher.getVectorAggregateCreatedTaskCount());
+                } finally {
+                    closeRuntime(runtime);
+                    Misc.free(dispatcher);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVectorAggregateBatchSwitchesDispatchContextBetweenOwners() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public int getSqlPageFrameMaxRows() {
+                    return 128;
+                }
+
+                @Override
+                public int getVectorAggregateQueueCapacity() {
+                    return 4;
+                }
+            };
+            try (CairoEngine engine = new CairoEngine(configuration)) {
+                final FiberDispatchContext contextA = new FiberDispatchContext() {
+                };
+                final FiberDispatchContext contextB = new FiberDispatchContext() {
+                };
+                final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
+                final FiberRuntime runtime = controller.createRuntime(1);
+                final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                        engine,
+                        engine.getMessageBus(),
+                        runtime
+                );
+                try {
+                    final MessageBus messageBus = engine.getMessageBus();
+                    final RingQueue<VectorAggregateTask> queue = messageBus.getVectorAggregateQueue();
+                    final MPSequence pubSeq = messageBus.getVectorAggregatePubSeq();
+                    final AtomicInteger doneA = new AtomicInteger();
+                    final AtomicInteger doneB = new AtomicInteger();
+                    final TestVectorAggregateEntry entryA = new TestVectorAggregateEntry(
+                            new AtomicBooleanCircuitBreaker(engine),
+                            doneA,
+                            1,
+                            null,
+                            new AsyncQueryProgressState()
+                    );
+                    final TestVectorAggregateEntry entryB = new TestVectorAggregateEntry(
+                            new AtomicBooleanCircuitBreaker(engine),
+                            doneB,
+                            1,
+                            null,
+                            new AsyncQueryProgressState()
+                    );
+                    final FiberTask publisherA = new FiberTask() {
+                        @Override
+                        protected boolean runStep() {
+                            publishVectorAggregateTask(queue, pubSeq, entryA);
+                            return true;
+                        }
+                    };
+                    final FiberTask publisherB = new FiberTask() {
+                        @Override
+                        protected boolean runStep() {
+                            publishVectorAggregateTask(queue, pubSeq, entryB);
+                            return true;
+                        }
+                    };
+
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(publisherA, contextA));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertSame(LaunchResult.LAUNCHED, runtime.launch(publisherB, contextB));
+                    Assert.assertEquals(1, runtime.drain(1));
+                    Assert.assertFalse(dispatcher.consumeVectorAggregate(-1));
+
+                    final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+                    while (runtime.getOutstandingTaskCount() > 0 && System.nanoTime() < deadline) {
+                        runtime.drain(1);
+                    }
+
+                    Assert.assertEquals(1, doneA.get());
+                    Assert.assertEquals(1, doneB.get());
+                    Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                    Assert.assertEquals(4, controller.getMountCount());
+                    Assert.assertSame(contextA, controller.getMountedContext(0));
+                    Assert.assertSame(contextB, controller.getMountedContext(1));
+                    Assert.assertSame(contextA, controller.getMountedContext(2));
+                    Assert.assertSame(contextB, controller.getMountedContext(3));
+                    Assert.assertEquals(4, controller.getUnmountCount());
                 } finally {
                     closeRuntime(runtime);
                     Misc.free(dispatcher);
@@ -3744,7 +3834,7 @@ public class QueryParallelFiberDispatcherTest extends AbstractTest {
     ) {
         final long cursor = pubSeq.next();
         Assert.assertTrue("vector aggregate queue slot must be available", cursor > -1);
-        queue.get(cursor).entry = entry;
+        queue.get(cursor).of(entry);
         pubSeq.done(cursor);
     }
 

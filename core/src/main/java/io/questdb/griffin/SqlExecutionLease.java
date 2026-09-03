@@ -36,8 +36,20 @@ import org.jetbrains.annotations.Nullable;
  * admission before restoring the execution context.
  */
 public interface SqlExecutionLease extends QuietCloseable {
+    /**
+     * Terminally consumes this lease. QueryRegistry retires its entry even when this method throws,
+     * so an implementation that still owns resources on failure must durably retain itself and
+     * arrange deferred cleanup before propagating that failure.
+     */
+    @Override
+    void close();
+
     default @Nullable MemoryTracker getMemoryTracker() {
         return null;
+    }
+
+    default long getResourceGroupCpuWaitNanos() {
+        return Numbers.LONG_NULL;
     }
 
     default long getResourceGroupId() {

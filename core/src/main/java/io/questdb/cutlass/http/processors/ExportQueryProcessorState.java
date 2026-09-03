@@ -25,6 +25,7 @@
 package io.questdb.cutlass.http.processors;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -38,6 +39,8 @@ import io.questdb.cutlass.parquet.HTTPSerialParquetExporter;
 import io.questdb.cutlass.parquet.HybridColumnMaterializer;
 import io.questdb.cutlass.parquet.ParquetExportMode;
 import io.questdb.cutlass.text.CopyExportContext;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.model.ExportModel;
 import io.questdb.network.PeerDisconnectedException;
@@ -54,6 +57,7 @@ import java.io.Closeable;
 
 public class ExportQueryProcessorState implements Mutable, Closeable {
 
+    private static final long SQL_EXECUTION_OWNER_UNINITIALIZED = Long.MIN_VALUE;
     final StringSink fileName = new StringSink();
     final HybridColumnMaterializer materializer = new HybridColumnMaterializer();
     final DirectLongList materializerColumnData = new DirectLongList(32, MemoryTag.NATIVE_PARQUET_EXPORTER);
@@ -91,14 +95,35 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
     long timeout;
     private CreateTableOperation createParquetOp;
     private int errorPosition;
+    private boolean isSqlExecutionOwnerMounted;
     private String parquetExportTableName;
     private boolean queryCacheable = false;
     private HTTPSerialParquetExporter serialParquetExporter;
+    private SqlExecutionContext sqlExecutionOwnerContext;
+    private long sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
 
     public ExportQueryProcessorState(HttpConnectionContext httpConnectionContext, CopyExportContext copyContext) {
         this.httpConnectionContext = httpConnectionContext;
         this.copyExportContext = copyContext;
         clear();
+    }
+
+    public void beginSqlExecutionOwner(
+            CharSequence query,
+            SqlExecutionContext executionContext,
+            short compiledQueryType
+    ) {
+        if (sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
+            throw new IllegalStateException("HTTP export SQL execution owner is already initialized");
+        }
+        final long ownerId = executionContext.getCairoEngine().beginSqlExecution(
+                query,
+                executionContext,
+                compiledQueryType
+        );
+        sqlExecutionOwnerContext = executionContext;
+        sqlExecutionOwnerId = ownerId;
+        isSqlExecutionOwnerMounted = ownerId > -1;
     }
 
     @Override
@@ -107,24 +132,41 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         fileName.clear();
         rnd = null;
         record = null;
-        // Close the Rust streaming writer and its decoded buffers before the
-        // cursor that owns the borrowed query memory tracker is unregistered.
-        task.clear();
+
+        // The HTTP exporter owns any materialized temporary table. Let it close the
+        // task's Rust writer and drop that table while task identity is still intact.
+        // All resources still disappear before the cursor unregisters its tracker.
+        Throwable cleanupFailure = null;
         if (serialParquetExporter != null) {
-            serialParquetExporter.clearExportResources();
+            try {
+                serialParquetExporter.clearExportResources();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
         }
-        cursor = Misc.free(cursor);
-        pageFrameCursor = Misc.free(pageFrameCursor);
-        materializer.clear();
-        materializerColumnData.clear();
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, task);
+        final RecordCursor cursor = this.cursor;
+        this.cursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        final PageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameCursor);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, materializer);
+        cleanupFailure = Misc.clearBestEffort(cleanupFailure, materializerColumnData);
         firstParquetWriteCall = true;
+
+        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
+        this.recordCursorFactory = null;
         if (recordCursorFactory != null) {
             if (queryCacheable) {
-                httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
+                try {
+                    httpConnectionContext.getSelectCache().put(sqlText, recordCursorFactory);
+                } catch (Throwable th) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                }
             } else {
-                recordCursorFactory.close();
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, recordCursorFactory);
             }
-            recordCursorFactory = null;
         }
         queryCacheable = false;
         sqlText.clear();
@@ -139,8 +181,14 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         arrayState.clear();
         columnValueFullySent = true;
         metadata = null;
-        releaseExportEntry();
-        createParquetOp = Misc.free(createParquetOp);
+        try {
+            releaseExportEntry();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        final CreateTableOperation createParquetOp = this.createParquetOp;
+        this.createParquetOp = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, createParquetOp);
         parquetExportTableName = null;
         parquetExportMode = null;
         parquetFileOffset = 0;
@@ -149,25 +197,57 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         errorPosition = 0;
         serialExporterInit = false;
         writeCallback.of(null, null);
+        try {
+            endSqlExecutionOwner();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
     public void close() {
-        // See clear(): task buffers must be destroyed while their borrowed
-        // query memory tracker is still owned by an open cursor.
-        task = Misc.free(task);
+        // See clear(): the exporter must release a materialized temporary table
+        // while the task still carries its export identity.
+        Throwable cleanupFailure = null;
+        final HTTPSerialParquetExporter serialParquetExporter = this.serialParquetExporter;
+        this.serialParquetExporter = null;
         if (serialParquetExporter != null) {
-            serialParquetExporter.clearExportResources();
-            serialParquetExporter = null;
+            try {
+                serialParquetExporter.clearExportResources();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
         }
-        cursor = Misc.free(cursor);
-        recordCursorFactory = Misc.free(recordCursorFactory);
-        pageFrameCursor = Misc.free(pageFrameCursor);
-        Misc.free(materializer);
-        Misc.free(materializerColumnData);
-        releaseExportEntry();
-        createParquetOp = Misc.free(createParquetOp);
+        final CopyExportRequestTask task = this.task;
+        this.task = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, task);
+        final RecordCursor cursor = this.cursor;
+        this.cursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cursor);
+        final PageFrameCursor pageFrameCursor = this.pageFrameCursor;
+        this.pageFrameCursor = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, pageFrameCursor);
+        final RecordCursorFactory recordCursorFactory = this.recordCursorFactory;
+        this.recordCursorFactory = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, recordCursorFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, materializer);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, materializerColumnData);
+        try {
+            releaseExportEntry();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        final CreateTableOperation createParquetOp = this.createParquetOp;
+        this.createParquetOp = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, createParquetOp);
         writeCallback.of(null, null);
+        try {
+            endSqlExecutionOwner();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public ExportModel getExportModel() {
@@ -194,6 +274,42 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         return queryCacheable;
     }
 
+    public void parkSqlExecutionOwner() {
+        try {
+            suspendCursorTimer();
+        } finally {
+            unmountSqlExecutionOwner();
+        }
+    }
+
+    public void publishSqlExecutionOwner(boolean containsSecret) {
+        if (sqlExecutionOwnerId > -1) {
+            sqlExecutionOwnerContext.getCairoEngine().publishSqlExecutionQuery(
+                    sqlExecutionOwnerId,
+                    sqlText,
+                    containsSecret,
+                    sqlExecutionOwnerContext
+            );
+        }
+    }
+
+    public void resumeCursorTimer() {
+        if (cursor != null) {
+            cursor.resumeTimer();
+        } else if (pageFrameCursor != null) {
+            pageFrameCursor.resumeTimer();
+        } else if (serialParquetExporter != null) {
+            serialParquetExporter.resumeCursorTimer();
+        }
+    }
+
+    public void resumeSqlExecutionOwner() {
+        if (hasActiveSqlExecutionWork()) {
+            resumeCursorTimer();
+            mountSqlExecutionOwner();
+        }
+    }
+
     public void setParquetExportTableName(String tableName) {
         this.parquetExportTableName = tableName;
     }
@@ -209,19 +325,83 @@ public class ExportQueryProcessorState implements Mutable, Closeable {
         this.task = task;
     }
 
+    public void suspendCursorTimer() {
+        if (cursor != null) {
+            cursor.suspendTimer();
+        } else if (pageFrameCursor != null) {
+            pageFrameCursor.suspendTimer();
+        } else if (serialParquetExporter != null) {
+            serialParquetExporter.suspendCursorTimer();
+        }
+    }
+
+    private void endSqlExecutionOwner() {
+        final long ownerId = sqlExecutionOwnerId;
+        try {
+            if (ownerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
+                sqlExecutionOwnerContext.getCairoEngine().endSqlExecution(ownerId, sqlExecutionOwnerContext);
+            }
+        } finally {
+            isSqlExecutionOwnerMounted = false;
+            sqlExecutionOwnerContext = null;
+            sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
+        }
+    }
+
+    private boolean hasActiveSqlExecutionWork() {
+        if (!exportModel.isParquetFormat()) {
+            return cursor != null || pageFrameCursor != null;
+        }
+        // TEMP_TABLE and the exporter-owned cursor modes may not expose a cursor on this state.
+        // They still execute query work through EXPORT_DATA. FILE_SEND_COMPLETE, DONE, and ERROR
+        // are response-only states and must not reacquire admission merely to flush bytes.
+        return switch (queryState) {
+            case ExportQueryProcessor.QUERY_SETUP_FIRST_RECORD,
+                 ExportQueryProcessor.QUERY_PARQUET_EXPORT_INIT,
+                 ExportQueryProcessor.QUERY_PARQUET_SEND_HEADER,
+                 ExportQueryProcessor.QUERY_PARQUET_SEND_MAGIC,
+                 ExportQueryProcessor.QUERY_PARQUET_EXPORT_DATA -> true;
+            default -> false;
+        };
+    }
+
+    private void mountSqlExecutionOwner() {
+        if (sqlExecutionOwnerId > -1 && !isSqlExecutionOwnerMounted) {
+            sqlExecutionOwnerContext.getCairoEngine().mountSqlExecution(
+                    sqlExecutionOwnerId,
+                    sqlExecutionOwnerContext
+            );
+            isSqlExecutionOwnerMounted = true;
+        }
+    }
+
     private void releaseExportEntry() {
+        final long copyID = this.copyID;
+        this.copyID = -1;
         if (copyID != -1) {
             CopyExportContext.ExportTaskEntry entry = copyExportContext.getEntry(copyID);
             if (entry != null) {
                 copyExportContext.releaseEntry(entry);
             }
-            copyID = -1;
         }
     }
 
-    HTTPSerialParquetExporter getOrCreateSerialParquetExporter(CairoEngine engine) {
+    private void unmountSqlExecutionOwner() {
+        if (sqlExecutionOwnerId > -1 && isSqlExecutionOwnerMounted) {
+            sqlExecutionOwnerContext.getCairoEngine().unmountSqlExecution(
+                    sqlExecutionOwnerId,
+                    sqlExecutionOwnerContext
+            );
+            isSqlExecutionOwnerMounted = false;
+        }
+    }
+
+    HTTPSerialParquetExporter getOrCreateSerialParquetExporter(
+            CairoEngine engine,
+            SqlExecutionContextImpl sqlExecutionContext
+    ) {
         if (serialParquetExporter == null) {
-            serialParquetExporter = new HTTPSerialParquetExporter(engine);
+            serialParquetExporter = new HTTPSerialParquetExporter(engine, sqlExecutionContext);
         }
         return serialParquetExporter;
     }

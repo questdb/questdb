@@ -187,6 +187,25 @@ public class QueryRegistry {
     }
 
     /**
+     * Returns the Resource Group CPU-dispatch wait accumulated by the active execution lease, or
+     * SQL NULL when the owner is absent or unmanaged. The value is monotonic for the owner lifetime.
+     * A protocol-owned traced cursor samples the owner total at cursor close, covering scheduler
+     * waits accrued from post-classification dispatch through that close.
+     */
+    public long getResourceGroupCpuWaitNanos(long queryId) {
+        final Entry entry = registry.get(queryId);
+        if (entry == null || !Entry.isActiveLifecycle(queryId, entry.lifecycle)) {
+            return Numbers.LONG_NULL;
+        }
+        final QuietCloseable lease = entry.executionLease;
+        final long cpuWaitNanos = lease instanceof SqlExecutionLease sqlExecutionLease
+                ? sqlExecutionLease.getResourceGroupCpuWaitNanos()
+                : Numbers.LONG_NULL;
+        Unsafe.loadFence();
+        return Entry.isActiveLifecycle(queryId, entry.lifecycle) ? cpuWaitNanos : Numbers.LONG_NULL;
+    }
+
+    /**
      * Returns the Resource Group ID captured by the active execution lease, or SQL NULL when the
      * owner is absent or the engine did not attach a Resource Group lease. The double lifecycle
      * check prevents a pooled entry recycled concurrently for another query from leaking its
@@ -277,9 +296,9 @@ public class QueryRegistry {
     }
 
     /**
-     * Registers a protocol-owned SQL execution before compilation. Its text remains hidden until
-     * {@link #publishOwnerQuery(long, CharSequence, boolean)} is called after the compiler has
-     * classified secret-bearing statements.
+     * Registers a protocol-owned SQL execution after statement classification. Its text remains
+     * hidden until {@link #publishOwnerQuery(long, CharSequence, boolean)} is called with the
+     * compiler's secret-bearing classification.
      */
     public long registerOwner(CharSequence query, SqlExecutionContext executionContext) {
         return register0(query, executionContext, true);
@@ -408,6 +427,8 @@ public class QueryRegistry {
             final QuietCloseable executionLease = e.executionLease;
             if (executionLease != null) {
                 try {
+                    // SqlExecutionLease.close() must self-retain before throwing when terminal
+                    // cleanup is deferred; this entry is retired and recycled regardless.
                     executionLease.close();
                 } catch (Throwable th) {
                     cleanupFailure = appendCleanupFailure(cleanupFailure, th);
@@ -639,6 +660,8 @@ public class QueryRegistry {
             final QuietCloseable executionLease = e.executionLease;
             if (executionLease != null) {
                 try {
+                    // SqlExecutionLease.close() must self-retain before throwing when terminal
+                    // cleanup is deferred; this rollback entry cannot remain registry-owned.
                     executionLease.close();
                 } catch (Throwable cleanupFailure) {
                     suppressCleanupFailure(th, cleanupFailure);

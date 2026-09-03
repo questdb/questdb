@@ -110,6 +110,9 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final ObjList<StateResumeAction> resumeActions = new ObjList<>();
     private final long statementTimeout;
     private byte apiVersion = DEFAULT_API_VERSION;
+    private long clientWaitAccumNanos;
+    // -1 when not parked; doubles as the isParked flag.
+    private long clientWaitStartNanos = -1;
     private int columnCount;
     private int columnIndex;
     // indicates to the state machine that the column value was fully sent to
@@ -213,6 +216,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
             containsSecret = false;
             errorMessage.clear();
             updateRecords = 0;
+            clientWaitAccumNanos = 0;
+            clientWaitStartNanos = -1;
         } finally {
             clearSqlExecutionOwner();
         }
@@ -396,6 +401,36 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.sendChunk(true);
     }
 
+    public void parkSqlExecutionOwner() {
+        try {
+            suspendExecutionTimer();
+        } finally {
+            // Releasing admission must not depend on timer instrumentation
+            // succeeding. The ordering is still timer first, owner second.
+            unmountSqlExecutionOwner();
+        }
+    }
+
+    public void resumeExecutionTimer() {
+        if (clientWaitStartNanos != -1) {
+            clientWaitAccumNanos += nanosecondClock.getTicks() - clientWaitStartNanos;
+            clientWaitStartNanos = -1;
+        }
+        if (cursor != null) {
+            cursor.resumeTimer();
+        }
+    }
+
+    public void resumeSqlExecutionOwner() {
+        resumeExecutionTimer();
+        // A cursor means resumeSend can still pull/serialize query results. Confirmation and error
+        // responses have no query work left, so flushing them must not re-admit an already-completed
+        // CTAS/INSERT AS SELECT (or an unmanaged control statement).
+        if (cursor != null) {
+            mountSqlExecutionOwner();
+        }
+    }
+
     public void setCompilerNanos(long compilerNanos) {
         this.compilerNanos = compilerNanos;
     }
@@ -441,6 +476,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
     public void startExecutionTimer() {
         this.executeStartNanos = nanosecondClock.getTicks();
+        clientWaitAccumNanos = 0;
+        clientWaitStartNanos = -1;
     }
 
     public void storeConfirmation() {
@@ -474,6 +511,15 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.updateRecords = updateRecords;
     }
 
+    public void suspendExecutionTimer() {
+        if (clientWaitStartNanos == -1) {
+            clientWaitStartNanos = nanosecondClock.getTicks();
+        }
+        if (cursor != null) {
+            cursor.suspendTimer();
+        }
+    }
+
     public void unmountSqlExecutionOwner() {
         final long ownerId = sqlExecutionOwnerId;
         if (ownerId > -1 && isSqlExecutionOwnerMounted) {
@@ -489,7 +535,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private void clearSqlExecutionOwner() {
         final long ownerId = sqlExecutionOwnerId;
         try {
-            if (ownerId > -1) {
+            if (ownerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
                 final var executionContext = httpConnectionContext.getSqlExecutionContext();
                 if (executionContext == null) {
                     throw new IllegalStateException("HTTP SQL execution owner has no execution context");
@@ -1354,7 +1400,8 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                         .putAsciiQuoted("authentication").putAscii(':').put(httpConnectionContext.getAuthenticationNanos()).putAscii(',')
                         .putAsciiQuoted("compiler").putAscii(':').put(compilerNanos).putAscii(',')
                         .putAsciiQuoted("execute").putAscii(':').put(nanosecondClock.getTicks() - executeStartNanos).putAscii(',')
-                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos)
+                        .putAsciiQuoted("count").putAscii(':').put(recordCountNanos).putAscii(',')
+                        .putAsciiQuoted("clientWait").putAscii(':').put(clientWaitAccumNanos)
                         .putAscii('}');
             }
             if (explain) {

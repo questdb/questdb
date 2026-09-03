@@ -59,6 +59,7 @@ import io.questdb.mp.RingQueue;
 import io.questdb.mp.SCSequence;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
+import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberRuntime;
 import io.questdb.mp.continuation.FiberRuntimeState;
 import io.questdb.mp.continuation.FiberTask;
@@ -544,6 +545,114 @@ public class PageFrameReduceDispatcherTest extends AbstractCairoTest {
                 close(runtime);
                 Misc.free(dispatcher);
                 Misc.free(frameSequence);
+                Misc.free(queue);
+            }
+        });
+    }
+
+    @Test
+    public void testBatchSwitchesDispatchContextBetweenOwners() throws Exception {
+        assertMemoryLeak(() -> {
+            final FiberDispatchContext contextA = new FiberDispatchContext() {
+            };
+            final FiberDispatchContext contextB = new FiberDispatchContext() {
+            };
+            final RecordingFiberDispatchController controller = new RecordingFiberDispatchController();
+            final FiberRuntime runtime = controller.createRuntime(1);
+            final RingQueue<PageFrameReduceTask> queue = new RingQueue<>(
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    2
+            );
+            final MPSequence pubSeq = new MPSequence(queue.getCycle());
+            final MCSequence subSeq = new MCSequence(queue.getCycle());
+            pubSeq.then(subSeq).then(pubSeq);
+            final PageFrameSequence<StatefulAtom> frameSequenceA = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+
+                @Override
+                public FiberDispatchContext getDispatchContext() {
+                    return contextA;
+                }
+
+                @Override
+                public long getFrameRowCount(int frameIndex) {
+                    return 1;
+                }
+            };
+            final PageFrameSequence<StatefulAtom> frameSequenceB = new PageFrameSequence<>(
+                    engine,
+                    configuration,
+                    engine.getMessageBus(),
+                    new StatefulAtom() {
+                    },
+                    (_, _, _, _, _) -> {
+                    },
+                    () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD),
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            ) {
+                @Override
+                public SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER;
+                }
+
+                @Override
+                public FiberDispatchContext getDispatchContext() {
+                    return contextB;
+                }
+
+                @Override
+                public long getFrameRowCount(int frameIndex) {
+                    return 1;
+                }
+            };
+            final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                    engine,
+                    engine.getMessageBus(),
+                    runtime
+            );
+            try {
+                long cursor = pubSeq.next();
+                Assert.assertTrue(cursor > -1);
+                queue.get(cursor).of(frameSequenceA, 0, false);
+                pubSeq.done(cursor);
+                cursor = pubSeq.next();
+                Assert.assertTrue(cursor > -1);
+                queue.get(cursor).of(frameSequenceB, 0, false);
+                pubSeq.done(cursor);
+
+                Assert.assertFalse(dispatcher.consumeOrdered(-1, queue, subSeq, null));
+                final long deadline = System.nanoTime() + 5_000_000_000L;
+                while (runtime.getOutstandingTaskCount() > 0 && System.nanoTime() < deadline) {
+                    runtime.drain(1);
+                }
+
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(2, controller.getMountCount());
+                Assert.assertSame(contextA, controller.getMountedContext(0));
+                Assert.assertSame(contextB, controller.getMountedContext(1));
+                Assert.assertEquals(2, controller.getUnmountCount());
+                Assert.assertEquals(1, frameSequenceA.getReduceFinishedCounter().get());
+                Assert.assertEquals(1, frameSequenceB.getReduceFinishedCounter().get());
+            } finally {
+                close(runtime);
+                Misc.free(dispatcher);
+                Misc.free(frameSequenceA);
+                Misc.free(frameSequenceB);
                 Misc.free(queue);
             }
         });

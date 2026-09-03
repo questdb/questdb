@@ -190,9 +190,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
 
         try {
             state.mountSqlExecutionOwner();
-            if (!state.isSqlExecutionOwnerStarted()) {
-                state.setSqlExecutionOwnerId(engine.beginSqlExecution(state.getQuery(), sqlExecutionContext));
-            }
             if (fut != null) {
                 retryQueryExecution(state, fut);
                 return;
@@ -201,6 +198,23 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             final RecordCursorFactory factory = context.getSelectCache().poll(state.getQuery());
             if (factory != null) {
                 // queries with sensitive info are not cached, doLog = true
+                if (!state.isSqlExecutionOwnerStarted()) {
+                    try {
+                        state.setSqlExecutionOwnerId(engine.beginSqlExecution(
+                                state.getQuery(),
+                                sqlExecutionContext,
+                                CompiledQuery.SELECT
+                        ));
+                    } catch (RuntimeException | Error e) {
+                        // The cache poll transferred ownership to this request, but an admission
+                        // failure happened before executeCachedSelect() could hand it to the state.
+                        final Throwable cleanupFailure = Misc.freeBestEffort(null, factory);
+                        if (cleanupFailure != null && cleanupFailure != e) {
+                            e.addSuppressed(cleanupFailure);
+                        }
+                        throw e;
+                    }
+                }
                 try {
                     engine.publishSqlExecutionQuery(
                             state.getSqlExecutionOwnerId(),
@@ -322,7 +336,7 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             // preserve random when we park the context
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.setRnd(sqlExecutionContext.getRandom());
-            state.unmountSqlExecutionOwner();
+            state.parkSqlExecutionOwner();
         }
     }
 
@@ -344,12 +358,12 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             sqlExecutionContext.with(context.getSecurityContext(), null, state.getRnd(), context.getFd(), circuitBreaker.of(context.getFd()));
-            state.mountSqlExecutionOwner();
             if (!state.isPausedQuery()) {
                 context.resumeResponseSend();
             } else {
                 state.setPausedQuery(false);
             }
+            state.resumeSqlExecutionOwner();
             try {
                 doResumeSend(state, context);
             } catch (CairoError e) {
@@ -504,7 +518,24 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
             for (int retries = 0; ; retries++) {
                 final long compilationStart = nanosecondClock.getTicks();
-                final CompiledQuery cc = compiler.compile(state.getQuery(), sqlExecutionContext);
+                final CompiledQuery cc = compileWithResourceGroupBypass(
+                        compiler,
+                        state.getQuery(),
+                        sqlExecutionContext
+                );
+                state.setQueryType(cc.getType());
+                if (!state.isSqlExecutionOwnerStarted()) {
+                    try {
+                        state.setSqlExecutionOwnerId(engine.beginSqlExecution(
+                                state.getQuery(),
+                                sqlExecutionContext,
+                                cc.getType()
+                        ));
+                    } catch (RuntimeException | Error e) {
+                        freeCompiledQueryAfterOwnerStartFailure(cc, e);
+                        throw e;
+                    }
+                }
                 engine.publishSqlExecutionQuery(
                         state.getSqlExecutionOwnerId(),
                         state.getQuery(),
@@ -513,7 +544,6 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
                 );
                 sqlExecutionContext.storeTelemetry(cc.getType(), TelemetryOrigin.HTTP);
                 state.setCompilerNanos(nanosecondClock.getTicks() - compilationStart);
-                state.setQueryType(cc.getType());
                 // Read-only boundary gate: engine.isReadOnlyMode() flips to true as the FIRST step of
                 // an in-place PRIMARY->REPLICA switch cascade, before the security context resolved for
                 // this request reflects the replica role. A write/DDL submitted over /exec on a
@@ -556,6 +586,39 @@ public class JsonQueryProcessor implements HttpRequestProcessor, HttpRequestHand
             }
         } finally {
             state.setContainsSecret(sqlExecutionContext.containsSecret());
+        }
+    }
+
+    private static CompiledQuery compileWithResourceGroupBypass(
+            SqlCompiler compiler,
+            CharSequence query,
+            SqlExecutionContextImpl executionContext
+    ) throws SqlException {
+        final boolean previousBypass = executionContext.isResourceGroupBypassed();
+        executionContext.setResourceGroupBypassed(true);
+        try {
+            return compiler.compile(query, executionContext);
+        } finally {
+            executionContext.setResourceGroupBypassed(previousBypass);
+        }
+    }
+
+    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cc, Throwable ownerStartFailure) {
+        Throwable cleanupFailure = null;
+        try {
+            cc.closeAllButSelect();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        if (cc.getType() == CompiledQuery.SELECT
+                || cc.getType() == CompiledQuery.EXPLAIN
+                || cc.getType() == CompiledQuery.PSEUDO_SELECT) {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, cc.getRecordCursorFactory());
+        } else {
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, cc.getOperation());
+        }
+        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
+            ownerStartFailure.addSuppressed(cleanupFailure);
         }
     }
 

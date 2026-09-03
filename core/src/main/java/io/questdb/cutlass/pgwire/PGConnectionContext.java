@@ -195,8 +195,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     private long sendBufferLimit;
     private long sendBufferPtr;
     private int sendBufferSize;
-    private CharSequence simpleQueryBatchText;
-    private long simpleQueryScanOwnerId = -1;
     // insert 'statements' are cached only for the duration of user session
     private SimpleAssociativeCache<TypesAndInsert> taiCache;
     private final PGResumeCallback msgFlushRef = this::msgFlush0;
@@ -306,8 +304,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
     @Override
     public void clear() {
         super.clear();
-        endSimpleQueryScanOwner();
-        simpleQueryBatchText = null;
 
         do {
             if (pipelineCurrentEntry != null) {
@@ -432,6 +428,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         flushRemainingBuffer();
         if (resumeCallback != null) {
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.resumeCursorTimer();
+            }
             resumeCallback.resume();
         }
 
@@ -561,6 +560,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (remaining > 0) {
             bufferRemainingOffset = offset;
             bufferRemainingSize = remaining;
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.parkSqlExecutionOwner();
+            }
             throw PeerIsSlowToReadException.INSTANCE;
         }
     }
@@ -753,20 +755,8 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             pipelineCurrentEntry.closeSuspendedCursor();
         }
 
-        final CharSequence sqlText = pipelineCurrentEntry.getSqlText();
         sqlExecutionContext.reset();
-        final long ownerId = engine.beginSqlExecution(sqlText, sqlExecutionContext);
-        try {
-            processBind(hi, lo, msgLimit, namedPortal);
-            engine.publishSqlExecutionQuery(
-                    ownerId,
-                    sqlText,
-                    pipelineCurrentEntry.isSqlTextSecret(),
-                    sqlExecutionContext
-            );
-        } finally {
-            engine.endSqlExecution(ownerId, sqlExecutionContext);
-        }
+        processBind(hi, lo, msgLimit, namedPortal);
     }
 
     private void processBind(long hi, long lo, long msgLimit, Utf8Sequence namedPortal) throws PGMessageProcessingException {
@@ -964,9 +954,13 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         pipelineCurrentEntry.setReturnRowCountLimit(pipelineCurrentEntry.getInt(lo, msgLimit, "could not read max rows value"));
         pipelineCurrentEntry.setStateExec(true);
         if (pipelineCurrentEntry.hasSqlExecutionOwner()) {
-            pipelineCurrentEntry.mountSqlExecutionOwner();
+            pipelineCurrentEntry.resumeSqlExecutionOwner();
         } else {
-            pipelineCurrentEntry.beginSqlExecutionOwner(pipelineCurrentEntry.getSqlText(), sqlExecutionContext);
+            pipelineCurrentEntry.beginSqlExecutionOwner(
+                    pipelineCurrentEntry.getSqlText(),
+                    sqlExecutionContext,
+                    pipelineCurrentEntry.getSqlType()
+            );
         }
         try {
             pipelineCurrentEntry.publishSqlExecutionOwner();
@@ -985,7 +979,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                     preparedStatementDeallocator
             );
         } finally {
-            pipelineCurrentEntry.unmountSqlExecutionOwner();
+            pipelineCurrentEntry.unmountSqlExecutionOwnerAfterExecute();
         }
     }
 
@@ -1062,82 +1056,71 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         final CharSequence utf16SqlText = e.toImmutable();
         lo = hi + 1;
         sqlExecutionContext.reset();
-        final long ownerId = engine.beginSqlExecution(utf16SqlText, sqlExecutionContext);
-        try {
-            // read parameter types before we are able to compile SQL text
-            // parameter values are not provided here, but we do not need them to be able to
-            // parse/compile the SQL.
-            // It is possible that the number of parameter types provided here is
-            // different from the number of bind variables in the SQL. At this point
-            // we will copy into the pipeline entry whatever was provided
-            short parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count");
+        // read parameter types before we are able to compile SQL text
+        // parameter values are not provided here, but we do not need them to be able to
+        // parse/compile the SQL.
+        // It is possible that the number of parameter types provided here is
+        // different from the number of bind variables in the SQL. At this point
+        // we will copy into the pipeline entry whatever was provided
+        short parameterTypeCount = pipelineCurrentEntry.getShort(lo, msgLimit, "could not read parameter type count");
 
-            // process parameter types
-            if (parameterTypeCount > 0) {
-                if (lo + Short.BYTES + parameterTypeCount * 4L > msgLimit) {
-                    throw msgKaput()
-                            .put("could not read parameters [parameterCount=").put(parameterTypeCount)
-                            .put(", offset=").put(lo - address)
-                            .put(", remaining=").put(msgLimit - lo);
-                }
-
-                LOG.debug().$("params [count=").$(parameterTypeCount).I$();
-                // copy argument types into the last pipeline entry
-                // the entry will also maintain count of these argument types to aid
-                // validation of the "bind" message.
-                pipelineCurrentEntry.msgParseCopyParameterTypesFromMsg(lo + Short.BYTES, parameterTypeCount);
-            } else if (parameterTypeCount < 0) {
+        // process parameter types
+        if (parameterTypeCount > 0) {
+            if (lo + Short.BYTES + parameterTypeCount * 4L > msgLimit) {
                 throw msgKaput()
-                        .put("invalid parameter count [parameterCount=").put(parameterTypeCount)
-                        .put(", offset=").put(lo - address);
+                        .put("could not read parameters [parameterCount=").put(parameterTypeCount)
+                        .put(", offset=").put(lo - address)
+                        .put(", remaining=").put(msgLimit - lo);
             }
 
-            // At this point parameters may or may not be defined.
-            // If they are defined, the pipeline entry
-            // will have the supplied parameter types.
-
-            int cachedStatus = CACHE_MISS;
-            final TypesAndInsert tai = taiCache.poll(utf16SqlText);
-            if (tai != null) {
-                if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
-                    pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
-                    cachedStatus = CACHE_HIT_INSERT_VALID;
-                } else {
-                    // Cache miss, get rid of this entry.
-                    tai.close();
-                    cachedStatus = CACHE_HIT_INSERT_INVALID;
-                }
-            }
-
-            if (cachedStatus == CACHE_MISS) {
-                final TypesAndSelect tas = tasCache.poll(utf16SqlText);
-                if (tas != null) {
-                    if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
-                        pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
-                        cachedStatus = CACHE_HIT_SELECT_VALID;
-                    } else {
-                        tas.close();
-                        cachedStatus = CACHE_HIT_SELECT_INVALID;
-                    }
-                }
-            }
-
-            if (cachedStatus != CACHE_HIT_INSERT_VALID && cachedStatus != CACHE_HIT_SELECT_VALID) {
-                // When parameter types are not supplied we will assume that the types are STRING
-                // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
-                // compiling the SQL from scratch.
-                pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool, false);
-            }
-            engine.publishSqlExecutionQuery(
-                    ownerId,
-                    utf16SqlText,
-                    sqlExecutionContext.containsSecret(),
-                    sqlExecutionContext
-            );
-            msgParseCreateNamedStatement(namedStatement);
-        } finally {
-            engine.endSqlExecution(ownerId, sqlExecutionContext);
+            LOG.debug().$("params [count=").$(parameterTypeCount).I$();
+            // copy argument types into the last pipeline entry
+            // the entry will also maintain count of these argument types to aid
+            // validation of the "bind" message.
+            pipelineCurrentEntry.msgParseCopyParameterTypesFromMsg(lo + Short.BYTES, parameterTypeCount);
+        } else if (parameterTypeCount < 0) {
+            throw msgKaput()
+                    .put("invalid parameter count [parameterCount=").put(parameterTypeCount)
+                    .put(", offset=").put(lo - address);
         }
+
+        // At this point parameters may or may not be defined.
+        // If they are defined, the pipeline entry
+        // will have the supplied parameter types.
+
+        int cachedStatus = CACHE_MISS;
+        final TypesAndInsert tai = taiCache.poll(utf16SqlText);
+        if (tai != null) {
+            if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tai)) {
+                pipelineCurrentEntry.ofCachedInsert(utf16SqlText, tai);
+                cachedStatus = CACHE_HIT_INSERT_VALID;
+            } else {
+                // Cache miss, get rid of this entry.
+                tai.close();
+                cachedStatus = CACHE_HIT_INSERT_INVALID;
+            }
+        }
+
+        if (cachedStatus == CACHE_MISS) {
+            final TypesAndSelect tas = tasCache.poll(utf16SqlText);
+            if (tas != null) {
+                if (pipelineCurrentEntry.msgParseReconcileParameterTypes(parameterTypeCount, tas)) {
+                    pipelineCurrentEntry.ofCachedSelect(utf16SqlText, tas);
+                    cachedStatus = CACHE_HIT_SELECT_VALID;
+                } else {
+                    tas.close();
+                    cachedStatus = CACHE_HIT_SELECT_INVALID;
+                }
+            }
+        }
+
+        if (cachedStatus != CACHE_HIT_INSERT_VALID && cachedStatus != CACHE_HIT_SELECT_VALID) {
+            // When parameter types are not supplied we will assume that the types are STRING
+            // this is done by default, when CairoEngine compiles the SQL text. Assuming we're
+            // compiling the SQL from scratch.
+            pipelineCurrentEntry.compileNewSQL(utf16SqlText, engine, sqlExecutionContext, taiPool, false);
+        }
+        msgParseCreateNamedStatement(namedStatement);
     }
 
     private void msgParseCreateNamedStatement(Utf8Sequence namedStatement) throws PGMessageProcessingException {
@@ -1171,14 +1154,18 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         }
         sqlExecutionContext.initNow();
         CharSequence activeSqlText = sqlTextCharacterStore.toImmutable();
-        simpleQueryBatchText = activeSqlText;
-        beginSimpleQueryScanOwner();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
-            if (pipelineCurrentEntry == null) {
-                pipelineCurrentEntry = entryPool.next();
-                pipelineCurrentEntry.ofEmpty(activeSqlText);
-                pipelineCurrentEntry.setStateExec(true);
+            final boolean previousBypass = sqlExecutionContext.isResourceGroupBypassed();
+            sqlExecutionContext.setResourceGroupBypassed(true);
+            try {
+                compiler.compileBatch(activeSqlText, sqlExecutionContext, batchCallback);
+                if (pipelineCurrentEntry == null) {
+                    pipelineCurrentEntry = entryPool.next();
+                    pipelineCurrentEntry.ofEmpty(activeSqlText);
+                    pipelineCurrentEntry.setStateExec(true);
+                }
+            } finally {
+                sqlExecutionContext.setResourceGroupBypassed(previousBypass);
             }
         } catch (PGMessageProcessingException ex) {
             if (transactionState == IN_TRANSACTION) {
@@ -1196,27 +1183,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             if (pipelineCurrentEntry != null) {
                 pipelineCurrentEntry.unmountSqlExecutionOwner();
             }
-            endSimpleQueryScanOwner();
-            simpleQueryBatchText = null;
             msgSync();
-        }
-    }
-
-    private void beginSimpleQueryScanOwner() {
-        if (simpleQueryScanOwnerId > -1) {
-            throw new IllegalStateException("PG simple-query scan owner is already active");
-        }
-        simpleQueryScanOwnerId = engine.beginSqlExecution(simpleQueryBatchText, sqlExecutionContext);
-    }
-
-    private void endSimpleQueryScanOwner() {
-        final long ownerId = simpleQueryScanOwnerId;
-        if (ownerId > -1) {
-            try {
-                engine.endSqlExecution(ownerId, sqlExecutionContext);
-            } finally {
-                simpleQueryScanOwnerId = -1;
-            }
         }
     }
 
@@ -1227,16 +1194,15 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                 if (pipelineCurrentEntry == null) {
                     pipelineCurrentEntry = entryPool.next();
                 }
-                if (pipelineCurrentEntry.hasSqlExecutionOwner()) {
-                    pipelineCurrentEntry.mountSqlExecutionOwner();
-                } else {
-                    pipelineCurrentEntry.beginSqlExecutionOwner("COMMIT", sqlExecutionContext);
-                }
+                final long ownerId = engine.beginSqlExecution(
+                        "COMMIT",
+                        sqlExecutionContext,
+                        CompiledQuery.COMMIT
+                );
                 try {
-                    pipelineCurrentEntry.publishSqlExecutionOwner();
                     pipelineCurrentEntry.commit(pendingWriters);
                 } finally {
-                    pipelineCurrentEntry.unmountSqlExecutionOwner();
+                    engine.endSqlExecution(ownerId, sqlExecutionContext);
                 }
             } catch (PGMessageProcessingException ignore) {
                 // the failed commit will have already labelled the pipeline entry as error
@@ -1502,11 +1468,14 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             boolean isExec = pipelineCurrentEntry.isStateExec();
             boolean isError = pipelineCurrentEntry.isError();
             boolean isClosed = pipelineCurrentEntry.isStateClosed();
-            pipelineCurrentEntry.mountSqlExecutionOwner();
+            pipelineCurrentEntry.mountSqlExecutionOwnerForSync();
             try {
                 syncPipelineEntry();
             } finally {
-                pipelineCurrentEntry.unmountSqlExecutionOwner();
+                // A retained cursor means either portal suspension or a socket send that parked
+                // before sync completed. In both cases stop its execution timer before releasing
+                // admission. Completed and non-cursor entries have no cursor and only unmount.
+                pipelineCurrentEntry.unmountSqlExecutionOwnerAfterExecute();
             }
 
             // we want the pipelineCurrentEntry to retain the last entry of the pipeline
@@ -1515,18 +1484,20 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // "cacheIfPossible" has side effects on the entry.
 
             PGPipelineEntry nextEntry = pipeline.poll();
-            if (nextEntry != null || isExec || isError || isClosed) {
+            // A resumed sync re-enters after clearState() has reset stateExec. Keep
+            // retained portals suspended even when this entry is otherwise not consumed.
+            if (pipelineCurrentEntry.isSuspended()
+                    && nextEntry == null
+                    && !isClosed
+                    && !isError) {
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
                 }
-                // check suspension before cacheIfPossible(), which frees the cursor
-                if (pipelineCurrentEntry.isSuspended()
-                        && nextEntry == null
-                        && !isClosed
-                        && !isError) {
-                    // portal is suspended with more rows to send, retain the entry
-                    // so the next Execute can resume the cursor
-                    break;
+                break;
+            }
+            if (nextEntry != null || isExec || isError || isClosed) {
+                if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
+                    bindingServiceConfiguredFor = null;
                 }
                 if (pipelineCurrentEntry.isSuspended()) {
                     // cursor is suspended but we cannot retain (closed, error,
@@ -1703,7 +1674,6 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         @Override
         public void postCompile(SqlCompiler compiler, CompiledQuery cq, CharSequence queryText) throws Exception {
-            boolean complete = false;
             try {
                 CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
                 entry.put(queryText);
@@ -1713,6 +1683,7 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         cq,
                         taiPool
                 );
+                pipelineCurrentEntry.beginSqlExecutionOwner(queryText, sqlExecutionContext, cq.getType());
                 pipelineCurrentEntry.publishSqlExecutionOwner();
                 transactionState = pipelineCurrentEntry.msgExecute(
                         sqlExecutionContext,
@@ -1727,59 +1698,74 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
                         preparedStatementDeallocator
                 );
                 pipelineCurrentEntry.setStateExec(true);
-                complete = true;
             } finally {
-                pipelineCurrentEntry.unmountSqlExecutionOwner();
-                if (complete) {
-                    beginSimpleQueryScanOwner();
+                try {
+                    pipelineCurrentEntry.unmountSqlExecutionOwner();
+                } finally {
+                    // compileBatch may continue with another statement after this callback.
+                    sqlExecutionContext.setResourceGroupBypassed(true);
                 }
             }
         }
 
         @Override
         public boolean preCompile(SqlCompiler compiler, CharSequence sqlText) {
-            addPipelineEntry();
-            pipelineCurrentEntry = entryPool.next();
-            endSimpleQueryScanOwner();
-            pipelineCurrentEntry.beginSqlExecutionOwner(sqlText, sqlExecutionContext);
-
-            final TypesAndSelect tas = tasCache.poll(sqlText);
-            if (tas == null) {
-                // cache miss -> we will compile the query for real
-                return true;
-            }
-
-            if (!pipelineCurrentEntry.msgParseReconcileParameterTypes((short) 0, tas)) {
-                // this should not be possible - SIMPLE query do not have parameters.
-                // so if there was a cache hit, the cached plan should not have no parameter either
-                // -> msgParseReconcileParameterTypes() should always pass
-                tas.close();
-                return true;
-            }
-
-            CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
-            entry.put(sqlText);
             try {
-                pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), sqlExecutionContext, tas);
-            } catch (Throwable e) {
-                // a bad thing happened while we tried to use cached query
-                // let's pretend we never tried and compile the query as if there was no cache
-                CharSequence msg;
-                if (e instanceof FlyweightMessageContainer) {
-                    msg = ((FlyweightMessageContainer) e).getFlyweightMessage();
-                } else {
-                    msg = e.getMessage();
+                addPipelineEntry();
+                pipelineCurrentEntry = entryPool.next();
+
+                final TypesAndSelect tas = tasCache.poll(sqlText);
+                if (tas == null) {
+                    // cache miss -> we will compile the query for real
+                    return true;
                 }
-                LOG.info().$("could not use cached select [error=").$(msg).$(']').$();
-                pipelineCurrentEntry.clearState();
-                pipelineCurrentEntry.beginSqlExecutionOwner(sqlText, sqlExecutionContext);
-                tas.close();
-                return true;
+
+                if (!pipelineCurrentEntry.msgParseReconcileParameterTypes((short) 0, tas)) {
+                    // this should not be possible - SIMPLE query do not have parameters.
+                    // so if there was a cache hit, the cached plan should not have no parameter either
+                    // -> msgParseReconcileParameterTypes() should always pass
+                    tas.close();
+                    return true;
+                }
+
+                CharacterStoreEntry entry = sqlTextCharacterStore.newEntry();
+                entry.put(sqlText);
+                try {
+                    pipelineCurrentEntry.beginSqlExecutionOwner(sqlText, sqlExecutionContext, tas.getSqlType());
+                } catch (RuntimeException | Error e) {
+                    try {
+                        tas.close();
+                    } catch (Throwable cleanupFailure) {
+                        if (cleanupFailure != e) {
+                            e.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    throw e;
+                }
+                try {
+                    pipelineCurrentEntry.ofSimpleCachedSelect(entry.toImmutable(), sqlExecutionContext, tas);
+                } catch (Throwable e) {
+                    // a bad thing happened while we tried to use cached query
+                    // let's pretend we never tried and compile the query as if there was no cache
+                    CharSequence msg;
+                    if (e instanceof FlyweightMessageContainer) {
+                        msg = ((FlyweightMessageContainer) e).getFlyweightMessage();
+                    } else {
+                        msg = e.getMessage();
+                    }
+                    LOG.info().$("could not use cached select [error=").$(msg).$(']').$();
+                    pipelineCurrentEntry.clearState();
+                    tas.close();
+                    return true;
+                }
+                pipelineCurrentEntry.publishSqlExecutionOwner();
+                pipelineCurrentEntry.unmountSqlExecutionOwner();
+                return false; // we will not compile the query
+            } finally {
+                // Cache-hit classification may have changed the shared context. compileBatch can
+                // immediately continue with another statement, which must stay outside RG policy.
+                sqlExecutionContext.setResourceGroupBypassed(true);
             }
-            pipelineCurrentEntry.publishSqlExecutionOwner();
-            pipelineCurrentEntry.unmountSqlExecutionOwner();
-            beginSimpleQueryScanOwner();
-            return false; // we will not compile the query
         }
     }
 

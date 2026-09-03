@@ -38,6 +38,8 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 public abstract class BaseParquetExporter {
     private static final Log LOG = LogFactory.getLog(BaseParquetExporter.class);
     protected final CopyExportContext copyExportContext;
@@ -56,6 +58,15 @@ public abstract class BaseParquetExporter {
             public boolean isPartitionFormatChangeTolerated() {
                 return isPartitionFormatChangeTolerated;
             }
+
+            @Override
+            public synchronized void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+                super.setCancelledFlag(cancelled, generation);
+                final CopyExportRequestTask currentTask = BaseParquetExporter.this.task;
+                if (currentTask != null && currentTask.getEntry().isCancellationRequested()) {
+                    getCircuitBreaker().cancel();
+                }
+            }
         };
         this.copyExportContext = engine.getCopyExportContext();
     }
@@ -71,7 +82,11 @@ public abstract class BaseParquetExporter {
         sqlExecutionContext.setMemoryTracker(null);
     }
 
-    protected void drainHybridFrames(
+    SqlExecutionContextImpl getSqlExecutionContext() {
+        return sqlExecutionContext;
+    }
+
+    protected long drainHybridFrames(
             CopyExportRequestTask.StreamPartitionParquetExporter exporter,
             HybridColumnMaterializer mat,
             DirectLongList columnData,
@@ -111,7 +126,9 @@ public abstract class BaseParquetExporter {
                 previousRowsWritten = currentRowsWritten;
             }
         }
+        final long totalRows = exporter.getTotalRows();
         exporter.finishExport();
+        return totalRows;
     }
 
     protected void dropTempTable(

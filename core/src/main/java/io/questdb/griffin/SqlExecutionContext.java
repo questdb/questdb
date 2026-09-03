@@ -167,7 +167,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     /**
      * Returns the protocol execution owner currently mounted on this context, or {@code -1}.
-     * This covers passive SHADOW ownership as well as scheduler-controlled ENFORCE segments.
+     * Enterprise uses this identity to retain one managed owner across protocol execution segments.
      */
     default long getQueryRegistryOwnerId() {
         return -1;
@@ -325,6 +325,10 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    default boolean isResourceGroupBypassed() {
+        return false;
+    }
+
     /**
      * Returns {@code true} for engine-owned SQL that is run as part of bootstrap or background
      * maintenance rather than on behalf of a client query. Such work is governed by its owning
@@ -459,6 +463,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * not track reader leaks.
      */
     default void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+    }
+
+    default void setResourceGroupBypassed(boolean resourceGroupBypassed) {
     }
 
     void setUseSimpleCircuitBreaker(boolean value);

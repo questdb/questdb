@@ -752,13 +752,25 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Extension point at an authenticated protocol's SQL boundary, before parsing or compilation.
-     * A non-negative return value identifies an owner that remains active until the matching
+     * Extension point at an authenticated SQL execution boundary. A non-negative return value
+     * identifies an owner that remains active until the matching
      * {@link #endSqlExecution(long, SqlExecutionContext)} call. The OSS engine has no protocol-level
      * admission policy and returns {@code -1}.
      */
     public long beginSqlExecution(CharSequence query, SqlExecutionContext executionContext) {
         return -1;
+    }
+
+    /**
+     * Starts an authenticated SQL execution after compilation has classified the statement.
+     * Implementations that do not distinguish statement types retain the legacy behavior.
+     */
+    public long beginSqlExecution(
+            CharSequence query,
+            SqlExecutionContext executionContext,
+            short compiledQueryType
+    ) {
+        return beginSqlExecution(query, executionContext);
     }
 
     public void buildViewGraphs() {

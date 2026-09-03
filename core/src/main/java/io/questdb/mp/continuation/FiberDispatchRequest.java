@@ -74,14 +74,18 @@ public final class FiberDispatchRequest {
     /**
      * Grants the captured request once. A successful return means the Fiber is mount-ready and
      * has been published to its runtime. A false return means the epoch is stale or another actor
-     * already resolved the request.
+     * already resolved the request. If normal runtime publication fails before its queue commit,
+     * this method publishes the same ticket through the runtime's failure path. The Fiber then
+     * fails before running its task, while the ticket still receives its symmetric mount/unmount
+     * callbacks. An exception is exposed to the controller only when neither queue publication
+     * path can commit, or when rollback itself proves the request state corrupt. Runtime
+     * publication must not throw after the Fiber becomes visible to a consumer.
      */
     public boolean grant(long dispatchEpoch, FiberDispatchTicket ticket) {
         if (!grantWithoutPublication(dispatchEpoch, ticket)) {
             return false;
         }
-        runtime.publishGrantedDispatch(this);
-        return true;
+        return publishGrantedOrFail(dispatchEpoch, ticket, null);
     }
 
     public long getDispatchEpoch() {
@@ -215,6 +219,21 @@ public final class FiberDispatchRequest {
     }
 
     boolean grantFailure(long dispatchEpoch, Throwable failure, FiberDispatchTicket failureTicket) {
+        return grantFailureWithoutPublication(dispatchEpoch, failure, failureTicket);
+    }
+
+    boolean grantFailureAndPublish(long dispatchEpoch, Throwable failure, FiberDispatchTicket failureTicket) {
+        if (!grantFailureWithoutPublication(dispatchEpoch, failure, failureTicket)) {
+            return false;
+        }
+        return publishGrantedOrFail(dispatchEpoch, failureTicket, failure);
+    }
+
+    private boolean grantFailureWithoutPublication(
+            long dispatchEpoch,
+            Throwable failure,
+            FiberDispatchTicket failureTicket
+    ) {
         if (failure == null) {
             throw new IllegalArgumentException("Fiber dispatch failure must not be null");
         }
@@ -299,5 +318,66 @@ public final class FiberDispatchRequest {
                         + ", state=" + lifecycleState(lifecycleState)
                         + ']'
         );
+    }
+
+    private boolean publishGrantedOrFail(
+            long dispatchEpoch,
+            FiberDispatchTicket ticket,
+            @Nullable Throwable dispatchFailure
+    ) {
+        try {
+            runtime.publishGrantedDispatch(this);
+            return true;
+        } catch (RuntimeException | Error publicationFailure) {
+            if (!rollbackGrant(dispatchEpoch, ticket)) {
+                throw new IllegalStateException(
+                        "Fiber dispatch grant could not roll back failed publication",
+                        publicationFailure
+                );
+            }
+            final Throwable terminalFailure = dispatchFailure != null ? dispatchFailure : publicationFailure;
+            if (!grantFailureWithoutPublication(dispatchEpoch, terminalFailure, ticket)) {
+                return false;
+            }
+            try {
+                runtime.publishFailedGrantedDispatch(this);
+                return true;
+            } catch (RuntimeException | Error fallbackFailure) {
+                if (!rollbackGrant(dispatchEpoch, ticket)) {
+                    final IllegalStateException rollbackFailure = new IllegalStateException(
+                            "Fiber dispatch failure could not roll back failed fallback publication",
+                            fallbackFailure
+                    );
+                    if (terminalFailure != fallbackFailure) {
+                        rollbackFailure.addSuppressed(terminalFailure);
+                    }
+                    throw rollbackFailure;
+                }
+                if (terminalFailure != fallbackFailure) {
+                    fallbackFailure.addSuppressed(terminalFailure);
+                }
+                if (publicationFailure != terminalFailure && publicationFailure != fallbackFailure) {
+                    fallbackFailure.addSuppressed(publicationFailure);
+                }
+                throw fallbackFailure;
+            }
+        }
+    }
+
+    private boolean rollbackGrant(long dispatchEpoch, FiberDispatchTicket ticket) {
+        final long granted = packLifecycleState(dispatchEpoch, STATE_GRANTED);
+        if (this.ticket != ticket
+                || !Unsafe.cas(
+                this,
+                LIFECYCLE_STATE_OFFSET,
+                granted,
+                packLifecycleState(dispatchEpoch, STATE_GRANTING)
+        )) {
+            return false;
+        }
+        this.ticket = null;
+        this.dispatchFailure = null;
+        lifecycleState = packLifecycleState(dispatchEpoch, STATE_REQUESTED);
+        return true;
     }
 }

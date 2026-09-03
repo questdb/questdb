@@ -33,6 +33,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.MCSequence;
 import io.questdb.mp.RingQueue;
+import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.FiberDispatchContext;
 import io.questdb.mp.continuation.FiberTask;
@@ -193,6 +194,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
     @Override
     protected boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
+        FiberDispatchContext batchDispatchContext = Fiber.captureDispatchContext();
         if (orderedFrameSequence != null) {
             final RingQueue<PageFrameReduceTask> queue = orderedQueue;
             final MCSequence subSeq = orderedSubSeq;
@@ -221,6 +223,8 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 orderedCursor = cursor;
                 orderedReduceTask = reduceTask;
                 orderedFrameSequence = frameSequence;
+                frameSequence.enterReducerCancellationScope();
+                batchDispatchContext = switchDispatchContext(batchDispatchContext, frameSequence.getDispatchContext());
                 batchRows += reduceTask.getFrameRowCount();
                 reduceOrderedFrame(subSeq, cursor, reduceTask, frameSequence);
             }
@@ -260,6 +264,8 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 }
                 unorderedFrameIndex = frameIndex;
                 unorderedFrameSequence = frameSequence;
+                frameSequence.enterReducerCancellationScope();
+                batchDispatchContext = switchDispatchContext(batchDispatchContext, frameSequence.getDispatchContext());
                 batchRows += frameSequence.getFrameRowCount(frameIndex);
                 reduceUnorderedFrame(frameIndex, frameSequence);
             }
@@ -275,6 +281,16 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             primary.addSuppressed(failure);
         }
         return primary;
+    }
+
+    private static @Nullable FiberDispatchContext switchDispatchContext(
+            @Nullable FiberDispatchContext currentContext,
+            @Nullable FiberDispatchContext nextContext
+    ) {
+        if (currentContext != nextContext && !Fiber.yieldForDispatch(nextContext)) {
+            throw new IllegalStateException("page frame reducer could not switch dispatch context");
+        }
+        return nextContext;
     }
 
     private void cancelFrameSequence(int reason) {

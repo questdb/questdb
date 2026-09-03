@@ -60,6 +60,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.SqlKeywords;
+import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.VirtualRecordCursorFactory;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.model.ExportModel;
@@ -159,7 +160,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             circuitBreaker.setTimeout(state.timeout);
             circuitBreaker.resetTimer();
-            state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
             sqlExecutionContext.with(
                     context.getSecurityContext(),
                     null,
@@ -168,26 +168,38 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                     circuitBreaker.of(context.getFd())
             );
             sqlExecutionContext.initNow();
+            state.recordCursorFactory = context.getSelectCache().poll(state.sqlText);
             if (state.recordCursorFactory == null) {
                 try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                    CompiledQuery cc = compiler.compile(state.sqlText, sqlExecutionContext);
+                    CompiledQuery cc = compileWithResourceGroupBypass(compiler, state.sqlText, sqlExecutionContext);
                     if (cc.getType() == CompiledQuery.SELECT || cc.getType() == CompiledQuery.EXPLAIN) {
                         state.recordCursorFactory = cc.getRecordCursorFactory();
                     } else if (isExpRequest) {
                         // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
                         cc.closeAllButSelect();
+                        Misc.free(cc.getOperation());
                         throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                     }
                     state.setQueryCacheable(cc.isCacheable());
                     sqlExecutionContext.storeTelemetry(state.getExportModel().isParquetFormat() ?
                             QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
+                    try {
+                        state.beginSqlExecutionOwner(state.sqlText, sqlExecutionContext, cc.getType());
+                    } catch (RuntimeException | Error e) {
+                        if (state.recordCursorFactory == null) {
+                            freeCompiledQueryAfterOwnerStartFailure(cc, e);
+                        }
+                        throw e;
+                    }
                 }
             } else {
                 state.setQueryCacheable(true);
                 sqlExecutionContext.setCacheHit(true);
                 sqlExecutionContext.storeTelemetry(state.getExportModel().isParquetFormat() ?
-                        QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
+                            QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
+                state.beginSqlExecutionOwner(state.sqlText, sqlExecutionContext, CompiledQuery.SELECT);
             }
+            state.publishSqlExecutionOwner(sqlExecutionContext.containsSecret());
 
             if (state.recordCursorFactory != null) {
                 try {
@@ -209,7 +221,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                                         // when unwrapped instanceof VirtualRecordCursorFactory.
                                         RecordCursorFactory unwrapped = ParquetExportMode.unwrapFactory(state.recordCursorFactory);
                                         VirtualRecordCursorFactory vf = (VirtualRecordCursorFactory) unwrapped;
-                                        state.pageFrameCursor = vf.getBaseFactory().getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                                        RecordCursorFactory pageFrameCursorFactory = vf.getBaseFactory();
+                                        if (state.recordCursorFactory instanceof QueryProgress queryProgress) {
+                                            state.pageFrameCursor = queryProgress.getPageFrameCursorFrom(
+                                                    pageFrameCursorFactory,
+                                                    sqlExecutionContext,
+                                                    ORDER_ASC
+                                            );
+                                        } else {
+                                            state.pageFrameCursor = pageFrameCursorFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                                        }
                                     }
                                     case CURSOR_BASED ->
                                             state.cursor = state.recordCursorFactory.getCursor(sqlExecutionContext);
@@ -231,10 +252,11 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                             state.recordCursorFactory = Misc.free(state.recordCursorFactory);
                             CompiledQuery cc;
                             try (SqlCompiler compiler = engine.getSqlCompiler()) {
-                                cc = compiler.compile(state.sqlText, sqlExecutionContext);
+                                cc = compileWithResourceGroupBypass(compiler, state.sqlText, sqlExecutionContext);
                                 if (cc.getType() != CompiledQuery.SELECT && isExpRequest) {
                                     // Close CompiledQuery to prevent memory leak for INSERT/UPDATE/ALTER unsupported operations
                                     cc.closeAllButSelect();
+                                    Misc.free(cc.getOperation());
                                     throw SqlException.$(0, "/exp endpoint only accepts SELECT");
                                 }
                                 state.recordCursorFactory = cc.getRecordCursorFactory();
@@ -261,7 +283,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                         }
                     }
                     state.metadata = state.recordCursorFactory.getMetadata();
-                    doResumeSend(context);
+                    doResumeSend(context, false);
                 } catch (CairoException e) {
                     if (state.isQueryCacheable()) {
                         state.setQueryCacheable(e.isCacheable());
@@ -300,6 +322,33 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return requiredAuthType;
     }
 
+    private static CompiledQuery compileWithResourceGroupBypass(
+            SqlCompiler compiler,
+            CharSequence query,
+            SqlExecutionContextImpl executionContext
+    ) throws SqlException {
+        final boolean previousBypass = executionContext.isResourceGroupBypassed();
+        executionContext.setResourceGroupBypassed(true);
+        try {
+            return compiler.compile(query, executionContext);
+        } finally {
+            executionContext.setResourceGroupBypassed(previousBypass);
+        }
+    }
+
+    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cc, Throwable ownerStartFailure) {
+        Throwable cleanupFailure = null;
+        try {
+            cc.closeAllButSelect();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cc.getOperation());
+        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
+            ownerStartFailure.addSuppressed(cleanupFailure);
+        }
+    }
+
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
@@ -324,6 +373,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             state.pausedQuery = pausedQuery;
             SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
             state.rnd = sqlExecutionContext.getRandom();
+            state.parkSqlExecutionOwner();
         }
     }
 
@@ -332,7 +382,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             HttpConnectionContext context
     ) throws PeerDisconnectedException, PeerIsSlowToReadException, ServerDisconnectException {
         try {
-            doResumeSend(context);
+            doResumeSend(context, true);
         } catch (CairoError | CairoException e) {
             // this is something we didn't expect
             // log the exception and disconnect
@@ -661,7 +711,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 SqlExecutionContextImpl sqlExecutionContext = state.getHttpConnectionContext().getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
                 var copyExportContext = engine.getCopyExportContext();
                 entry = copyExportContext.getEntry(state.copyID);
-                HTTPSerialParquetExporter exporter = state.getOrCreateSerialParquetExporter(engine);
+                HTTPSerialParquetExporter exporter = state.getOrCreateSerialParquetExporter(engine, sqlExecutionContext);
                 if (state.serialExporterInit) {
                     exporter.of(state.task);
                     exporter.setExportMode(state.parquetExportMode);
@@ -841,21 +891,31 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         readyForNextRequest(context);
     }
 
-    private void doResumeSend(HttpConnectionContext context) throws PeerDisconnectedException, PeerIsSlowToReadException {
+    private void doResumeSend(
+            HttpConnectionContext context,
+            boolean resuming
+    ) throws PeerDisconnectedException, PeerIsSlowToReadException {
         ExportQueryProcessorState state = LV.get(context);
         if (state == null) {
             return;
         }
 
-        NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
-        SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
-        sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
-        LOG.debug().$("resume [fd=").$(context.getFd()).I$();
+        if (resuming) {
+            // with() resets all per-execution bindings, including the query owner. It is valid only
+            // after parkRequest() has unmounted the owner. The initial execution context was already
+            // configured before beginSqlExecutionOwner(), so resetting it here would detach a live
+            // mounted owner from its context and make terminal cleanup order-dependent.
+            NetworkSqlExecutionCircuitBreaker circuitBreaker = context.getOrCreateCircuitBreaker(engine);
+            SqlExecutionContextImpl sqlExecutionContext = context.getOrCreateSqlExecutionContext(engine, sharedWorkerCount);
+            sqlExecutionContext.with(context.getSecurityContext(), null, state.rnd, context.getFd(), circuitBreaker.of(context.getFd()));
+            LOG.debug().$("resume [fd=").$(context.getFd()).I$();
 
-        if (!state.pausedQuery) {
-            context.resumeResponseSend();
-        } else {
-            state.pausedQuery = false;
+            if (!state.pausedQuery) {
+                context.resumeResponseSend();
+            } else {
+                state.pausedQuery = false;
+            }
+            state.resumeSqlExecutionOwner();
         }
 
         final HttpChunkedResponse response = context.getChunkedResponse();

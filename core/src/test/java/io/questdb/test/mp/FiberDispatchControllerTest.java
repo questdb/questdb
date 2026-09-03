@@ -72,6 +72,29 @@ public class FiberDispatchControllerTest {
     }
 
     @Test
+    public void testControllerFailureUsesFallbackPublication() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final CountingTask task = new CountingTask();
+            final RuntimeException controllerFailure = new RuntimeException("dispatch failed");
+            controller.session.requestFailure = controllerFailure;
+            runtime.setBeforeGrantedDispatchPublicationForTesting(() -> {
+                throw new RuntimeException("injected publication failure");
+            });
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            Assert.assertEquals(1, runtime.getQueuedCount());
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(0, task.runCount);
+            Assert.assertSame(controllerFailure, task.error);
+
+            runtime.setBeforeGrantedDispatchPublicationForTesting(null);
+            close(runtime);
+        });
+    }
+
+    @Test
     public void testDispatchContextChangesOnlyAcrossAuthorizedMounts() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final TestController controller = new TestController();
@@ -145,6 +168,69 @@ public class FiberDispatchControllerTest {
             Assert.assertEquals(0, runtime.getQueuedCount());
             Assert.assertEquals(2, controller.ticket.mountCount);
             Assert.assertEquals(2, controller.ticket.unmountCount);
+
+            close(runtime);
+        });
+    }
+
+    @Test
+    public void testGrantPublicationFailureFailsOnlyTheCurrentDispatch() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final CountingTask task = new CountingTask();
+            final RuntimeException publicationFailure = new RuntimeException("injected publication failure");
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            final Pending pending = controller.session.removeNext();
+            runtime.setBeforeGrantedDispatchPublicationForTesting(() -> {
+                throw publicationFailure;
+            });
+            Assert.assertTrue(pending.request.grant(pending.dispatchEpoch, controller.ticket));
+            Assert.assertFalse(pending.request.isPending(pending.dispatchEpoch));
+            Assert.assertEquals(1, runtime.getQueuedCount());
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(0, task.runCount);
+            Assert.assertSame(publicationFailure, task.error);
+            Assert.assertEquals(1, controller.ticket.mountCount);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
+            Assert.assertFalse(controller.ticket.wasMounted);
+
+            runtime.setBeforeGrantedDispatchPublicationForTesting(null);
+            close(runtime);
+        });
+    }
+
+    @Test
+    public void testGrantPublicationFallbackFailureRestoresTheRequest() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = newRuntime(1, controller);
+            final CountingTask task = new CountingTask();
+            final RuntimeException publicationFailure = new RuntimeException("injected publication failure");
+
+            Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            final Pending pending = controller.session.removeNext();
+            runtime.setBeforeGrantedDispatchPublicationForTesting(() -> {
+                throw publicationFailure;
+            });
+            runtime.setRunQueueDepthForTesting(runtime.getRunQueueCapacity());
+            final IllegalStateException fallbackFailure = Assert.assertThrows(
+                    IllegalStateException.class,
+                    () -> pending.request.grant(pending.dispatchEpoch, controller.ticket)
+            );
+            Assert.assertEquals("fiber ring is full", fallbackFailure.getMessage());
+            Assert.assertArrayEquals(new Throwable[]{publicationFailure}, fallbackFailure.getSuppressed());
+            Assert.assertTrue(pending.request.isPending(pending.dispatchEpoch));
+
+            runtime.setRunQueueDepthForTesting(0);
+            runtime.setBeforeGrantedDispatchPublicationForTesting(null);
+            Assert.assertTrue(pending.request.grant(pending.dispatchEpoch, controller.ticket));
+            Assert.assertEquals(1, runtime.drain(1));
+            Assert.assertEquals(1, task.runCount);
+            Assert.assertNull(task.error);
+            Assert.assertEquals(1, controller.ticket.mountCount);
+            Assert.assertEquals(1, controller.ticket.unmountCount);
 
             close(runtime);
         });

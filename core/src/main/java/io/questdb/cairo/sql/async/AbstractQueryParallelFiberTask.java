@@ -43,11 +43,11 @@ import java.util.concurrent.atomic.AtomicBoolean;
 abstract class AbstractQueryParallelFiberTask extends FiberTask implements QuietCloseable {
     private final CancellationBinding cancellationBinding = new CancellationBinding();
     private final QueryParallelFiberDispatcher dispatcher;
-    private FiberDispatchContext dispatchContext;
     private final FiberTaskPool<?> pool;
     private final TimerShards timerShards;
     private MCSequence batchSubSeq;
     private int batchWorkerId = -1;
+    private FiberDispatchContext dispatchContext;
     private AsyncQueryProgressState progressState;
 
     protected AbstractQueryParallelFiberTask(
@@ -90,9 +90,12 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
         this.batchSubSeq = subSeq;
     }
 
-    final void bindCancellation(SqlExecutionCircuitBreaker circuitBreaker) {
+    final void bindCancellation(
+            SqlExecutionCircuitBreaker circuitBreaker,
+            @Nullable FiberDispatchContext dispatchContext
+    ) {
         circuitBreaker.copyCancelledFlagTo(cancellationBinding);
-        dispatchContext = Fiber.captureParallelDispatchContext();
+        this.dispatchContext = dispatchContext;
     }
 
     final void bindProgress(AsyncQueryProgressState progressState) {
@@ -154,6 +157,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
     @Override
     protected final boolean runStep() {
         SuspensionScope.enterTimerShards(timerShards);
+        FiberDispatchContext batchDispatchContext = Fiber.captureDispatchContext();
         long batchWeight = boundEntryWeight();
         if (!runTask()) {
             return false;
@@ -173,6 +177,7 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
                 // entries of one batch can belong to different queries; the carrier scope's
                 // signal must track the entry, not the mount
                 enterBoundCancellationScope();
+                batchDispatchContext = switchDispatchContext(batchDispatchContext, dispatchContext);
                 batchWeight += boundEntryWeight();
                 if (!runTask()) {
                     return false;
@@ -226,6 +231,16 @@ abstract class AbstractQueryParallelFiberTask extends FiberTask implements Quiet
             }
             Os.pause();
         }
+    }
+
+    private static @Nullable FiberDispatchContext switchDispatchContext(
+            @Nullable FiberDispatchContext currentContext,
+            @Nullable FiberDispatchContext nextContext
+    ) {
+        if (currentContext != nextContext && !Fiber.yieldForDispatch(nextContext)) {
+            throw new IllegalStateException("query parallel reducer could not switch dispatch context");
+        }
+        return nextContext;
     }
 
     private void enterBoundCancellationScope() {
