@@ -196,6 +196,9 @@ if (OS_LINUX)
             liburing_git
             GIT_REPOSITORY https://github.com/axboe/liburing.git
             GIT_TAG liburing-2.2
+            # The tag pin allows a shallow clone (asmjit above pins a raw SHA, which
+            # CMake cannot clone shallowly); CI never needs liburing's history.
+            GIT_SHALLOW TRUE
             BUILD_IN_SOURCE 1
             BUILD_BYPRODUCTS "<SOURCE_DIR>/src/liburing.a"
             BUILD_COMMAND make "CC=${CMAKE_C_COMPILER}" "CXX=${CMAKE_CXX_COMPILER}" "AR=${CMAKE_AR}" "RANLIB=${CMAKE_RANLIB}"

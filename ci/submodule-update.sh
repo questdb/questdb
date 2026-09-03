@@ -18,9 +18,14 @@
 # backoff outlasts a burst without stalling a healthy build, whereas git's
 # own instant second attempt lands inside the same window and dies.
 #
-# The update deliberately fetches full history (no --depth): several
-# submodules pin a SHA that is not a branch tip, and a shallow fetch of an
-# unadvertised object is not guaranteed to be served.
+# Each attempt clones shallow (--depth 1) first: CI never needs submodule
+# history, only the pinned tree. Several submodules pin a SHA that is not a
+# branch tip; git then fetches that SHA directly, which github.com serves
+# for any ref-reachable commit (uploadpack.allowReachableSHA1InWant) -- the
+# same mechanism .gitmodules' existing shallow = true entries and every
+# exact-SHA CI fetch already rely on. Because the git protocol does not
+# guarantee that for arbitrary servers, a failed shallow pass falls back to
+# a full-history pass within the same attempt before any backoff.
 #
 # Usage: bash ci/submodule-update.sh [--recursive] <submodule-path>...
 
@@ -38,6 +43,11 @@ fi
 
 eval "$(bash "$(dirname "$0")/git-auth-env.sh")"
 
+update_args=(--init)
+if [[ -n "$recursive" ]]; then
+  update_args+=(--recursive)
+fi
+
 # A failed `git submodule update` is safe to rerun: git removes the target
 # directory of a failed clone, and submodules that already completed are
 # skipped on the next pass.
@@ -46,8 +56,11 @@ for delay in 0 15 30 60 120; do
     echo "git submodule update failed; retrying in ${delay}s" >&2
     sleep "$delay"
   fi
-  # shellcheck disable=SC2086  # $recursive is empty or a single flag
-  if git submodule update --init $recursive "$@"; then
+  if git submodule update "${update_args[@]}" --depth 1 "$@"; then
+    exit 0
+  fi
+  echo "shallow submodule update failed; trying full history" >&2
+  if git submodule update "${update_args[@]}" "$@"; then
     exit 0
   fi
 done
