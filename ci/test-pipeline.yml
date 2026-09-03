@@ -267,6 +267,21 @@ stages:
             lfs: false
             submodules: false
             persistCredentials: true
+          # persistCredentials serves the non-fork paths: the diff-base fetch in
+          # "Post combined report" and ci/git-auth-env.sh's fallback. This job is a
+          # required check, so it also runs on fork PRs (with the real work
+          # SHOULD_RUN-gated off) while processing fork-controlled data -- pom.xml
+          # and .gitmodules in detect-local-client. Drop the on-disk credential
+          # there before any of that runs; the fork-side submodule clone then uses
+          # the same anonymous backoff path as every other fork clone. The
+          # condition fails safe: IsFork is unset on merge-queue and manual runs,
+          # which keep the credential their fetches legitimately need. || true:
+          # an absent key (persistCredentials flipped off later) exits 5 and must
+          # not fail the job. and(succeeded(), ...) because an explicit condition
+          # replaces the implicit succeeded() guard.
+          - bash: git config --unset-all "http.https://github.com/questdb/questdb.extraheader" || true
+            displayName: "Drop persisted checkout credential on fork PRs"
+            condition: and(succeeded(), eq(variables['System.PullRequest.IsFork'], 'true'))
           - template: templates/use-hetzner-apt-mirrors.yml
             parameters:
               shouldRun: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'))
