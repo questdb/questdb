@@ -67,15 +67,20 @@ public class M4Algorithm implements SubsampleAlgorithm {
             return;
         }
 
-        double timeRange = (double) maxTs - (double) minTs;
-        double bucketWidth = timeRange / numBuckets;
+        final long span = maxTs - minTs;
+        if (span < 0) {
+            // maxTs - minTs overflowed long: the table spans more than half the
+            // timestamp range (~292 years at nanosecond resolution). Degrade to
+            // a single bucket instead of computing garbage boundaries.
+            numBuckets = 1;
+        }
 
         int dataIdx = 0;
         for (int bucket = 0; bucket < numBuckets; bucket++) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
-            long bucketStartTs = (long) ((double) minTs + bucket * bucketWidth);
-            long bucketEndTs = (bucket < numBuckets - 1) ? (long) ((double) minTs + (bucket + 1) * bucketWidth) : Long.MAX_VALUE;
+            long bucketStartTs = minTs + SubsampleAlgorithm.bucketOffset(span, bucket, numBuckets);
+            long bucketEndTs = (bucket < numBuckets - 1) ? minTs + SubsampleAlgorithm.bucketOffset(span, bucket + 1, numBuckets) : Long.MAX_VALUE;
 
             int firstIdx = -1;
             int lastIdx = -1;

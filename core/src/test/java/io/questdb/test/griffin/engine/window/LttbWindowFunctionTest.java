@@ -162,6 +162,36 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepsNanoTimestampPrecision() throws Exception {
+        // double ulp near a 2024 nanosecond epoch (~1.7e18) is 256ns, so LttbAlgorithm must
+        // compute triangle areas from long timestamp differences rather than absolute epochs
+        // converted to double. Candidates sit 1ns apart with exact areas 4, 400, 8: the
+        // algorithm must keep id 2, not fall back to the first candidate on an all-zero tie.
+        assertMemoryLeak(() -> {
+            execute("create table t (id int, v double, ts timestamp_ns) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (0, 0.0, '2024-01-01T00:00:00.000000000Z'),
+                    (1, 1.0, '2024-01-01T00:00:00.000000001Z'),
+                    (2, 100.0, '2024-01-01T00:00:00.000000002Z'),
+                    (3, 2.0, '2024-01-01T00:00:00.000000003Z'),
+                    (4, 0.0, '2024-01-01T00:00:00.000000004Z')
+                    """);
+            assertQuery("select id, lttb(ts, v, 3) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tkeep
+                            0\ttrue
+                            1\tfalse
+                            2\ttrue
+                            3\tfalse
+                            4\ttrue
+                            """);
+        });
+    }
+
+    @Test
     public void testMatchesLttbAlgorithmOnTenPoints() throws Exception {
         // Same dataset as SubsampleTest.testLttbBasic (10 points -> target 5): first and last are
         // always kept, plus one point per interior bucket chosen by largest triangle area. Expected

@@ -268,23 +268,27 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 nextBucketEnd = end;
             }
 
-            double avgX = 0;
+            final long axTs = SubsampleAlgorithm.getTimestamp(buffer, prevSelected);
+            final double ay = SubsampleAlgorithm.getValue(buffer, prevSelected);
+
+            // Mean of the next bucket with x measured relative to point A. The
+            // long subtraction is exact at any epoch; converting the absolute
+            // epoch itself to double quantizes nanosecond timestamps to 256ns
+            // steps (double ulp near 1.7e18) and cancels the area terms below.
+            double avgDx = 0;
             double avgY = 0;
             int nextBucketLen = nextBucketEnd - nextBucketStart;
             for (int j = nextBucketStart; j < nextBucketEnd; j++) {
                 if ((j & 0xFFF) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                 }
-                avgX += (double) SubsampleAlgorithm.getTimestamp(buffer, j);
+                avgDx += (double) (SubsampleAlgorithm.getTimestamp(buffer, j) - axTs);
                 avgY += SubsampleAlgorithm.getValue(buffer, j);
             }
             if (nextBucketLen > 0) {
-                avgX /= nextBucketLen;
+                avgDx /= nextBucketLen;
                 avgY /= nextBucketLen;
             }
-
-            double ax = (double) SubsampleAlgorithm.getTimestamp(buffer, prevSelected);
-            double ay = SubsampleAlgorithm.getValue(buffer, prevSelected);
 
             double maxArea = -1;
             int maxAreaIndex = bucketStart;
@@ -292,9 +296,14 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 if ((j & 0xFFF) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                 }
-                double bx = (double) SubsampleAlgorithm.getTimestamp(buffer, j);
+                // Triangle area (x2) with vertex A translated to the origin:
+                // the cross product of edges AB and AC. Algebraically equal to
+                // the absolute-coordinate determinant, but free of the
+                // epoch-magnitude products whose rounding error swamps small
+                // time differences.
+                double dbx = (double) (SubsampleAlgorithm.getTimestamp(buffer, j) - axTs);
                 double by = SubsampleAlgorithm.getValue(buffer, j);
-                double area = Math.abs(ax * (by - avgY) + bx * (avgY - ay) + avgX * (ay - by));
+                double area = Math.abs(dbx * (avgY - ay) - avgDx * (by - ay));
                 if (area > maxArea) {
                     maxArea = area;
                     maxAreaIndex = j;

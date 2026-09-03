@@ -53,6 +53,22 @@ public interface SubsampleAlgorithm {
                 DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker);
 
     /**
+     * Computes floor(span * bucket / numBuckets) without long overflow, for
+     * span >= 0. Decomposing span = q * numBuckets + r gives
+     * span * bucket / numBuckets = q * bucket + r * bucket / numBuckets, where
+     * q * bucket &lt;= span and r * bucket &lt; numBuckets^2 &lt;= 2^62, so both
+     * terms and their sum (&lt;= span) fit in a long.
+     * <p>
+     * Exact integer boundaries keep full resolution at any epoch. Double math
+     * does not: the double ulp near a 2024 nanosecond epoch (~1.7e18) is 256,
+     * so absolute-epoch doubles quantize TIMESTAMP_NS boundaries to 256ns
+     * steps and can collapse sub-256ns bucket spans to zero.
+     */
+    static long bucketOffset(long span, int bucket, int numBuckets) {
+        return span / numBuckets * bucket + span % numBuckets * bucket / numBuckets;
+    }
+
+    /**
      * Read timestamp from buffer entry at the given index.
      */
     static long getTimestamp(long buffer, long index) {

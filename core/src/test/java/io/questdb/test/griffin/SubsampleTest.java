@@ -257,6 +257,136 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLttbNanoTimestampPrecision() throws Exception {
+        // double ulp near a 2024 nanosecond epoch (~1.7e18) is 256ns. LTTB must
+        // compute triangle areas from long timestamp differences, not absolute
+        // epochs converted to double, or 1ns-apart candidates all collapse to
+        // area 0 and the first candidate wins regardless of value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, value DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (0, 0.0, '2024-01-01T00:00:00.000000000Z'),
+                    (1, 1.0, '2024-01-01T00:00:00.000000001Z'),
+                    (2, 100.0, '2024-01-01T00:00:00.000000002Z'),
+                    (3, 2.0, '2024-01-01T00:00:00.000000003Z'),
+                    (4, 0.0, '2024-01-01T00:00:00.000000004Z')
+                    """);
+            // exact triangle areas for the middle-bucket candidates: id1=4, id2=400, id3=8
+            assertQuery("SELECT id, value, ts FROM t SUBSAMPLE lttb(value, 3)")
+                    .timestamp("ts")
+                    .returns("""
+                            id\tvalue\tts
+                            0\t0.0\t2024-01-01T00:00:00.000000000Z
+                            2\t100.0\t2024-01-01T00:00:00.000000002Z
+                            4\t0.0\t2024-01-01T00:00:00.000000004Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testM4NanoTimestampPrecision() throws Exception {
+        // 10 points spanning 9ns: with absolute-epoch double math the span
+        // rounds to 0 and every bucket collapses into the final one. Exact
+        // integer boundaries cut floor(9 * 1 / 2) = 4, so offsets [0,4) form
+        // bucket 0 and offsets [4,9] form bucket 1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, value DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (0, 10.0, '2024-01-01T00:00:00.000000000Z'),
+                    (1, -100.0, '2024-01-01T00:00:00.000000001Z'),
+                    (2, 100.0, '2024-01-01T00:00:00.000000002Z'),
+                    (3, 10.0, '2024-01-01T00:00:00.000000003Z'),
+                    (4, 10.0, '2024-01-01T00:00:00.000000004Z'),
+                    (5, 20.0, '2024-01-01T00:00:00.000000005Z'),
+                    (6, -50.0, '2024-01-01T00:00:00.000000006Z'),
+                    (7, 50.0, '2024-01-01T00:00:00.000000007Z'),
+                    (8, 20.0, '2024-01-01T00:00:00.000000008Z'),
+                    (9, 20.0, '2024-01-01T00:00:00.000000009Z')
+                    """);
+            // bucket0: first 0, min 1, max 2, last 3; bucket1: first 4, min 6, max 7, last 9
+            assertQuery("SELECT id, value, ts FROM t SUBSAMPLE m4(value, 8)")
+                    .timestamp("ts")
+                    .returns("""
+                            id\tvalue\tts
+                            0\t10.0\t2024-01-01T00:00:00.000000000Z
+                            1\t-100.0\t2024-01-01T00:00:00.000000001Z
+                            2\t100.0\t2024-01-01T00:00:00.000000002Z
+                            3\t10.0\t2024-01-01T00:00:00.000000003Z
+                            4\t10.0\t2024-01-01T00:00:00.000000004Z
+                            6\t-50.0\t2024-01-01T00:00:00.000000006Z
+                            7\t50.0\t2024-01-01T00:00:00.000000007Z
+                            9\t20.0\t2024-01-01T00:00:00.000000009Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMinMaxNanoTimestampPrecision() throws Exception {
+        // same 9ns fixture as testM4NanoTimestampPrecision: bucket0 holds
+        // offsets [0,4) with min/max at ids 1/2, bucket1 holds offsets [4,9]
+        // with min/max at ids 6/7
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, value DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (0, 10.0, '2024-01-01T00:00:00.000000000Z'),
+                    (1, -100.0, '2024-01-01T00:00:00.000000001Z'),
+                    (2, 100.0, '2024-01-01T00:00:00.000000002Z'),
+                    (3, 10.0, '2024-01-01T00:00:00.000000003Z'),
+                    (4, 10.0, '2024-01-01T00:00:00.000000004Z'),
+                    (5, 20.0, '2024-01-01T00:00:00.000000005Z'),
+                    (6, -50.0, '2024-01-01T00:00:00.000000006Z'),
+                    (7, 50.0, '2024-01-01T00:00:00.000000007Z'),
+                    (8, 20.0, '2024-01-01T00:00:00.000000008Z'),
+                    (9, 20.0, '2024-01-01T00:00:00.000000009Z')
+                    """);
+            assertQuery("SELECT id, value, ts FROM t SUBSAMPLE minmax(value, 4)")
+                    .timestamp("ts")
+                    .returns("""
+                            id\tvalue\tts
+                            1\t-100.0\t2024-01-01T00:00:00.000000001Z
+                            2\t100.0\t2024-01-01T00:00:00.000000002Z
+                            6\t-50.0\t2024-01-01T00:00:00.000000006Z
+                            7\t50.0\t2024-01-01T00:00:00.000000007Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMinMaxFarFutureMicroTimestamp() throws Exception {
+        // year 9999 microsecond epoch (~2.5e17) has a double ulp of 32us, so
+        // the precision loss is unit-independent, not TIMESTAMP_NS-specific.
+        // Same shape as testMinMaxNanoTimestampPrecision at 1us spacing.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (id INT, value DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (0, 10.0, 253402300799999990::timestamp),
+                    (1, -100.0, 253402300799999991::timestamp),
+                    (2, 100.0, 253402300799999992::timestamp),
+                    (3, 10.0, 253402300799999993::timestamp),
+                    (4, 10.0, 253402300799999994::timestamp),
+                    (5, 20.0, 253402300799999995::timestamp),
+                    (6, -50.0, 253402300799999996::timestamp),
+                    (7, 50.0, 253402300799999997::timestamp),
+                    (8, 20.0, 253402300799999998::timestamp),
+                    (9, 20.0, 253402300799999999::timestamp)
+                    """);
+            assertQuery("SELECT id, value, ts FROM t SUBSAMPLE minmax(value, 4)")
+                    .timestamp("ts")
+                    .returns("""
+                            id\tvalue\tts
+                            1\t-100.0\t9999-12-31T23:59:59.999991Z
+                            2\t100.0\t9999-12-31T23:59:59.999992Z
+                            6\t-50.0\t9999-12-31T23:59:59.999996Z
+                            7\t50.0\t9999-12-31T23:59:59.999997Z
+                            """);
+        });
+    }
+
+    @Test
     public void testEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
