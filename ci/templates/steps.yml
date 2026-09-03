@@ -150,14 +150,23 @@ steps:
     displayName: "Cache .m2/repository"
     continueOnError: true
     inputs:
-      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"'
+      # The pom hash in the key makes a dependency change save an updated cache
+      # (Azure skips the save on an exact key hit, so a static key freezes the
+      # cache at its first save); restoreKeys still restores the newest previous
+      # cache on a pom change, so only the delta comes from Maven Central.
+      key: '"questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven" | **/pom.xml'
+      restoreKeys: |
+        "questdb_main" | "$(Agent.OS)" | "$(jdk)" | "maven"
       path: $(MAVEN_CACHE_FOLDER)
-    condition: |
-      and(
-        ne(variables['poolName'], 'hetzner-incus'),
-        ne(variables['poolName'], 'hetzner-incus-arm'),
-        ne(variables['poolName'], 'hetzner-incus-zfs')
-      )
+    # Allowlist, not a hetzner-pool denylist: this cache only serves the hosted
+    # (Microsoft) agents, which cannot reach the Reposilite cache. The denylist
+    # failed open on the fuzz pipeline, which sets pool.name directly and defines
+    # no poolName variable, so ne('') passed and the task ran on its Hetzner
+    # agents -- harmless while the static key froze saves after the first one,
+    # but the pom-hashed key would have started re-saving the shared $HOME/.m2
+    # there on every pom change. A consumer without poolName now gets no cache
+    # instead of a surprise one.
+    condition: eq(variables['poolName'], 'Azure Pipelines')
   - task: Cache@2
     displayName: "Cache .cargo/registry"
     continueOnError: true
@@ -174,10 +183,10 @@ steps:
         ne(variables['poolName'], 'hetzner-incus-arm'),
         ne(variables['poolName'], 'hetzner-incus-zfs')
       )
-  - pwsh: New-Item -Path "$HOME/.m2/repository" -ItemType Directory -Force
+  - pwsh: New-Item -Path "$(MAVEN_CACHE_FOLDER)" -ItemType Directory -Force
     displayName: "Ensure .m2/repository exists (PowerShell)"
     condition: eq(variables['os'], 'Windows')
-  - bash: mkdir -p "$HOME/.m2/repository"
+  - bash: mkdir -p "$(MAVEN_CACHE_FOLDER)"
     displayName: "Ensure .m2/repository exists (bash)"
     condition: ne(variables['os'], 'Windows')
   - script: "wget https://archive.apache.org/dist/maven/maven-3/$(MAVEN_VERSION)/binaries/apache-maven-$(MAVEN_VERSION)-bin.zip"
@@ -226,10 +235,17 @@ steps:
       goals: "compile"
       options: "-s $(MAVEN_SETTINGS_FILE) $(javadoc_step) -DskipTests -P build-web-console$(javadoc_profile) -P qdbr-release $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
+    # succeeded() explicitly: a bare variable condition replaces Azure's implicit
+    # succeeded() guard, so without it this step runs after an earlier step (e.g.
+    # the submodule clone in detect-local-client) failed, and dies on the
+    # never-populated $(MAVEN_SETTINGS_FILE) -- burying the real error.
     condition: |
-      or(
-        eq(variables['testset'], 'none'),
-        eq(variables['SOURCE_CODE_CHANGED'], 'false')
+      and(
+        succeeded(),
+        or(
+          eq(variables['testset'], 'none'),
+          eq(variables['SOURCE_CODE_CHANGED'], 'false')
+        )
       )
   - task: Maven@3
     displayName: "Run tests"
@@ -249,9 +265,13 @@ steps:
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
+    # Defaults to 55, matching master's previous hardcoded value; the adaptive
+    # nightly overrides it (165 / 315) for its long single-JVM passes.
     timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
+    # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
+        succeeded(),
         eq(variables['testset'], 'all'),
         eq(variables['SOURCE_CODE_CHANGED'], 'true')
       )
@@ -275,8 +295,10 @@ steps:
         -P build-web-console
         $(CLIENT_PROFILE) $(MAVEN_RUN_OPTS)"
       jdkVersionOption: $(jdk)
+    # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
+        succeeded(),
         startsWith(variables['testset'], 'coverage'),
         ne(variables['System.PullRequest.IsFork'], 'true'),
         or(
@@ -302,8 +324,10 @@ steps:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
       LD_PRELOAD: $(Build.SourcesDirectory)/core/src/main/bin/linux-x86-64/libjemalloc.so
     timeoutInMinutes: 55
+    # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
+        succeeded(),
         startsWith(variables['testset'], 'coverage'),
         ne(variables['System.PullRequest.IsFork'], 'true'),
         or(

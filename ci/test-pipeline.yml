@@ -11,8 +11,9 @@ pr:
   drafts: false
 
 variables:
-  # Supplies GIT_GITHUB_TOKEN, which the submodule-clone steps hand to gh so the
-  # clones do not go out anonymously. See templates/detect-local-client.yml.
+  # Supplies GIT_GITHUB_TOKEN, which the fetch steps feed to ci/git-auth-env.sh
+  # (as GH_TOKEN) so github.com fetches do not go out anonymously. Fork PRs
+  # never receive it and rely on the scripts' backoff retry instead.
   - group: github-public-read
   - name: QDB_LOG_W_FILE_LOCATION
     value: "$(Build.BinariesDirectory)/tests.log"
@@ -266,6 +267,21 @@ stages:
             lfs: false
             submodules: false
             persistCredentials: true
+          # persistCredentials serves the non-fork paths: the diff-base fetch in
+          # "Post combined report" and ci/git-auth-env.sh's fallback. This job is a
+          # required check, so it also runs on fork PRs (with the real work
+          # SHOULD_RUN-gated off) while processing fork-controlled data -- pom.xml
+          # and .gitmodules in detect-local-client. Drop the on-disk credential
+          # there before any of that runs; the fork-side submodule clone then uses
+          # the same anonymous backoff path as every other fork clone. The
+          # condition fails safe: IsFork is unset on merge-queue and manual runs,
+          # which keep the credential their fetches legitimately need. || true:
+          # an absent key (persistCredentials flipped off later) exits 5 and must
+          # not fail the job. and(succeeded(), ...) because an explicit condition
+          # replaces the implicit succeeded() guard.
+          - bash: git config --unset-all "http.https://github.com/questdb/questdb.extraheader" || true
+            displayName: "Drop persisted checkout credential on fork PRs"
+            condition: and(succeeded(), eq(variables['System.PullRequest.IsFork'], 'true'))
           - template: templates/use-hetzner-apt-mirrors.yml
             parameters:
               shouldRun: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'))
@@ -309,7 +325,11 @@ stages:
 
           - task: Maven@3
             displayName: "Compile with Maven"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
+            # succeeded() explicitly: a bare variable condition replaces Azure's
+            # implicit succeeded() guard; without it this step runs after e.g. a
+            # failed submodule clone and dies on the never-populated
+            # $(MAVEN_SETTINGS_FILE), burying the real error.
+            condition: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               mavenPomFile: "pom.xml"
               mavenOptions: "$(MAVEN_OPTS)"
@@ -319,7 +339,8 @@ stages:
 
           - task: Maven@3
             displayName: "Merge partial JaCoCo reports"
-            condition: and(eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
+            # succeeded() explicitly: see "Compile with Maven" above.
+            condition: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'), eq(variables['CODE_COVERAGE_TOOL_OPTION'], 'JaCoCo'))
             inputs:
               mavenPomFile: "ci/jacoco-merge.xml"
               goals: "verify"
@@ -379,18 +400,27 @@ stages:
               # A merge-queue build carries no PR context, so recover the PR and the base the
               # entry was built on from the queue ref. Diffing against that commit excludes
               # what other entries merged while this one waited.
+              # --recurse-submodules=no everywhere: the diff below never reads submodule
+              # content, but git's default on-demand recursion follows a moved
+              # java-questdb-client pointer (detect-local-client populated the submodule
+              # earlier in this job) and fetches it from github.com. The credential
+              # persistCredentials leaves behind is scoped to the questdb/questdb URL, so
+              # that submodule fetch goes out anonymously, and GitHub's throttling of
+              # anonymous git-over-HTTPS fails the whole step.
               if [[ "$BUILD_SOURCEBRANCH" =~ ^refs/heads/gh-readonly-queue/(.*)/pr-([0-9]+)-([0-9a-f]{40})$ ]]; then
                 BASE_BRANCH="${BASH_REMATCH[1]}"
                 PR_NUMBER="${BASH_REMATCH[2]}"
                 DIFF_BASE="${BASH_REMATCH[3]}"
                 # GitHub deletes the ref that made this commit reachable once that entry merges.
-                if ! git fetch --depth=1 origin "$DIFF_BASE"; then
-                  git fetch origin "$BASE_BRANCH"
+                if ! git fetch --recurse-submodules=no --depth=1 origin "$DIFF_BASE"; then
+                  git fetch --recurse-submodules=no --depth=1 origin "$BASE_BRANCH"
                   DIFF_BASE="origin/$BASE_BRANCH"
                 fi
               elif [[ "$PR_NUMBER_MACRO" =~ ^[0-9]+$ ]]; then
                 PR_NUMBER="$PR_NUMBER_MACRO"
-                git fetch origin "$TARGET_BRANCH"
+                # --depth=1: the two-dot git diff below compares the endpoint trees
+                # only, so the base branch's history is dead weight.
+                git fetch --recurse-submodules=no --depth=1 origin "$TARGET_BRANCH"
                 DIFF_BASE="origin/$TARGET_BRANCH"
               else
                 echo "Neither a PR nor a merge-queue build ($BUILD_SOURCEBRANCH); skipping the diff coverage report"
@@ -404,7 +434,9 @@ stages:
                 $COVER_ARGS --repo "questdb/questdb" --pr "$PR_NUMBER" \
                 -t $(DIFF_COVER_THRESHOLD_PCT) --github-token $(GH_TOKEN)
             displayName: "Post combined report to GitHub"
-            condition: eq(variables['SHOULD_RUN'], 'true')
+            # succeeded() explicitly: without it a failed merge step upstream does
+            # not stop this step from posting a report built from stale inputs.
+            condition: and(succeeded(), eq(variables['SHOULD_RUN'], 'true'))
             env:
               BUILD_SOURCEBRANCH: $(Build.SourceBranch)
               PR_NUMBER_MACRO: $(System.PullRequest.PullRequestNumber)
