@@ -41,6 +41,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class WorkerPool implements Closeable {
     // Generous backstop used by the unbounded halt() so a wedged worker cannot block shutdown forever.
@@ -69,6 +70,7 @@ public class WorkerPool implements Closeable {
     private final ObjList<Job> freeOnExit = new ObjList<>();
     private final boolean haltOnError;
     private final SOCountDownLatch halted;
+    private final ReentrantLock haltLock = new ReentrantLock();
     // Legacy pools run their loop body directly (no WorkerContinuation
     // wrapping) and accept per-worker Job assignment via
     // {@link #assign(int, Job)}. Used today for the ILP TCP IO and writer
@@ -78,6 +80,8 @@ public class WorkerPool implements Closeable {
     private final long napThreshold;
     private final String poolName;
     private final int priority;
+    private boolean isHaltComplete;
+    private boolean isStartAttempted;
     private final AtomicBoolean running = new AtomicBoolean();
     private final long sleepMs;
     private final long sleepThreshold;
@@ -207,7 +211,7 @@ public class WorkerPool implements Closeable {
     }
 
     public void halt() {
-        halt(DEFAULT_HALT_TIMEOUT_NANOS);
+        halt0(false, 0, false);
     }
 
     /**
@@ -216,12 +220,11 @@ public class WorkerPool implements Closeable {
      * The unbounded variant of this wait could block the caller forever: if a worker is wedged
      * (GC-starvation, a stuck native job) it never reaches halted.countDown(), so a plain
      * halted.await() in the close path made server shutdown unkillable under SIGTERM. This variant
-     * waits at most timeoutNanos for started/halted and then logs a warning and proceeds, so the
-     * caller can finish closing.
+     * waits at most timeoutNanos for started/halted and then returns without freeing resources
+     * that a live worker may still access. A later halt attempt resumes the same shutdown.
      * <p>
-     * Tradeoff: proceeding while a worker is still running means that worker may touch state that
-     * later cleanup frees. Keep the timeout generous -- it is only a backstop against a truly
-     * wedged worker, not a normal-path tuning knob. Healthy pools count down well within it.
+     * This legacy void overload does not report whether the halt completed. Call
+     * {@link #haltWithin(long)} when the caller must condition later teardown on completion.
      * <p>
      * Footgun: this overload takes a RELATIVE timeout (a nanosecond duration measured from now),
      * but {@link io.questdb.WorkerPoolManager#halt(long)} has the identical {@code (long)} signature
@@ -233,91 +236,118 @@ public class WorkerPool implements Closeable {
      * @param timeoutNanos upper bound on the combined wait for started and halted, a RELATIVE
      *                     duration in nanoseconds measured from the call (NOT an absolute
      *                     {@link System#nanoTime()} deadline, unlike {@link io.questdb.WorkerPoolManager#halt(long)})
+     * @deprecated use {@link #haltWithin(long)} and inspect its completion result
      */
+    @Deprecated
     public void halt(long timeoutNanos) {
-        halt(timeoutNanos, false);
+        haltWithin(timeoutNanos);
+    }
+
+    /**
+     * Attempts to halt using an absolute {@link System#nanoTime()} deadline. A timeout retains all
+     * worker-owned resources so a later attempt can retry safely.
+     */
+    public boolean haltBy(long deadlineNanos) {
+        return halt0(true, deadlineNanos, false);
+    }
+
+    /**
+     * Attempts to halt using a relative nanosecond timeout and reports completion.
+     */
+    public boolean haltWithin(long timeoutNanos) {
+        return halt0(true, System.nanoTime() + Math.max(0, timeoutNanos), false);
     }
 
     @TestOnly
     public void haltAndAssertCleanForTest(long timeoutNanos) {
-        halt(timeoutNanos, true);
+        halt0(true, System.nanoTime() + Math.max(0, timeoutNanos), true);
     }
 
-    private void halt(long timeoutNanos, boolean strict) {
-        if (closed.compareAndSet(false, true)) {
-            final Runnable afterClosed = afterClosedSignalForTesting;
-            if (afterClosed != null) {
-                afterClosed.run();
+    private boolean halt0(boolean isBounded, long deadlineNanos, boolean isStrict) {
+        final long timeoutNanos = isBounded ? Math.max(0, deadlineNanos - System.nanoTime()) : 0;
+        boolean isInterrupted = false;
+        if (isBounded) {
+            boolean isLocked = haltLock.tryLock();
+            while (!isLocked) {
+                final long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    if (isInterrupted) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return false;
+                }
+                try {
+                    isLocked = haltLock.tryLock(remainingNanos, TimeUnit.NANOSECONDS);
+                } catch (InterruptedException e) {
+                    isInterrupted = true;
+                }
+            }
+        } else {
+            haltLock.lock();
+        }
+        try {
+            if (isHaltComplete) {
+                return true;
+            }
+            if (closed.compareAndSet(false, true)) {
+                final Runnable afterClosed = afterClosedSignalForTesting;
+                if (afterClosed != null) {
+                    afterClosed.run();
+                }
             }
             if (running.compareAndSet(true, false)) {
-                final long deadline = System.nanoTime() + timeoutNanos;
-                // Signal halt to every spawned worker UNCONDITIONALLY, before clearing or freeing.
-                // start() may have stalled between running=true and started.countDown() (e.g. an OOM
-                // mid-launch), so the start latch may never count down -- but the worker threads are
-                // already spawned and looping. Skipping the signal there (the old start-latch-timeout
-                // branch) left those workers looping on RUNNING against the freeOnExit resources this
-                // method then frees: a use-after-free plus an orphan thread leak. The per-worker halt
-                // flag is idempotent, so signalling unconditionally is safe on every branch. Iterate
-                // the live workers list (not workerCount) so a partially-spawned pool is covered.
-                //
-                // Read the list under workersLock so a concurrent start() still mid-add cannot present
-                // it torn (a half-published pos/buffer or a null slot). The monitor makes this pass see
-                // an empty-or-complete-and-consistent snapshot; the signal still runs UNCONDITIONALLY
-                // and BEFORE started.await() below, preserving the start-stall halt ordering.
-                boolean startCompleted = false;
+                isStartAttempted = true;
+            }
+            if (isStartAttempted) {
                 synchronized (workersLock) {
                     for (int i = 0, n = workers.size(); i < n; i++) {
                         workers.getQuick(i).halt();
                     }
                 }
-                if (started.await(remaining(deadline))) {
-                    startCompleted = true;
-                    // start() completed: every worker is now in the list. Re-signal to catch any
-                    // worker spawned after the first pass but before started counted down (the flag
-                    // is idempotent), then wait for them to exit.
+                if (!awaitLatch(started, isBounded, deadlineNanos)) {
+                    if (isStrict) {
+                        throw workerPoolHaltTimeout(timeoutNanos, false);
+                    }
+                    return false;
+                }
+                synchronized (workersLock) {
                     for (int i = 0, n = workers.size(); i < n; i++) {
                         workers.getQuick(i).halt();
                     }
-                    if (!halted.await(remaining(deadline))) {
-                        if (strict) {
-                            throw workerPoolHaltTimeout(timeoutNanos, true);
-                        }
-                        LOG.error().$("timed out waiting for worker pool to halt; proceeding with close [pool=").$(poolName)
-                                .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
+                }
+                if (!awaitLatch(halted, isBounded, deadlineNanos)) {
+                    if (isStrict) {
+                        throw workerPoolHaltTimeout(timeoutNanos, true);
                     }
-                } else {
-                    if (strict) {
-                        throw workerPoolHaltTimeout(timeoutNanos, startCompleted);
-                    }
-                    LOG.error().$("timed out waiting for worker pool to start; proceeding with close [pool=").$(poolName)
-                            .$(", timeout=").$(timeoutNanos / 1_000_000).$("ms").I$();
+                    return false;
                 }
             }
-            // closeInstance() every Job instance the pool owns: the blueprints and gen-0 clones
-            // from assign(), plus the clones each worker minted during cont rotation (mintNextGen).
-            // A rotation clone whose cont is abandoned at shutdown is never recycled, so this is the
-            // only release of its per-cont native resources (e.g. an HTTP selector). closeInstance()
-            // is a no-op default on caller-owned singletons and idempotent on recycled clones, so
-            // blanket-closing is safe. assignedJobs is not touched by start(), so it needs no monitor.
+
+            // No worker can reach the owned object graph after both latches complete.
             closeInstances(assignedJobs);
-            // Read the per-worker owned-clone lists and clear the list under the monitor. The
-            // start-latch-timeout branch reaches here while start() may still be mid-add-loop (an
-            // OOM/SIGTERM-stalled launch): an unguarded read/clear() races start()'s
-            // workers.add(worker), so a worker added right after would loop on the freeOnExit
-            // resources this then frees -- a use-after-free plus an orphan. Guarding serializes
-            // against the add critical section so this pass sees a consistent (empty-or-complete)
-            // list, never torn.
             synchronized (workersLock) {
                 for (int i = 0, n = workers.size(); i < n; i++) {
                     closeInstances(workers.getQuick(i).getOwnedJobClones());
                 }
-                workers.clear(); // Worker is not closable
+                workers.clear();
             }
-            // Closeables the caller explicitly handed to the pool via freeOnExit() are closed here;
-            // the pool never close()d the jobs it minted itself -- those release through
-            // closeInstance() above.
             Misc.freeObjListIfCloseable(freeOnExit);
+            isHaltComplete = true;
+            return true;
+        } finally {
+            haltLock.unlock();
+            if (isInterrupted) {
+                Thread.currentThread().interrupt();
+            }
         }
+    }
+
+    private boolean awaitLatch(SOCountDownLatch latch, boolean isBounded, long deadlineNanos) {
+        if (!isBounded) {
+            latch.await();
+            return true;
+        }
+        return latch.await(Math.max(0, deadlineNanos - System.nanoTime()));
     }
 
     @TestOnly
@@ -375,68 +405,72 @@ public class WorkerPool implements Closeable {
 
     public void start(@Nullable Log log) {
         if (!closed.get() && running.compareAndSet(false, true)) {
+            int startedWorkerCount = 0;
+            try {
+                // very common cleaner
+                // it is set up from start() to make sure it is called last
+                // some other thread local cleaners are liable to access thread local Path instances
+                setupPathCleaner();
 
-            // very common cleaner
-            // it is set up from start() to make sure it is called last
-            // some other thread local cleaners are liable to access thread local Path instances
-            setupPathCleaner();
-
-            for (int i = 0; i < workerCount; i++) {
-                final int index = i;
-                Worker worker = new Worker(
-                        poolName,
-                        i,
-                        workerAffinity[i],
-                        workerJobs.getQuick(i),
-                        halted,
-                        _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
-                        haltOnError,
-                        yieldThreshold,
-                        napThreshold,
-                        sleepThreshold,
-                        sleepMs,
-                        metrics,
-                        continuationQueue,
-                        log
-                );
-                worker.setPriority(priority);
-                worker.setDaemon(daemons);
-                // Add + spawn under workersLock so a concurrent halt() first pass never reads the list
-                // torn (ObjList.add mutates a non-volatile pos/buffer). The worker is spawned inside the
-                // monitor too, so halt() either has not yet seen this worker (it is not spawned) or sees
-                // it fully published -- never a spawned-but-invisible worker that would loop on freed
-                // resources.
-                synchronized (workersLock) {
-                    // Fire the test seam INSIDE the monitor so a test can hold the add critical section
-                    // open and prove a concurrent halt() first pass is held off (serialized), never
-                    // reading a half-built list. The seam is a strict no-op when unset.
-                    final Runnable beforeWorkerAdded = beforeWorkerAddedForTesting;
-                    if (beforeWorkerAdded != null) {
-                        beforeWorkerAdded.run();
+                for (int i = 0; i < workerCount; i++) {
+                    final int index = i;
+                    Worker worker = new Worker(
+                            poolName,
+                            i,
+                            workerAffinity[i],
+                            workerJobs.getQuick(i),
+                            halted,
+                            _ -> Misc.freeObjListAndClear(threadLocalCleaners.getQuick(index)),
+                            haltOnError,
+                            yieldThreshold,
+                            napThreshold,
+                            sleepThreshold,
+                            sleepMs,
+                            metrics,
+                            continuationQueue,
+                            log
+                    );
+                    worker.setPriority(priority);
+                    worker.setDaemon(daemons);
+                    // Add + spawn under workersLock so a concurrent halt() first pass never reads the list
+                    // torn (ObjList.add mutates a non-volatile pos/buffer). The worker is spawned inside the
+                    // monitor too, so halt() either has not yet seen this worker (it is not spawned) or sees
+                    // it fully published -- never a spawned-but-invisible worker that would loop on freed
+                    // resources.
+                    synchronized (workersLock) {
+                        // Fire the test seam INSIDE the monitor so a test can hold the add critical section
+                        // open and prove a concurrent halt() first pass is held off (serialized), never
+                        // reading a half-built list. The seam is a strict no-op when unset.
+                        final Runnable beforeWorkerAdded = beforeWorkerAddedForTesting;
+                        if (beforeWorkerAdded != null) {
+                            beforeWorkerAdded.run();
+                        }
+                        // Re-check closed inside the critical section, before spawning. A concurrent
+                        // halt(long) sets closed and frees freeOnExit under this same monitor; if the seam
+                        // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
+                        // already gone by the time this loop resumes. Spawning a worker now would loop it on
+                        // freed resources -- a use-after-free plus an orphan thread. Break instead: the
+                        // workers added so far will be halt-signalled once the add critical section releases,
+                        // and started.countDown() below still runs so a waiting halt() proceeds.
+                        if (closed.get()) {
+                            break;
+                        }
+                        workers.add(worker);
+                        worker.start();
+                        startedWorkerCount++;
                     }
-                    // Re-check closed inside the critical section, before spawning. A concurrent
-                    // halt(long) sets closed and frees freeOnExit under this same monitor; if the seam
-                    // (or a real OOM-stalled launch) held the add open while halt() ran, freeOnExit is
-                    // already gone by the time this loop resumes. Spawning a worker now would loop it on
-                    // freed resources -- a use-after-free plus an orphan thread. Break instead: the
-                    // workers added so far will be halt-signalled once the add critical section releases,
-                    // and started.countDown() below still runs so a waiting halt() proceeds.
-                    if (closed.get()) {
-                        countDownUnstartedWorkers(i);
-                        break;
-                    }
-                    workers.add(worker);
-                    worker.start();
                 }
+                if (log != null) {
+                    log.debug().$("worker pool started [pool=").$(poolName).I$();
+                }
+                final Runnable beforeStarted = beforeStartedSignalForTesting;
+                if (beforeStarted != null) {
+                    beforeStarted.run();
+                }
+            } finally {
+                countDownUnstartedWorkers(startedWorkerCount);
+                started.countDown();
             }
-            if (log != null) {
-                log.debug().$("worker pool started [pool=").$(poolName).I$();
-            }
-            final Runnable beforeStarted = beforeStartedSignalForTesting;
-            if (beforeStarted != null) {
-                beforeStarted.run();
-            }
-            started.countDown();
         }
     }
 
@@ -473,12 +507,6 @@ public class WorkerPool implements Closeable {
         for (int i = firstUnstartedWorker; i < workerCount; i++) {
             halted.countDown();
         }
-    }
-
-    private static long remaining(long deadline) {
-        // Never hand SOCountDownLatch.await() a non-positive budget; parkNanos(<=0) returns
-        // immediately, which is the intended behaviour once the overall deadline has passed.
-        return Math.max(1, deadline - System.nanoTime());
     }
 
     private AssertionError workerPoolHaltTimeout(long timeoutNanos, boolean startCompleted) {

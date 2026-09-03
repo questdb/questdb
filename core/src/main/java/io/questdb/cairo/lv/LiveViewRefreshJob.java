@@ -293,14 +293,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseApplyDuringRederiveForTest;
-    // Test-only: when armed, the fallback scan runs this action BETWEEN the ahead guard's two
-    // reads - after the view watermark read, before the base sequencer head read. That interval
-    // is the contract, not a convenience: it is the window a concurrent refresh worker used to
-    // race, so a test can publish and refresh the next base commit there instead of relying on
-    // thread timing. Keep the call between the two reads. Moving it outside them, or reordering
-    // the reads across it, makes the guard sample a coherent pair either way and silently strips
-    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the two orders
-    // apart.
+    // Test-only: when armed, the fallback scan runs this action inside the ahead guard - after
+    // the view watermark read, before the two base head reads (cached sequencer head and tracker
+    // writerTxn). That interval is the contract, not a convenience: it is the window a concurrent
+    // refresh worker used to race, so a test can publish and refresh the next base commit there
+    // instead of relying on thread timing. Keep the call between the watermark read and the base
+    // reads. Moving it outside them, or reordering the reads across it, makes the guard sample a
+    // coherent set either way and silently strips
+    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the orders apart.
     // One-shot (self-clears on fire); always null in production.
     @TestOnly
     private Runnable simulateBaseCommitBetweenAheadGuardReadsForTest;
@@ -563,12 +563,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: arms a one-shot action that the fallback scan runs BETWEEN the two reads feeding
-     * the live-view-ahead guard - after the view watermark read, after which it blocks the scan,
-     * and before the base sequencer head read. The interval is what the arming test asserts on:
-     * a commit published there is visible to the base-head read but not to the already-captured
-     * watermark, which is exactly the asymmetry that distinguishes the correct read order from
-     * the racy one. Relocating this call outside the two reads leaves
+     * Test-only: arms a one-shot action that the fallback scan runs inside the live-view-ahead
+     * guard - after the view watermark read, after which it blocks the scan, and before the two
+     * base head reads (cached sequencer head and tracker writerTxn). The interval is what the
+     * arming test asserts on: a commit published there is visible to the base reads but not to
+     * the already-captured watermark, which is exactly the asymmetry that distinguishes the
+     * correct read order from the racy one. Relocating this call outside the reads leaves
      * {@code testConcurrentRefreshCannotInvalidateFromStaleBaseHead} green under a read-order
      * swap that fully restores the race.
      * <p>
@@ -8270,12 +8270,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 simulateBaseCommitBetweenAheadGuardReadsForTest = null;
                 aheadGuardAction.run();
             }
+            // Compare against the higher of the two base heads. On a primary the cached
+            // sequencer head is authoritative: the sole appender keeps it current, and the
+            // watermark can sit above writerTxn because the notification-driven refresh
+            // consumes a commit before the apply job lands it. On an enterprise replica the
+            // downloader appends the on-disk txnlog behind the cached sequencer and reconciles
+            // it later, while WAL apply and this refresh consume the new txns from the file;
+            // there writerTxn covers the stale window. writerTxn is not monotonic
+            // (notifyWalTxnRepublisher resets it to -1; a late apply can publish an older head),
+            // so the max never drops below the cached head. Neither head can exceed the durable
+            // txnlog, so a hydrate-restored watermark past it still trips the guard.
             final long baseSeqLastTxn = engine.getTableSequencerAPI().lastTxn(baseToken);
-            if (lastProcessedSeqTxn > baseSeqLastTxn) {
+            final long baseWriterTxn = engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn();
+            if (lastProcessedSeqTxn > Math.max(baseSeqLastTxn, baseWriterTxn)) {
                 LOG.error().$("live view is ahead of base table and cannot be synchronized [view=")
                         .$(instance.getLiveViewToken())
                         .$(", lastProcessedSeqTxn=").$(lastProcessedSeqTxn)
                         .$(", baseTableTxn=").$(baseSeqLastTxn)
+                        .$(", baseWriterTxn=").$(baseWriterTxn)
                         .I$();
                 engine.invalidateLiveView(instance, "live view is ahead of base table and cannot be synchronized");
                 didWork = true;
