@@ -17,7 +17,7 @@ runs:
         if echo "$CLIENT_VERSION" | grep -q '\-SNAPSHOT$'; then
           echo "SNAPSHOT version detected, activating local-client profile"
           git config --global --add safe.directory /__w/questdb/questdb
-          git submodule update --init java-questdb-client
+          git submodule update --init --depth 1 java-questdb-client
           echo "client_profile=-Plocal-client" >> "$GITHUB_OUTPUT"
         else
           echo "Release version detected, using Maven Central"
