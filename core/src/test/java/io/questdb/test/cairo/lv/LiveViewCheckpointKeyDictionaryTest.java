@@ -70,6 +70,8 @@ import java.nio.charset.StandardCharsets;
 public class LiveViewCheckpointKeyDictionaryTest extends AbstractCairoTest {
 
     private static final int BASE_TABLE_ID = 5;
+    /** Width of the decimal id {@link GeneratedColumnSource} puts at the head of every entry. */
+    private static final int ID_WIDTH = 10;
     private static final String LV_DIR = "lv_key_dictionary";
     private static final int WRITER_COLUMN_0 = 2;
     private static final int WRITER_COLUMN_1 = 9;
@@ -199,6 +201,46 @@ public class LiveViewCheckpointKeyDictionaryTest extends AbstractCairoTest {
                     Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
                     TestUtils.assertContains(e.getFlyweightMessage(), "chunk page kind unknown");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testDeltaAbovePerChunkEntryCapSplitsIntoChunks() throws Exception {
+        assertMemoryLeak(() -> {
+            // One entry more than a chunk page carries, so this delta has to become two chunks.
+            final int cap = LiveViewCheckpointKeyDictionaryWriter.MAX_CHUNK_ENTRY_COUNT;
+            final GeneratedColumnSource columns = new GeneratedColumnSource(WRITER_COLUMN_0, ID_WIDTH);
+            columns.setEntryCount(cap + 1);
+            final LiveViewCheckpointPageRef ref1 = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointKeyDictionaryWriter writer = new LiveViewCheckpointKeyDictionaryWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                writer.write(new LiveViewCheckpointPageRef(), columns, 200, ref1);
+            }
+            try (LiveViewCheckpointKeyDictionaryReader reader = new LiveViewCheckpointKeyDictionaryReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir), ref1);
+                Assert.assertEquals(2, reader.getChunkCount(0));
+                Assert.assertEquals(cap + 1, reader.getSymbolCount(0));
+                assertRestoresGeneratedColumn(reader, 0, cap + 1, ID_WIDTH);
+            }
+
+            // A second delta that also crosses the cap path-copies both chunks and appends two
+            // of its own, in id order behind them.
+            columns.setEntryCount(2 * cap + 2);
+            final LiveViewCheckpointPageRef ref2 = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointKeyDictionaryWriter writer = new LiveViewCheckpointKeyDictionaryWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                writer.write(ref1, columns, 201, ref2);
+            }
+            try (LiveViewCheckpointKeyDictionaryReader reader = new LiveViewCheckpointKeyDictionaryReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir), ref2);
+                Assert.assertEquals(4, reader.getChunkCount(0));
+                Assert.assertEquals(2 * cap + 2, reader.getSymbolCount(0));
+                assertRestoresGeneratedColumn(reader, 0, 2 * cap + 2, ID_WIDTH);
             }
         });
     }
@@ -543,6 +585,97 @@ public class LiveViewCheckpointKeyDictionaryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSingleSealPastReaderEntryLimitRestores() throws Exception {
+        assertMemoryLeak(() -> {
+            // The shape the writer used to get wrong: one boundary interning more entries for a
+            // single column than the 1 << 20 a chunk page may declare. Written as one page it
+            // produced a chunk every restore rejects, which surfaces as an invalid timeline and
+            // a rebuild from base rather than as a failed seal - so nothing but a case this wide
+            // catches it.
+            final int entryCount = (1 << 20) + 5;
+            final int cap = LiveViewCheckpointKeyDictionaryWriter.MAX_CHUNK_ENTRY_COUNT;
+            final GeneratedColumnSource columns = new GeneratedColumnSource(WRITER_COLUMN_0, ID_WIDTH);
+            columns.setEntryCount(entryCount);
+            final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointKeyDictionaryWriter writer = new LiveViewCheckpointKeyDictionaryWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                writer.write(new LiveViewCheckpointPageRef(), columns, 210, ref);
+            }
+            try (LiveViewCheckpointKeyDictionaryReader reader = new LiveViewCheckpointKeyDictionaryReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir), ref);
+                Assert.assertEquals(entryCount, reader.getSymbolCount(0));
+                // The restore comes first deliberately: written as one page this is where the
+                // defect showed, as a rejected chunk rather than as a surprising chunk count.
+                assertRestoresGeneratedColumn(reader, 0, entryCount, ID_WIDTH);
+                Assert.assertEquals((entryCount + cap - 1) / cap, reader.getChunkCount(0));
+            }
+        });
+    }
+
+    @Test
+    public void testWideEntriesSplitOnPayloadByteBudget() throws Exception {
+        assertMemoryLeak(() -> {
+            // Few entries, each the widest the format admits: the entry cap never fires and the
+            // byte budget is what splits the delta, so a chunk of long values still fits the int
+            // a page header carries its payload length in.
+            final int valueLength = 1 << 20;
+            final int entryCount = 15;
+            final GeneratedColumnSource columns = new GeneratedColumnSource(WRITER_COLUMN_0, valueLength);
+            columns.setEntryCount(entryCount);
+            final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointKeyDictionaryWriter writer = new LiveViewCheckpointKeyDictionaryWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                writer.write(new LiveViewCheckpointPageRef(), columns, 220, ref);
+            }
+            try (LiveViewCheckpointKeyDictionaryReader reader = new LiveViewCheckpointKeyDictionaryReader(configuration);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir), ref);
+                final int chunkCount = reader.getChunkCount(0);
+                Assert.assertTrue(
+                        "entries this wide must not all fit one chunk, chunks=" + chunkCount,
+                        chunkCount > 1 && chunkCount < entryCount
+                );
+                final long maxPageLength = (long) LiveViewCheckpointLayout.PAGE_HEADER_SIZE
+                        + LiveViewCheckpointKeyDictionaryWriter.MAX_CHUNK_PAYLOAD_BYTES;
+                for (int k = 0; k < chunkCount; k++) {
+                    final int length = reader.getChunkRef(0, k).getLength();
+                    Assert.assertTrue("chunk " + k + " is over budget, length=" + length, length <= maxPageLength);
+                }
+                Assert.assertEquals(entryCount, reader.getSymbolCount(0));
+                assertRestoresGeneratedColumn(reader, 0, entryCount, valueLength);
+            }
+        });
+    }
+
+    /**
+     * Restores {@code columnIndex} and asserts it holds exactly the {@code entryCount} entries
+     * {@link GeneratedColumnSource} would have produced, in id order. Every entry is compared,
+     * not a sample: a chunk boundary that dropped or repeated one is the failure this exists to
+     * catch, and the ids it would land on depend on the chunk size.
+     */
+    private static void assertRestoresGeneratedColumn(
+            LiveViewCheckpointKeyDictionaryReader reader,
+            int columnIndex,
+            int entryCount,
+            int valueLength
+    ) {
+        final DirectSymbolMap map = freshMap();
+        try {
+            reader.restoreInto(columnIndex, map);
+            Assert.assertEquals(entryCount, map.size());
+            final GeneratedValue expected = new GeneratedValue(valueLength);
+            for (int id = 0; id < entryCount; id++) {
+                TestUtils.assertEquals(expected.of(id), map.valueOf(id));
+            }
+        } finally {
+            map.close();
+        }
+    }
+
     private static void assertLongList(LongList actual, long... expected) {
         Assert.assertEquals(expected.length, actual.size());
         for (int i = 0; i < expected.length; i++) {
@@ -668,6 +801,107 @@ public class LiveViewCheckpointKeyDictionaryTest extends AbstractCairoTest {
         @Override
         public CharSequence valueOf(int key) {
             return key >= 0 && key < values.size() ? values.getQuick(key) : null;
+        }
+    }
+
+    /**
+     * A single-column {@link LiveViewCheckpointKeyDictionaryColumnSource} whose entries are
+     * generated on demand rather than held: a zero-padded decimal id, padded out to a fixed
+     * width. That is what lets a case drive a delta of a million entries, or of entries a
+     * megabyte wide, without either the strings or their ids living in the test's heap.
+     */
+    private static final class GeneratedColumnSource implements LiveViewCheckpointKeyDictionaryColumnSource {
+        private final int baseWriterColumnIndex;
+        private final GeneratedValue value;
+        private int entryCount;
+
+        GeneratedColumnSource(int baseWriterColumnIndex, int valueLength) {
+            this.baseWriterColumnIndex = baseWriterColumnIndex;
+            this.value = new GeneratedValue(valueLength);
+        }
+
+        @Override
+        public int getBaseTableId(int columnIndex) {
+            return BASE_TABLE_ID;
+        }
+
+        @Override
+        public int getBaseWriterColumnIndex(int columnIndex) {
+            return baseWriterColumnIndex;
+        }
+
+        @Override
+        public int getColumnCount() {
+            return 1;
+        }
+
+        @Override
+        public CharSequence getColumnName(int columnIndex) {
+            return "sym";
+        }
+
+        @Override
+        public int getColumnType(int columnIndex) {
+            return ColumnType.SYMBOL;
+        }
+
+        @Override
+        public int getEntryCount(int columnIndex) {
+            return entryCount;
+        }
+
+        @Override
+        public CharSequence getEntryValue(int columnIndex, int lvId) {
+            return value.of(lvId);
+        }
+
+        void setEntryCount(int entryCount) {
+            this.entryCount = entryCount;
+        }
+    }
+
+    /**
+     * The entry {@link GeneratedColumnSource} hands out: one reusable buffer whose leading
+     * {@link #ID_WIDTH} characters carry the id, so two entries are never equal and a restore's
+     * duplicate check still means something.
+     */
+    private static final class GeneratedValue implements CharSequence {
+        private final char[] chars;
+
+        GeneratedValue(int length) {
+            chars = new char[length];
+            for (int i = 0; i < length; i++) {
+                chars[i] = 'x';
+            }
+        }
+
+        @Override
+        public char charAt(int index) {
+            return chars[index];
+        }
+
+        @Override
+        public int length() {
+            return chars.length;
+        }
+
+        @Override
+        public CharSequence subSequence(int start, int end) {
+            return new String(chars, start, end - start);
+        }
+
+        @Override
+        public String toString() {
+            return new String(chars);
+        }
+
+        GeneratedValue of(int id) {
+            int rest = id;
+            for (int i = ID_WIDTH - 1; i >= 0; i--) {
+                chars[i] = (char) ('0' + rest % 10);
+                rest /= 10;
+            }
+            return this;
         }
     }
 

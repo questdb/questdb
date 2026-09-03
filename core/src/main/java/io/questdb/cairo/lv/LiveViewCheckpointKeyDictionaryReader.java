@@ -64,7 +64,7 @@ public class LiveViewCheckpointKeyDictionaryReader implements Closeable {
     public static final int DIRECTORY_PAGE_KIND = 0x2a;
     static final int CHUNK_FORMAT_VERSION = 1;
     static final int DIRECTORY_FORMAT_VERSION = 1;
-    private static final int CHUNK_HEADER_SIZE = 2 * Integer.BYTES;
+    static final int CHUNK_HEADER_SIZE = 2 * Integer.BYTES;
     private static final int COLUMN_HEADER_SIZE = 4 * Integer.BYTES;
     private static final int COLUMN_FOOTER_SIZE = 2 * Integer.BYTES;
     private static final int DIRECTORY_HEADER_SIZE = 2 * Integer.BYTES;

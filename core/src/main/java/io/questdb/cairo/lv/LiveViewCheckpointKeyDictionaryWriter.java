@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -38,7 +39,7 @@ import java.io.Closeable;
 
 /**
  * Builds one checkpoint root's LV-private symbol-key dictionary directory, path-copying every
- * predecessor column's chunk list unchanged and appending one new chunk per column whose live
+ * predecessor column's chunk list unchanged and appending new chunks for each column whose live
  * dictionary has grown since the predecessor.
  * <p>
  * A column's chunk list therefore only ever grows: {@link #writeIntoOpenSegment} refuses a
@@ -49,23 +50,60 @@ import java.io.Closeable;
  * Reading the predecessor is deliberately cheap: {@link LiveViewCheckpointKeyDictionaryReader#of}
  * decodes only the directory, not the strings each chunk holds, so a seal's cost stays
  * proportional to what changed rather than to the dictionary's total size.
+ * <p>
+ * A delta wider than one page's limits becomes several chunks rather than one oversized page -
+ * see {@link #MAX_CHUNK_ENTRY_COUNT} and {@link #MAX_CHUNK_PAYLOAD_BYTES}. A column's chunk list
+ * is ordered and covers its ids contiguously from zero, so the number of chunks a delta takes is
+ * invisible to a restore, which walks the list either way.
  */
 public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
 
+    /**
+     * Most entries one chunk page carries. A restore refuses a chunk whose entry count is
+     * above {@code MAX_ENTRY_COUNT} (1 << 20), so a delta bigger than that has to become
+     * several chunks or the seal writes a page no restore can read - which surfaces as an
+     * invalid timeline and a rebuild from base, not as a failed seal.
+     * <p>
+     * The cap sits well below the reader's limit rather than at it. A column's chunk count is
+     * bounded by that same constant, so 64K-entry chunks still admit 2^16 x 2^20 ids per
+     * column - far past the non-negative int id space a dictionary can hand out - and chunking
+     * therefore introduces no ceiling of its own. The cost it does carry is that every chunk
+     * ref is path-copied into the directory page on every later seal, 20 bytes a ref.
+     */
+    public static final int MAX_CHUNK_ENTRY_COUNT = 1 << 16;
+    /**
+     * Byte budget for one chunk page's payload, the second half of the same cap. A page header
+     * carries its payload length in a single int and a restore checksums a whole page in one
+     * pass, so a chunk of few but very long entries has to be split on bytes as well as on
+     * count. Entries are never split across pages, so a single entry longer than the whole
+     * budget - the format admits up to 1 MiB of UTF-8 per entry - takes a page of its own and
+     * is the one case a chunk exceeds this.
+     */
+    public static final int MAX_CHUNK_PAYLOAD_BYTES = 8 * 1024 * 1024;
+
     private final Path checkpointsDir = new Path();
     /**
-     * Scratch, one slot per column of the build in progress: the new chunk
-     * {@link #writeChunk} wrote for a grown column, or {@code null} for a column the
-     * predecessor's chunks already cover in full. Populated in a pass that runs to
-     * completion - opening and closing every new chunk page - before the directory page
-     * itself opens, because {@link LiveViewCheckpointMetaSegmentWriter} holds at most one
-     * page open at a time and the directory page's payload names these refs.
+     * Scratch, one slot per column of the build in progress: how many new chunks
+     * {@link #writeChunks} wrote for it, zero for a column the predecessor's chunks already
+     * cover in full. Slices {@link #newChunkRefs}, which is flat across columns.
+     */
+    private final IntList newChunkCounts = new IntList();
+    /**
+     * Scratch: the chunk pages the build in progress wrote, in column order and, within a
+     * column, in id order. Populated in a pass that runs to completion - opening and closing
+     * every new chunk page - before the directory page itself opens, because
+     * {@link LiveViewCheckpointMetaSegmentWriter} holds at most one page open at a time and
+     * the directory page's payload names these refs.
+     * <p>
+     * The refs are pooled across builds and claimed by {@link #nextChunkRef()}, because one
+     * wide delta chunks into many pages and a seal must not allocate a reference per page.
      */
     private final ObjList<LiveViewCheckpointPageRef> newChunkRefs = new ObjList<>();
     private final LiveViewCheckpointKeyDictionaryReader predecessorReader;
     private final LongList referencedSegmentIds = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private long lastSegmentBytes;
+    private int newChunkRefCount;
 
     public LiveViewCheckpointKeyDictionaryWriter(@NotNull CairoConfiguration configuration) {
         predecessorReader = new LiveViewCheckpointKeyDictionaryReader(configuration);
@@ -126,7 +164,7 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
     }
 
     /**
-     * Writes the directory - and one new chunk per grown column - into an aggregate metadata
+     * Writes the directory - and every grown column's new chunks - into an aggregate metadata
      * segment the caller owns. {@code predecessorRef} may be a cleared (null) reference for a
      * fresh dictionary. {@code columns} must already be sorted ascending by
      * {@code (baseTableId, baseWriterColumnIndex)}; the writer validates the order rather than
@@ -151,10 +189,11 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
             }
         }
 
-        // Pass 1: write every grown column's new chunk to completion first. A page must be
+        // Pass 1: write every grown column's new chunks to completion first. A page must be
         // begun and ended before the next one starts, so a chunk page cannot be opened while
-        // the directory page - whose payload names the chunk's ref - is itself still open.
-        newChunkRefs.clear();
+        // the directory page - whose payload names the chunks' refs - is itself still open.
+        newChunkCounts.clear();
+        newChunkRefCount = 0;
         for (int c = 0; c < columnCount; c++) {
             final int liveCount = columns.getEntryCount(c);
             final int predecessorSymbolCount = predecessorSymbolCount(hasPredecessor, columns, c);
@@ -166,16 +205,15 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
                         .put(", predecessor=").put(predecessorSymbolCount)
                         .put(", live=").put(liveCount).put(']');
             }
-            newChunkRefs.add(liveCount > predecessorSymbolCount
-                    ? writeChunk(columns, c, predecessorSymbolCount, liveCount, writer)
-                    : null);
+            newChunkCounts.add(writeChunks(columns, c, predecessorSymbolCount, liveCount, writer));
         }
 
-        // Pass 2: the directory page, path-copying every predecessor chunk ref and pointing
-        // at pass 1's new one where a column grew.
+        // Pass 2: the directory page, path-copying every predecessor chunk ref and appending
+        // pass 1's new ones, in id order, where a column grew.
         final MemoryA mem = writer.beginPage(LiveViewCheckpointKeyDictionaryReader.DIRECTORY_PAGE_KIND);
         mem.putInt(LiveViewCheckpointKeyDictionaryReader.DIRECTORY_FORMAT_VERSION);
         mem.putInt(columnCount);
+        int newChunkCursor = 0;
         for (int c = 0; c < columnCount; c++) {
             final int baseTableId = columns.getBaseTableId(c);
             final int baseWriterColumnIndex = columns.getBaseWriterColumnIndex(c);
@@ -192,17 +230,18 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
             final int predecessorChunkCount = predecessorColumnIndex >= 0
                     ? predecessorReader.getChunkCount(predecessorColumnIndex)
                     : 0;
-            final LiveViewCheckpointPageRef newChunkRef = newChunkRefs.getQuick(c);
+            final int newChunkCount = newChunkCounts.getQuick(c);
             mem.putInt(columns.getEntryCount(c));
-            mem.putInt(predecessorChunkCount + (newChunkRef != null ? 1 : 0));
+            mem.putInt(predecessorChunkCount + newChunkCount);
             for (int k = 0; k < predecessorChunkCount; k++) {
                 final LiveViewCheckpointPageRef ref = predecessorReader.getChunkRef(predecessorColumnIndex, k);
                 LiveViewCheckpointMetadata.putMetaRef(mem, ref);
                 referencedSegmentIds.add(ref.getSegmentId());
             }
-            if (newChunkRef != null) {
-                LiveViewCheckpointMetadata.putMetaRef(mem, newChunkRef);
-                referencedSegmentIds.add(newChunkRef.getSegmentId());
+            for (int k = 0; k < newChunkCount; k++) {
+                final LiveViewCheckpointPageRef ref = newChunkRefs.getQuick(newChunkCursor++);
+                LiveViewCheckpointMetadata.putMetaRef(mem, ref);
+                referencedSegmentIds.add(ref.getSegmentId());
             }
         }
         writer.endPage(out);
@@ -236,12 +275,54 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
         list.setPos(w);
     }
 
-    private LiveViewCheckpointPageRef writeChunk(
+    /**
+     * @return one past the last id the chunk starting at {@code fromInclusive} takes:
+     * {@link #MAX_CHUNK_ENTRY_COUNT} entries at most, and {@link #MAX_CHUNK_PAYLOAD_BYTES} of
+     * payload at most unless the chunk's first entry already exceeds the budget on its own.
+     * Never {@code fromInclusive}, so a caller's loop always advances.
+     */
+    private static int chunkEnd(
+            LiveViewCheckpointKeyDictionaryColumnSource columns,
+            int columnIndex,
+            int fromInclusive,
+            int toExclusive
+    ) {
+        final int limit = (int) Math.min(toExclusive, (long) fromInclusive + MAX_CHUNK_ENTRY_COUNT);
+        long bytes = LiveViewCheckpointKeyDictionaryReader.CHUNK_HEADER_SIZE;
+        int id = fromInclusive;
+        while (id < limit) {
+            // Measures rather than encodes: the entry is encoded once, by writeChunk, and a
+            // value the source hands out is a reusable view a later call invalidates anyway.
+            final long entryBytes = Integer.BYTES
+                    + LiveViewCheckpointMetadata.utf8Bytes(columns.getEntryValue(columnIndex, id));
+            if (id > fromInclusive && bytes + entryBytes > MAX_CHUNK_PAYLOAD_BYTES) {
+                break;
+            }
+            bytes += entryBytes;
+            id++;
+        }
+        return id;
+    }
+
+    /**
+     * @return the next pooled chunk reference for the build in progress. Refs stay claimed
+     * until the next {@link #writeIntoOpenSegment} resets the count, because the directory
+     * page reads every one of them after the last chunk page closes.
+     */
+    private LiveViewCheckpointPageRef nextChunkRef() {
+        if (newChunkRefCount == newChunkRefs.size()) {
+            newChunkRefs.add(new LiveViewCheckpointPageRef());
+        }
+        return newChunkRefs.getQuick(newChunkRefCount++);
+    }
+
+    private void writeChunk(
             LiveViewCheckpointKeyDictionaryColumnSource columns,
             int columnIndex,
             int fromInclusive,
             int toExclusive,
-            LiveViewCheckpointMetaSegmentWriter writer
+            LiveViewCheckpointMetaSegmentWriter writer,
+            LiveViewCheckpointPageRef out
     ) {
         final MemoryA mem = writer.beginPage(LiveViewCheckpointKeyDictionaryReader.CHUNK_PAGE_KIND);
         mem.putInt(LiveViewCheckpointKeyDictionaryReader.CHUNK_FORMAT_VERSION);
@@ -251,8 +332,31 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
             mem.putInt(value.length);
             LiveViewCheckpointMetadata.putBytes(mem, value);
         }
-        final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
-        writer.endPage(ref);
-        return ref;
+        writer.endPage(out);
+    }
+
+    /**
+     * Writes {@code [fromInclusive, toExclusive)} as however many chunk pages the per-page
+     * limits require, appending each one's reference to {@link #newChunkRefs} in id order. An
+     * empty range writes nothing.
+     *
+     * @return how many chunk pages the range took
+     */
+    private int writeChunks(
+            LiveViewCheckpointKeyDictionaryColumnSource columns,
+            int columnIndex,
+            int fromInclusive,
+            int toExclusive,
+            LiveViewCheckpointMetaSegmentWriter writer
+    ) {
+        int chunkCount = 0;
+        int id = fromInclusive;
+        while (id < toExclusive) {
+            final int end = chunkEnd(columns, columnIndex, id, toExclusive);
+            writeChunk(columns, columnIndex, id, end, writer, nextChunkRef());
+            chunkCount++;
+            id = end;
+        }
+        return chunkCount;
     }
 }
