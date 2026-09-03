@@ -83,6 +83,17 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
 
     private final Path checkpointsDir = new Path();
     /**
+     * Scratch: the UTF-8 length of every entry the chunk being built carries, measured by
+     * {@link #chunkEnd} and read back by {@link #writeChunk}, so each value is walked once
+     * to measure and once to encode rather than twice to measure.
+     */
+    private final IntList entryUtf8Lengths = new IntList();
+    /**
+     * Scratch: the payload bytes the chunk {@link #chunkEnd} last measured will take, handed
+     * to the segment writer as a size hint so the mapping grows once ahead of the page.
+     */
+    private long lastChunkPayloadBytes;
+    /**
      * Scratch, one slot per column of the build in progress: how many new chunks
      * {@link #writeChunks} wrote for it, zero for a column the predecessor's chunks already
      * cover in full. Slices {@link #newChunkRefs}, which is flat across columns.
@@ -104,6 +115,12 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private long lastSegmentBytes;
     private int newChunkRefCount;
+    // The predecessor directory predecessorReader currently has open, so isUnchanged and
+    // the write that follows it within one seal map the page once. Forgotten by of() and
+    // detach(), which bound the reuse to one seal of one view: a segment id names a file
+    // only within a directory, and a mapping must not outlive the seal that took it.
+    private long openedPredecessorOffset = -1;
+    private long openedPredecessorSegmentId = -1;
 
     public LiveViewCheckpointKeyDictionaryWriter(@NotNull CairoConfiguration configuration) {
         predecessorReader = new LiveViewCheckpointKeyDictionaryReader(configuration);
@@ -124,6 +141,60 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
     public void detach() {
         predecessorReader.detach();
         segmentWriter.discard();
+        openedPredecessorSegmentId = -1;
+        openedPredecessorOffset = -1;
+    }
+
+    /**
+     * Whether {@code columns} is exactly the dictionary {@code predecessorRef} froze: the
+     * same columns in the same order, each with the same entry count. A seal that interned
+     * nothing since its predecessor need not write a directory at all - see
+     * {@link #reusePredecessor}. A fresh dictionary (null predecessor) is never unchanged.
+     */
+    public boolean isUnchanged(
+            @NotNull LiveViewCheckpointPageRef predecessorRef,
+            @NotNull LiveViewCheckpointKeyDictionaryColumnSource columns
+    ) {
+        if (predecessorRef.isNull()) {
+            return false;
+        }
+        openPredecessor(predecessorRef);
+        final int columnCount = columns.getColumnCount();
+        if (predecessorReader.getColumnCount() != columnCount) {
+            return false;
+        }
+        for (int c = 0; c < columnCount; c++) {
+            if (predecessorReader.getBaseTableId(c) != columns.getBaseTableId(c)
+                    || predecessorReader.getBaseWriterColumnIndex(c) != columns.getBaseWriterColumnIndex(c)
+                    || predecessorReader.getColumnType(c) != columns.getColumnType(c)
+                    || predecessorReader.getSymbolCount(c) != columns.getEntryCount(c)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Names the predecessor's own directory page as this root's dictionary, for a seal
+     * {@link #isUnchanged} found nothing to write. The referenced segments are the page's
+     * whole closure - every chunk's segment and the directory page's own - so the root
+     * that adopts them keeps them retained exactly as it would a directory it wrote.
+     */
+    public void reusePredecessor(
+            @NotNull LiveViewCheckpointPageRef predecessorRef,
+            @NotNull LiveViewCheckpointPageRef out
+    ) {
+        openPredecessor(predecessorRef);
+        referencedSegmentIds.clear();
+        for (int c = 0, n = predecessorReader.getColumnCount(); c < n; c++) {
+            for (int k = 0, m = predecessorReader.getChunkCount(c); k < m; k++) {
+                referencedSegmentIds.add(predecessorReader.getChunkRef(c, k).getSegmentId());
+            }
+        }
+        referencedSegmentIds.add(predecessorRef.getSegmentId());
+        sortAndDedupe(referencedSegmentIds);
+        out.of(predecessorRef.getSegmentId(), predecessorRef.getOffset(), predecessorRef.getLength());
+        lastSegmentBytes = 0;
     }
 
     /**
@@ -145,6 +216,10 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
 
     public void of(@Transient @NotNull Path checkpointsDir) {
         this.checkpointsDir.of(checkpointsDir);
+        // A page reference names a file only together with the directory it lives in, and
+        // this writer serves every view a worker seals: forget what was open for the last one.
+        openedPredecessorSegmentId = -1;
+        openedPredecessorOffset = -1;
     }
 
     /**
@@ -178,7 +253,7 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
     ) {
         final boolean hasPredecessor = !predecessorRef.isNull();
         if (hasPredecessor) {
-            predecessorReader.of(checkpointsDir, predecessorRef);
+            openPredecessor(predecessorRef);
         }
         referencedSegmentIds.clear();
         final int columnCount = columns.getColumnCount();
@@ -249,6 +324,18 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
         sortAndDedupe(referencedSegmentIds);
     }
 
+    private void openPredecessor(LiveViewCheckpointPageRef predecessorRef) {
+        if (openedPredecessorSegmentId == predecessorRef.getSegmentId()
+                && openedPredecessorOffset == predecessorRef.getOffset()) {
+            return;
+        }
+        openedPredecessorSegmentId = -1;
+        openedPredecessorOffset = -1;
+        predecessorReader.of(checkpointsDir, predecessorRef);
+        openedPredecessorSegmentId = predecessorRef.getSegmentId();
+        openedPredecessorOffset = predecessorRef.getOffset();
+    }
+
     private int predecessorSymbolCount(boolean hasPredecessor, LiveViewCheckpointKeyDictionaryColumnSource columns, int columnIndex) {
         if (!hasPredecessor) {
             return 0;
@@ -281,7 +368,7 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
      * payload at most unless the chunk's first entry already exceeds the budget on its own.
      * Never {@code fromInclusive}, so a caller's loop always advances.
      */
-    private static int chunkEnd(
+    private int chunkEnd(
             LiveViewCheckpointKeyDictionaryColumnSource columns,
             int columnIndex,
             int fromInclusive,
@@ -290,17 +377,21 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
         final int limit = (int) Math.min(toExclusive, (long) fromInclusive + MAX_CHUNK_ENTRY_COUNT);
         long bytes = LiveViewCheckpointKeyDictionaryReader.CHUNK_HEADER_SIZE;
         int id = fromInclusive;
+        entryUtf8Lengths.clear();
         while (id < limit) {
-            // Measures rather than encodes: the entry is encoded once, by writeChunk, and a
-            // value the source hands out is a reusable view a later call invalidates anyway.
-            final long entryBytes = Integer.BYTES
-                    + LiveViewCheckpointMetadata.utf8Bytes(columns.getEntryValue(columnIndex, id));
+            // Measures rather than encodes: the entry is encoded once, by writeChunk, which
+            // reads the length measured here back off entryUtf8Lengths rather than walking
+            // the value a second time.
+            final int utf8Length = LiveViewCheckpointMetadata.utf8Bytes(columns.getEntryValue(columnIndex, id));
+            final long entryBytes = Integer.BYTES + utf8Length;
             if (id > fromInclusive && bytes + entryBytes > MAX_CHUNK_PAYLOAD_BYTES) {
                 break;
             }
+            entryUtf8Lengths.add(utf8Length);
             bytes += entryBytes;
             id++;
         }
+        lastChunkPayloadBytes = bytes;
         return id;
     }
 
@@ -324,13 +415,15 @@ public class LiveViewCheckpointKeyDictionaryWriter implements Closeable {
             LiveViewCheckpointMetaSegmentWriter writer,
             LiveViewCheckpointPageRef out
     ) {
-        final MemoryA mem = writer.beginPage(LiveViewCheckpointKeyDictionaryReader.CHUNK_PAGE_KIND);
+        final MemoryA mem = writer.beginPage(LiveViewCheckpointKeyDictionaryReader.CHUNK_PAGE_KIND, lastChunkPayloadBytes);
         mem.putInt(LiveViewCheckpointKeyDictionaryReader.CHUNK_FORMAT_VERSION);
         mem.putInt(toExclusive - fromInclusive);
         for (int id = fromInclusive; id < toExclusive; id++) {
-            final byte[] value = LiveViewCheckpointMetadata.encodeUtf8(columns.getEntryValue(columnIndex, id));
-            mem.putInt(value.length);
-            LiveViewCheckpointMetadata.putBytes(mem, value);
+            // Encoded straight into the page: no byte array per entry, and the length
+            // chunkEnd measured for the split decision is the prefix written here.
+            final int utf8Length = entryUtf8Lengths.getQuick(id - fromInclusive);
+            mem.putInt(utf8Length);
+            LiveViewCheckpointMetadata.putUtf8(mem, columns.getEntryValue(columnIndex, id), utf8Length);
         }
         writer.endPage(out);
     }

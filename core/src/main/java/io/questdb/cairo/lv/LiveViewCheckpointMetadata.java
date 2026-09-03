@@ -27,10 +27,12 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
-import io.questdb.std.LongGroupSort;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
 
@@ -122,25 +124,40 @@ final class LiveViewCheckpointMetadata {
      * this resolves arbitrarily costs nothing but locality.
      * <p>
      * Two arms, picked by whether a key fits a long. A key that does is packed into one
-     * whole, most significant byte first and with its sign bit flipped so that the signed
-     * order the sort compares by is the unsigned byte order the tree is laid out in; the
-     * ordinals ride along as the group's second long. That is the arm a translated SYMBOL
-     * key takes, and it is also the only key narrow enough for the hash-slot-ordered map
-     * that makes the sort worth doing. A wider key falls back to heapsorting the ordinals
+     * as an unsigned big-endian number with its sign bit flipped, so the signed order the
+     * native radix sort compares by is the unsigned byte order the tree is laid out in,
+     * and {@link Vect#radixSortLongIndexAscChecked} orders the pairs with the ordinal riding
+     * along as each pair's index. That is the arm a translated SYMBOL key takes, and it is
+     * also the only key narrow enough for the hash-slot-ordered map that makes the sort
+     * worth doing; the sort sizes its passes by the key range, so a batch of sequential
+     * ids costs two or three linear passes rather than a comparison sort. A wider key falls back to heapsorting the ordinals
      * against the keys themselves - allocating nothing beyond the ordinal list, for the
      * reason {@link LiveViewCheckpointMutationArena}'s own sort does - and skips even that
      * when one linear scan says the keys already arrive in the tree's order, which an
      * {@code OrderedMap} walking its cursor in insertion order often does.
      */
-    static void sortKeyOrdinals(ObjList<byte[]> keys, LongList pairScratch, IntList ordinalsOut) {
+    static void sortKeyOrdinals(ObjList<byte[]> keys, DirectLongList pairScratch, IntList ordinalsOut) {
         final int size = keys.size();
         ordinalsOut.clear();
-        if (packKeysIntoPairs(keys, pairScratch)) {
-            LongGroupSort.quickSort(2, pairScratch, 0, size);
+        if (size > 0 && packKeysIntoPairs(keys, pairScratch)) {
+            long min = Long.MAX_VALUE;
+            long max = Long.MIN_VALUE;
             for (int i = 0; i < size; i++) {
-                ordinalsOut.add((int) pairScratch.getQuick(2 * i + 1));
+                final long packed = pairScratch.get(2L * i);
+                min = Math.min(min, packed);
+                max = Math.max(max, packed);
             }
-            return;
+            // The native sort sizes its passes by max - min and refuses a range that does
+            // not fit a signed long; only an 8-byte key with both sign-bit values can
+            // produce one, and that shape takes the comparison arm below instead.
+            if (!(min < 0 && max > Long.MAX_VALUE + min)) {
+                final long address = pairScratch.getAddress();
+                Vect.radixSortLongIndexAscChecked(address, size, address + 2L * size * Long.BYTES, min, max);
+                for (int i = 0; i < size; i++) {
+                    ordinalsOut.add((int) pairScratch.get(2L * i + 1));
+                }
+                return;
+            }
         }
         for (int i = 0; i < size; i++) {
             ordinalsOut.add(i);
@@ -191,6 +208,44 @@ final class LiveViewCheckpointMetadata {
         final byte[] bytes = new byte[utf8Bytes(value)];
         putUtf8(bytes, 0, value);
         return bytes;
+    }
+
+    /**
+     * Appends {@code value} to {@code mem} as UTF-8, exactly as {@link #putUtf8(byte[], int,
+     * CharSequence)} encodes it, without an intermediate array. {@code utf8Length} is the
+     * value's measured UTF-8 length: when it equals the char count the value is ASCII and
+     * the copy is a narrowing pass straight into the sink's append address.
+     */
+    static void putUtf8(MemoryA mem, CharSequence value, int utf8Length) {
+        final int n = value.length();
+        if (utf8Length == n && mem instanceof MemoryARW arw) {
+            Utf8s.strCpyAscii(value, n, arw.appendAddressFor(n));
+            return;
+        }
+        for (int i = 0; i < n; i++) {
+            final char ch = value.charAt(i);
+            if (ch < 0x80) {
+                mem.putByte((byte) ch);
+            } else if (ch < 0x800) {
+                mem.putByte((byte) (0xc0 | ch >> 6));
+                mem.putByte((byte) (0x80 | ch & 0x3f));
+            } else if (Character.isHighSurrogate(ch)
+                    && i + 1 < n
+                    && Character.isLowSurrogate(value.charAt(i + 1))) {
+                final int codePoint = Character.toCodePoint(ch, value.charAt(++i));
+                mem.putByte((byte) (0xf0 | codePoint >> 18));
+                mem.putByte((byte) (0x80 | codePoint >> 12 & 0x3f));
+                mem.putByte((byte) (0x80 | codePoint >> 6 & 0x3f));
+                mem.putByte((byte) (0x80 | codePoint & 0x3f));
+            } else if (Character.isSurrogate(ch)) {
+                // Matches StandardCharsets.UTF_8's replacement for malformed UTF-16.
+                mem.putByte((byte) '?');
+            } else {
+                mem.putByte((byte) (0xe0 | ch >> 12));
+                mem.putByte((byte) (0x80 | ch >> 6 & 0x3f));
+                mem.putByte((byte) (0x80 | ch & 0x3f));
+            }
+        }
     }
 
     static int putBytes(byte[] sink, int offset, byte[] bytes) {
@@ -338,16 +393,33 @@ final class LiveViewCheckpointMetadata {
      * @return false as soon as a key is found that does not fit a long, leaving
      * {@code pairScratch} half-filled for the next caller to clear
      */
-    private static boolean packKeysIntoPairs(ObjList<byte[]> keys, LongList pairScratch) {
-        pairScratch.clear();
-        for (int i = 0, n = keys.size(); i < n; i++) {
-            final byte[] key = keys.getQuick(i);
-            if (key.length > Long.BYTES) {
+    /**
+     * Packs every key into {@code pairScratch} as {@code (sortValue, ordinal)} pairs, the
+     * key right-aligned as an unsigned big-endian number with its sign bit flipped, and
+     * reserves the copy region the native sort needs behind them. Returns false when a
+     * key is wider than a long or the keys differ in length - one key schema never mixes
+     * widths, but the byte order of mixed widths is a prefix order this packing cannot
+     * reproduce.
+     */
+    private static boolean packKeysIntoPairs(ObjList<byte[]> keys, DirectLongList pairScratch) {
+        final int n = keys.size();
+        final int width = keys.getQuick(0).length;
+        if (width > Long.BYTES) {
+            return false;
+        }
+        for (int i = 0; i < n; i++) {
+            if (keys.getQuick(i).length != width) {
                 return false;
             }
+        }
+        // Two longs per pair, and as many again for the sort's copy region.
+        pairScratch.setCapacity(4L * n);
+        pairScratch.clear();
+        for (int i = 0; i < n; i++) {
+            final byte[] key = keys.getQuick(i);
             long packed = 0;
-            for (int b = 0; b < key.length; b++) {
-                packed |= (key[b] & 0xffL) << (Long.SIZE - Byte.SIZE - (b << 3));
+            for (int b = 0; b < width; b++) {
+                packed |= (key[b] & 0xffL) << ((width - 1 - b) << 3);
             }
             pairScratch.add(packed ^ Long.MIN_VALUE);
             pairScratch.add(i);

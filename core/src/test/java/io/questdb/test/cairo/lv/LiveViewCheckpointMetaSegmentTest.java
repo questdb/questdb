@@ -405,4 +405,61 @@ public class LiveViewCheckpointMetaSegmentTest extends AbstractCairoTest {
         }
         return ref;
     }
+
+
+    @Test
+    public void testLargePageWithSizeHintAndGeometricGrowth() throws Exception {
+        assertMemoryLeak(() -> {
+            // One page far past the initial mapping, announced ahead through the hint, then
+            // enough small pages to grow the mapping several more times, then a page bigger
+            // than the hint said.
+            final int bigPayload = 3 * 1024 * 1024;
+            final int smallPages = 20_000;
+            final LiveViewCheckpointPageRef bigRef = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef lastRef = new LiveViewCheckpointPageRef();
+            final LiveViewCheckpointPageRef ref = new LiveViewCheckpointPageRef();
+            final long committed;
+            try (LiveViewCheckpointMetaSegmentWriter writer = new LiveViewCheckpointMetaSegmentWriter(configuration)) {
+                try (Path dir = new Path()) {
+                    writer.of(checkpointsDir(dir), 7);
+                }
+                MemoryA payload = writer.beginPage(1, bigPayload);
+                for (int i = 0; i < bigPayload; i++) {
+                    payload.putByte((byte) i);
+                }
+                writer.endPage(bigRef);
+                for (int i = 0; i < smallPages; i++) {
+                    payload = writer.beginPage(2);
+                    for (int b = 0; b < 100; b++) {
+                        payload.putLong(i);
+                    }
+                    writer.endPage(ref);
+                }
+                payload = writer.beginPage(3, 16);
+                for (int i = 0; i < 1024 * 1024; i++) {
+                    payload.putByte((byte) 7);
+                }
+                writer.endPage(lastRef);
+                committed = writer.commit();
+            }
+            try (Path dir = new Path(); Path segment = new Path()) {
+                LiveViewCheckpointLayout.metaSegmentPath(segment, checkpointsDir(dir), 7);
+                Assert.assertEquals(committed, configuration.getFilesFacade().length(segment.$()));
+            }
+            try (LiveViewCheckpointMetaSegmentReader reader = new LiveViewCheckpointMetaSegmentReader(configuration)) {
+                try (Path dir = new Path()) {
+                    reader.of(checkpointsDir(dir), 7);
+                }
+                Assert.assertEquals(smallPages + 2, reader.getPageCount());
+                reader.openPage(bigRef);
+                Assert.assertEquals(bigPayload, reader.getPagePayloadLength());
+                for (int i = 0; i < bigPayload; i += 4099) {
+                    Assert.assertEquals((byte) i, reader.getByte(i));
+                }
+                reader.openPage(lastRef);
+                Assert.assertEquals(1024 * 1024, reader.getPagePayloadLength());
+                Assert.assertEquals((byte) 7, reader.getByte(1024 * 1024 - 1));
+            }
+        });
+    }
 }

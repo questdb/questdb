@@ -967,4 +967,58 @@ public class LiveViewCheckpointKeyDictionaryTest extends AbstractCairoTest {
             return values.getQuick(columnIndex).getQuick(lvId);
         }
     }
+
+
+    @Test
+    public void testUnchangedDictionaryReusesPredecessorDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            final TestColumnSource columns = new TestColumnSource();
+            columns.addColumn(BASE_TABLE_ID, WRITER_COLUMN_0, "sym", ColumnType.SYMBOL, "a", "b");
+            final LiveViewCheckpointPageRef ref1 = new LiveViewCheckpointPageRef();
+            try (LiveViewCheckpointKeyDictionaryWriter writer = new LiveViewCheckpointKeyDictionaryWriter(configuration);
+                 Path dir = new Path()) {
+                writer.of(checkpointsDir(dir));
+                // A fresh dictionary is never unchanged.
+                Assert.assertFalse(writer.isUnchanged(new LiveViewCheckpointPageRef(), columns));
+                writer.write(new LiveViewCheckpointPageRef(), columns, 10, ref1);
+
+                // Nothing interned since: the seal names the predecessor's own page and its
+                // closure, and writes no segment.
+                Assert.assertTrue(writer.isUnchanged(ref1, columns));
+                final LiveViewCheckpointPageRef reused = new LiveViewCheckpointPageRef();
+                writer.reusePredecessor(ref1, reused);
+                assertRefEquals(ref1, reused);
+                assertLongList(writer.getReferencedSegmentIds(), 10);
+                Assert.assertEquals(0, writer.getLastSegmentBytes());
+
+                // A grown column, a second column, or a different identity is a change.
+                columns.addEntry(0, "c");
+                Assert.assertFalse(writer.isUnchanged(ref1, columns));
+                final LiveViewCheckpointPageRef ref2 = new LiveViewCheckpointPageRef();
+                writer.write(ref1, columns, 11, ref2);
+                assertLongList(writer.getReferencedSegmentIds(), 10, 11);
+                Assert.assertTrue(writer.isUnchanged(ref2, columns));
+
+                final TestColumnSource wider = new TestColumnSource();
+                wider.addColumn(BASE_TABLE_ID, WRITER_COLUMN_0, "sym", ColumnType.SYMBOL, "a", "b", "c");
+                wider.addColumn(BASE_TABLE_ID, WRITER_COLUMN_1, "other", ColumnType.SYMBOL, "x");
+                Assert.assertFalse(writer.isUnchanged(ref2, wider));
+                final TestColumnSource moved = new TestColumnSource();
+                moved.addColumn(BASE_TABLE_ID, WRITER_COLUMN_1, "sym", ColumnType.SYMBOL, "a", "b", "c");
+                Assert.assertFalse(writer.isUnchanged(ref2, moved));
+            }
+
+            // A restore through the reused reference sees exactly the predecessor's ids, and
+            // a grown successor path-copies the chunk the reused page named.
+            try (LiveViewCheckpointKeyDictionaryReader reader = new LiveViewCheckpointKeyDictionaryReader(configuration);
+                 DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT);
+                 Path dir = new Path()) {
+                reader.of(checkpointsDir(dir), ref1);
+                reader.restoreInto(0, map);
+                Assert.assertEquals(2, map.size());
+                Assert.assertEquals(0, map.keyOf("a"));
+                Assert.assertEquals(1, map.keyOf("b"));
+            }
+        });
+    }
 }

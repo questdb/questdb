@@ -79,9 +79,17 @@ import static io.questdb.cairo.lv.LiveViewCheckpointLayout.SEG_PAGE_COUNT_OFFSET
  */
 public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
 
+    /**
+     * The mapping's initial size and its rounding step. Growth itself is geometric: the
+     * mapping doubles whenever a page begins that would not fit, or a page ends with less
+     * than a quarter of the mapping left, so a 12 MB seal costs six fallocate-and-remap
+     * steps rather than the two hundred a fixed 64 KiB step cost, and a segment that stays
+     * small never grows at all. Commit truncates the file to what was written, so an
+     * over-reservation costs nothing durable.
+     */
+    private static final long MAPPING_STEP = 256L * 1024;
     private final Path checkpointsDirCopy = new Path();
     private final int commitMode;
-    private final long extendSize;
     private final FilesFacade ff;
     private final Path finalPath = new Path();
     private final MemoryMARW mem;
@@ -95,9 +103,6 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
     public LiveViewCheckpointMetaSegmentWriter(@NotNull CairoConfiguration configuration) {
         this.commitMode = configuration.getCommitMode();
         this.ff = configuration.getFilesFacade();
-        // 64 KiB is ample for a segment of small tree/root pages; the mapping
-        // grows on demand if a single segment packs more.
-        this.extendSize = 64 * 1024;
         this.mem = Vm.getCMARWInstance();
     }
 
@@ -107,6 +112,15 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
      * {@link #endPage(LiveViewCheckpointPageRef)}.
      */
     public MemoryA beginPage(int pageKind) {
+        return beginPage(pageKind, 0);
+    }
+
+    /**
+     * As {@link #beginPage(int)}, with the payload size the caller expects to write, so
+     * the mapping grows once ahead of a page larger than the headroom rather than in
+     * steps beneath it. The hint is advisory: a page may write more or less.
+     */
+    public MemoryA beginPage(int pageKind, long payloadSizeHint) {
         ensureOpen();
         if (pageHeaderOffset != -1) {
             throw CairoException.critical(0)
@@ -114,6 +128,9 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
         }
         pageHeaderOffset = mem.getAppendOffset();
         pendingPageKind = pageKind;
+        if (payloadSizeHint > 0) {
+            reserve(pageHeaderOffset + PAGE_HEADER_SIZE + payloadSizeHint);
+        }
         // Reserve the header; the caller appends the payload after it, and
         // endPage() patches length, kind, and CRC back into these bytes.
         mem.jumpTo(pageHeaderOffset + PAGE_HEADER_SIZE);
@@ -245,6 +262,12 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
         out.of(segmentId, pageHeaderOffset, (int) (PAGE_HEADER_SIZE + payloadLength));
         pageCount++;
         pageHeaderOffset = -1;
+        // Keep a quarter of the mapping free ahead of the next page, doubling when it
+        // runs low, so ordinary pages never grow the mapping from inside an append.
+        final long size = mem.size();
+        if (size - payloadEnd < (size >> 2)) {
+            mem.extend(size << 1);
+        }
     }
 
     /**
@@ -255,6 +278,17 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
     public long getSegmentId() {
         ensureOpen();
         return segmentId;
+    }
+
+    /**
+     * Grows the mapping to hold {@code needed} bytes, doubling rather than stepping so
+     * the number of fallocate-and-remap calls stays logarithmic in the segment size.
+     */
+    private void reserve(long needed) {
+        final long size = mem.size();
+        if (needed > size) {
+            mem.extend(Math.max(needed, size << 1));
+        }
     }
 
     public int getPageCount() {
@@ -283,7 +317,7 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
         mem.of(
                 ff,
                 tmpPath.$(),
-                extendSize,
+                MAPPING_STEP,
                 -1,
                 MemoryTag.MMAP_DEFAULT,
                 CairoConfiguration.O_NONE,

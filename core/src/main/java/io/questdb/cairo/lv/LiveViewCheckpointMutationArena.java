@@ -61,6 +61,8 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     private static final long PAGE_SIZE = 4096;
     private final MemoryCARWImpl bytes = new MemoryCARWImpl(PAGE_SIZE, MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
     private final DirectLongList descriptors = new DirectLongList(INITIAL_LONG_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
+    // The merge's output, for input that arrives as two sorted runs; see sortAndValidate.
+    private final DirectLongList mergeScratch = new DirectLongList(INITIAL_LONG_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
     private final DirectLongList ordinals = new DirectLongList(INITIAL_LONG_CAPACITY, MemoryTag.NATIVE_DEFAULT, true);
     private final LiveViewCheckpointStatePageRef otherStateRefFlyweight = new LiveViewCheckpointStatePageRef();
     private final LiveViewCheckpointStatePageRef stateRefFlyweight = new LiveViewCheckpointStatePageRef();
@@ -75,6 +77,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     public LiveViewCheckpointMutationArena(@Nullable MemoryTracker memoryTracker) {
         bytes.setMemoryTracker(memoryTracker);
         descriptors.setMemoryTracker(memoryTracker);
+        mergeScratch.setMemoryTracker(memoryTracker);
         ordinals.setMemoryTracker(memoryTracker);
     }
 
@@ -88,6 +91,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         release();
         bytes.setMemoryTracker(memoryTracker);
         descriptors.setMemoryTracker(memoryTracker);
+        mergeScratch.setMemoryTracker(memoryTracker);
         ordinals.setMemoryTracker(memoryTracker);
     }
 
@@ -96,6 +100,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
             bytes.jumpTo(0);
         }
         descriptors.clear();
+        mergeScratch.clear();
         ordinals.clear();
         size = 0;
         sortedSize = 0;
@@ -105,6 +110,7 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     public void close() {
         Misc.free(bytes);
         Misc.free(descriptors);
+        Misc.free(mergeScratch);
         Misc.free(ordinals);
         size = 0;
         sortedSize = 0;
@@ -120,6 +126,8 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         bytes.setMemoryTracker(null);
         descriptors.close();
         descriptors.setMemoryTracker(null);
+        mergeScratch.close();
+        mergeScratch.setMemoryTracker(null);
         ordinals.close();
         ordinals.setMemoryTracker(null);
         size = 0;
@@ -429,24 +437,85 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         for (int i = 0; i < size; i++) {
             ordinals.add(i);
         }
-        for (int start = size >>> 1; start-- > 0; ) {
-            siftDown(start, size);
-        }
-        for (int end = size; --end > 0; ) {
-            swapOrdinals(0, end);
-            siftDown(0, end);
-        }
+        // Mutations that arrive in key order need no sort, and every freeze walk hands
+        // them over that way - it walks the predecessor tree's own order - so one linear
+        // scan replaces the heapsort in the common case. A seal that also removes keys
+        // hands over two such runs, the removals ahead of the puts, and those merge in one
+        // pass. The scan doubles as the duplicate check the sorted order owes within a
+        // run; the merge makes it across the two, and anything else falls through to the
+        // heapsort, which validates after sorting.
+        int descent = -1;
+        boolean isTwoRunsAtMost = true;
         for (int i = 1; i < size; i++) {
-            if (compareKey(getSortedMutationIndex(i - 1), getSortedMutationIndex(i)) == 0) {
-                throw CairoException.critical(0)
-                        .put("duplicate live view checkpoint partition mutation key [left=")
-                        .put(getSortedMutationIndex(i - 1))
-                        .put(", right=").put(getSortedMutationIndex(i))
-                        .put(", count=").put(size).put(']');
+            final int cmp = compareKey(i - 1, i);
+            if (cmp == 0) {
+                throw duplicateKey(i - 1, i);
+            }
+            if (cmp > 0) {
+                if (descent >= 0) {
+                    isTwoRunsAtMost = false;
+                    break;
+                }
+                descent = i;
+            }
+        }
+        if (descent >= 0 && isTwoRunsAtMost) {
+            mergeRuns(descent);
+        } else if (descent >= 0) {
+            for (int start = size >>> 1; start-- > 0; ) {
+                siftDown(start, size);
+            }
+            for (int end = size; --end > 0; ) {
+                swapOrdinals(0, end);
+                siftDown(0, end);
+            }
+            for (int i = 1; i < size; i++) {
+                if (compareKey(getSortedMutationIndex(i - 1), getSortedMutationIndex(i)) == 0) {
+                    throw duplicateKey(getSortedMutationIndex(i - 1), getSortedMutationIndex(i));
+                }
             }
         }
         sortedSize = size;
         return size;
+    }
+
+    /**
+     * Merges the sorted runs {@code [0, split)} and {@code [split, size)} of mutation
+     * indexes into {@link #ordinals}, refusing a key both runs hold.
+     */
+    private void mergeRuns(int split) {
+        mergeScratch.clear();
+        mergeScratch.ensureCapacity(size);
+        int i = 0;
+        int j = split;
+        while (i < split && j < size) {
+            final int cmp = compareKey(i, j);
+            if (cmp == 0) {
+                throw duplicateKey(i, j);
+            }
+            if (cmp < 0) {
+                mergeScratch.add(i++);
+            } else {
+                mergeScratch.add(j++);
+            }
+        }
+        while (i < split) {
+            mergeScratch.add(i++);
+        }
+        while (j < size) {
+            mergeScratch.add(j++);
+        }
+        for (int k = 0; k < size; k++) {
+            ordinals.set(k, mergeScratch.get(k));
+        }
+    }
+
+    private CairoException duplicateKey(int leftMutationIndex, int rightMutationIndex) {
+        return CairoException.critical(0)
+                .put("duplicate live view checkpoint partition mutation key [left=")
+                .put(leftMutationIndex)
+                .put(", right=").put(rightMutationIndex)
+                .put(", count=").put(size).put(']');
     }
 
     private void append(

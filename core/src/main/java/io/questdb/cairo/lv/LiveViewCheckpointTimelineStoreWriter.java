@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BoolList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongList;
@@ -129,6 +130,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      */
     private static final int SCRATCH_MAX_PAGES = 524_288;
     private static final long SCRATCH_PAGE_SIZE = 4096;
+    private static final int SCRATCH_PAIR_LONGS = 4 * 64;
     // A fail-closed physical scan remains as a safety net, but at one pass per
     // 1024 GC sweeps it stays below the benchmark's P99 population.
     private static final int ORPHAN_SAFETY_SCAN_INTERVAL = 1024;
@@ -2831,6 +2833,15 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 activeScratch.keyLookupOrder
         );
         frozen.isUnchanged.setAll(keyCount, false);
+        frozen.keyOrder.clear();
+        for (int o = 0; o < keyCount; o++) {
+            frozen.keyOrder.add(activeScratch.keyLookupOrder.getQuick(o));
+        }
+        LiveViewCheckpointMetadata.sortKeyOrdinals(
+                frozen.removedKeys,
+                activeScratch.keyLookupPairs,
+                frozen.removedKeyOrder
+        );
         for (int o = 0; o < keyCount; o++) {
             final int i = activeScratch.keyLookupOrder.getQuick(o);
             final byte[] key = frozen.keys.getQuick(i);
@@ -3076,7 +3087,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         // walk of a boundary: they run one after another, and each fills them before it
         // reads them.
         private final IntList keyLookupOrder = new IntList();
-        private final LongList keyLookupPairs = new LongList();
+        private final DirectLongList keyLookupPairs =
+                new DirectLongList(SCRATCH_PAIR_LONGS, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
         private final MemoryCARWImpl stateBuffer =
                 new MemoryCARWImpl(SCRATCH_PAGE_SIZE, SCRATCH_MAX_PAGES, MemoryTag.NATIVE_DEFAULT);
         private int frozenAnchorPoolCursor;
@@ -3093,8 +3105,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             release();
             Misc.free(keyBuffer);
             Misc.free(stateBuffer);
+            Misc.free(keyLookupPairs);
             keyLookupOrder.clear();
-            keyLookupPairs.clear();
             completeMemberImages.clear();
             completeMembers.clear();
             completeMemberProjections.clear();
@@ -3120,6 +3132,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             frozenWindowStatePoolCursor = 0;
             this.memoryTracker = memoryTracker;
             keyBuffer.setMemoryTracker(memoryTracker);
+            keyLookupPairs.setMemoryTracker(memoryTracker);
             stateBuffer.setMemoryTracker(memoryTracker);
         }
 
@@ -3129,7 +3142,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             keyBuffer.clear();
             keyBuffer.setMemoryTracker(null);
             keyLookupOrder.clear();
-            keyLookupPairs.clear();
+            // Native, tracker-bound: freed on release like the arena's own lists, so one
+            // view's key set is not charged to the next view's tracker.
+            keyLookupPairs.close();
+            keyLookupPairs.setMemoryTracker(null);
             stateBuffer.clear();
             stateBuffer.setMemoryTracker(null);
             releaseGroupedFreezeScratch(incrementalMemberImages);
@@ -3200,8 +3216,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private static final class FrozenWindowState {
         private final LongList anchorValues = new LongList();
         private final BoolList isUnchanged = new BoolList();
+        // The ordinals of keys in the tree's byte order, as the freeze's predecessor walk
+        // computed them. The put loop issues its puts in this order so the mutation arena
+        // receives them already sorted and skips its own sort.
+        private final IntList keyOrder = new IntList();
         private final ObjList<byte[]> keys = new ObjList<>();
         private final ObjList<byte[]> payloads = new ObjList<>();
+        // The same order over removedKeys, which the freeze names in the dirty map's
+        // cursor order: issued sorted ahead of the puts, the two are the two runs the
+        // arena merges rather than the many it would have to heapsort.
+        private final IntList removedKeyOrder = new IntList();
         private final ObjList<byte[]> removedKeys = new ObjList<>();
         private int anchorValueType;
         private boolean isIncremental;
@@ -3231,8 +3255,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             this.totalInlineStateBytes = totalInlineStateBytes;
             anchorValues.clear();
             isUnchanged.clear();
+            keyOrder.clear();
             keys.clear();
             payloads.clear();
+            removedKeyOrder.clear();
             removedKeys.clear();
             isIncremental = false;
             logicalStateBytes = 0;
@@ -5994,12 +6020,18 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         final LiveViewCheckpointKeyDictionaryColumnSource columnSource =
                                 partitionKeyRegistry.newDictionaryColumnSource();
                         if (columnSource.getColumnCount() > 0) {
-                            dictionaryWriter.writeIntoOpenSegment(
-                                    state.oldKeyDictionaryRef,
-                                    columnSource,
-                                    aggregateRootWriter,
-                                    dictionaryRefOut
-                            );
+                            if (dictionaryWriter.isUnchanged(state.oldKeyDictionaryRef, columnSource)) {
+                                // Nothing interned since the predecessor: this root names the
+                                // predecessor's directory page and retains its closure.
+                                dictionaryWriter.reusePredecessor(state.oldKeyDictionaryRef, dictionaryRefOut);
+                            } else {
+                                dictionaryWriter.writeIntoOpenSegment(
+                                        state.oldKeyDictionaryRef,
+                                        columnSource,
+                                        aggregateRootWriter,
+                                        dictionaryRefOut
+                                );
+                            }
                             checkpointRootBuilder.setKeyDictionaryRef(dictionaryRefOut, dictionaryWriter.getReferencedSegmentIds());
                         }
                     }
@@ -6042,10 +6074,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                         !windowState.isIncremental,
                         outputKeys
                 );
-                for (int i = 0, n = windowState.removedKeys.size(); i < n; i++) {
-                    windowRootBuilder.removePartition(windowState.removedKeys.getQuick(i));
+                for (int o = 0, n = windowState.removedKeys.size(); o < n; o++) {
+                    windowRootBuilder.removePartition(windowState.removedKeys.getQuick(windowState.removedKeyOrder.getQuick(o)));
                 }
-                for (int i = 0, n = windowState.keys.size(); i < n; i++) {
+                for (int o = 0, n = windowState.keys.size(); o < n; o++) {
+                    // Puts go in the tree's order, which the freeze already computed, so
+                    // the arena's sorted-input fast path takes them as they are.
+                    final int i = windowState.keyOrder.getQuick(o);
                     final byte[] payload = windowState.payloads.getQuick(i);
                     if (payload == null) {
                         continue;
@@ -6175,10 +6210,13 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 // Removals first, mirroring the anchor and function paths below. A
                 // complete snapshot carries none - it removes by omission in build() - so
                 // the two rules never name one key twice.
-                for (int i = 0, n = windowState.removedKeys.size(); i < n; i++) {
-                    windowRootBuilder.removePartition(windowState.removedKeys.getQuick(i));
+                for (int o = 0, n = windowState.removedKeys.size(); o < n; o++) {
+                    windowRootBuilder.removePartition(windowState.removedKeys.getQuick(windowState.removedKeyOrder.getQuick(o)));
                 }
-                for (int i = 0, n = windowState.keys.size(); i < n; i++) {
+                for (int o = 0, n = windowState.keys.size(); o < n; o++) {
+                    // Puts go in the tree's order, which the freeze already computed, so
+                    // the arena's sorted-input fast path takes them as they are.
+                    final int i = windowState.keyOrder.getQuick(o);
                     final byte[] payload = windowState.payloads.getQuick(i);
                     if (payload == null) {
                         // Outside the repair's key domain: the freeze imaged nothing for
@@ -6282,11 +6320,17 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (partitionKeyRegistry != null) {
                 final LiveViewCheckpointKeyDictionaryColumnSource columnSource = partitionKeyRegistry.newDictionaryColumnSource();
                 if (columnSource.getColumnCount() > 0) {
-                    nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
-                    final long dictionarySegmentId = nextSegmentId++;
-                    dictionaryWriter.write(oldKeyDictionaryRef, columnSource, dictionarySegmentId, dictionaryRefOut);
-                    metadataBytesAdded = checkedAdd(metadataBytesAdded, dictionaryWriter.getLastSegmentBytes());
-                    writtenMetaSegments.add(dictionarySegmentId, dictionaryWriter.getLastSegmentBytes());
+                    if (dictionaryWriter.isUnchanged(oldKeyDictionaryRef, columnSource)) {
+                        // Nothing interned since the predecessor: no segment is written, the
+                        // root names the predecessor's directory page and retains its closure.
+                        dictionaryWriter.reusePredecessor(oldKeyDictionaryRef, dictionaryRefOut);
+                    } else {
+                        nextSegmentId = skipPublishedSegmentIds(checkpointsDir, nextSegmentId);
+                        final long dictionarySegmentId = nextSegmentId++;
+                        dictionaryWriter.write(oldKeyDictionaryRef, columnSource, dictionarySegmentId, dictionaryRefOut);
+                        metadataBytesAdded = checkedAdd(metadataBytesAdded, dictionaryWriter.getLastSegmentBytes());
+                        writtenMetaSegments.add(dictionarySegmentId, dictionaryWriter.getLastSegmentBytes());
+                    }
                     checkpointRootBuilder.setKeyDictionaryRef(dictionaryRefOut, dictionaryWriter.getReferencedSegmentIds());
                 }
             }

@@ -232,4 +232,63 @@ public class LiveViewCheckpointMutationArenaTest {
         key[2] = (byte) (value >>> 8);
         key[3] = (byte) value;
     }
+
+
+    @Test
+    public void testTwoSortedRunsMergeWithoutHeapsort() {
+        try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+            // Removals first, then puts, each run in key order and interleaved across runs -
+            // the shape a seal after a frontier sweep hands over.
+            for (int i = 0; i < 1000; i++) {
+                arena.remove(intKey(3 * i + 1));
+            }
+            for (int i = 0; i < 1000; i++) {
+                arena.put(intKey(3 * i), NO_BYTES);
+                arena.put(intKey(3 * i + 2), NO_BYTES);
+            }
+            arena.sortAndValidateForTest();
+            for (int i = 1; i < arena.getMutationCount(); i++) {
+                Assert.assertTrue(arena.compareSortedKeysForTest(i - 1, i) < 0);
+            }
+            // Every mutation is present exactly once.
+            final boolean[] seen = new boolean[3000];
+            for (int i = 0; i < arena.getMutationCount(); i++) {
+                seen[arena.getSortedMutationIndex(i)] = true;
+            }
+            for (boolean s : seen) {
+                Assert.assertTrue(s);
+            }
+        }
+    }
+
+    @Test
+    public void testDuplicateAcrossTwoRunsRejected() {
+        try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+            arena.remove(intKey(5));
+            arena.remove(intKey(9));
+            arena.put(intKey(1), NO_BYTES);
+            arena.put(intKey(9), NO_BYTES);
+            try {
+                arena.sortAndValidateForTest();
+                Assert.fail();
+            } catch (CairoException e) {
+                Assert.assertTrue(e.getFlyweightMessage().toString().contains("duplicate"));
+            }
+        }
+    }
+
+    @Test
+    public void testThreeRunsFallBackToFullSort() {
+        try (LiveViewCheckpointMutationArena arena = new LiveViewCheckpointMutationArena()) {
+            for (int run = 0; run < 3; run++) {
+                for (int i = 0; i < 100; i++) {
+                    arena.put(intKey(3 * i + run), NO_BYTES);
+                }
+            }
+            arena.sortAndValidateForTest();
+            for (int i = 1; i < arena.getMutationCount(); i++) {
+                Assert.assertTrue(arena.compareSortedKeysForTest(i - 1, i) < 0);
+            }
+        }
+    }
 }
