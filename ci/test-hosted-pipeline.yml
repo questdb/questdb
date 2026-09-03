@@ -34,8 +34,9 @@ schedules:
     always: true
 
 variables:
-  # Supplies GIT_GITHUB_TOKEN, which the submodule-clone steps hand to gh so the
-  # clones do not go out anonymously. See templates/detect-local-client.yml.
+  # Supplies GIT_GITHUB_TOKEN, which the fetch steps feed to ci/git-auth-env.sh
+  # (as GH_TOKEN) so github.com fetches do not go out anonymously. Fork PRs
+  # never receive it and rely on the scripts' backoff retry instead.
   - group: github-public-read
   - name: QDB_LOG_W_FILE_LOCATION
     value: "$(Build.BinariesDirectory)/tests.log"
