@@ -102,11 +102,18 @@ jobs:
           fi
           # The library embeds jni.h from JAVA_HOME.
           export JAVA_HOME="${JAVA_HOME:-/usr/lib/jvm/java-25-openjdk-amd64}"
+          # CMake FetchContent clones questdb/asmjit at configure time with its own
+          # git, which inherits GIT_CONFIG_* from this shell; export the resolved
+          # credential here so that clone (and the submodule update below)
+          # authenticates instead of hitting GitHub's anonymous-clone throttle.
+          # xtrace stays off around the eval to keep the header out of the log.
+          set +x
+          eval "$(bash ci/git-auth-env.sh)"
+          set -x
           # This job checks out without submodules; the questdb library the tests link needs these.
-          # ci/submodule-update.sh authenticates the clones when it can (GH_TOKEN, or
-          # the checkout task's persisted credential) and retries with backoff when
-          # it cannot; fork PR builds never receive GIT_GITHUB_TOKEN because Azure
-          # withholds secret variables from forks.
+          # ci/submodule-update.sh retries with backoff when the fetch is anonymous;
+          # fork PR builds never receive GIT_GITHUB_TOKEN because Azure withholds
+          # secret variables from forks.
           bash ci/submodule-update.sh \
             core/src/main/c/share/zlib \
             core/src/main/c/share/fsst \
@@ -115,7 +122,26 @@ jobs:
           cd core
           # The static-library link step writes here and does not create the directory itself.
           mkdir -p target/classes/io/questdb/bin-local
-          cmake -B build/jittest -DCMAKE_BUILD_TYPE=Release -DJIT_TEST=TRUE
+          # Anonymous fallback (fork PRs): FetchContent's three instant clone retries
+          # all land inside the same throttle window, so back off and reconfigure
+          # from scratch instead. A failed configure can leave a half-populated
+          # FetchContent cache behind, hence the rm.
+          configured=""
+          for delay in 0 15 30 60 120; do
+            if [[ "$delay" -gt 0 ]]; then
+              echo "cmake configure failed; retrying in ${delay}s"
+              sleep "$delay"
+              rm -rf build/jittest
+            fi
+            if cmake -B build/jittest -DCMAKE_BUILD_TYPE=Release -DJIT_TEST=TRUE; then
+              configured=1
+              break
+            fi
+          done
+          if [[ -z "$configured" ]]; then
+            echo "cmake configure failed after all retries" >&2
+            exit 1
+          fi
           # An explicit job count: a bare --parallel passes make an unbounded -j, and this graph is
           # ~190 objects including four -O3 SIMD variants and the simdjson amalgamation.
           cmake --build build/jittest --target jittests --parallel "$(nproc)"
