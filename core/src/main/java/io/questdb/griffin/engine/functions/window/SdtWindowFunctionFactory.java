@@ -176,7 +176,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private long readOffset;   // pass2 read cursor (bytes)
 
         SdtOverWholeResultSetFunction(Function tsArg, Function valueArg, Function compdevArg, double compdev,
-                                       boolean ignoreNulls, MemoryARW mem) {
+                                      boolean ignoreNulls, MemoryARW mem) {
             super(valueArg); // BaseWindowFunction stores the "value" arg as `arg`
             this.tsArg = tsArg;
             this.compdevArg = compdevArg;
@@ -371,8 +371,8 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private long readOffset;   // pass2 read cursor (bytes), monotonic across ALL partitions
 
         SdtOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink,
-                                  Function tsArg, Function valueArg, Function compdevArg, double compdev,
-                                  boolean ignoreNulls, MemoryARW mem) {
+                                 Function tsArg, Function valueArg, Function compdevArg, double compdev,
+                                 boolean ignoreNulls, MemoryARW mem) {
             super(map, partitionByRecord, partitionBySink, valueArg);
             this.tsArg = tsArg;
             this.compdevArg = compdevArg;

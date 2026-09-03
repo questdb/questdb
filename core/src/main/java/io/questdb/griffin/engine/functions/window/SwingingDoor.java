@@ -160,7 +160,7 @@ public class SwingingDoor {
     }
 
     public void load(long flags, long anchorIndex, long anchorTs, double anchorValue,
-                      double slopeHi, double slopeLo, long pendingIndex, long pendingTs, double pendingValue) {
+                     double slopeHi, double slopeLo, long pendingIndex, long pendingTs, double pendingValue) {
         this.hasAnchor = (flags & 1) != 0;
         this.hasInterval = (flags & 2) != 0;
         this.hasPending = (flags & 4) != 0;

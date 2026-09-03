@@ -167,9 +167,8 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
             case 'm' -> safeMultiplyMicros(n, Micros.MINUTE_MICROS, gapPosition);
             case 'h' -> safeMultiplyMicros(n, Micros.HOUR_MICROS, gapPosition);
             case 'd' -> safeMultiplyMicros(n, Micros.DAY_MICROS, gapPosition);
-            default ->
-                    throw SqlException.$(gapPosition + k, "unsupported interval unit: ").put(interval.charAt(k))
-                            .put(". Supported: s, m, h, d");
+            default -> throw SqlException.$(gapPosition + k, "unsupported interval unit: ").put(interval.charAt(k))
+                    .put(". Supported: s, m, h, d");
         };
     }
 

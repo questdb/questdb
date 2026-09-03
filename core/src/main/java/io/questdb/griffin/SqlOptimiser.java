@@ -4915,7 +4915,7 @@ public class SqlOptimiser implements Mutable {
             if (alias != null) {
                 return alias;
             }
-            if (model.getAliasToColumnMap().get(timestamp) != null || isSubsamplePassThroughProjection(model)) {
+            if (model.getAliasToColumnMap().get(timestamp) != null || isSubsampleTimestampPassThroughProjection(model)) {
                 return timestamp;
             }
             return null;
@@ -4925,7 +4925,7 @@ public class SqlOptimiser implements Mutable {
         if (nestedTimestamp == null) {
             return null;
         }
-        if (isSubsamplePassThroughProjection(model)) {
+        if (isSubsampleTimestampPassThroughProjection(model)) {
             return nestedTimestamp;
         }
 
@@ -4986,6 +4986,16 @@ public class SqlOptimiser implements Mutable {
     private static boolean isSubsamplePassThroughProjection(IQueryModel model) {
         if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE) {
             return true;
+        }
+        return hasWildcardColumn(model.getColumns()) || hasWildcardColumn(model.getBottomUpColumns());
+    }
+
+    private static boolean isSubsampleTimestampPassThroughProjection(IQueryModel model) {
+        if (model.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE) {
+            // Rewrites such as PIVOT build NONE models with explicit output columns. Those columns
+            // form a projection boundary, while leaf and empty wrapper NONE models pass through.
+            return model.getNestedModel() == null
+                    || (model.getColumns().size() == 0 && model.getBottomUpColumns().size() == 0);
         }
         return hasWildcardColumn(model.getColumns()) || hasWildcardColumn(model.getBottomUpColumns());
     }
@@ -10482,13 +10492,13 @@ public class SqlOptimiser implements Mutable {
 
     /**
      * @param insideJoin true when this {@code model} is already known to sit inside a join - either
-     *                    because an ancestor call found {@code nested} to be a multi-branch join
-     *                    (this level or an outer one), or because this call was reached through the
-     *                    per-branch recursion below. Propagated downward through every recursive call
-     *                    (nested model, join branches, union model) so a SUBSAMPLE arbitrarily deep
-     *                    inside any join branch - not just one directly attached to the join node
-     *                    itself - is still flagged. Only sdt refuses a join context (it throws); the
-     *                    count/value methods migrate above the completed join projection.
+     *                   because an ancestor call found {@code nested} to be a multi-branch join
+     *                   (this level or an outer one), or because this call was reached through the
+     *                   per-branch recursion below. Propagated downward through every recursive call
+     *                   (nested model, join branches, union model) so a SUBSAMPLE arbitrarily deep
+     *                   inside any join branch - not just one directly attached to the join node
+     *                   itself - is still flagged. Only sdt refuses a join context (it throws); the
+     *                   count/value methods migrate above the completed join projection.
      */
     private IQueryModel rewriteSubsample(IQueryModel model, @Transient SqlExecutionContext sqlExecutionContext, boolean insideJoin) throws SqlException {
         if (model == null || !model.isOptimisable()) {
