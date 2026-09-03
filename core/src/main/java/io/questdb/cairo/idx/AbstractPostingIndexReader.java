@@ -186,6 +186,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         lastPickedPinnedTxn = Long.MIN_VALUE;
         // A closed reader holds nothing, so it must not keep reporting isOpen().
         isColumnAbsentFromPartition = false;
+        // Nor may it keep the metadata-recovered cover set of a previous binding: the
+        // frozen-reader assert in openRequiredSidecars() reads this flag to decide
+        // whether a missing warm sidecar is a bug, and only of() and
+        // ofColumnAbsentFromPartition() otherwise reset it.
+        isCoversFromMetadata = false;
     }
 
     @Override
@@ -1351,13 +1356,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     /**
-     * Walk the v2 chain and pick the entry visible to this reader's pin,
-     * then promote its metadata into the active snapshot.
-     * <p>
-     * On chain-header unreadable failures we spin briefly and retry; the
-     * picker has its own bounded internal retry loop, so transient writer-
-     * mid-publish states are absorbed inside it.
-     * <p>
      * Rebuild the covered-column list from table metadata for a partition that has no
      * index files. Normally this comes from the partition's .pci, which does not exist
      * here, but the INCLUDE set is a property of the index as a whole, so the table's
@@ -1400,6 +1398,14 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         isCoversFromMetadata = true;
     }
 
+    /**
+     * Walk the v2 chain and pick the entry visible to this reader's pin,
+     * then promote its metadata into the active snapshot.
+     * <p>
+     * On chain-header unreadable failures we spin briefly and retry; the
+     * picker has its own bounded internal retry loop, so transient writer-
+     * mid-publish states are absorbed inside it.
+     */
     private void readIndexMetadataFromChain() {
         final long deadline = clock.getTicks() + spinLockTimeoutMs;
         while (true) {

@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.EmptyRowCursor;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
@@ -48,6 +49,8 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+
+import java.util.Arrays;
 
 public class PostingIndexFwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
@@ -1064,8 +1067,10 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
         // Cursor.close()/releaseResources()), so a reused cursor always re-resolves
         // against whatever partition the outer reader is currently bound to.
         private long[] npAuxAddrs;
+        private long[] npAuxFds;
         private long[] npAuxSizes;
         private long[] npColAddrs;
+        private long[] npColFds;
         private long[] npColSizes;
         private long[] npColTops;
         private boolean npColumnsOpened;
@@ -1308,27 +1313,48 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         ff.munmap(npColAddrs[i], npColSizes[i], MemoryTag.MMAP_INDEX_READER);
                         npColAddrs[i] = 0;
                     }
+                    if (npColFds[i] != -1) {
+                        ff.close(npColFds[i]);
+                        npColFds[i] = -1;
+                    }
                     if (npAuxAddrs[i] != 0) {
                         ff.munmap(npAuxAddrs[i], npAuxSizes[i], MemoryTag.MMAP_INDEX_READER);
                         npAuxAddrs[i] = 0;
                     }
+                    if (npAuxFds[i] != -1) {
+                        ff.close(npAuxFds[i]);
+                        npAuxFds[i] = -1;
+                    }
                 }
             }
             npAuxAddrs = null;
+            npAuxFds = null;
             npAuxSizes = null;
             npColAddrs = null;
+            npColFds = null;
             npColSizes = null;
             npColTops = null;
         }
 
         /**
          * Lazily opens every INCLUDEd column's own raw .d (and .i, for var-size
-         * types) file for this partition, read-only, mmapped whole. Runs at most
-         * once per checkout (see closeCoveringResources(), which resets
-         * npColumnsOpened on every close -- pooled or final -- so a reused cursor
-         * always re-resolves against whatever partition the outer reader is
-         * currently bound to). Mirrors PostingIndexWriter#mapCoveredColumn /
-         * #mapColumnFile, which build the sidecar from these same files.
+         * types) file for this partition, read-only, mapped over the rows the
+         * null prefix can reach. Runs at most once per checkout (see
+         * closeCoveringResources(), which resets npColumnsOpened on every close --
+         * pooled or final -- so a reused cursor always re-resolves against
+         * whatever partition the outer reader is currently bound to). Mirrors
+         * PostingIndexWriter#mapCoveredColumn / #mapColumnFile, which build the
+         * sidecar from these same files.
+         * <p>
+         * The mapping is sized from the row count, never from the file length.
+         * TableReader.reloadColumnAt maps the same .d/.i at their data length and
+         * keeps the fd open, so a request at offset 0 that is no longer than its
+         * mapping is served by MmapCache as a refcount bump on TableReader's own
+         * mapping. A whole-file map is longer whenever the file carries slack past
+         * the committed rows, and then MmapCache both misses and replaces
+         * TableReader's record with the longer map. Reading the length back from
+         * the file is also a no-go on the read path in its own right: the writer
+         * grows column files ahead of the rows it has committed.
          *
          * @return true iff at least the per-column top/address arrays were
          * populated (individual columns can still be unavailable -- dropped,
@@ -1350,10 +1376,14 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // them. PostingIndexWriter#mapColumnFile targets its persistent array
             // for the same reason.
             npAuxAddrs = new long[coverCount];
+            npAuxFds = new long[coverCount];
             npAuxSizes = new long[coverCount];
             npColAddrs = new long[coverCount];
+            npColFds = new long[coverCount];
             npColSizes = new long[coverCount];
             npColTops = new long[coverCount];
+            Arrays.fill(npAuxFds, -1);
+            Arrays.fill(npColFds, -1);
             Path p = Path.getThreadLocal(sidecarBasePath);
             int pLen = p.size();
             try {
@@ -1370,21 +1400,49 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     if (denseIdx < 0) {
                         continue;
                     }
-                    npColTops[c] = columnVersionReader.getColumnTop(partitionTimestamp, writerIdx);
+                    // -1 is ColumnVersionReader.getColumnTop's "the column has no files in
+                    // this partition" sentinel, not a column top: leave the address at 0 so
+                    // every prefix row reads this column as NULL. It is not a real value the
+                    // arithmetic below could absorb (row - (-1) targets the next row).
+                    long top = columnVersionReader.getColumnTop(partitionTimestamp, writerIdx);
+                    if (top < 0) {
+                        continue;
+                    }
+                    npColTops[c] = top;
+                    // The prefix cursor only ever reads rows [top, columnTop): the indexed
+                    // column's top bounds the prefix, and rows below this column's own top
+                    // are its genuine NULLs. Map exactly those rows.
+                    long rowCount = columnTop - top;
+                    if (rowCount <= 0) {
+                        continue;
+                    }
                     CharSequence name = metadata.getColumnName(denseIdx);
                     long nameTxn = sidecarCovTs.getQuick(c);
                     p.trimTo(pLen);
-                    openRawColumnFile(p, name, nameTxn, false, npColAddrs, npColSizes, c);
                     if (ColumnType.isVarSize(colType)) {
-                        p.trimTo(pLen);
-                        openRawColumnFile(p, name, nameTxn, true, npAuxAddrs, npAuxSizes, c);
+                        // Aux first: the data vector's length is only known from its last
+                        // aux entry, exactly as TableReader.reloadColumnAt sizes it.
+                        final ColumnTypeDriver driver = ColumnType.getDriver(colType);
+                        openRawColumnFile(p, name, nameTxn, true, driver.getAuxVectorSize(rowCount), c);
+                        if (npAuxAddrs[c] == 0) {
+                            continue;
+                        }
+                        long dataSize = driver.getDataVectorSizeAt(npAuxAddrs[c], rowCount - 1);
+                        if (dataSize > 0) {
+                            p.trimTo(pLen);
+                            openRawColumnFile(p, name, nameTxn, false, dataSize, c);
+                        }
+                    } else {
+                        openRawColumnFile(p, name, nameTxn, false, rowCount << ColumnType.pow2SizeOf(colType), c);
                     }
                 }
             } catch (Throwable th) {
                 // Release now, and keep the all-or-nothing contract this method
                 // documents: npColumnsOpened stays true, so a retry on the same
-                // cursor short-circuits to false and every covered read falls back
-                // to the sidecar, exactly as it did before any column was mapped.
+                // cursor short-circuits to false, and with isNullPrefixRow set the
+                // covered getters answer every prefix row with the column's typed
+                // NULL sentinel (see the field comment) -- they never fall through
+                // to the sidecar, which has no entry for a prefix row.
                 closeNullPrefixColumns();
                 throw th;
             } finally {
@@ -1447,26 +1505,35 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return view.of(dataAddr, dataAddr + size);
         }
 
-        private void openRawColumnFile(Path p, CharSequence name, long nameTxn, boolean isAux, long[] addrs, long[] sizes, int idx) {
+        /**
+         * Maps the first {@code size} bytes of one INCLUDE column file. The fd stays
+         * open for as long as the mapping does (closeNullPrefixColumns() releases
+         * both): closing it right after mmap would drop the FdCache record, and with
+         * it the key under which MmapCache shares the mapping with TableReader and
+         * with sibling cursors on the same partition.
+         */
+        private void openRawColumnFile(Path p, CharSequence name, long nameTxn, boolean isAux, long size, int idx) {
             LPSZ fileName = isAux ? TableUtils.iFile(p, name, nameTxn) : TableUtils.dFile(p, name, nameTxn);
             long fd = ff.openRO(fileName);
             if (fd < 0) {
                 return; // no data below the indexed column's top for this column -- normal
             }
-            try {
-                long fileSize = ff.length(fd);
-                if (fileSize > 0) {
-                    long mapped = ff.mmap(fd, fileSize, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_READER);
-                    if (mapped == FilesFacade.MAP_FAILED) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not mmap covering INCLUDE column for null-prefix read [file=").put(fileName)
-                                .put(", size=").put(fileSize).put(']');
-                    }
-                    addrs[idx] = mapped;
-                    sizes[idx] = fileSize;
-                }
-            } finally {
+            long mapped = ff.mmap(fd, size, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_READER);
+            if (mapped == FilesFacade.MAP_FAILED) {
+                int errno = ff.errno();
                 ff.close(fd);
+                throw CairoException.critical(errno)
+                        .put("could not mmap covering INCLUDE column for null-prefix read [file=").put(fileName)
+                        .put(", size=").put(size).put(']');
+            }
+            if (isAux) {
+                npAuxAddrs[idx] = mapped;
+                npAuxSizes[idx] = size;
+                npAuxFds[idx] = fd;
+            } else {
+                npColAddrs[idx] = mapped;
+                npColSizes[idx] = size;
+                npColFds[idx] = fd;
             }
         }
 
