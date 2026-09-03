@@ -25,6 +25,7 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
@@ -391,17 +392,45 @@ public class TableReader implements Closeable, SymbolTableSource {
             ) {
                 int plen = path.size();
                 try {
-                    indexReader.of(
-                            configuration,
-                            pathGenNativePartition(partitionIndex, partitionTxn),
-                            metadata.getColumnName(columnIndex),
-                            columnNameTxn,
-                            partitionTxn,
-                            getColumnTop(columnBase, columnIndex),
-                            metadata,
-                            columnVersionReader,
-                            partitionTimestamp
-                    );
+                    //noinspection resource
+                    final Path partitionPath = pathGenNativePartition(partitionIndex, partitionTxn);
+                    final CharSequence columnName = metadata.getColumnName(columnIndex);
+                    final long columnTop = getColumnTop(columnBase, columnIndex);
+                    // Re-initialising has to repeat the absent-vs-present call that
+                    // createIndexReaderAt() made when it built this reader: a partition
+                    // that predates the indexed column carries no index file on disk, so
+                    // of() would open a .pk the writer never created. The cached reader
+                    // gets here whenever its column or partition txn moved, and also
+                    // whenever closeIndexReader() closed it in place (partition reload)
+                    // without dropping it from `indexes`.
+                    if (
+                            columns.getQuick(index) instanceof NullMemoryCMR
+                                    && indexReader instanceof AbstractPostingIndexReader postingReader
+                    ) {
+                        postingReader.ofColumnAbsentFromPartition(
+                                configuration,
+                                partitionPath,
+                                columnName,
+                                columnNameTxn,
+                                partitionTxn,
+                                columnTop,
+                                metadata,
+                                columnVersionReader,
+                                partitionTimestamp
+                        );
+                    } else {
+                        indexReader.of(
+                                configuration,
+                                partitionPath,
+                                columnName,
+                                columnNameTxn,
+                                partitionTxn,
+                                columnTop,
+                                metadata,
+                                columnVersionReader,
+                                partitionTimestamp
+                        );
+                    }
                 } finally {
                     path.trimTo(plen);
                 }

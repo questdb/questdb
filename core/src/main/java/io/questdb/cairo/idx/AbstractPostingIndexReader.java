@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
+import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.BorrowedArray;
@@ -39,6 +40,7 @@ import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.BinarySequence;
+import io.questdb.std.Decimals;
 import io.questdb.std.DirectBinarySequence;
 import io.questdb.std.DirectBitSet;
 import io.questdb.std.FilesFacade;
@@ -182,6 +184,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
         pinnedTableTxn = Long.MAX_VALUE;
         lastPickedPinnedTxn = Long.MIN_VALUE;
+        // A closed reader holds nothing, so it must not keep reporting isOpen().
+        isColumnAbsentFromPartition = false;
     }
 
     @Override
@@ -568,7 +572,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
 
     @Override
     public boolean isOpen() {
-        return keyMem.getFd() != -1;
+        // A reader initialised by ofColumnAbsentFromPartition() holds no index file at
+        // all -- a partition that predates the indexed column has none on disk -- yet it
+        // is fully initialised and answers that partition's implicit NULL key. Report it
+        // open so TableReader.getIndexReader() hands it straight back instead of
+        // re-entering of() and opening a .pk the writer never created.
+        return isColumnAbsentFromPartition || keyMem.getFd() != -1;
     }
 
     @Override
@@ -660,6 +669,64 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         } finally {
             path.trimTo(pLen);
         }
+    }
+
+    /**
+     * Initialise for a partition whose indexed column has no rows at all, as recorded in
+     * the column version file (_cv): its column top equals the partition row count. There
+     * is nothing to read here, so no index file is opened -- whether or not one happens to
+     * exist on disk, which varies with history (a rowless partition, a parquet reconvert)
+     * and is not a fact worth asking the filesystem for.
+     * <p>
+     * The result is an empty index whose only key is the implicit NULL, so the ordinary
+     * null-prefix cursor serves every row of the partition and reads covered values from
+     * the INCLUDE columns' own files.
+     */
+    public void ofColumnAbsentFromPartition(
+            CairoConfiguration configuration,
+            @Transient Path path,
+            CharSequence columnName,
+            long columnNameTxn,
+            long partitionTxn,
+            long columnTop,
+            RecordMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            long partitionTimestamp
+    ) {
+        // TableReader keeps one pooled reader per (partition, column, direction) slot and
+        // re-initialises it in place, so this can arrive holding the mappings and the
+        // chain snapshot a previous of() built for a partition that DID have index files.
+        // This initialisation opens no file, so nothing below would replace them: release
+        // them here. (initCoversFromMetadata closes the sidecar mmaps, genLookup.reopen()
+        // resets the gen lookup.)
+        Misc.free(keyMem);
+        Misc.free(valueMem);
+        Misc.free(infoMem);
+        sidecarPrefixSum.clear();
+        this.chainSequence = 0;
+        this.entryMaxValue = -1L;
+        this.genCount = 0;
+        this.lastPickedPinnedTxn = Long.MIN_VALUE;
+        this.columnTop = columnTop;
+        this.columnTxn = columnNameTxn;
+        this.partitionTxn = partitionTxn;
+        this.metadata = metadata;
+        this.columnVersionReader = columnVersionReader;
+        this.partitionTimestamp = partitionTimestamp;
+        this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
+        this.clock = configuration.getMillisecondClock();
+        this.ff = configuration.getFilesFacade();
+        this.indexColumnName = columnName;
+        this.sidecarBasePath.of(path);
+        this.frozen = false;
+        this.isCoversFromMetadata = false;
+        this.isColumnAbsentFromPartition = true;
+        genLookup.reopen();
+        initCoversFromMetadata(columnName);
+        this.keyCount = 0;
+        this.keyCountIncludingNulls = columnTop > 0 ? 1 : 0;
+        this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
+        this.valueMemSize = 0;
     }
 
     @Override
@@ -1331,49 +1398,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
         coverCount = covers.size();
         isCoversFromMetadata = true;
-    }
-
-    /**
-     * Initialise for a partition whose indexed column has no rows at all, as recorded in
-     * the column version file (_cv): its column top equals the partition row count. There
-     * is nothing to read here, so no index file is opened -- whether or not one happens to
-     * exist on disk, which varies with history (a rowless partition, a parquet reconvert)
-     * and is not a fact worth asking the filesystem for.
-     * <p>
-     * The result is an empty index whose only key is the implicit NULL, so the ordinary
-     * null-prefix cursor serves every row of the partition and reads covered values from
-     * the INCLUDE columns' own files.
-     */
-    protected void ofColumnAbsentFromPartition(
-            CairoConfiguration configuration,
-            @Transient Path path,
-            CharSequence columnName,
-            long columnNameTxn,
-            long partitionTxn,
-            long columnTop,
-            RecordMetadata metadata,
-            ColumnVersionReader columnVersionReader,
-            long partitionTimestamp
-    ) {
-        this.columnTop = columnTop;
-        this.columnTxn = columnNameTxn;
-        this.partitionTxn = partitionTxn;
-        this.metadata = metadata;
-        this.columnVersionReader = columnVersionReader;
-        this.partitionTimestamp = partitionTimestamp;
-        this.spinLockTimeoutMs = configuration.getSpinLockTimeout();
-        this.clock = configuration.getMillisecondClock();
-        this.ff = configuration.getFilesFacade();
-        this.indexColumnName = columnName;
-        this.sidecarBasePath.of(path);
-        this.frozen = false;
-        this.isColumnAbsentFromPartition = true;
-        genLookup.reopen();
-        initCoversFromMetadata(columnName);
-        this.keyCount = 0;
-        this.keyCountIncludingNulls = columnTop > 0 ? 1 : 0;
-        this.headEntryOffset = PostingIndexUtils.V2_NO_HEAD;
-        this.valueMemSize = 0;
     }
 
     private void readIndexMetadataFromChain() {
@@ -3498,6 +3522,18 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         /**
+         * Resolves the declared type of INCLUDE column {@code includeIdx}, or -1 when the
+         * index is out of range or the sidecar could not map the column back to a table
+         * column. Callers must treat -1 as "type unknown" and fall back to a width-based
+         * default. Mirrors the guard the raw address resolvers apply to the same index.
+         */
+        protected int coveredColumnType(int includeIdx) {
+            return includeIdx >= 0 && includeIdx < sidecarColumnTypes.size()
+                    ? sidecarColumnTypes.getQuick(includeIdx)
+                    : -1;
+        }
+
+        /**
          * Lazy per-column decode cache. Returns true when the column's block
          * has been bulk-decoded into colCacheAddrs[includeIdx]. On the first
          * access to a new block the method returns false (caller should use
@@ -3570,6 +3606,76 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 );
                 decodeWorkspaceCapacity = count;
             }
+        }
+
+        /**
+         * BYTE-width NULL sentinel for INCLUDE column {@code includeIdx}. The null-prefix
+         * getters use this when they cannot resolve a raw address for a row, so it must
+         * agree with what {@link PostingIndexWriter} writes into the sidecar for the same
+         * column; a width-based sentinel would render GEOBYTE as {@code 0} and DECIMAL8 as
+         * {@code 0.0} instead of empty, and would not match {@code IS NULL}.
+         */
+        protected byte nullPrefixByte(int includeIdx) {
+            return switch (ColumnType.tagOf(coveredColumnType(includeIdx))) {
+                case ColumnType.GEOBYTE -> GeoHashes.BYTE_NULL;
+                case ColumnType.DECIMAL8 -> Decimals.DECIMAL8_NULL;
+                // BYTE and BOOLEAN are NULL at zero, and so is an unresolvable type.
+                default -> 0;
+            };
+        }
+
+        /**
+         * INT-width NULL sentinel for INCLUDE column {@code includeIdx}.
+         *
+         * @see #nullPrefixByte(int)
+         */
+        protected int nullPrefixInt(int includeIdx) {
+            return switch (ColumnType.tagOf(coveredColumnType(includeIdx))) {
+                case ColumnType.GEOINT -> GeoHashes.INT_NULL;
+                case ColumnType.IPv4 -> Numbers.IPv4_NULL;
+                // INT, SYMBOL and DECIMAL32 all share Numbers.INT_NULL.
+                default -> Numbers.INT_NULL;
+            };
+        }
+
+        /**
+         * SHORT-width NULL sentinel for INCLUDE column {@code includeIdx}.
+         *
+         * @see #nullPrefixByte(int)
+         */
+        protected short nullPrefixShort(int includeIdx) {
+            return switch (ColumnType.tagOf(coveredColumnType(includeIdx))) {
+                case ColumnType.GEOSHORT -> GeoHashes.SHORT_NULL;
+                case ColumnType.DECIMAL16 -> Decimals.DECIMAL16_NULL;
+                // SHORT and CHAR are NULL at zero, and so is an unresolvable type.
+                default -> 0;
+            };
+        }
+
+        /**
+         * NULL sentinel for the {@code wordIndex}-th 8-byte word of INCLUDE column
+         * {@code includeIdx}. Word 0 is the value at offset 0, matching the layout the
+         * raw {@code .d} file and the sidecar share: UUID stores its low word first,
+         * DECIMAL128 its high word first, DECIMAL256 its words most-significant first.
+         * Only DECIMAL128 and DECIMAL256 have a NULL whose words differ from each other.
+         *
+         * @see #nullPrefixByte(int)
+         */
+        protected long nullPrefixWord(int includeIdx, int wordIndex) {
+            return switch (ColumnType.tagOf(coveredColumnType(includeIdx))) {
+                case ColumnType.GEOLONG -> GeoHashes.NULL;
+                case ColumnType.DECIMAL128 ->
+                        wordIndex == 0 ? Decimals.DECIMAL128_HI_NULL : Decimals.DECIMAL128_LO_NULL;
+                case ColumnType.DECIMAL256 -> switch (wordIndex) {
+                    case 0 -> Decimals.DECIMAL256_HH_NULL;
+                    case 1 -> Decimals.DECIMAL256_HL_NULL;
+                    case 2 -> Decimals.DECIMAL256_LH_NULL;
+                    default -> Decimals.DECIMAL256_LL_NULL;
+                };
+                // LONG, TIMESTAMP, DATE, DECIMAL64, UUID and LONG256 are Numbers.LONG_NULL
+                // in every word, and so is an unresolvable type.
+                default -> Numbers.LONG_NULL;
+            };
         }
 
         protected void resetCoveringState() {

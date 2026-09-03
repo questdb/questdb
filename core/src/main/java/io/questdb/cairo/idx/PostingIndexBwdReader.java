@@ -43,7 +43,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.DirectString;
@@ -1230,7 +1229,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getByte(addr);
             }
-            return isNullPrefixRow ? 0 : super.getCoveredByte(includeIdx);
+            return isNullPrefixRow ? nullPrefixByte(includeIdx) : super.getCoveredByte(includeIdx);
         }
 
         @Override
@@ -1257,7 +1256,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getInt(addr);
             }
-            return isNullPrefixRow ? Numbers.INT_NULL : super.getCoveredInt(includeIdx);
+            return isNullPrefixRow ? nullPrefixInt(includeIdx) : super.getCoveredInt(includeIdx);
         }
 
         @Override
@@ -1266,7 +1265,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getLong(addr);
             }
-            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong(includeIdx);
+            return isNullPrefixRow ? nullPrefixWord(includeIdx, 0) : super.getCoveredLong(includeIdx);
         }
 
         @Override
@@ -1275,7 +1274,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getLong(addr + 8);
             }
-            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong128Hi(includeIdx);
+            return isNullPrefixRow ? nullPrefixWord(includeIdx, 1) : super.getCoveredLong128Hi(includeIdx);
         }
 
         @Override
@@ -1284,7 +1283,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getLong(addr);
             }
-            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong128Lo(includeIdx);
+            return isNullPrefixRow ? nullPrefixWord(includeIdx, 0) : super.getCoveredLong128Lo(includeIdx);
         }
 
         @Override
@@ -1293,7 +1292,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getLong(addr);
             }
-            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong256_0(includeIdx);
+            return isNullPrefixRow ? nullPrefixWord(includeIdx, 0) : super.getCoveredLong256_0(includeIdx);
         }
 
         @Override
@@ -1302,7 +1301,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getLong(addr + 8);
             }
-            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong256_1(includeIdx);
+            return isNullPrefixRow ? nullPrefixWord(includeIdx, 1) : super.getCoveredLong256_1(includeIdx);
         }
 
         @Override
@@ -1311,7 +1310,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getLong(addr + 16);
             }
-            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong256_2(includeIdx);
+            return isNullPrefixRow ? nullPrefixWord(includeIdx, 2) : super.getCoveredLong256_2(includeIdx);
         }
 
         @Override
@@ -1320,7 +1319,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getLong(addr + 24);
             }
-            return isNullPrefixRow ? Numbers.LONG_NULL : super.getCoveredLong256_3(includeIdx);
+            return isNullPrefixRow ? nullPrefixWord(includeIdx, 3) : super.getCoveredLong256_3(includeIdx);
         }
 
         @Override
@@ -1329,7 +1328,7 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             if (addr != 0) {
                 return Unsafe.getShort(addr);
             }
-            return isNullPrefixRow ? 0 : super.getCoveredShort(includeIdx);
+            return isNullPrefixRow ? nullPrefixShort(includeIdx) : super.getCoveredShort(includeIdx);
         }
 
         @Override
