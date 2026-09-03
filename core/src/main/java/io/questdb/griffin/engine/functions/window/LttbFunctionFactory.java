@@ -48,7 +48,9 @@ import org.jetbrains.annotations.Nullable;
  * than SUBSAMPLE's whole-cursor buffer. Reuses {@link M4FunctionFactory.BucketSelectWindowFunction} for
  * the buffering/pass1/pass2 plumbing: LTTB always emits first, one point per bucket, and last in
  * strictly ascending buffer-position order (and, in gap-preserving mode, per segment in ascending
- * segment order), matching the ascending-walk assumption that plumbing relies on.
+ * segment order), matching the ascending-walk assumption that plumbing relies on. Large inputs run
+ * the two-stage MinMaxLTTB variant transparently (same output count, pinned endpoints and ascending
+ * order; see {@link LttbAlgorithm}'s class doc).
  * <p>
  * The optional fourth argument (see {@link LttbGapFunctionFactory}, signature {@code lttb(NDls)})
  * supplies a gap threshold interval string (e.g. {@code '1h'}): when present, the buffered points are
@@ -186,8 +188,10 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     // Thin subclass of the shared M4FunctionFactory.BucketSelectWindowFunction purely to release
     // LttbAlgorithm's native scratch lists on close(). M4Algorithm and MinMaxAlgorithm are stateless
     // singletons, so the shared base's close() has nothing algorithm-specific to free - but LttbAlgorithm
-    // owns two DirectLongList fields (lazily allocated only in gap mode; see
-    // LttbAlgorithm.selectGapPreserving) and must be tracker-bound and closed explicitly.
+    // owns native DirectLongList scratch fields (segment/target bookkeeping, lazily allocated in gap
+    // mode, plus the MinMaxLTTB preselection candidate list, lazily allocated for large inputs; see
+    // LttbAlgorithm.selectGapPreserving and LttbAlgorithm.preselectMinMax) and must be tracker-bound
+    // and closed explicitly.
     static class LttbBucketSelectWindowFunction extends M4FunctionFactory.BucketSelectWindowFunction {
         private final LttbAlgorithm lttbAlgorithm;
 

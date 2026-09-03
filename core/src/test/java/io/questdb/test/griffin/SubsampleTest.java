@@ -860,6 +860,74 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLttbMinMaxPreselectionConstantSeries() throws Exception {
+        // Worst case for the MinMaxLTTB preselection stage (large inputs; see LttbAlgorithm):
+        // a constant series dedups every preselection bin's min==max picks to a single
+        // survivor. Survivors (bins + 2 = 2 * (target - 2) + 2) still cover the target,
+        // so the exact output row count is preserved.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT 42.0, timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(5000)");
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 25))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n25\n");
+        });
+    }
+
+    @Test
+    public void testLttbMinMaxPreselectionGapSegments() throws Exception {
+        // Two dense 3000-row segments split by a month-long gap: each segment independently
+        // crosses the MinMaxLTTB activation threshold (2998 interior rows > 2*4*18). The
+        // gap budgeting is unchanged (exactly 20 points per segment) and each segment's
+        // first/last rows stay pinned through preselection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(3000)");
+            execute("INSERT INTO t SELECT rnd_double() * 100, timestamp_sequence('2024-02-01', 1000000) FROM long_sequence(3000)");
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 40, '1h'))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n40\n");
+            // Per-segment pinned endpoints survive the fast path: last row of segment 1,
+            // first row of segment 2.
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 40, '1h')) " +
+                    "WHERE ts = '2024-01-01T00:49:59.000000Z' OR ts = '2024-02-01T00:00:00.000000Z'")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testLttbMinMaxPreselectionKeepsExtremesAndEndpoints() throws Exception {
+        // 5000 rows with target 10 takes LttbAlgorithm's MinMaxLTTB fast path (interior
+        // 4998 > 2*4*8). Per-bin min/max preselection cannot lose isolated extremes, the
+        // triangle stage then picks them (dominant areas in distinct buckets), global
+        // first/last stay pinned, and the output count stays exactly the target. The
+        // data is deterministic, so this doubles as a stability guard for the fast path.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t SELECT " +
+                    "case when x = 2500 then 100000.0 when x = 3500 then -100000.0 else (x % 97)::double end, " +
+                    "timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(5000)");
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 10))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n10\n");
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 10)) " +
+                    "WHERE abs(price) = 100000.0")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n2\n");
+            assertQuery("SELECT min(ts), max(ts) FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, 10))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("min\tmax\n2024-01-01T00:00:00.000000Z\t2024-01-01T01:23:19.000000Z\n");
+        });
+    }
+
+    @Test
     public void testLargeDatasetM4() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -1916,6 +1984,36 @@ public class SubsampleTest extends AbstractCairoTest {
                     "10.0\t2024-01-01T01:00:00.000000Z\n" +
                     "-1.7E308\t2024-01-01T02:00:00.000000Z\n" +
                     "20.0\t2024-01-01T03:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testLttbMinMaxPreselectionActivationBoundary() throws Exception {
+        // Pins the MinMaxLTTB activation threshold contract on both sides of the boundary.
+        // Preselection activates when interior (n - 2) > 2 * 4 * (target - 2); for target 4
+        // that is n > 18. n=18 runs plain single-stage LTTB, n=19 runs the two-stage fast
+        // path with 4 preselection bins. The output contract must not differ in count or
+        // pinned endpoints. Exact selections are deliberately not pinned here: the n=19
+        // side would freeze the preselection ratio, which is an internal tuning constant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t18 AS (SELECT (x % 7)::double price, timestamp_sequence('2024-01-01', 1000000) ts FROM long_sequence(18)) TIMESTAMP(ts)");
+            execute("CREATE TABLE t19 AS (SELECT (x % 7)::double price, timestamp_sequence('2024-01-01', 1000000) ts FROM long_sequence(19)) TIMESTAMP(ts)");
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t18 SUBSAMPLE lttb(price, 4))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
+            assertQuery("SELECT count() FROM (SELECT price, ts FROM t19 SUBSAMPLE lttb(price, 4))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n4\n");
+            assertQuery("SELECT min(ts), max(ts) FROM (SELECT price, ts FROM t18 SUBSAMPLE lttb(price, 4))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("min\tmax\n2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:17.000000Z\n");
+            assertQuery("SELECT min(ts), max(ts) FROM (SELECT price, ts FROM t19 SUBSAMPLE lttb(price, 4))")
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("min\tmax\n2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:18.000000Z\n");
         });
     }
 

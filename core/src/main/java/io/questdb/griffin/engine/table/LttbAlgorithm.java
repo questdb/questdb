@@ -48,15 +48,42 @@ import org.jetbrains.annotations.Nullable;
  * are detected, the output may exceed target_points. Non-gap LTTB and
  * M4/MinMax treat target_points as a hard maximum.
  * <p>
- * Reference: Steinarsson, S. (2013). "Downsampling Time Series for Visual
- * Representation." University of Iceland MSc thesis.
+ * Large ranges run as MinMaxLTTB: a cheap MinMax pass over equal row-count
+ * bins preselects about {@code PRESELECT_RATIO} points per output point
+ * (per-bin minimum and maximum, plus the pinned first and last points), and
+ * the LTTB triangle stage then runs over the survivors only. The expensive
+ * sequential triangle stage shrinks from n points to ~ratio*m while the
+ * selection stays visually near-identical to plain LTTB: preselection can
+ * never drop a per-bin extreme, and because the bins are row-count based
+ * every bin is non-empty, so survivors always number at least m and the
+ * output row count is identical to the plain path. Ranges at or below the
+ * activation threshold keep the single-stage path bit-for-bit.
+ * <p>
+ * References: Steinarsson, S. (2013). "Downsampling Time Series for Visual
+ * Representation." University of Iceland MSc thesis. Van Der Donckt, J.,
+ * Van Der Donckt, J., Deprost, E., Van Hoecke, S. (2023). "MinMaxLTTB:
+ * Leveraging MinMax-Preselection to Scale LTTB" (arXiv:2305.00332).
  *
  * @see SubsampleAlgorithm
  */
 public class LttbAlgorithm implements SubsampleAlgorithm {
+    // MinMaxLTTB (Van Der Donckt et al., 2023): preselect ~PRESELECT_RATIO * (m - 2)
+    // interior points with a MinMax pass before the triangle stage. The paper
+    // evaluates ratios 2..8; 4 is its recommended default, visually
+    // indistinguishable from plain LTTB. Must be >= 2 so that even full per-bin
+    // min==max dedup leaves at least m - 2 interior survivors (bins = ratio/2 *
+    // (m - 2) >= m - 2), preserving the exact output row count.
+    private static final int PRESELECT_RATIO = 4;
+    // Preselect only when the interior outnumbers the worst-case (no-dedup)
+    // survivor count by at least this factor. Below the threshold the extra
+    // cheap scan saves too little triangle work to matter, and staying on the
+    // plain path keeps small-range selections bit-identical to classic LTTB.
+    private static final int PRESELECT_MIN_SHRINK = 2;
     private final long gapThresholdMicros;
-    // Reusable native lists for segment bookkeeping. Stored as cursor-lifetime
-    // fields to avoid per-execution allocation. Cleared per execution.
+    // Reusable native lists for segment bookkeeping and MinMaxLTTB preselection.
+    // Stored as cursor-lifetime fields to avoid per-execution allocation.
+    // Cleared per execution.
+    private DirectLongList candidates;
     @Nullable
     private MemoryTracker memoryTracker;
     private DirectLongList segments;
@@ -75,6 +102,10 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             targets.close();
             targets = null;
         }
+        if (candidates != null) {
+            candidates.close();
+            candidates = null;
+        }
     }
 
     public void setMemoryTracker(@Nullable MemoryTracker memoryTracker) {
@@ -84,6 +115,9 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         }
         if (targets != null) {
             targets.setMemoryTracker(memoryTracker);
+        }
+        if (candidates != null) {
+            candidates.setMemoryTracker(memoryTracker);
         }
     }
 
@@ -96,6 +130,15 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         } else {
             selectOnRange(buffer, 0, bufferSize, targetPoints, selectedIndices, circuitBreaker);
         }
+    }
+
+    /**
+     * Position {@code pos} to buffer index: identity when {@code candidates} is
+     * null (plain LTTB over a contiguous range), otherwise the preselected
+     * buffer index stored at {@code pos} (MinMaxLTTB triangle stage).
+     */
+    private static long at(@Nullable DirectLongList candidates, int pos) {
+        return candidates == null ? pos : candidates.get(pos);
     }
 
     /**
@@ -228,15 +271,115 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     }
 
     /**
-     * Run LTTB on a sub-range [start, end) of the buffer.
+     * Run LTTB on a sub-range [start, end) of the buffer, switching to the
+     * two-stage MinMaxLTTB variant when the range is large enough for the
+     * preselection to pay off (see class doc).
      */
-    private static void selectOnRange(long buffer, int start, int end, int m,
-                                      DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
+    private void selectOnRange(long buffer, int start, int end, int m,
+                               DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
+        // Preselection needs at least one interior LTTB bucket (m > 2) and an
+        // interior that outnumbers the worst-case survivor count
+        // (PRESELECT_RATIO * (m - 2), i.e. 2 per bin) by PRESELECT_MIN_SHRINK.
+        // The condition also guarantees every preselection bin holds at least
+        // 2 * PRESELECT_MIN_SHRINK rows, so bins are never empty. Long math:
+        // both sides fit comfortably, no overflow for any int n, m.
+        if (m > 2 && (long) (end - start) - 2 > (long) PRESELECT_MIN_SHRINK * PRESELECT_RATIO * (m - 2)) {
+            preselectMinMax(buffer, start, end, m, circuitBreaker);
+            lttbCore(buffer, candidates, 0, (int) candidates.size(), m, selectedIndices, circuitBreaker);
+        } else {
+            lttbCore(buffer, null, start, end, m, selectedIndices, circuitBreaker);
+        }
+    }
+
+    /**
+     * MinMaxLTTB stage 1: fill {@link #candidates} with a strictly ascending
+     * preselection of buffer indices from [start, end) - the pinned first and
+     * last points plus the min-value and max-value point of each of
+     * {@code PRESELECT_RATIO / 2 * (m - 2)} equal row-count bins over the
+     * interior. Per-bin extremes make the later triangle stage's selection
+     * visually near-identical to running it over every point: LTTB rarely
+     * picks a point that is not a local extreme of its bucket.
+     * <p>
+     * Bins are row-count based (like LTTB's own buckets), so with the
+     * activation threshold in {@code selectOnRange} every bin is non-empty and
+     * the survivor count is at least {@code bins + 2 >= m}: the triangle stage
+     * still emits exactly m points, same as the plain path.
+     */
+    private void preselectMinMax(long buffer, int start, int end, int m, SqlExecutionCircuitBreaker circuitBreaker) {
+        if (candidates == null) {
+            candidates = new DirectLongList(64, MemoryTag.NATIVE_FUNC_RSS, true);
+            candidates.setMemoryTracker(memoryTracker);
+            candidates.reopen();
+        }
+        candidates.clear();
+
+        final int nInner = end - start - 2;
+        // (m - 2) * PRESELECT_RATIO cannot overflow in long; the activation
+        // threshold caps bins below nInner / (2 * PRESELECT_MIN_SHRINK), so the
+        // int cast is safe.
+        final int bins = (int) ((long) (m - 2) * PRESELECT_RATIO / 2);
+        final int interiorStart = start + 1;
+
+        candidates.add(start);
+        for (int b = 0; b < bins; b++) {
+            circuitBreaker.statefulThrowExceptionIfTripped();
+            // Exact integer boundaries, same reasoning as LTTB's own buckets;
+            // b * nInner fits a long for any int inputs.
+            final int binStart = interiorStart + (int) ((long) b * nInner / bins);
+            final int binEnd = interiorStart + (int) ((long) (b + 1) * nInner / bins);
+
+            // Seed with the first row of the bin. The buffer never holds NaN
+            // values (pass1 drops null/NaN rows before buffering); even if one
+            // slipped in, the < and > comparisons below keep the seed, matching
+            // MinMaxAlgorithm's seeding behavior, and the triangle stage
+            // already tolerates NaN areas.
+            int minIdx = binStart;
+            int maxIdx = binStart;
+            double minVal = SubsampleAlgorithm.getValue(buffer, binStart);
+            double maxVal = minVal;
+            for (int j = binStart + 1; j < binEnd; j++) {
+                if ((j & 0xFFF) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
+                final double v = SubsampleAlgorithm.getValue(buffer, j);
+                if (v < minVal) {
+                    minVal = v;
+                    minIdx = j;
+                }
+                if (v > maxVal) {
+                    maxVal = v;
+                    maxIdx = j;
+                }
+            }
+            // Emit in buffer-index order, deduplicated, so candidates stay
+            // strictly ascending (bins are disjoint and exclude the pinned
+            // endpoints).
+            if (minIdx == maxIdx) {
+                candidates.add(minIdx);
+            } else if (minIdx < maxIdx) {
+                candidates.add(minIdx);
+                candidates.add(maxIdx);
+            } else {
+                candidates.add(maxIdx);
+                candidates.add(minIdx);
+            }
+        }
+        candidates.add(end - 1);
+    }
+
+    /**
+     * LTTB triangle stage over positions [start, end). When {@code candidates}
+     * is null, positions are buffer indices (plain LTTB over a contiguous
+     * range); otherwise each position maps through the preselected candidate
+     * list (MinMaxLTTB stage 2) and [start, end) indexes that list.
+     */
+    private static void lttbCore(long buffer, @Nullable DirectLongList candidates, int start, int end, int m,
+                                 DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         int n = end - start;
         if (n < 2) {
             // Single data point or empty range - emit what's there
             for (int j = start; j < end; j++) {
-                selectedIndices.add(j);
+                selectedIndices.add(at(candidates, j));
             }
             return;
         }
@@ -244,11 +387,11 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             // Cannot form LTTB buckets with fewer than 2 target points.
             // This should not happen in normal flow (targetPoints >= 2 is
             // validated at compile time), but guard defensively.
-            selectedIndices.add(start);
+            selectedIndices.add(at(candidates, start));
             return;
         }
 
-        selectedIndices.add(start);
+        selectedIndices.add(at(candidates, start));
 
         double bucketSize = (double) (n - 2) / (m - 2);
         int prevSelected = start;
@@ -268,8 +411,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 nextBucketEnd = end;
             }
 
-            final long axTs = SubsampleAlgorithm.getTimestamp(buffer, prevSelected);
-            final double ay = SubsampleAlgorithm.getValue(buffer, prevSelected);
+            final long axTs = SubsampleAlgorithm.getTimestamp(buffer, at(candidates, prevSelected));
+            final double ay = SubsampleAlgorithm.getValue(buffer, at(candidates, prevSelected));
 
             // Mean of the next bucket with x measured relative to point A. The
             // long subtraction is exact at any epoch; converting the absolute
@@ -282,8 +425,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 if ((j & 0xFFF) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                 }
-                avgDx += (double) (SubsampleAlgorithm.getTimestamp(buffer, j) - axTs);
-                avgY += SubsampleAlgorithm.getValue(buffer, j);
+                avgDx += (double) (SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)) - axTs);
+                avgY += SubsampleAlgorithm.getValue(buffer, at(candidates, j));
             }
             if (nextBucketLen > 0) {
                 avgDx /= nextBucketLen;
@@ -301,8 +444,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 // the absolute-coordinate determinant, but free of the
                 // epoch-magnitude products whose rounding error swamps small
                 // time differences.
-                double dbx = (double) (SubsampleAlgorithm.getTimestamp(buffer, j) - axTs);
-                double by = SubsampleAlgorithm.getValue(buffer, j);
+                double dbx = (double) (SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)) - axTs);
+                double by = SubsampleAlgorithm.getValue(buffer, at(candidates, j));
                 double area = Math.abs(dbx * (avgY - ay) - avgDx * (by - ay));
                 if (area > maxArea) {
                     maxArea = area;
@@ -310,10 +453,10 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 }
             }
 
-            selectedIndices.add(maxAreaIndex);
+            selectedIndices.add(at(candidates, maxAreaIndex));
             prevSelected = maxAreaIndex;
         }
 
-        selectedIndices.add(end - 1);
+        selectedIndices.add(at(candidates, end - 1));
     }
 }
