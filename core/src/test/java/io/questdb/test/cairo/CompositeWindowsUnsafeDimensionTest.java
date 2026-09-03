@@ -85,6 +85,85 @@ public class CompositeWindowsUnsafeDimensionTest {
         Assert.assertEquals("BTC-USD_1a", sink.toString());
     }
 
+    /**
+     * Windows RESERVED DEVICE NAMES. A directory cannot be called CON, PRN, AUX, NUL, COM1-9 or
+     * LPT1-9 on Windows, whatever its characters are -- the name itself is the problem, so character
+     * escaping does not help. These are entirely plausible SYMBOL values: CON and AUX are real
+     * ticker and sensor names.
+     * <p>
+     * Case-insensitive, because the reservation is.
+     */
+    @Test
+    public void testWindowsReservedDeviceNamesAreEscaped() {
+        for (String reserved : new String[]{
+                "CON", "PRN", "AUX", "NUL", "COM1", "COM9", "LPT1", "LPT9",
+                "con", "Nul", "lpt3"
+        }) {
+            final StringSink sink = new StringSink();
+            TableUtils.putPathSafe(sink, reserved);
+            Assert.assertNotEquals(
+                    "a reserved device name must not render to itself: " + reserved,
+                    reserved,
+                    sink.toString()
+            );
+        }
+    }
+
+    /**
+     * A name that merely CONTAINS a reserved name, or extends it, is fine on Windows and must not be
+     * mangled -- otherwise every ticker starting with "CON" pays for the four that matter.
+     */
+    @Test
+    public void testNamesResemblingReservedDevicesPassThrough() {
+        for (String ok : new String[]{"CONS", "CONSOLE", "COM", "COM10", "LPT", "NULL", "PRNT"}) {
+            final StringSink sink = new StringSink();
+            TableUtils.putPathSafe(sink, ok);
+            Assert.assertEquals("not a reserved device name: " + ok, ok, sink.toString());
+        }
+    }
+
+    /**
+     * Windows silently strips a TRAILING space from a filename, so two values differing only by one
+     * would collide on a single directory -- the exact non-injectivity the %NULL and %EMPTY tokens
+     * exist to prevent, arriving through the filesystem instead of the renderer.
+     */
+    @Test
+    public void testTrailingSpaceIsEscaped() {
+        final StringSink sink = new StringSink();
+        TableUtils.putPathSafe(sink, "abc ");
+        Assert.assertEquals("abc%20", sink.toString());
+
+        // An INTERIOR space is legal on Windows and must survive: mangling it would rename every
+        // two-word symbol value for no reason.
+        final StringSink interior = new StringSink();
+        TableUtils.putPathSafe(interior, "New York");
+        Assert.assertEquals("New York", interior.toString());
+    }
+
+    /**
+     * Injectivity across the two new transforms. Both escape into the {@code %} space, which real
+     * values can never reach because {@code %} is itself escaped -- so the value that LOOKS like an
+     * escaped reserved name, and the reserved name itself, must render differently.
+     */
+    @Test
+    public void testReservedAndTrailingSpaceEscapesStayInjective() {
+        final StringSink reserved = new StringSink();
+        TableUtils.putPathSafe(reserved, "CON");
+        final StringSink literal = new StringSink();
+        TableUtils.putPathSafe(literal, reserved.toString());
+        Assert.assertNotEquals(
+                "a literal value equal to the escaped form must not collide with it",
+                reserved.toString(),
+                literal.toString()
+        );
+
+        final StringSink spaced = new StringSink();
+        TableUtils.putPathSafe(spaced, "abc ");
+        final StringSink spacedLiteral = new StringSink();
+        TableUtils.putPathSafe(spacedLiteral, "abc%20");
+        Assert.assertNotEquals(spaced.toString(), spacedLiteral.toString());
+    }
+
     private static void assertEscaped(char c, String expected) {
         final StringSink sink = new StringSink();
         TableUtils.putPathSafe(sink, String.valueOf(c));

@@ -2989,8 +2989,33 @@ public final class TableUtils {
      * identifier validators above already accept.
      */
     public static void putPathSafe(CharSink<?> sink, CharSequence value) {
-        for (int i = 0, n = value.length(); i < n; i++) {
+        final int n = value.length();
+        // A Windows RESERVED DEVICE NAME cannot be a directory name whatever its characters are, so
+        // escaping characters does not help -- the name itself is the problem. CON, PRN, AUX and NUL
+        // are entirely plausible SYMBOL values (real ticker and sensor names), and this is invisible
+        // to OSS CI, which is Linux-only.
+        //
+        // Escaping the FIRST character is enough to clear the reservation, and stays injective for
+        // the same reason every other escape here does: a real value can never render a BARE '%',
+        // so "%43ON" can only have come from this transform -- the literal value "%43ON" renders
+        // "%2543ON". Checking the INPUT is equivalent to checking the output, because a reserved
+        // name is all ASCII letters and digits, none of which the loop below escapes.
+        int start = 0;
+        if (isWindowsReservedDeviceName(value)) {
+            final char c = value.charAt(0);
+            sink.put('%').put(Numbers.hexDigits[(c >> 4) & 0xF]).put(Numbers.hexDigits[c & 0xF]);
+            start = 1;
+        }
+        for (int i = start; i < n; i++) {
             char c = value.charAt(i);
+            // Windows silently STRIPS a trailing space, so "a" and "a " would land on one directory --
+            // the same non-injectivity %NULL and %EMPTY exist to prevent, arriving via the filesystem
+            // rather than the renderer. Only the trailing one: an interior space is legal, and
+            // escaping those would rename every two-word value for nothing.
+            if (c == ' ' && i == n - 1) {
+                sink.put('%').put(Numbers.hexDigits[(c >> 4) & 0xF]).put(Numbers.hexDigits[c & 0xF]);
+                continue;
+            }
             // Windows additionally forbids * ? : | " < > in a filename. A cell segment is rendered
             // from arbitrary user data (a SYMBOL value or TRUNCATE prefix), so without these a
             // value like "a?b" names a directory Windows cannot create -- invisible to OSS CI,
@@ -3004,6 +3029,37 @@ public final class TableUtils {
                 sink.put(c);
             }
         }
+    }
+
+    /**
+     * Whether {@code value} is a Windows reserved device name: CON, PRN, AUX, NUL, COM1-9, LPT1-9.
+     * Case-insensitive, because the reservation is.
+     * <p>
+     * Only the EXACT name is reserved, so "CONSOLE" and "COM10" are fine and must not be mangled --
+     * otherwise every value merely starting with one of these pays for the handful that matter.
+     * <p>
+     * The {@code NAME.ext} form Windows also reserves cannot arise here: {@code putPathSafe} escapes
+     * every '.', so a rendered segment never contains a bare dot.
+     */
+    private static boolean isWindowsReservedDeviceName(CharSequence value) {
+        final int len = value.length();
+        if (len != 3 && len != 4) {
+            return false;
+        }
+        final char c0 = Character.toUpperCase(value.charAt(0));
+        final char c1 = Character.toUpperCase(value.charAt(1));
+        final char c2 = Character.toUpperCase(value.charAt(2));
+        if (len == 3) {
+            return (c0 == 'C' && c1 == 'O' && c2 == 'N')
+                    || (c0 == 'P' && c1 == 'R' && c2 == 'N')
+                    || (c0 == 'A' && c1 == 'U' && c2 == 'X')
+                    || (c0 == 'N' && c1 == 'U' && c2 == 'L');
+        }
+        final char c3 = value.charAt(3);
+        if (c3 < '1' || c3 > '9') {
+            return false;
+        }
+        return (c0 == 'C' && c1 == 'O' && c2 == 'M') || (c0 == 'L' && c1 == 'P' && c2 == 'T');
     }
 
     /**
