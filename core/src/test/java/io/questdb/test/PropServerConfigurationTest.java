@@ -202,11 +202,10 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
-        // The PRODUCTION default stays nosync: adaptive ships opt-in, so an upgrade does not move a
-        // user's durability and throughput profile for them. Deliberately the opposite of the TEST
-        // default in DefaultCairoConfiguration, which returns ADAPTIVE so the suite keeps exercising
-        // the new path.
-        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        // ADAPTIVE is the OSS default: a single node has no replica to fall back on, so local
+        // durability is the only thing standing between it and a power loss. Enterprise flips this to
+        // nosync only when replication is configured (EntPropServerConfiguration).
+        Assert.assertEquals(CommitMode.ADAPTIVE, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());

@@ -1656,18 +1656,21 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
-            // Ships as nosync, i.e. unchanged from the pre-adaptive release. Defaulting to adaptive
-            // would move every user who never set cairo.commit.mode onto a different durability AND
-            // performance profile on upgrade (~15-17% lower ingest, ~1.6x the bytes written, measured
-            // on a full-day 489M-row load), which an operator should choose deliberately rather than
-            // inherit from a version bump. The machinery ships enabled and opt-in; the default flips
-            // in a later release, on its own, so a durability change and a throughput regression do
-            // not arrive together.
+            // ADAPTIVE by default, because a single node has nothing else standing between it and a
+            // power loss. The cost is real (~15-17% lower ingest and ~1.6x the bytes written, measured
+            // on a full-day 489M-row load, and far worse on small commits -- see
+            // docs/adaptive-commit-mode.md §3) but it buys crash-safe recovery that no other layer is
+            // providing here.
             //
-            // The TEST default is deliberately the other way round: DefaultCairoConfiguration
-            // .getCommitMode() returns ADAPTIVE, so the suite keeps exercising the new path. Changing
-            // this line does not change what CI covers.
-            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            // Enterprise overrides this to nosync WHEN REPLICATION IS CONFIGURED
+            // (EntPropServerConfiguration): a replicated deployment already survives the loss of a
+            // node, and with store-and-forward clients the replay makes that RPO 0, so paying for
+            // local durability as well is redundant. That override is conditioned on replication
+            // actually being set up, not on the edition -- an enterprise node without an object store
+            // has no more redundancy than an OSS one and keeps this default.
+            //
+            // An explicit cairo.commit.mode always wins over both.
+            this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
             this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
             this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);
             // Default 50_000 (50ms) batches the device flush within a small window (RPO <= 50ms) under
