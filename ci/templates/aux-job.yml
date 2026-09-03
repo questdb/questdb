@@ -132,7 +132,7 @@ jobs:
           fetched=""
           for delay in 0 15 30 60 120; do
             if [[ "$delay" -gt 0 ]]; then
-              echo "fetching JIT build dependencies failed; retrying in ${delay}s"
+              echo "JIT dependency fetch/configure failed; retrying in ${delay}s (a transient GitHub throttle heals here; a deterministic CMake error will just repeat)"
               sleep "$delay"
               rm -rf build/jittest
             fi
@@ -143,7 +143,7 @@ jobs:
             fi
           done
           if [[ -z "$fetched" ]]; then
-            echo "fetching JIT build dependencies failed after all retries" >&2
+            echo "cmake configure or dependency fetch failed after all retries; if the same error repeats identically above, it is a deterministic CMake/build error, not a network problem" >&2
             exit 1
           fi
           # An explicit job count: a bare --parallel passes make an unbounded -j, and this graph is
