@@ -96,8 +96,8 @@ public class CompositeFuzzCrashTest extends AbstractCairoTest {
     }
 
     /**
-     * @param warmRows/warmTxns  applied cleanly first, so the fault lands on a table that already has
-     *                           committed cells rather than on an empty one
+     * @param warmRows/warmTxns   applied cleanly first, so the fault lands on a table that already has
+     *                            committed cells rather than on an empty one
      * @param armedRows/armedTxns applied with the fault armed
      */
     private void assertRecoversFromFaultDuringApply(

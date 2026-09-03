@@ -50,7 +50,9 @@ import org.junit.Test;
  */
 public class CompositeMatrixTest extends AbstractCairoTest {
 
-    /** The 64-cell open-cell cap, and eviction past it, must not lose or corrupt rows. */
+    /**
+     * The 64-cell open-cell cap, and eviction past it, must not lose or corrupt rows.
+     */
     @Test
     public void testCellCapBoundaryAndEvictionBeyondIt() throws Exception {
         assertMemoryLeak(() -> {
@@ -72,7 +74,9 @@ public class CompositeMatrixTest extends AbstractCairoTest {
         });
     }
 
-    /** A day roll while several cells are live. */
+    /**
+     * A day roll while several cells are live.
+     */
     @Test
     public void testDayRollWithSeveralLiveCells() throws Exception {
         assertMemoryLeak(() -> {
@@ -90,7 +94,9 @@ public class CompositeMatrixTest extends AbstractCairoTest {
         });
     }
 
-    /** An EXPRESSION dimension, including a value that changes bucket. */
+    /**
+     * An EXPRESSION dimension, including a value that changes bucket.
+     */
     @Test
     public void testExpressionDimensionMatchesPlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -104,7 +110,9 @@ public class CompositeMatrixTest extends AbstractCairoTest {
         });
     }
 
-    /** Fast-append OFF must be behaviourally identical: the flag is an optimisation, not semantics. */
+    /**
+     * Fast-append OFF must be behaviourally identical: the flag is an optimisation, not semantics.
+     */
     @Test
     public void testFastAppendFlagOffMatchesPlainTwin() throws Exception {
         setProperty(PropertyKey.CAIRO_WAL_COMPOSITE_FASTAPPEND_ENABLED, "false");
@@ -119,7 +127,9 @@ public class CompositeMatrixTest extends AbstractCairoTest {
         });
     }
 
-    /** PLAIN layout: routing and content must match, and SHOW CREATE TABLE must round-trip it. */
+    /**
+     * PLAIN layout: routing and content must match, and SHOW CREATE TABLE must round-trip it.
+     */
     @Test
     public void testLayoutPlainRoutesAndRoundTrips() throws Exception {
         assertMemoryLeak(() -> {
@@ -140,7 +150,9 @@ public class CompositeMatrixTest extends AbstractCairoTest {
         });
     }
 
-    /** A declared-but-never-routed composite table must read exactly like its plain twin. */
+    /**
+     * A declared-but-never-routed composite table must read exactly like its plain twin.
+     */
     @Test
     public void testNeverRoutedEmptyCompositeReadsLikeTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -182,7 +194,9 @@ public class CompositeMatrixTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    /** Tiny indirection so the assertion helper reads the same in every test. */
+    /**
+     * Tiny indirection so the assertion helper reads the same in every test.
+     */
     private static final class TestUtilsBridge {
         static void assertContains(String haystack, String needle) {
             io.questdb.test.tools.TestUtils.assertContains(haystack, needle);

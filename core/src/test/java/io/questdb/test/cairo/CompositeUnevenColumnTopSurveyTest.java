@@ -91,8 +91,8 @@ public class CompositeUnevenColumnTopSurveyTest extends AbstractCairoTest {
     @Test
     public void testO3InsertIntoExistingCell() throws Exception {
         runTwinned("o3", (t) ->
-                // BEFORE the cell's existing rows, carrying a value for the late-added column
-                execute("INSERT INTO " + t + " VALUES ('2023-10-01T00:30:00.000000Z','ETH',9.0,'E0')"),
+                        // BEFORE the cell's existing rows, carrying a value for the late-added column
+                        execute("INSERT INTO " + t + " VALUES ('2023-10-01T00:30:00.000000Z','ETH',9.0,'E0')"),
                 DEFAULT_QUERY);
     }
 
@@ -287,7 +287,9 @@ public class CompositeUnevenColumnTopSurveyTest extends AbstractCairoTest {
         });
     }
 
-    /** Cell 0 gets the SMALLER top: BTC 1 row before ADD COLUMN, ETH 3. */
+    /**
+     * Cell 0 gets the SMALLER top: BTC 1 row before ADD COLUMN, ETH 3.
+     */
     private void createReversedSkewCells(String name, String dimension) throws Exception {
         execute("CREATE TABLE " + name + " (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
                 + "PARTITION BY DAY" + dimension + " WAL");
@@ -305,7 +307,9 @@ public class CompositeUnevenColumnTopSurveyTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    /** THREE cells with three DIFFERENT tops: BTC 3, ETH 2, SOL 1. */
+    /**
+     * THREE cells with three DIFFERENT tops: BTC 3, ETH 2, SOL 1.
+     */
     private void createThreeCells(String name, String dimension) throws Exception {
         execute("CREATE TABLE " + name + " (ts TIMESTAMP, exch SYMBOL, px DOUBLE) TIMESTAMP(ts) "
                 + "PARTITION BY DAY" + dimension + " WAL");

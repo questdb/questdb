@@ -110,7 +110,9 @@ public class CompositePostingIndexSealTest extends AbstractCairoTest {
         });
     }
 
-    /** Index files living INSIDE a cell directory, i.e. {@code <day>/<cell>/<name>.pk|.pv.N}. */
+    /**
+     * Index files living INSIDE a cell directory, i.e. {@code <day>/<cell>/<name>.pk|.pv.N}.
+     */
     private List<String> cellIndexFiles() throws Exception {
         final List<String> out = new ArrayList<>();
         final Path root = Paths.get(configuration.getDbRoot());

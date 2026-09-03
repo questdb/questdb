@@ -141,7 +141,7 @@ public class CompositeWalBlockApplyTest extends AbstractCairoTest {
             Assert.assertEquals("three transactions drained individually should be three writer commits",
                     3, sequential);
             Assert.assertEquals("three transactions drained together should be ONE writer commit;"
-                            + " this suite is not exercising a blocked apply", 1, batched);
+                    + " this suite is not exercising a blocked apply", 1, batched);
         });
     }
 

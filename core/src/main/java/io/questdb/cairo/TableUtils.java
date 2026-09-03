@@ -3092,10 +3092,10 @@ public final class TableUtils {
      * reverse-lookup failure and throws, rather than being guessed to mean NULL.
      *
      * @param ordinalKey the per-dimension ordinal {@code value} was reverse-looked-up FROM; drives
-     *                    the NULL-token decision
+     *                   the NULL-token decision
      * @param value      the reverse lookup's result for {@code ordinalKey}, or null
      * @throws CairoException if {@code ordinalKey != SymbolTable.VALUE_IS_NULL} but {@code value}
-     *                         is null
+     *                        is null
      */
     public static void putCellSegmentPathSafe(CharSink<?> sink, int ordinalKey, @Nullable CharSequence value) {
         if (ordinalKey == SymbolTable.VALUE_IS_NULL) {

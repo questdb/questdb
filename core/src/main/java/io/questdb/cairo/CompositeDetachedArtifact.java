@@ -216,7 +216,6 @@ public final class CompositeDetachedArtifact {
     }
 
 
-
     /**
      * Folds the designated-timestamp min and max across the artifact's cells into
      * {@code minMaxOut[0]}/{@code minMaxOut[1]}.

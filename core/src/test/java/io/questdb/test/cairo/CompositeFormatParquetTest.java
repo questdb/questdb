@@ -52,7 +52,9 @@ public class CompositeFormatParquetTest extends AbstractCairoTest {
             + " rnd_varchar(4, 12, 1) c_varchar"
             + " FROM long_sequence(240)";
 
-    /** The plainest thing that can be asked of it: create, load, read back. */
+    /**
+     * The plainest thing that can be asked of it: create, load, read back.
+     */
     @Test
     public void testFreshParquetLoadMatchesThePlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -66,7 +68,9 @@ public class CompositeFormatParquetTest extends AbstractCairoTest {
         });
     }
 
-    /** An out-of-order merge into a day that is already parquet, per cell. */
+    /**
+     * An out-of-order merge into a day that is already parquet, per cell.
+     */
     @Test
     public void testO3MergeIntoFreshParquetMatchesThePlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -84,7 +88,9 @@ public class CompositeFormatParquetTest extends AbstractCairoTest {
         });
     }
 
-    /** Partition lifecycle over born-parquet cells. */
+    /**
+     * Partition lifecycle over born-parquet cells.
+     */
     @Test
     public void testDropPartitionOnFreshParquetMatchesThePlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -102,7 +108,9 @@ public class CompositeFormatParquetTest extends AbstractCairoTest {
         });
     }
 
-    /** DEDUP over born-parquet cells: an upsert has to merge into a parquet cell, not a native one. */
+    /**
+     * DEDUP over born-parquet cells: an upsert has to merge into a parquet cell, not a native one.
+     */
     @Test
     public void testDedupUpsertOnFreshParquetMatchesThePlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -124,7 +132,9 @@ public class CompositeFormatParquetTest extends AbstractCairoTest {
         });
     }
 
-    /** Converting born-parquet cells back to native, per cell. */
+    /**
+     * Converting born-parquet cells back to native, per cell.
+     */
     @Test
     public void testConvertFreshParquetToNativeMatchesThePlainTwin() throws Exception {
         assertMemoryLeak(() -> {
@@ -143,7 +153,9 @@ public class CompositeFormatParquetTest extends AbstractCairoTest {
         });
     }
 
-    /** Column DDL over born-parquet cells. */
+    /**
+     * Column DDL over born-parquet cells.
+     */
     @Test
     public void testAddColumnOnFreshParquetMatchesThePlainTwin() throws Exception {
         assertMemoryLeak(() -> {

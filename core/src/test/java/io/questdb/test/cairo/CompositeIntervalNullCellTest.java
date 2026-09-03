@@ -154,5 +154,4 @@ public class CompositeIntervalNullCellTest extends AbstractCompositeTwinTest {
     }
 
 
-
 }

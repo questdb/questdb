@@ -218,5 +218,4 @@ public class CompositeIntervalSiblingCellTest extends AbstractCompositeTwinTest 
     }
 
 
-
 }

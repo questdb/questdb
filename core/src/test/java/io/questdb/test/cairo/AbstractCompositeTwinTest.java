@@ -64,10 +64,10 @@ public abstract class AbstractCompositeTwinTest extends AbstractCairoTest {
     }
 
     /**
-     * @param columns          column list shared by both tables, e.g. {@code "ts TIMESTAMP, exch SYMBOL, px DOUBLE"}
-     * @param compositeClause  the composite table's partitioning clause, e.g.
-     *                         {@code "PARTITION BY DAY, exch LAYOUT PLAIN"}. The plain twin always gets
-     *                         {@code PARTITION BY DAY}.
+     * @param columns         column list shared by both tables, e.g. {@code "ts TIMESTAMP, exch SYMBOL, px DOUBLE"}
+     * @param compositeClause the composite table's partitioning clause, e.g.
+     *                        {@code "PARTITION BY DAY, exch LAYOUT PLAIN"}. The plain twin always gets
+     *                        {@code PARTITION BY DAY}.
      */
     protected void createTwins(String columns, String compositeClause) throws SqlException {
         execute("CREATE TABLE c (" + columns + ") TIMESTAMP(ts) " + compositeClause + " WAL");

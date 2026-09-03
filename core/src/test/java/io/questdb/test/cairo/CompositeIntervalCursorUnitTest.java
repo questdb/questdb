@@ -61,7 +61,7 @@ public class CompositeIntervalCursorUnitTest extends AbstractCairoTest {
             createAndFillStraddleShape();
             final LongList intervals = pointInterval("2023-01-02T02:00:00.000000Z");
             Assert.assertEquals("the matching sibling cell must produce a frame",
-                        1, countForwardRows(intervals));
+                    1, countForwardRows(intervals));
         });
     }
 
@@ -75,7 +75,7 @@ public class CompositeIntervalCursorUnitTest extends AbstractCairoTest {
             createAndFillStraddleShape();
             final LongList intervals = pointInterval("2023-01-02T02:00:00.000000Z");
             Assert.assertEquals("the matching sibling cell must produce a frame",
-                        1, countBackwardRows(intervals));
+                    1, countBackwardRows(intervals));
         });
     }
 
@@ -103,9 +103,9 @@ public class CompositeIntervalCursorUnitTest extends AbstractCairoTest {
 
             final LongList intervals = pointInterval("2023-01-02T03:00:00.000000Z");
             Assert.assertEquals("forward cursor must reach every matching cell",
-                        3, countForwardRows(intervals));
-                Assert.assertEquals("backward cursor must reach every matching cell",
-                        3, countBackwardRows(intervals));
+                    3, countForwardRows(intervals));
+            Assert.assertEquals("backward cursor must reach every matching cell",
+                    3, countBackwardRows(intervals));
         });
     }
 
@@ -119,7 +119,7 @@ public class CompositeIntervalCursorUnitTest extends AbstractCairoTest {
             createAndFillStraddleShape();
             final LongList intervals = pointInterval("2023-01-02T02:30:00.000000Z");
             Assert.assertEquals(0, countForwardRows(intervals));
-                Assert.assertEquals(0, countBackwardRows(intervals));
+            Assert.assertEquals(0, countBackwardRows(intervals));
         });
     }
 

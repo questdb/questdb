@@ -507,8 +507,8 @@ public class CompositeReadShapesTest extends AbstractCairoTest {
      * used).
      *
      * @param symIndexed whether {@code sym} carries a bitmap index (exercises the indexed-symbol scan
-     *                    sites Task 6b gates/audits; non-indexed exercises the plain residual-filter /
-     *                    generic-LATEST-BY paths).
+     *                   sites Task 6b gates/audits; non-indexed exercises the plain residual-filter /
+     *                   generic-LATEST-BY paths).
      */
     private void createSingleTableTwins(boolean symIndexed) throws SqlException {
         final String symCol = symIndexed ? "sym symbol index" : "sym symbol";

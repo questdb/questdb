@@ -28,7 +28,8 @@ import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 
 public final class CompositeTupleCodec {
-    private CompositeTupleCodec() {}
+    private CompositeTupleCodec() {
+    }
 
     public static void encode(int[] tuple, int len, CharSink<?> sink) {
         for (int i = 0; i < len; i++) {

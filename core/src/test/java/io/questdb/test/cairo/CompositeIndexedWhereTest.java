@@ -104,7 +104,9 @@ public class CompositeIndexedWhereTest extends AbstractCairoTest {
         });
     }
 
-    /** {@code ORDER BY sym, ts} -- the shape that previously took the symbol-key shortcut. */
+    /**
+     * {@code ORDER BY sym, ts} -- the shape that previously took the symbol-key shortcut.
+     */
     @Test
     public void testOrderBySymbolThenTimestamp() throws Exception {
         assertMemoryLeak(() -> {
@@ -114,7 +116,9 @@ public class CompositeIndexedWhereTest extends AbstractCairoTest {
         });
     }
 
-    /** Multi-value IN: a different factory again (FilterOnValues). */
+    /**
+     * Multi-value IN: a different factory again (FilterOnValues).
+     */
     @Test
     public void testInList() throws Exception {
         assertMemoryLeak(() -> {
@@ -123,7 +127,9 @@ public class CompositeIndexedWhereTest extends AbstractCairoTest {
         });
     }
 
-    /** NOT IN reaches FilterOnExcludedValues, which was a separate return site. */
+    /**
+     * NOT IN reaches FilterOnExcludedValues, which was a separate return site.
+     */
     @Test
     public void testNotInList() throws Exception {
         assertMemoryLeak(() -> {
@@ -132,7 +138,9 @@ public class CompositeIndexedWhereTest extends AbstractCairoTest {
         });
     }
 
-    /** A sub-query key set reaches FilterOnSubQuery -- yet another return site. */
+    /**
+     * A sub-query key set reaches FilterOnSubQuery -- yet another return site.
+     */
     @Test
     public void testSubQueryKeySet() throws Exception {
         assertMemoryLeak(() -> {
@@ -142,7 +150,9 @@ public class CompositeIndexedWhereTest extends AbstractCairoTest {
         });
     }
 
-    /** An indexed predicate PLUS a residual filter, which is compiled and attached separately. */
+    /**
+     * An indexed predicate PLUS a residual filter, which is compiled and attached separately.
+     */
     @Test
     public void testIndexedPredicateWithResidualFilter() throws Exception {
         assertMemoryLeak(() -> {

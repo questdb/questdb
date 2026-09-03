@@ -103,7 +103,9 @@ public class CompositeAddColumnPostingGateTest extends AbstractCairoTest {
         });
     }
 
-    /** {@code <day>/<cell>/*.pci|.pc} -- covering sidecars living inside a cell. */
+    /**
+     * {@code <day>/<cell>/*.pci|.pc} -- covering sidecars living inside a cell.
+     */
     private List<String> coveringSidecarsInCells() throws Exception {
         final List<String> out = new ArrayList<>();
         final Path root = Paths.get(configuration.getDbRoot());

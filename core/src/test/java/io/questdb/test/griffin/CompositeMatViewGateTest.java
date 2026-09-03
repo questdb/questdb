@@ -86,7 +86,9 @@ public class CompositeMatViewGateTest extends AbstractCairoTest {
         });
     }
 
-    /** POSITIVE CONTROL: a plain base must still work, or the gate is over-reaching. */
+    /**
+     * POSITIVE CONTROL: a plain base must still work, or the gate is over-reaching.
+     */
     @Test
     public void testMatViewOverPlainBaseStillWorks() throws Exception {
         assertMemoryLeak(() -> {

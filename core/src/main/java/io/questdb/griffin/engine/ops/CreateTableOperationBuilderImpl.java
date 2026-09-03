@@ -377,7 +377,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
                     final ExpressionNode dim = partitionDimensionExprs.getQuick(d);
                     if (dim != null && dim.token != null && Chars.equalsIgnoreCase(dim.token, colName)) {
                         throw SqlException.$(model.getColumnNamePos(),
-                                "composite partitioning does not yet support a POSTING index on a partition dimension [table=")
+                                        "composite partitioning does not yet support a POSTING index on a partition dimension [table=")
                                 .put(tableNameExpr.token).put(", column=").put(colName).put(']');
                     }
                 }
@@ -402,7 +402,7 @@ public class CreateTableOperationBuilderImpl implements CreateTableOperationBuil
         if (dimCount > 0) {
             for (int i = 0, n = columnNames.size(); i < n; i++) {
                 CreateTableColumnModel model = columnModels.get(columnNames.getQuick(i));
-                
+
             }
         }
 

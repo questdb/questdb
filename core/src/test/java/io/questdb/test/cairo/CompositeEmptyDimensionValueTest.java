@@ -159,7 +159,7 @@ public class CompositeEmptyDimensionValueTest extends AbstractCairoTest {
                         raw.get(i).startsWith("."));
             }
             Assert.assertEquals("the empty and 'BTC' dimension values must occupy DISTINCT cell "
-                            + "directories; got " + raw, 2, raw.size());
+                    + "directories; got " + raw, 2, raw.size());
         });
     }
 

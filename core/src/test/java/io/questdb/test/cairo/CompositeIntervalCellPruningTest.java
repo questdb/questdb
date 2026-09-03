@@ -148,5 +148,4 @@ public class CompositeIntervalCellPruningTest extends AbstractCompositeTwinTest 
     }
 
 
-
 }

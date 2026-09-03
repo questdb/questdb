@@ -39,7 +39,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.PartitionTransform;
 import io.questdb.griffin.model.ExpressionNode;
+
 import java.util.function.Function;
+
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlCompiler;

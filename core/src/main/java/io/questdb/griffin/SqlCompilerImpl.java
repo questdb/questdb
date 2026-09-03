@@ -5614,7 +5614,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             try (TableReader compositeCheckReader = engine.getReader(updateTableToken)) {
                 if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
                     throw SqlException.$(lexer.lastTokenPosition(),
-                            "composite partitioning does not support UPDATE [table=")
+                                    "composite partitioning does not support UPDATE [table=")
                             .put(updateTableToken.getTableName()).put(']');
                 }
             } catch (CairoException ignored) {

@@ -137,5 +137,4 @@ public class CompositeIntervalReaderReloadTest extends AbstractCompositeTwinTest
     }
 
 
-
 }

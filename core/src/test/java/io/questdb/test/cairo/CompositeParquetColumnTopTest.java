@@ -58,7 +58,9 @@ import org.junit.Test;
  */
 public class CompositeParquetColumnTopTest extends AbstractCairoTest {
 
-    /** The defect itself: CONVERT alone, nothing else. */
+    /**
+     * The defect itself: CONVERT alone, nothing else.
+     */
     @Test
     public void testConvertPreservesValuesInCellsWithUnevenColumnTops() throws Exception {
         assertMemoryLeak(() -> {
@@ -80,7 +82,9 @@ public class CompositeParquetColumnTopTest extends AbstractCairoTest {
         });
     }
 
-    /** And the round trip back, which must restore the same values. */
+    /**
+     * And the round trip back, which must restore the same values.
+     */
     @Test
     public void testConvertToParquetAndBackPreservesValues() throws Exception {
         assertMemoryLeak(() -> {
@@ -99,7 +103,9 @@ public class CompositeParquetColumnTopTest extends AbstractCairoTest {
         });
     }
 
-    /** ALTER COLUMN TYPE over the converted cells -- the shape the defect was first seen through. */
+    /**
+     * ALTER COLUMN TYPE over the converted cells -- the shape the defect was first seen through.
+     */
     @Test
     public void testAlterColumnTypeOverParquetCellsPreservesValues() throws Exception {
         assertMemoryLeak(() -> {
@@ -172,7 +178,9 @@ public class CompositeParquetColumnTopTest extends AbstractCairoTest {
         });
     }
 
-    /** SQUASH over converted cells with uneven tops -- another shape never probed in this condition. */
+    /**
+     * SQUASH over converted cells with uneven tops -- another shape never probed in this condition.
+     */
     @Test
     public void testSquashOverParquetCellsWithUnevenColumnTops() throws Exception {
         assertMemoryLeak(() -> {

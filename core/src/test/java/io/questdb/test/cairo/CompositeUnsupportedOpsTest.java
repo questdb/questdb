@@ -64,7 +64,6 @@ public class CompositeUnsupportedOpsTest extends AbstractCairoTest {
      */
 
 
-
     @Test
     public void testConvertPartitionToParquetIsNoLongerGated() throws Exception {
         assertMemoryLeak(() -> {

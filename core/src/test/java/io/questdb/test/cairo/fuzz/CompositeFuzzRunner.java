@@ -245,14 +245,14 @@ public class CompositeFuzzRunner {
      *     {@code isRoutedComposite()} check, and its reopen step resolves the last partition through
      *     the cellKey-0-only path that {@code scaleSymbolCapacities}'s own doc calls "a genuine
      *     correctness risk" for a routed composite table.
-     *     <p>
+     * <p>
      *     The audit (see {@code CompositeSymbolCapacityAlterTest}) settled it. The reopen provably DOES
      *     run ungated on a routed composite table -- instrumentation gives
      *     {@code routedComposite=true, transientRowCount=1, willReopen=true} -- but the ALTER is
      *     ACCEPTED and leaves the table twin-correct and unsuspended, including when the ALTER and the
      *     writes that follow it land in one apply pass, which is the shape that would use the
      *     repositioned handle.
-     *     <p>
+     * <p>
      *     GATED is therefore the wrong label: {@link #applyGatedOperation} asserts a composite REFUSAL,
      *     and there is none to assert. Residual risk, pinned by that test rather than by this
      *     classification: nothing breaks only because the composite write path re-resolves per-cell
@@ -1286,78 +1286,78 @@ public class CompositeFuzzRunner {
      * metadata: the two schemas are identical, and the plain reader is never itself under test.
      * Task 1 keeps this to plain data inserts (no structural DDL, no O3, no replace-range) so the
      * skeleton had the fewest moving parts, with "later tasks randomize these axes" as the plan. That
- * never happened, so EVERY structural DDL below still sits at 0.0 and this fuzz exercises no DDL at
- * all -- including operations that became supported in 2026-08. The scope-closure index claims
- * (invariant 5) that flipping an operation to SUPPORTED "enrols the operation in the differential
- * fuzz automatically": it does NOT. The Support map is read only by CompositeFuzzOpCoverageTest to
- * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
- * else.
- * <p>
- * DROP PARTITION: <b>FOUR causes FIXED 2026-08-26, and ENROLLED at 0.05.</b> It failed 12 of 24 fixed
- * sweep seeds when this investigation started.
- * <p>
- * Enrolled ONCE, un-enrolled, then re-enrolled -- the middle step is the instructive one. The first
- * enrolment rested on "all 24 fixed seeds pass"; the very next wide run,
- * {@code CompositeFuzzUnstableTest} (clock seeds, precisely to explore what fixed seeds do not), found
- * a fresh divergence, so that basis was wrong and it came back off. The fourth cause -- the drop
- * path's active-tail reopen -- was then found and fixed, and the evidence now is: 24 fixed seeds, plus
- * roughly 28 random-seed explorations across 4 independent unstable runs, all green.
- * <p>
- * That is EVIDENCE, not proof, and it is recorded as such deliberately. If CI ever goes intermittently
- * red here, {@link #withDropPartitionProbability} makes it a one-line revert -- but prefer chasing the
- * seed, because the reproduction recipe is now correct (use {@code TestUtils.generateRandom}, never a
- * bare {@code new Rnd}) and every failure this generation has produced so far has been a real bug.
- * <p>
- * That is worth stating plainly: the fixed sweep is a regression guard, not evidence of absence. Use
- * {@link #withDropPartitionProbability}(0.05) to keep hunting; expect the unstable test to keep
- * finding things until it stops.
- * <p>
- * <b>The one it found is FIXED</b> (the three causes below, plus the drop path's active-tail reopen).
- * Its reproduction is kept because it is the only deterministic one this generation produced, and a
- * repro that no longer fails is the cheapest regression check there is:
- * <pre>
- *   CompositeFuzzRunner.of(engine, TestUtils.generateRandom(null, 345549849791363L, 1787735726165L))
- *           .withDropPartitionProbability(0.05)
- *   -&gt; Row 238 ts expected 2023-01-02T00:00:00Z SKEWEARLY SKEWEARLY 0.5 0
- *      but was  2023-01-02T00:21:23.066143Z SYM2 SYM0 ...
- * </pre>
- * The PLAIN twin has the SKEWEARLY rows at that position and the composite twin does not, so the
- * composite side is missing rows this harness inserts AFTER the generated traffic
- * ({@code insertTimeSkewedCell}) -- i.e. after any generated DROP has run. Note
- * {@code TestUtils.generateRandom}, NOT {@code new Rnd}: the former primes the stream with two
- * {@code nextBoolean()} calls and a bare {@code new Rnd} does not reproduce (see
- * {@code CompositeFuzzUnstableTest}'s javadoc).
- * THREE independent causes, every one a per-cell concept handled through a cellKey-0-only API:
- * <ol>
- *   <li><b>Writer, {@code TxWriter#beginPartitionSizeUpdate}.</b> Paired the last ENTRY's cellKey with
- *       {@code maxTimestamp}; the lookup missed and INSERTED ON MISS, creating a phantom _txn entry
- *       for a cell with no directory. 50 -&gt; 35 occurrences, 12 -&gt; 9 of 24 seeds.</li>
- *   <li><b>Reader, {@code TableReader#reloadAllSymbols}.</b> Walked {@code columnCount} and touched
- *       {@code symbolMapReaders} only, so a composite table's INTERNERS were never refreshed on that
- *       arm -- the reader advanced its partition list while its cell registry stayed behind and
- *       {@code resolveCellSegmentOrNullIfDormant} fell back to the BARE DAY path.
- *       35 -&gt; 0 occurrences, 9 -&gt; 2 of 24 seeds.</li>
- *   <li><b>{@code ColumnVersionWriter#replaceInitialPartitionRecords}.</b> On a drop it moves a
- *       column's "added at" record back to the new last partition and writes a compensating
- *       column-top -- with the cellKey-0-only forms, so SIBLING cells got none while the moved default
- *       claimed the column existed at their day. A reader on a sibling then opened a
- *       {@code <col>.d.<txn>} file that was never created. Fixed by collecting the moved columns and
- *       backfilling each sibling with ITS OWN row count, mirroring
- *       {@code writeCompositeAddColumnColumnVersions}. 2 -&gt; 0 of 24 seeds.</li>
- * </ol>
- * Each measurement above holds every probability FIXED and changes only product code, so the counts
- * are comparable (see the method warning below for why that matters).
- * <p>
- * Nine mechanisms were eliminated by measurement before the right ones were found, and five probes
- * were spoiled by a missing identity or scope field -- the last provider is the registry (it was not),
- * the edit applied (it had not), these lines share a reader (they did not), these lines share a table
- * (they did not), this method is on the failing path (it was not). Before reading any probe on this
- * code, verify it observes the thing you think it observes.
- * <p>
- * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
- * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
- * match column count [expected=7, actual=5]" and a type change gives "inconvertible types:
- * DOUBLE -> TIMESTAMP_NS". Enabling it means making the harness schema-adaptive first.
+     * never happened, so EVERY structural DDL below still sits at 0.0 and this fuzz exercises no DDL at
+     * all -- including operations that became supported in 2026-08. The scope-closure index claims
+     * (invariant 5) that flipping an operation to SUPPORTED "enrols the operation in the differential
+     * fuzz automatically": it does NOT. The Support map is read only by CompositeFuzzOpCoverageTest to
+     * check the map is COMPLETE, never by the generator. Enrolment is these probabilities and nothing
+     * else.
+     * <p>
+     * DROP PARTITION: <b>FOUR causes FIXED 2026-08-26, and ENROLLED at 0.05.</b> It failed 12 of 24 fixed
+     * sweep seeds when this investigation started.
+     * <p>
+     * Enrolled ONCE, un-enrolled, then re-enrolled -- the middle step is the instructive one. The first
+     * enrolment rested on "all 24 fixed seeds pass"; the very next wide run,
+     * {@code CompositeFuzzUnstableTest} (clock seeds, precisely to explore what fixed seeds do not), found
+     * a fresh divergence, so that basis was wrong and it came back off. The fourth cause -- the drop
+     * path's active-tail reopen -- was then found and fixed, and the evidence now is: 24 fixed seeds, plus
+     * roughly 28 random-seed explorations across 4 independent unstable runs, all green.
+     * <p>
+     * That is EVIDENCE, not proof, and it is recorded as such deliberately. If CI ever goes intermittently
+     * red here, {@link #withDropPartitionProbability} makes it a one-line revert -- but prefer chasing the
+     * seed, because the reproduction recipe is now correct (use {@code TestUtils.generateRandom}, never a
+     * bare {@code new Rnd}) and every failure this generation has produced so far has been a real bug.
+     * <p>
+     * That is worth stating plainly: the fixed sweep is a regression guard, not evidence of absence. Use
+     * {@link #withDropPartitionProbability}(0.05) to keep hunting; expect the unstable test to keep
+     * finding things until it stops.
+     * <p>
+     * <b>The one it found is FIXED</b> (the three causes below, plus the drop path's active-tail reopen).
+     * Its reproduction is kept because it is the only deterministic one this generation produced, and a
+     * repro that no longer fails is the cheapest regression check there is:
+     * <pre>
+     *   CompositeFuzzRunner.of(engine, TestUtils.generateRandom(null, 345549849791363L, 1787735726165L))
+     *           .withDropPartitionProbability(0.05)
+     *   -&gt; Row 238 ts expected 2023-01-02T00:00:00Z SKEWEARLY SKEWEARLY 0.5 0
+     *      but was  2023-01-02T00:21:23.066143Z SYM2 SYM0 ...
+     * </pre>
+     * The PLAIN twin has the SKEWEARLY rows at that position and the composite twin does not, so the
+     * composite side is missing rows this harness inserts AFTER the generated traffic
+     * ({@code insertTimeSkewedCell}) -- i.e. after any generated DROP has run. Note
+     * {@code TestUtils.generateRandom}, NOT {@code new Rnd}: the former primes the stream with two
+     * {@code nextBoolean()} calls and a bare {@code new Rnd} does not reproduce (see
+     * {@code CompositeFuzzUnstableTest}'s javadoc).
+     * THREE independent causes, every one a per-cell concept handled through a cellKey-0-only API:
+     * <ol>
+     *   <li><b>Writer, {@code TxWriter#beginPartitionSizeUpdate}.</b> Paired the last ENTRY's cellKey with
+     *       {@code maxTimestamp}; the lookup missed and INSERTED ON MISS, creating a phantom _txn entry
+     *       for a cell with no directory. 50 -&gt; 35 occurrences, 12 -&gt; 9 of 24 seeds.</li>
+     *   <li><b>Reader, {@code TableReader#reloadAllSymbols}.</b> Walked {@code columnCount} and touched
+     *       {@code symbolMapReaders} only, so a composite table's INTERNERS were never refreshed on that
+     *       arm -- the reader advanced its partition list while its cell registry stayed behind and
+     *       {@code resolveCellSegmentOrNullIfDormant} fell back to the BARE DAY path.
+     *       35 -&gt; 0 occurrences, 9 -&gt; 2 of 24 seeds.</li>
+     *   <li><b>{@code ColumnVersionWriter#replaceInitialPartitionRecords}.</b> On a drop it moves a
+     *       column's "added at" record back to the new last partition and writes a compensating
+     *       column-top -- with the cellKey-0-only forms, so SIBLING cells got none while the moved default
+     *       claimed the column existed at their day. A reader on a sibling then opened a
+     *       {@code <col>.d.<txn>} file that was never created. Fixed by collecting the moved columns and
+     *       backfilling each sibling with ITS OWN row count, mirroring
+     *       {@code writeCompositeAddColumnColumnVersions}. 2 -&gt; 0 of 24 seeds.</li>
+     * </ol>
+     * Each measurement above holds every probability FIXED and changes only product code, so the counts
+     * are comparable (see the method warning below for why that matters).
+     * <p>
+     * Nine mechanisms were eliminated by measurement before the right ones were found, and five probes
+     * were spoiled by a missing identity or scope field -- the last provider is the registry (it was not),
+     * the edit applied (it had not), these lines share a reader (they did not), these lines share a table
+     * (they did not), this method is on the failing path (it was not). Before reading any probe on this
+     * code, verify it observes the thing you think it observes.
+     * <p>
+     * SCHEMA-CHANGING DDL is blocked for a separate, plainer reason: this runner's SQL is fixed-shape
+     * (5-column INSERTs, fixed literals), so a generated ADD/DROP COLUMN gives "row value count does not
+     * match column count [expected=7, actual=5]" and a type change gives "inconvertible types:
+     * DOUBLE -> TIMESTAMP_NS". Enabling it means making the harness schema-adaptive first.
      * <p>
      * {@code probabilityOfUnassignedColumnValue} and {@code probabilityOfAssigningNull} were kept
      * at 0.0 in Task 1 to dodge a hang: {@code generateSet} applies both uniformly across every
@@ -1537,7 +1537,6 @@ public class CompositeFuzzRunner {
         }
         return transactions;
     }
-
 
 
     /**

@@ -1578,7 +1578,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        
 
 
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
@@ -1595,7 +1594,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // the column files at the DAY container, not the cell directory. Unlike the other column
         // DDLs fixed in SP2, its paths are threaded through parallel conversion tasks from several
         // call sites, so making it cell-aware is a change in that class rather than a per-call fix.
-        
+
 
         ConvertOperatorImpl convertOperator = getConvertOperator();
         try {
@@ -2693,7 +2692,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        
+
 
         // SP2 (2026-08-18): gate RETAINED, now with a measured root cause rather than a guess. With it
         // lifted, DROP INDEX fails
@@ -2703,7 +2702,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // and its two column versions both come from the cellKey-0-only
         // getColumnNameTxn(timestamp, columnIndex), so they collide. Making it cell-aware means
         // threading cellKey through DropIndexOperator's walk -- a change in that class, not here.
-        
+
 
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
@@ -4463,7 +4462,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
         // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
         // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
-        
+
 
         LOG.info().$("renaming column '").$safe(columnName).$('[')
                 .$(ColumnType.nameOf(type)).$("]' to '").$safe(newName)
@@ -4658,7 +4657,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                    read, so callers may reuse one scratch array across many rows without
      *                    reallocating
      * @return the dense cellKey for this ordinal tuple (0 for the first-ever distinct tuple, 1
-     *         for the next distinct one, ...)
+     * for the next distinct one, ...)
      */
     public int resolveCellKey(int[] dimOrdinals) {
         int dimCount = metadata.getPartitionSpec().getDimensionCount();
@@ -4808,15 +4807,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param cellKey the dense cellKey to render, as returned by {@link #resolveCellKey(int[])}
      * @throws UnsupportedOperationException if called on a non-composite table
      * @throws CairoException                if any dimension is {@code KIND_EXPRESSION} -- not yet
-     *                                        evaluated/renderable (composite-partitioning Plan 4e
-     *                                        Task 1; real rendering, a dedicated-dict reverse lookup
-     *                                        byte-identical to {@code KIND_TRUNCATE}, is Task 3).
-     *                                        Reachable even before any row is dispatched: a brand new
-     *                                        composite table's first WAL commit unconditionally tears
-     *                                        down an artificial 0-length "lag" placeholder partition
-     *                                        (see {@code processWalCommitFinishApply}) before real row
-     *                                        data is ever processed, and that teardown renders the
-     *                                        placeholder's own cell segment name through here.
+     *                                       evaluated/renderable (composite-partitioning Plan 4e
+     *                                       Task 1; real rendering, a dedicated-dict reverse lookup
+     *                                       byte-identical to {@code KIND_TRUNCATE}, is Task 3).
+     *                                       Reachable even before any row is dispatched: a brand new
+     *                                       composite table's first WAL commit unconditionally tears
+     *                                       down an artificial 0-length "lag" placeholder partition
+     *                                       (see {@code processWalCommitFinishApply}) before real row
+     *                                       data is ever processed, and that teardown renders the
+     *                                       placeholder's own cell segment name through here.
      */
 
     public void renderCellSegment(CharSink<?> sink, int cellKey) {
@@ -6589,7 +6588,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * #isRoutedComposite()}) first.
      *
      * @return the single cellKey every row in {@code [rowLo, rowHi)} resolves to, if this commit is
-     *         fast-append-eligible; -1 otherwise
+     * fast-append-eligible; -1 otherwise
      */
     int isCompositeSingleCellFastAppendPossible(long rowLo, long rowHi, boolean ordered, long o3TimestampMin, long o3TimestampMax) {
         if (!ordered || isCommitDedupMode()) {
@@ -6755,7 +6754,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * never sufficient for a caller to act on.
      *
      * @return true iff this commit is multi-cell fast-append-eligible (detection only -- no caller
-     *         acts on this result yet)
+     * acts on this result yet)
      */
     boolean isCompositeMultiCellFastAppendPossible(
             long rowLo,
@@ -14648,7 +14647,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * #buildCompositeCellGroupScratch}).
      *
      * @return 1 if a partition-processing unit was actually dispatched (the caller's {@code
-     *         latchCount} delta), 0 if this cell was skipped (read-only partition)
+     * latchCount} delta), 0 if this cell was skipped (read-only partition)
      */
     private int dispatchCompositeCellRange(
             int cellKey,
@@ -15223,7 +15222,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * <p>
      * Column resolution mirrors {@link FunctionParser#createColumn(int, CharSequence,
      * io.questdb.cairo.sql.RecordMetadata)} exactly ({@link SqlUtil#getColumnIndexQuiet(
-     * io.questdb.cairo.sql.RecordMetadata, CharSequence)}, NOT the verbatim {@code
+     *io.questdb.cairo.sql.RecordMetadata, CharSequence)}, NOT the verbatim {@code
      * RecordMetadata#getColumnIndexQuiet(CharSequence)} default, which does not apply the same
      * quoted-identifier handling) -- this runs BEFORE {@link FunctionParser#parseFunction}, purely
      * to fail fast with a clearer message before building (and having to discard) a Function tree
@@ -19639,7 +19638,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long parquetNameTxn,
             int dstDirLen,
             long partitionRowCount
-    , @Nullable CharSequence cellSegment) {
+            , @Nullable CharSequence cellSegment) {
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
         final int srcDirLen = path.size();
         try {
@@ -20977,7 +20976,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return true;
     }
 
-    /** First attached index at {@code ts} with {@code cellKey}, or -1. */
+    /**
+     * First attached index at {@code ts} with {@code cellKey}, or -1.
+     */
     private int findCompositePartitionIndex(long ts, int cellKey) {
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             if (txWriter.getPartitionTimestampByIndex(i) == ts && txWriter.getPartitionCellKey(i) == cellKey) {
@@ -20987,7 +20988,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return -1;
     }
 
-    /** First attached index at exactly {@code ts} (any cell), or -1. */
+    /**
+     * First attached index at exactly {@code ts} (any cell), or -1.
+     */
     private int findCompositePartitionIndexByTimestamp(long ts) {
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             if (txWriter.getPartitionTimestampByIndex(i) == ts) {
@@ -21956,7 +21959,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int lastEntryIndex = txWriter.getPartitionCount() - 1;
         final long columnNameTxn = lastEntryIndex >= 0
                 ? columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(),
-                        txWriter.getPartitionCellKey(lastEntryIndex), columnIndex)
+                txWriter.getPartitionCellKey(lastEntryIndex), columnIndex)
                 : columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
         try {
             try {

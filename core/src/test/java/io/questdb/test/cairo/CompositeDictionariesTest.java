@@ -303,8 +303,12 @@ public class CompositeDictionariesTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, exchange symbol, price double) " +
                     "timestamp(ts) partition by day order by exchange wal");
             try (TableWriter w = getWriter("t")) {
-                try { w.removeColumn("exchange"); Assert.fail("dropping an ORDER BY/cluster column must be rejected"); }
-                catch (CairoException e) { TestUtils.assertContains(e.getFlyweightMessage(), "composite"); }
+                try {
+                    w.removeColumn("exchange");
+                    Assert.fail("dropping an ORDER BY/cluster column must be rejected");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "composite");
+                }
                 w.removeColumn("price");                                  // non-cluster column -> allowed
                 Assert.assertTrue(w.getMetadata().getColumnIndexQuiet("price") < 0);
             }

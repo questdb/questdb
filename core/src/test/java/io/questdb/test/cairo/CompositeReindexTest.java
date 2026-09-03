@@ -65,7 +65,9 @@ public class CompositeReindexTest extends AbstractCairoTest {
         });
     }
 
-    /** POSTING chains use a different indexer and a different on-disk shape ({@code .pk}/{@code .pv.N}). */
+    /**
+     * POSTING chains use a different indexer and a different on-disk shape ({@code .pk}/{@code .pv.N}).
+     */
     @Test
     public void testReindexRebuildsADeletedCellPostingIndex() throws Exception {
         assertMemoryLeak(() -> {
@@ -158,7 +160,9 @@ public class CompositeReindexTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
-    /** Index files living inside a CELL directory, i.e. {@code <table>/<day>/<cell>/<name><suffix>}. */
+    /**
+     * Index files living inside a CELL directory, i.e. {@code <table>/<day>/<cell>/<name><suffix>}.
+     */
     private List<String> indexFilesUnder(String tablePrefix, String... suffixes) throws Exception {
         final List<String> out = new ArrayList<>();
         final Path root = Paths.get(configuration.getDbRoot());
