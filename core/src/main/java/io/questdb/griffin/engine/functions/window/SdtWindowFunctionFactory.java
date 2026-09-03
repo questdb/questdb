@@ -36,6 +36,7 @@ import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.vm.Vm;
@@ -51,6 +52,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -155,15 +157,16 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
                     map,
                     windowContext.getPartitionByRecord(),
                     windowContext.getPartitionBySink(),
-                    tsArg, valueArg, compdev, ignoreNulls, mem
+                    tsArg, valueArg, compdevArg, compdev, ignoreNulls, mem
             );
         }
-        return new SdtOverWholeResultSetFunction(tsArg, valueArg, compdev, ignoreNulls, mem);
+        return new SdtOverWholeResultSetFunction(tsArg, valueArg, compdevArg, compdev, ignoreNulls, mem);
     }
 
     // ---- non-partitioned, two-pass ----
     static class SdtOverWholeResultSetFunction extends BaseWindowFunction implements SwingingDoor.Sink, Reopenable {
         private final double compdev;
+        private final Function compdevArg;
         private final boolean ignoreNulls;
         private final MemoryARW mem;
         private final Function tsArg;
@@ -172,10 +175,11 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private ObjList<ExpressionNode> orderBy;
         private long readOffset;   // pass2 read cursor (bytes)
 
-        SdtOverWholeResultSetFunction(Function tsArg, Function valueArg, double compdev,
+        SdtOverWholeResultSetFunction(Function tsArg, Function valueArg, Function compdevArg, double compdev,
                                        boolean ignoreNulls, MemoryARW mem) {
             super(valueArg); // BaseWindowFunction stores the "value" arg as `arg`
             this.tsArg = tsArg;
+            this.compdevArg = compdevArg;
             this.compdev = compdev;
             this.ignoreNulls = ignoreNulls;
             this.mem = mem;
@@ -184,8 +188,16 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void close() {
-            super.close();
+            super.close(); // frees the value arg only; tsArg and compdevArg are owned here
+            Misc.free(tsArg);
+            Misc.free(compdevArg);
             mem.close();
+        }
+
+        @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            tsArg.cursorClosed();
         }
 
         @Override
@@ -228,6 +240,22 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
                     dest.add(traversalOrdinal);
                 }
             }
+        }
+
+        // BaseWindowFunction inits only the value arg; tsArg lifecycle is this class's job.
+        // Without this, a stateful ts expression (e.g. json_extract) reads null for every row.
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            tsArg.init(symbolTableSource, executionContext);
+        }
+
+        // Live-view incremental refresh skips init() from the second cycle on and calls this
+        // instead to rebind cursor-scoped arg state; see BaseWindowFunction.initPartitionBy.
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            tsArg.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -319,6 +347,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toTop() {
             super.toTop();
+            tsArg.toTop();
             appendOffset = 0;
             readOffset = 0;
             sd.reset();
@@ -332,6 +361,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
     // and the fuse gate excludes PARTITION BY anyway, so this function stays on the unfused pass2 path.
     static class SdtOverPartitionFunction extends BasePartitionedWindowFunction implements SwingingDoor.Sink {
         private final double compdev;
+        private final Function compdevArg;
         private final boolean ignoreNulls;
         private final MemoryARW mem;
         private final SwingingDoor scratch = new SwingingDoor();
@@ -341,10 +371,11 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private long readOffset;   // pass2 read cursor (bytes), monotonic across ALL partitions
 
         SdtOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink,
-                                  Function tsArg, Function valueArg, double compdev, boolean ignoreNulls,
-                                  MemoryARW mem) {
+                                  Function tsArg, Function valueArg, Function compdevArg, double compdev,
+                                  boolean ignoreNulls, MemoryARW mem) {
             super(map, partitionByRecord, partitionBySink, valueArg);
             this.tsArg = tsArg;
+            this.compdevArg = compdevArg;
             this.compdev = compdev;
             this.ignoreNulls = ignoreNulls;
             this.mem = mem;
@@ -353,8 +384,16 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void close() {
-            super.close();
+            super.close(); // frees the value arg, map and partition-by functions; tsArg and compdevArg are owned here
+            Misc.free(tsArg);
+            Misc.free(compdevArg);
             mem.close();
+        }
+
+        @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            tsArg.cursorClosed();
         }
 
         @Override
@@ -377,6 +416,22 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
             // Unused on the cached (pass1/pass2) execution path; present only to satisfy
             // the Function contract for a BOOLEAN-typed result.
             return false;
+        }
+
+        // BaseWindowFunction inits only the value arg; tsArg lifecycle is this class's job.
+        // Without this, a stateful ts expression (e.g. json_extract) reads null for every row.
+        @Override
+        public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.init(symbolTableSource, executionContext);
+            tsArg.init(symbolTableSource, executionContext);
+        }
+
+        // Live-view incremental refresh skips init() from the second cycle on and calls this
+        // instead to rebind cursor-scoped arg state; see BaseWindowFunction.initPartitionBy.
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            tsArg.init(symbolTableSource, executionContext);
         }
 
         @Override
@@ -495,6 +550,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toTop() {
             super.toTop();
+            tsArg.toTop();
             appendOffset = 0;
             readOffset = 0;
         }

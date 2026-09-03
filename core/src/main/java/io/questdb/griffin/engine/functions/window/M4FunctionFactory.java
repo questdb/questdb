@@ -265,6 +265,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             super.cursorClosed();
             tsArg.cursorClosed();
             valueArg.cursorClosed();
+            targetArg.cursorClosed();
         }
 
         @Override
@@ -330,6 +331,19 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
+            bindArgs(symbolTableSource, executionContext);
+        }
+
+        // Live-view incremental refresh skips init() from the second cycle on and calls this
+        // instead; args cache cursor-scoped bindings, so rebind them every cycle. See
+        // BaseWindowFunction.initPartitionBy.
+        @Override
+        public void initPartitionBy(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+            super.initPartitionBy(symbolTableSource, executionContext);
+            bindArgs(symbolTableSource, executionContext);
+        }
+
+        private void bindArgs(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             tsArg.init(symbolTableSource, executionContext);
             valueArg.init(symbolTableSource, executionContext);
             targetArg.init(symbolTableSource, executionContext);
@@ -494,6 +508,9 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public void toTop() {
             super.toTop();
+            tsArg.toTop();
+            valueArg.toTop();
+            targetArg.toTop();
             count = 0;
             rowCount = 0;
             pass2Ordinal = 0;

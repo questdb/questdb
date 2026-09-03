@@ -188,6 +188,48 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPartitionedStatefulTimestampArgInitializedAndClosed() throws Exception {
+        // Same regression as testStatefulTimestampArgInitializedAndClosed, for SdtOverPartitionFunction.
+        assertQuery("select id from (select id, sdt(json_extract(j, '$.x')::timestamp, val, 0.0) over (partition by sym order by ts) keep from tab) where keep")
+                .ddl("create table tab (id int, sym symbol, j varchar, val double, ts timestamp) timestamp(ts)",
+                        """
+                                insert into tab values
+                                (0, 'a', '{"x":"2024-01-01T00:00:00.000000Z"}', 0.0, '2024-01-01T00:00:00.000000Z'),
+                                (1, 'b', '{"x":"2024-01-01T00:00:01.000000Z"}', 0.0, '2024-01-01T00:00:01.000000Z'),
+                                (2, 'a', '{"x":"2024-01-01T00:00:02.000000Z"}', 0.0, '2024-01-01T00:00:02.000000Z'),
+                                (3, 'b', '{"x":"2024-01-01T00:00:03.000000Z"}', 0.0, '2024-01-01T00:00:03.000000Z'),
+                                (4, 'a', '{"x":"2024-01-01T00:00:04.000000Z"}', 0.0, '2024-01-01T00:00:04.000000Z'),
+                                (5, 'b', '{"x":"2024-01-01T00:00:05.000000Z"}', 0.0, '2024-01-01T00:00:05.000000Z')""")
+                .returns("""
+                        id
+                        0
+                        1
+                        4
+                        5
+                        """);
+    }
+
+    @Test
+    public void testStatefulTimestampArgInitializedAndClosed() throws Exception {
+        // Regression: BaseWindowFunction inits/frees only the value arg, so sdt must handle tsArg
+        // itself. json_extract builds its native JSON pointer in init() and frees it in close();
+        // without init() every read returns null, every row becomes a hard boundary (all rows
+        // survive the filter), and without close() the native state leaks (fails the leak check).
+        assertQuery("select id from (select id, sdt(json_extract(j, '$.x')::timestamp, val, 0.0) over (order by ts) keep from tab) where keep")
+                .ddl("create table tab (id int, j varchar, val double, ts timestamp) timestamp(ts)",
+                        """
+                                insert into tab values
+                                (0, '{"x":"2024-01-01T00:00:00.000000Z"}', 0.0, '2024-01-01T00:00:00.000000Z'),
+                                (1, '{"x":"2024-01-01T00:00:01.000000Z"}', 0.0, '2024-01-01T00:00:01.000000Z'),
+                                (2, '{"x":"2024-01-01T00:00:02.000000Z"}', 0.0, '2024-01-01T00:00:02.000000Z')""")
+                .returns("""
+                        id
+                        0
+                        2
+                        """);
+    }
+
+    @Test
     public void testPartitionedSingleRowPerPartitionKept() throws Exception {
         assertQuery("select ts, sym, val, sdt(ts, val, 0.5) over (partition by sym order by ts) keep from tab")
                 .ddl("create table tab (ts timestamp, sym symbol, val double) timestamp(ts)",
