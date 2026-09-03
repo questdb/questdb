@@ -62,10 +62,18 @@ variables:
   # off on 429/503 and obeys the server's Retry-After header (MRESOLVER-396,
   # resolver 1.9.16+); wagon's GET retries have no backoff, so this pipeline
   # must NOT pin transport=wagon the way test-pipeline.yml does for the
-  # Reposilite keepalive tuning. interval doubles per attempt and only applies
-  # when the server sends no Retry-After.
+  # Reposilite keepalive tuning.
+  #
+  # The backoff ramps linearly, interval x attempt number: 7.5s, 15s, ... and
+  # applies only when the server sends no Retry-After. intervalMax is a
+  # bail-out, not a clamp: a computed wait, or a server Retry-After, above it
+  # stops the retry chain (ResolverServiceUnavailableRetryStrategy returns
+  # null). 120s leaves headroom for a count bump up to 16 and obeys a
+  # Retry-After of up to two minutes instead of aborting on it; the cost is a
+  # slower failure when Central throttles persistently, still bounded by the
+  # job timeout.
   - name: MAVEN_RUN_OPTS
-    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Daether.connector.http.retryHandler.count=8 -Daether.connector.http.retryHandler.interval=7500 -Daether.connector.http.retryHandler.intervalMax=60000"
+    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Daether.connector.http.retryHandler.count=8 -Daether.connector.http.retryHandler.interval=7500 -Daether.connector.http.retryHandler.intervalMax=120000"
   - name: MAVEN_VERSION
     value: "version"
   - name: MAVEN_VERSION_OPTION
