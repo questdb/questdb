@@ -27,6 +27,7 @@ Behind `cairo.o3.partition.merge.append.enabled`. OFF in production, ON by defau
 | Dedup | Deduplicating merge index; an all-duplicate commit with identical values writes nothing |
 | Active partition | Left closed like parquet; when mapped, positioned at physical rows so a close trims nothing live |
 | Non-WAL | Never founds one, but still handles a partition that is already composite |
+| WAL lag | None, and no fast append through it either (`tryFastAppendInOrderBlock`): every commit is a merge-append |
 | Replace commits | Fully implemented, including the table's own last partition: a piece fully inside the declared range is dropped (KEEP) or superseded (MERGE, rewritten to NEW_PIECE) |
 
 ## Read
@@ -37,6 +38,7 @@ Behind `cairo.o3.partition.merge.append.enabled`. OFF in production, ON by defau
 | `CompositeTimestampFinder` | Interval scans in DIRECTORY row order - file order is not timestamp order |
 | Indexes | Build, seal and rebuild cover the directory's whole `[columnTop, physicalRows)`, not one piece |
 | Covering sidecar | Accepts unsorted timestamps, which a relocated piece produces |
+| Covering index growth | Every write lands at the tail, so a covering POSTING index grows by one generation per commit, appended after the write with the rows' covered values (`O3PartitionJob.publishCoveredIndexesForAppend`) - the O3 worker does it for a composite plan, the seal sweep for the last partition's in-place append. Never a rebuild of the whole sidecar; entries of rows a MERGE or DROP retired stay, unreachable, as they would after a rebuild |
 
 ## Other
 

@@ -192,6 +192,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // ... column top for every column
     public static final int PARTITION_SINK_SIZE_LONGS = 9;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
+    // The high int of a partition update sink block's flags word (offset 4; the low int is
+    // partitionMutates): what the post-commit seal sweep has to do about the partition's COVERING posting
+    // indexes. The O3 write indexed the rows without their covered values, so the sweep rebuilds the
+    // whole covered sidecar to fill them in.
+    public static final int COVERING_INDEX_REBUILD = 0;
+    // The write published every covering index itself, with the covered values, as one appended
+    // generation - see O3PartitionJob.publishCoveredIndexesForAppend. The sweep leaves them alone.
+    public static final int COVERING_INDEX_PUBLISHED = 1;
+    // The write left the covering columns' rows, [oldPartitionSize, newPartitionSize), unindexed. The
+    // sweep publishes them the way the composite write would have, then leaves them alone.
+    public static final int COVERING_INDEX_DEFERRED = 2;
     public static final int SWITCH_NO_PARQUET = -1;
     public static final int SWITCH_OK = 0;
     public static final int SWITCH_SKIPPED = -2;
@@ -421,6 +432,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long o3MasterRef = -1L;
     private ObjList<MemoryCARW> o3MemColumns1;
     private ObjList<MemoryCARW> o3MemColumns2;
+    // The partition update sink block of the last partition's in-place append when that append left
+    // its covering posting columns unindexed for the seal sweep to publish; 0 when no O3 block did.
+    // Written and read on the writer thread only, inside one processO3Block call.
+    private long deferredCoveringSinkAddr;
     // Max timestamp of committed data left on disk by o3MoveUncommitted() that is NOT part of the
     // sorted O3 batch (set only when uncommitted rows span more than the active partition).
     private long o3MoveUncommittedMaxTimestamp = Long.MIN_VALUE;
@@ -8866,6 +8881,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
+     * Under merge-append a partition's covering posting indexes are extended by a writer instance other
+     * than the live indexer's - the O3 composite executor's, or the seal sweep's for the last partition's
+     * in-place append (see {@code O3PartitionJob.publishCoveredIndexesForAppend}). A live indexer that
+     * still maps the covered sidecar files it last wrote to - ADD INDEX seals through it and leaves them
+     * mapped, so does a recovery rollback on reopen - would, on its next release, truncate those files
+     * back to its own append offset, cutting off whatever the other instance appended since. Drop those
+     * mappings now, before any O3 work runs, while the offsets are still the files' true ends. See
+     * {@link PostingIndexWriter#releaseSidecarWriteMappings}.
+     */
+    private void releaseCoveringSidecarWriteMappings() {
+        for (int i = 0, n = Math.min(columnCount, indexers.size()); i < n; i++) {
+            if (metadata.getColumnType(i) <= 0 || !metadata.isColumnIndexed(i) || !isCoveringPostingColumn(i)) {
+                continue;
+            }
+            final ColumnIndexer indexer = indexers.getQuick(i);
+            if (indexer != null && indexer.getWriter() instanceof PostingIndexWriter piw) {
+                piw.releaseSidecarWriteMappings();
+            }
+        }
+    }
+
+    private boolean isCoveringPostingColumn(int columnIndex) {
+        if (!IndexType.isPosting(metadata.getColumnIndexType(columnIndex))) {
+            return false;
+        }
+        final IntList covering = metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices();
+        return covering != null && covering.size() > 0;
+    }
+
+    /**
      * House keeps table after commit. The tricky bit is to run this housekeeping on each commit. Commit() itself
      * has a contract that if exception is thrown, the data is not committed. However, if this housekeeping fails,
      * the data IS committed.
@@ -11661,6 +11706,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         o3ColumnCounters.clear();
         o3BasketPool.clear();
         commitRowCount = srcOooMax;
+        deferredCoveringSinkAddr = 0;
+        if (configuration.isO3PartitionMergeAppendEnabled()) {
+            releaseCoveringSidecarWriteMappings();
+        }
 
         // move uncommitted is liable to change max timestamp,
         // however, we need to identify the last partition before max timestamp skips to NULL, for example
@@ -11922,6 +11971,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         final int plen = pathToPartition.size();
                         int columnsPublished = 0;
                         long minTimestamp = isCommitReplaceMode() ? txWriter.getMinTimestamp() : o3TimestampMin;
+                        // Under merge-append this in-place append is one more merge-append: a plan made of
+                        // a single APPEND, run through the writer's own column mappings instead of a frame.
+                        // Its covering posting indexes are published the way the composite write publishes
+                        // its own - one generation per index, appended after the write, with the covered
+                        // values - and never rebuilt over the whole partition. See the DEFERRED sink flag.
+                        final boolean deferCoveredIndexing = configuration.isO3PartitionMergeAppendEnabled() && hasCoveringPostingIndex();
                         for (int i = 0; i < columnCount; i++) {
                             final int columnType = metadata.getColumnType(i);
                             if (columnType < 0) {
@@ -11930,7 +11985,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final int colOffset = TableWriter.getPrimaryColumnIndex(i);
                             final boolean notTheTimestamp = i != timestampIndex;
                             final CharSequence columnName = metadata.getColumnName(i);
-                            final int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                            int indexBlockCapacity = metadata.isColumnIndexed(i) ? metadata.getIndexValueBlockCapacity(i) : -1;
+                            if (indexBlockCapacity > -1 && deferCoveredIndexing && isCoveringPostingColumn(i)) {
+                                // The column task must not index a covering posting column: its covered
+                                // values are written by OTHER column tasks, running at the same time, so
+                                // a value it read now could still be missing. -1 is what the task reads
+                                // as "not indexed". The rows are indexed once every task has joined, by
+                                // the seal sweep, with the values on disk - see
+                                // O3PartitionJob.publishCoveredIndexesForAppend.
+                                indexBlockCapacity = -1;
+                                deferredCoveringSinkAddr = partitionUpdateSinkAddr;
+                            }
                             final IndexWriter indexWriter = indexBlockCapacity > -1 ? getIndexWriter(i) : null;
                             final MemoryR oooMem1 = o3Columns.getQuick(colOffset);
                             final MemoryR oooMem2 = o3Columns.getQuick(colOffset + 1);
@@ -12082,6 +12147,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             o3ConsumePartitionUpdates();
             if (o3ErrorCount.get() == 0 && success) {
+                if (deferredCoveringSinkAddr != 0) {
+                    // The last column task to finish wrote this block's flags word (see
+                    // o3NotifyPartitionUpdate), and o3ConsumePartitionUpdates has just waited for it.
+                    // Only the high int changes; the low int is the task's own partitionMutates.
+                    final long flags = Unsafe.getLong(deferredCoveringSinkAddr + 4 * Long.BYTES);
+                    Unsafe.putLong(
+                            deferredCoveringSinkAddr + 4 * Long.BYTES,
+                            Numbers.encodeLowHighInts(Numbers.decodeLowInt(flags), COVERING_INDEX_DEFERRED)
+                    );
+                }
                 o3ConsumePartitionUpdateSink();
             }
             o3DoneLatch.await(latchCount);
@@ -15122,6 +15197,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (PostingIndexWriter.COVERING_FASTPATH_DISABLED) {
             return o3Lo;
         }
+        // A merge-append table takes no LAG, and this fast append is the LAG mechanism run to completion
+        // inside one commit: it parks the block above the last partition's live rows and then adopts it
+        // by advancing the row count. That is the same file region a composite promotion relocates a
+        // piece onto, and the table refuses it for the same reason processWalCommit refuses to park a
+        // single transaction there (see its noLag). Every commit of such a table is a merge-append, an
+        // in-order block included: it lands on processO3Block's in-place append, whose covering indexes
+        // are published incrementally too (see COVERING_INDEX_DEFERRED), so nothing is lost by going
+        // that way.
+        if (configuration.isO3PartitionMergeAppendEnabled()) {
+            return o3Lo;
+        }
         final long blockRows = o3LoHi - o3Lo;
         final long blockMin = segmentCopyInfo.getMinTimestamp();
         // Guards (fall back to the unchanged O3 path on any). Only a PURE APPEND
@@ -15690,10 +15776,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if at least one column indexer was touched.
      */
     private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
-        return sealPostingIndexForPartition(partitionTimestamp, canSkipRebuild, false);
+        return sealPostingIndexForPartition(partitionTimestamp, canSkipRebuild, COVERING_INDEX_REBUILD, 0, 0);
     }
 
-    private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild, boolean coveringPublished) {
+    /**
+     * @param coveringState     what the O3 write left the partition's COVERING posting indexes in - one
+     *                          of {@link #COVERING_INDEX_REBUILD}, {@link #COVERING_INDEX_PUBLISHED},
+     *                          {@link #COVERING_INDEX_DEFERRED}
+     * @param oldPartitionSize  with {@code COVERING_INDEX_DEFERRED}: the first row the write appended
+     * @param newPartitionSize  with {@code COVERING_INDEX_DEFERRED}: the row after the last one it appended
+     */
+    private boolean sealPostingIndexForPartition(
+            long partitionTimestamp,
+            boolean canSkipRebuild,
+            int coveringState,
+            long oldPartitionSize,
+            long newPartitionSize
+    ) {
         // Invariant: posting seal runs only after every O3 partition worker has
         // joined (finishO3Commit / post-await, or a writer-thread squash). It reads
         // the just-written partition column data and rotates value files; a worker
@@ -15746,6 +15845,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // at an earlier E - which is every column added to a composite partition, leaving it no .pk at all.
         long partitionSize = getPartitionFileRowCountByTimestamp(partitionTimestamp);
         try {
+            boolean coveringPublished = coveringState == COVERING_INDEX_PUBLISHED;
+            if (coveringState == COVERING_INDEX_DEFERRED) {
+                // The last partition's in-place append left its covering posting columns unindexed, so
+                // the rows it appended are published here the way the composite write publishes its own:
+                // one generation per index, carrying the covered values, now that every column task has
+                // joined and the values are on disk. This opens its own index writer on each column; the
+                // live indexer that holds the same partition is reopened on it by
+                // restorePostingIndexersToLastPartition once this sweep is done.
+                coveringPublished = O3PartitionJob.publishCoveredIndexesForAppend(
+                        path.trimTo(plen),
+                        partitionTimestamp,
+                        partitionNameTxn,
+                        oldPartitionSize,
+                        newPartitionSize,
+                        this,
+                        columnVersionWriter,
+                        coveringNames,
+                        coveringNameTxns,
+                        coveringTops,
+                        coveringShifts,
+                        coveringIndices,
+                        coveringTypes
+                );
+            }
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
                         || !IndexType.isPosting(metadata.getColumnIndexType(colIdx))) {
@@ -15782,9 +15905,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean hasCovering = coveringCols != null && coveringCols.size() > 0;
 
                 if (hasCovering && coveringPublished) {
-                    // Already published with its covered values by the composite write. Touching the
-                    // writer here would rotate the sidecar for nothing; the entries this commit added
-                    // are its final state.
+                    // Already published with its covered values, by the composite write or by the
+                    // deferred publish just above. Touching the writer here would rotate the sidecar
+                    // for nothing; the entries this commit added are its final state.
                     continue;
                 }
 
@@ -15950,11 +16073,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long oldPartitionSize = Unsafe.getLong(blockAddress + 3 * Long.BYTES);
             long flags = Unsafe.getLong(blockAddress + 4 * Long.BYTES);
             boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
-            // The composite write already published this partition's covering indexes, with their
-            // covered values, as one appended generation - see O3PartitionJob's
-            // publishCoveredIndexesForAppend. Rewriting the whole sidecar below would only reproduce
-            // what is already there, at a cost that grows with the partition.
-            boolean coveringPublished = Numbers.decodeHighInt(flags) != 0;
+            // What the write left the partition's covering posting indexes in - see the
+            // COVERING_INDEX_* constants. A write that published them itself, or left their rows for
+            // this sweep to publish, spares them the rebuild below, whose cost grows with the partition.
+            int coveringState = Numbers.decodeHighInt(flags);
             long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
             // Sink offset 6 holds the original (pre-split) partition ts. Non-split
             // commits leave [0] == [6]; splits overwrite [0] with the new split's
@@ -15971,7 +16093,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && o3SplitPartitionSize == 0
                     && newPartitionSize >= oldPartitionSize;
 
-            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition, coveringPublished)) {
+            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition, coveringState, oldPartitionSize, newPartitionSize)) {
                 anyPartitionProcessed = true;
             }
             if (dataPartitionTimestamp != -1L && dataPartitionTimestamp != partitionTimestamp

@@ -1693,6 +1693,26 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnAuxAddrSizes.clear();
     }
 
+    /**
+     * Drops this writer's mappings of its covered sidecar files, before ANOTHER writer instance appends
+     * to those same files - the O3 composite executor and the seal sweep both open their own
+     * {@link PostingIndexWriter} on a partition the TableWriter's live indexer may hold as well.
+     * <p>
+     * A sidecar mapping is released with a truncate to its own append offset (see
+     * {@link #closeSidecarMems}), which is right only while that offset is the file's true end. Once
+     * another instance has appended past it, that same release cuts the newer generation's bytes off
+     * the file - the chain still points at them, and a covered read of that generation faults. Releasing
+     * here, while nothing has been appended since this instance last wrote, trims exactly what it wrote.
+     * The next flush through this writer reopens the files in append mode at their then-current end.
+     * <p>
+     * The covering schema, the cover end offsets this writer last published and everything else stay
+     * as they are: a later chain publish still carries a correct cover footer (see
+     * {@link #captureCoverEndOffsets}).
+     */
+    public void releaseSidecarWriteMappings() {
+        closeSidecarMems();
+    }
+
     @Override
     public void rollbackConditionally(long row) {
         checkNotPoisoned();

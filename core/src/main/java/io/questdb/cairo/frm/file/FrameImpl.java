@@ -102,6 +102,9 @@ public class FrameImpl implements Frame {
         this.columnsMemory = null;
         this.columnTopSink = null;
         this.crv = null;
+        // Scoped to the open that set it: this frame goes back to the recycle bin below, and the next
+        // open gets it as a frame that indexes every column, whatever the previous one asked for.
+        this.deferCoveredIndexing = false;
         if (frameRecycleBin != null && !frameRecycleBin.isClosed()) {
             frameRecycleBin.put(this);
         } else {

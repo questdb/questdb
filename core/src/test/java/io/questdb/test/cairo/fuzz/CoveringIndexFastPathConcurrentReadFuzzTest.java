@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
@@ -302,6 +303,11 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
                         }
                     } catch (Throwable e) {
                         bgError.set(e);
+                    } finally {
+                        // A read of a COMPOSITE partition resolves its geometry through a thread-local
+                        // Path (see PartitionGeometry), born on this thread the first time. The thread
+                        // ends with the test, so free it here or the leak check charges it to the test.
+                        Path.clearThreadLocals();
                     }
                 }, "covering-fastpath-reader-" + r);
                 readers[r].setDaemon(true);
