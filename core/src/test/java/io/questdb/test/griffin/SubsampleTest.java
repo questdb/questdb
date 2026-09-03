@@ -32,6 +32,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1988,6 +1989,66 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLttbWithExtremeValues() throws Exception {
+        // Sibling of testM4WithExtremeValues / testMinMaxWithExtremeValues (see there for the
+        // Infinity-via-SQL discussion), but the edge is sharper for LTTB: the triangle area
+        // multiplies timestamp deltas by value deltas, so near-Double.MAX_VALUE inputs push
+        // area terms to +/-Infinity, and an Inf - Inf cancellation yields a NaN area. NaN
+        // never beats maxArea (NaN > x is false), so the bucket falls back to its first
+        // point instead of crashing or selecting garbage.
+        // Walkthrough (5 rows, target 4, bucketSize 1.5):
+        //   bucket 0 = {row1}: both area terms overflow to -Inf -> NaN area -> falls back
+        //     to bucket start (row1, 10.0);
+        //   bucket 1 = {row2, row3}: row2's area term is +Inf (finite - -1.7E308 spans the
+        //     double range), which beats row3's finite area -> the extreme row2 is kept.
+        // First (row0) and last (row4) are pinned.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.7E308, '2024-01-01T00:00:00.000000Z'),
+                    (10.0, '2024-01-01T01:00:00.000000Z'),
+                    (-1.7E308, '2024-01-01T02:00:00.000000Z'),
+                    (20.0, '2024-01-01T03:00:00.000000Z'),
+                    (15.0, '2024-01-01T04:00:00.000000Z')
+                    """);
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 4)").timestamp("ts").returns("price\tts\n" +
+                    "1.7E308\t2024-01-01T00:00:00.000000Z\n" +
+                    "10.0\t2024-01-01T01:00:00.000000Z\n" +
+                    "-1.7E308\t2024-01-01T02:00:00.000000Z\n" +
+                    "15.0\t2024-01-01T04:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testLttbAllSameTimestamp() throws Exception {
+        // Degenerate timestamp edge, sibling of the m4/minmax same-timestamp tests: every
+        // dbx and avgDx is 0, so every triangle area is exactly 0. The strict '>' in the
+        // area comparison keeps the first candidate of the bucket (only 0 > -1 fires), so
+        // the selection stays deterministic: first, bucket start, last.
+        // With 5 equal-ts rows and target 3: bucket [1,4) picks row1 -> rows 0, 1, 4.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:00.000000Z'),
+                    (30.0, '2024-01-01T00:00:00.000000Z'),
+                    (40.0, '2024-01-01T00:00:00.000000Z'),
+                    (50.0, '2024-01-01T00:00:00.000000Z')
+                    """);
+            final String expected = "price\tts\n" +
+                    "10.0\t2024-01-01T00:00:00.000000Z\n" +
+                    "20.0\t2024-01-01T00:00:00.000000Z\n" +
+                    "50.0\t2024-01-01T00:00:00.000000Z\n";
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 3)").timestamp("ts").returns(expected);
+            // Gap mode on the same data: a zero timestamp delta is never a gap (curr > prev
+            // + threshold is false), so a single segment forms and the output is identical.
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 3, '1h')").timestamp("ts").returns(expected);
+        });
+    }
+
+    @Test
     public void testLttbMinMaxPreselectionActivationBoundary() throws Exception {
         // Pins the MinMaxLTTB activation threshold contract on both sides of the boundary.
         // Preselection activates when interior (n - 2) > 2 * 4 * (target - 2); for target 4
@@ -2015,6 +2076,461 @@ public class SubsampleTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("min\tmax\n2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:18.000000Z\n");
         });
+    }
+
+    @Test
+    public void testLttbTargetSweepInvariants() throws Exception {
+        // Output-count invariant swept across targets that land on every internal path:
+        // m=2 (endpoints only), m=3/7/50 (MinMaxLTTB preselection: interior 998 > 8*(m-2)),
+        // m=200 (plain LTTB: 998 <= 1584), m=999 (plain, n barely above target), m=1000
+        // (count == target -> keepAll short-circuit). Every path must emit exactly
+        // min(n, m) rows with the first and last input rows pinned. Deterministic
+        // (x-derived) values, no rnd dependence.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT (x % 89)::double + x / 100.0 price, timestamp_sequence('2024-01-01', 1000000) ts FROM long_sequence(1000)) TIMESTAMP(ts)");
+            final int[] targets = {2, 3, 7, 50, 200, 999, 1000};
+            for (int target : targets) {
+                assertQuery("SELECT count() FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, " + target + "))")
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n" + target + "\n");
+                assertQuery("SELECT min(ts), max(ts) FROM (SELECT price, ts FROM t SUBSAMPLE lttb(price, " + target + "))")
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("min\tmax\n2024-01-01T00:00:00.000000Z\t2024-01-01T00:16:39.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testLttbValueTypeMatrix() throws Exception {
+        // Positive-path coverage for every numeric value type the factory accepts
+        // (DOUBLE, FLOAT, INT, LONG, SHORT, BYTE - see readValue's per-type null -> NaN
+        // mapping). The selection is value-driven, so identical logical values must give
+        // an identical timestamp selection for every type. 10 rows [0,1,2,100,4..9]
+        // (byte-range) with target 5 select rows {0,2,3,6,9} - the canonical single-stage
+        // walkthrough: bucket [1,3) picks 2 (larger area vs next-bucket centroid), [3,6)
+        // picks the 100 spike, [6,9) picks 6, endpoints pinned.
+        assertMemoryLeak(() -> {
+            final String expected = "ts\n" +
+                    "2024-01-01T00:00:00.000000Z\n" +
+                    "2024-01-01T00:00:02.000000Z\n" +
+                    "2024-01-01T00:00:03.000000Z\n" +
+                    "2024-01-01T00:00:06.000000Z\n" +
+                    "2024-01-01T00:00:09.000000Z\n";
+            final String[] types = {"DOUBLE", "FLOAT", "INT", "LONG", "SHORT", "BYTE"};
+            for (String type : types) {
+                final String table = "t_" + type.toLowerCase();
+                execute("CREATE TABLE " + table + " (price " + type + ", ts TIMESTAMP) TIMESTAMP(ts)");
+                execute("INSERT INTO " + table + " SELECT " +
+                        "case when x = 4 then 100 else x - 1 end, " +
+                        "timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(10)");
+                // SUBSAMPLE requires the value column in the projection; the outer
+                // ts-only projection keeps the assertion type-agnostic (no per-type
+                // value formatting).
+                assertQuery("SELECT ts FROM (SELECT price, ts FROM " + table + " SUBSAMPLE lttb(price, 5))")
+                        .timestamp("ts")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testLttbValueTypeNullSentinelsDropped() throws Exception {
+        // Per-type NULL handling: FLOAT NaN, INT_NULL and LONG_NULL all map to NaN in
+        // readValue and the row is dropped from the buffer, exactly like a DOUBLE null.
+        // The null replaces row 2 - a row the non-null fixture SELECTS - so dropping is
+        // observable: the selection over the 9 surviving rows shifts to ts {0,3,4,6,9}s.
+        // Walkthrough (bucketSize 7/3): bucket [1,3) picks the 100 spike (ts3); bucket
+        // [3,5) picks ts4 (largest area vs the next-bucket centroid); the final bucket's
+        // candidates (6,7,8) are exactly collinear with A=(ts4,4) and C=(ts9,9), every
+        // area is 0.0, and the strict '>' fallback keeps the bucket's first point (ts6).
+        // SHORT and BYTE are absent here by design: they have no null representation,
+        // so no row can be dropped.
+        assertMemoryLeak(() -> {
+            final String expected = "ts\n" +
+                    "2024-01-01T00:00:00.000000Z\n" +
+                    "2024-01-01T00:00:03.000000Z\n" +
+                    "2024-01-01T00:00:04.000000Z\n" +
+                    "2024-01-01T00:00:06.000000Z\n" +
+                    "2024-01-01T00:00:09.000000Z\n";
+            final String[] types = {"DOUBLE", "FLOAT", "INT", "LONG"};
+            for (String type : types) {
+                final String table = "tn_" + type.toLowerCase();
+                execute("CREATE TABLE " + table + " (price " + type + ", ts TIMESTAMP) TIMESTAMP(ts)");
+                execute("INSERT INTO " + table + " SELECT " +
+                        "case when x = 3 then null when x = 4 then 100 else x - 1 end, " +
+                        "timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(10)");
+                assertQuery("SELECT ts FROM (SELECT price, ts FROM " + table + " SUBSAMPLE lttb(price, 5))")
+                        .timestamp("ts")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testLttbGapThresholdOverflowGuardNearMaxTimestamp() throws Exception {
+        // Pins the overflow guard in gap detection (LttbAlgorithm.selectGapPreserving):
+        // when prevTs > Long.MAX_VALUE - threshold, prevTs + threshold would overflow
+        // negative and the unguarded comparison currTs > (negative) would flag EVERY
+        // pair as a gap. The guard instead reports no-gap, which is exact: currTs is
+        // bounded, so no representable timestamp can sit further than the threshold
+        // past prevTs. Designated timestamps are capped at 9999-12-31 (validateBounds),
+        // so the guard zone is only reachable via a near-max THRESHOLD: '106751991d'
+        // (the largest parseable day count) puts Long.MAX_VALUE - threshold about 4
+        // hours after the 1970 epoch - every modern timestamp is inside the zone.
+        // Fixture: 3 rows in 2024 + 3 rows at the 9999 bound. The ~7975-year spread is
+        // genuinely smaller than the threshold, so the correct answer is ONE segment:
+        // plain LTTB over 6 rows, target 4 -> rows {0,2,3,5} = prices 1,3,4,6 (the huge
+        // avgDx term dominates each bucket, picking the point closest to the far side).
+        // A regressed guard would flag all 5 pairs as gaps: 6 one-row segments, floor
+        // 6 > target -> 6 rows out, failing both count and content.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_guard (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t_guard VALUES " +
+                    "(1.0, '2024-01-01T00:00:00.000000Z')," +
+                    "(2.0, '2024-01-01T00:00:01.000000Z')," +
+                    "(3.0, '2024-01-01T00:00:02.000000Z')," +
+                    "(4.0, '9999-12-31T23:59:57.000000Z')," +
+                    "(5.0, '9999-12-31T23:59:58.000000Z')," +
+                    "(6.0, '9999-12-31T23:59:59.000000Z')");
+            assertQuery("SELECT price FROM (SELECT price, ts FROM t_guard SUBSAMPLE lttb(price, 4, '106751991d'))")
+                    .returns("price\n1.0\n3.0\n4.0\n6.0\n");
+
+            // Plain (non-gap) LTTB entirely at the far timestamp bound: the exact-integer
+            // timestamp deltas keep full resolution, so 1us-spaced triangle math still
+            // discriminates 8000 years from the epoch. Values [10,50,20,40,30], target 3:
+            // bucket [1,4) areas (vs A=first, C=last) are 140/0/60 in us-value units ->
+            // the 50 spike wins.
+            execute("CREATE TABLE t_max_plain (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t_max_plain VALUES " +
+                    "(10.0, '9999-12-31T23:59:59.999991Z')," +
+                    "(50.0, '9999-12-31T23:59:59.999992Z')," +
+                    "(20.0, '9999-12-31T23:59:59.999993Z')," +
+                    "(40.0, '9999-12-31T23:59:59.999994Z')," +
+                    "(30.0, '9999-12-31T23:59:59.999995Z')");
+            assertQuery("SELECT price FROM (SELECT price, ts FROM t_max_plain SUBSAMPLE lttb(price, 3))")
+                    .returns("price\n10.0\n50.0\n30.0\n");
+        });
+    }
+
+    @Test
+    public void testLttbRandomizedDifferentialAgainstReference() throws Exception {
+        // Differential fuzz: random walks with spikes, interleaved NULL rows, and duplicate
+        // timestamps, compared row-for-row against an in-test reference implementation of
+        // canonical single-stage LTTB using the same exact-integer timestamp-delta math
+        // (see referenceLttb). Every (n, target) combo sits at or under the MinMaxLTTB
+        // activation threshold (interior <= 8 * (target - 2), or target == 2 which never
+        // preselects), so production must run the plain single-stage path and match the
+        // reference EXACTLY - catching regressions anywhere in the pipeline: pass1
+        // buffering, null bitset, ordinal mapping, keep-flag fusion, or an activation
+        // threshold creeping over the documented boundary. Fixed seeds: reproducible.
+        assertMemoryLeak(() -> {
+            final long[] seeds = {0xDEADBEEFL, 42L, 20240101L};
+            final int[][] combos = {{300, 2}, {50, 8}, {120, 17}, {200, 27}, {400, 52}};
+            int tableId = 0;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (long seed : seeds) {
+                    for (int[] combo : combos) {
+                        final int n = combo[0];
+                        final int m = combo[1];
+                        final String table = "t_diff_" + tableId++;
+                        final long[] tss = new long[n];
+                        final double[] vals = new double[n];
+                        final boolean[] nulls = new boolean[n];
+                        generateRandomSeries(new Rnd(seed, seed * 31 + m), n, tss, vals, nulls, true);
+                        createAndInsert(table, n, tss, vals, nulls);
+
+                        // Compact to the non-null rows pass1 would buffer
+                        final long[] refTs = new long[n];
+                        final double[] refVal = new double[n];
+                        int nonNull = 0;
+                        for (int i = 0; i < n; i++) {
+                            if (!nulls[i]) {
+                                refTs[nonNull] = tss[i];
+                                refVal[nonNull] = vals[i];
+                                nonNull++;
+                            }
+                        }
+                        Assert.assertTrue("fixture must exercise the algorithm path", nonNull > m);
+
+                        final int[] expected = referenceLttb(refTs, refVal, nonNull, m);
+                        final long[] outTs = new long[m];
+                        final double[] outVal = new double[m];
+                        final int outCount = runLttbAndCollect(
+                                compiler, "SELECT price, ts FROM " + table + " SUBSAMPLE lttb(price, " + m + ")", outTs, outVal);
+
+                        final String ctx = "seed=" + seed + " n=" + n + " m=" + m;
+                        Assert.assertEquals(ctx + " row count", m, outCount);
+                        for (int i = 0; i < m; i++) {
+                            Assert.assertEquals(ctx + " ts[" + i + "]", refTs[expected[i]], outTs[i]);
+                            Assert.assertEquals(ctx + " value[" + i + "]", refVal[expected[i]], outVal[i], 0.0);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLttbRandomizedFastPathInvariants() throws Exception {
+        // Property fuzz on the MinMaxLTTB fast path (interior >> 8 * (target - 2)): exact
+        // selections are internal, but the contract is not. For random data with NULLs and
+        // duplicate timestamps: exactly target rows, the first and last buffered rows
+        // pinned, and the output an order-preserving subset of the non-null input
+        // (verified by a forward matching walk). Fixed seeds: reproducible.
+        assertMemoryLeak(() -> {
+            final long[] seeds = {7L, 99L};
+            final int[] targets = {3, 10, 40};
+            final int n = 1200;
+            int tableId = 0;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (long seed : seeds) {
+                    final String table = "t_fast_" + tableId++;
+                    final long[] tss = new long[n];
+                    final double[] vals = new double[n];
+                    final boolean[] nulls = new boolean[n];
+                    generateRandomSeries(new Rnd(seed, seed + 17), n, tss, vals, nulls, true);
+                    createAndInsert(table, n, tss, vals, nulls);
+
+                    final long[] refTs = new long[n];
+                    final double[] refVal = new double[n];
+                    int nonNull = 0;
+                    for (int i = 0; i < n; i++) {
+                        if (!nulls[i]) {
+                            refTs[nonNull] = tss[i];
+                            refVal[nonNull] = vals[i];
+                            nonNull++;
+                        }
+                    }
+
+                    for (int m : targets) {
+                        final long[] outTs = new long[n];
+                        final double[] outVal = new double[n];
+                        final int outCount = runLttbAndCollect(
+                                compiler, "SELECT price, ts FROM " + table + " SUBSAMPLE lttb(price, " + m + ")", outTs, outVal);
+                        final String ctx = "seed=" + seed + " m=" + m;
+                        Assert.assertEquals(ctx + " row count", m, outCount);
+                        Assert.assertEquals(ctx + " first ts pinned", refTs[0], outTs[0]);
+                        Assert.assertEquals(ctx + " first value pinned", refVal[0], outVal[0], 0.0);
+                        Assert.assertEquals(ctx + " last ts pinned", refTs[nonNull - 1], outTs[outCount - 1]);
+                        Assert.assertEquals(ctx + " last value pinned", refVal[nonNull - 1], outVal[outCount - 1], 0.0);
+                        matchOutputAgainstInput(ctx, outTs, outVal, outCount, refTs, refVal, nonNull, null);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testLttbRandomizedGapInvariants() throws Exception {
+        // Property fuzz for gap-preserving mode over random segment structure. The
+        // documented contract, independent of exact selections: every segment's first and
+        // last rows survive (the min(2, segSize) floor), the output is an order-preserving
+        // subset, and the row count lands in the soft-target envelope - exactly floorTotal
+        // when the floor alone exceeds the target, otherwise between floorTotal and the
+        // target. Targets 6/30 (floor dominates -> overshoot) and 100 (budget above floor)
+        // exercise both budgeting branches. Fixed seeds: reproducible.
+        assertMemoryLeak(() -> {
+            final long[] seeds = {13L, 77L};
+            final int[] targets = {6, 30, 100};
+            final int n = 400;
+            final long thresholdMicros = 3_600_000_000L; // '1h'
+            int tableId = 0;
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (long seed : seeds) {
+                    final String table = "t_gap_" + tableId++;
+                    final long[] tss = new long[n];
+                    final double[] vals = new double[n];
+                    final boolean[] nulls = new boolean[n];
+                    generateRandomSeries(new Rnd(seed, seed ^ 0x5DEECE66DL), n, tss, vals, nulls, false);
+                    // Inject 2h+ gaps at ~5% of the steps (regenerate timestamps)
+                    final Rnd gapRnd = new Rnd(seed + 1, seed + 2);
+                    long ts = 1704067200000000L;
+                    for (int i = 0; i < n; i++) {
+                        tss[i] = ts;
+                        ts += gapRnd.nextInt(20) == 0
+                                ? (7200 + gapRnd.nextInt(10000)) * 1_000_000L
+                                : (1 + gapRnd.nextInt(4)) * 1_000_000L;
+                    }
+                    createAndInsert(table, n, tss, vals, nulls);
+
+                    // Spec-level segmentation: split where delta > threshold
+                    final int[] segStarts = new int[n + 1];
+                    int segCount = 0;
+                    segStarts[segCount++] = 0;
+                    for (int i = 1; i < n; i++) {
+                        if (tss[i] - tss[i - 1] > thresholdMicros) {
+                            segStarts[segCount++] = i;
+                        }
+                    }
+                    segStarts[segCount] = n;
+                    int floorTotal = 0;
+                    for (int s = 0; s < segCount; s++) {
+                        floorTotal += Math.min(2, segStarts[s + 1] - segStarts[s]);
+                    }
+                    Assert.assertTrue("fixture must produce multiple segments", segCount > 3);
+
+                    for (int m : targets) {
+                        final long[] outTs = new long[n];
+                        final double[] outVal = new double[n];
+                        final int outCount = runLttbAndCollect(
+                                compiler, "SELECT price, ts FROM " + table + " SUBSAMPLE lttb(price, " + m + ", '1h')", outTs, outVal);
+                        final String ctx = "seed=" + seed + " m=" + m + " segments=" + segCount;
+                        if (floorTotal >= m) {
+                            Assert.assertEquals(ctx + " soft-target floor count", floorTotal, outCount);
+                        } else {
+                            Assert.assertTrue(ctx + " count >= floor (" + outCount + " vs " + floorTotal + ")", outCount >= floorTotal);
+                            Assert.assertTrue(ctx + " count <= target (" + outCount + ")", outCount <= m);
+                        }
+                        final boolean[] kept = new boolean[n];
+                        matchOutputAgainstInput(ctx, outTs, outVal, outCount, tss, vals, n, kept);
+                        for (int s = 0; s < segCount; s++) {
+                            Assert.assertTrue(ctx + " segment " + s + " first row kept", kept[segStarts[s]]);
+                            Assert.assertTrue(ctx + " segment " + s + " last row kept", kept[segStarts[s + 1] - 1]);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Reference implementation of canonical single-stage LTTB (Steinarsson 2013) over
+     * the same exact-integer timestamp-delta math production uses: equal row-count
+     * buckets of size (n-2)/(m-2), point C = mean of the NEXT bucket with x measured
+     * relative to point A via long subtraction, largest doubled-triangle area wins with
+     * a strict comparison, first and last points pinned. Serves as the differential
+     * oracle for inputs under the MinMaxLTTB activation threshold. Requires
+     * n &gt; m &gt;= 2 (the keepAll short-circuit is the caller's business).
+     */
+    private static int[] referenceLttb(long[] tss, double[] vals, int n, int m) {
+        final int[] out = new int[m];
+        int outIdx = 0;
+        out[outIdx++] = 0;
+        final double bucketSize = (double) (n - 2) / (m - 2);
+        int prev = 0;
+        for (int bucket = 0; bucket < m - 2; bucket++) {
+            final int bucketStart = (int) (bucket * bucketSize) + 1;
+            int bucketEnd = (int) ((bucket + 1) * bucketSize) + 1;
+            if (bucketEnd > n - 1) {
+                bucketEnd = n - 1;
+            }
+            final int nextStart = bucketEnd;
+            int nextEnd = (int) ((bucket + 2) * bucketSize) + 1;
+            if (nextEnd > n - 1 || bucket == m - 3) {
+                nextEnd = n;
+            }
+            final long axTs = tss[prev];
+            final double ay = vals[prev];
+            double avgDx = 0;
+            double avgY = 0;
+            final int len = nextEnd - nextStart;
+            for (int j = nextStart; j < nextEnd; j++) {
+                avgDx += (double) (tss[j] - axTs);
+                avgY += vals[j];
+            }
+            if (len > 0) {
+                avgDx /= len;
+                avgY /= len;
+            }
+            double maxArea = -1;
+            int maxIdx = bucketStart;
+            for (int j = bucketStart; j < bucketEnd; j++) {
+                final double dbx = (double) (tss[j] - axTs);
+                final double area = Math.abs(dbx * (avgY - ay) - avgDx * (vals[j] - ay));
+                if (area > maxArea) {
+                    maxArea = area;
+                    maxIdx = j;
+                }
+            }
+            out[outIdx++] = maxIdx;
+            prev = maxIdx;
+        }
+        out[outIdx] = n - 1;
+        return out;
+    }
+
+    /**
+     * Random walk with occasional +/-1000 spikes, ~1/4 duplicate timestamps and,
+     * when {@code withNulls}, ~10%% NULL values capped at n/6 so fixtures always
+     * keep enough rows to exercise the algorithm path.
+     */
+    private static void generateRandomSeries(Rnd rnd, int n, long[] tss, double[] vals, boolean[] nulls, boolean withNulls) {
+        long ts = 1704067200000000L; // 2024-01-01T00:00:00Z in micros
+        double base = 0;
+        int nullCount = 0;
+        for (int i = 0; i < n; i++) {
+            tss[i] = ts;
+            ts += rnd.nextInt(4) == 0 ? 0 : (1 + rnd.nextInt(5)) * 1_000_000L;
+            base += rnd.nextDouble() - 0.5;
+            double v = base;
+            if (rnd.nextInt(25) == 0) {
+                v += rnd.nextBoolean() ? 1000 : -1000;
+            }
+            vals[i] = v;
+            if (withNulls && nullCount < n / 6 && rnd.nextInt(10) == 0) {
+                nulls[i] = true;
+                nullCount++;
+            } else {
+                nulls[i] = false;
+            }
+        }
+    }
+
+    private static void createAndInsert(String table, int n, long[] tss, double[] vals, boolean[] nulls) throws Exception {
+        execute("CREATE TABLE " + table + " (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+        final StringBuilder sb = new StringBuilder("INSERT INTO ").append(table).append(" VALUES ");
+        for (int i = 0; i < n; i++) {
+            if (i > 0) {
+                sb.append(',');
+            }
+            sb.append('(');
+            if (nulls[i]) {
+                sb.append("null");
+            } else {
+                // Double.toString round-trips exactly through the SQL double literal parser
+                sb.append(vals[i]);
+            }
+            sb.append(",cast(").append(tss[i]).append(" as timestamp))");
+        }
+        execute(sb.toString());
+    }
+
+    private static int runLttbAndCollect(SqlCompiler compiler, String sql, long[] outTs, double[] outVal) throws Exception {
+        try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory();
+             RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            final Record record = cursor.getRecord();
+            int count = 0;
+            while (cursor.hasNext()) {
+                outVal[count] = record.getDouble(0);
+                outTs[count] = record.getTimestamp(1);
+                count++;
+            }
+            return count;
+        }
+    }
+
+    /**
+     * Forward matching walk: proves the output is an order-preserving subset of the
+     * input rows (by exact (ts, value) pairs). When {@code kept} is non-null, marks
+     * the matched input positions for segment-boundary assertions.
+     */
+    private static void matchOutputAgainstInput(
+            String ctx, long[] outTs, double[] outVal, int outCount,
+            long[] inTs, double[] inVal, int inCount, boolean[] kept
+    ) {
+        int in = 0;
+        for (int i = 0; i < outCount; i++) {
+            while (in < inCount && (inTs[in] != outTs[i] || inVal[in] != outVal[i])) {
+                in++;
+            }
+            Assert.assertTrue(ctx + ": output row " + i + " (ts=" + outTs[i] + ") not an order-preserving input row", in < inCount);
+            if (kept != null) {
+                kept[in] = true;
+            }
+            in++;
+        }
     }
 
     @Test
