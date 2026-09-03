@@ -29,12 +29,15 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cutlass.auth.AnonymousAuthenticator;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.auth.SocketAuthenticator;
+import io.questdb.cutlass.line.tcp.auth.EllipticCurveAuthenticator;
+import io.questdb.log.LogFactory;
 import io.questdb.metrics.HealthMetrics;
 import io.questdb.std.Files;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
+import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -59,6 +62,7 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
     @Before
     @Override
     public void setUp() {
+        LogFactory.enableGuaranteedLogging(EllipticCurveAuthenticator.class);
         super.setUp();
         nWriterThreads = 2;
         timestampTicks = -1;
@@ -94,6 +98,13 @@ public class EllipticCurveAuthConnectionContextTest extends BaseLineTcpContextTe
                 return nSent;
             }
         });
+    }
+
+    @After
+    @Override
+    public void tearDown() throws Exception {
+        super.tearDown();
+        LogFactory.disableGuaranteedLogging(EllipticCurveAuthenticator.class);
     }
 
     @Test
