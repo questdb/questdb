@@ -67,12 +67,18 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
 
     private static final String CREATE_PREFIX = "CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS ";
     private static final String SELECT_PREFIX = "SELECT ts, v, ";
-    /** Factory-raised errors are positioned within the inner SELECT. */
+    /**
+     * Factory-raised errors are positioned within the inner SELECT.
+     */
     private static final int FACTORY_POS = SELECT_PREFIX.length();
-    /** Parser-raised errors are positioned within the whole CREATE statement. */
+    /**
+     * Parser-raised errors are positioned within the whole CREATE statement.
+     */
     private static final int PARSER_POS = CREATE_PREFIX.length() + SELECT_PREFIX.length();
 
-    /** Every window-function spelling the SUBSAMPLE family exposes, with the name it reports. */
+    /**
+     * Every window-function spelling the SUBSAMPLE family exposes, with the name it reports.
+     */
     private static final String[][] ALL_WINDOW_FORMS = {
             {"lttb(ts, v, 100)", "lttb"},
             {"lttb(ts, v, 100, '1h')", "lttb"},
@@ -84,7 +90,9 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
             {"sdt(ts, v, 0.5)", "sdt"},
     };
 
-    /** Every method spelling the SUBSAMPLE clause accepts. */
+    /**
+     * Every method spelling the SUBSAMPLE clause accepts.
+     */
     private static final String[] ALL_SUBSAMPLE_METHODS = {
             "lttb(v, 100)",
             "lttb(v, 100, '1h')",

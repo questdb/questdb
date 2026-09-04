@@ -62,11 +62,15 @@ import java.math.BigInteger;
  */
 public class SubsampleFuzzTest extends AbstractCairoTest {
 
-    /** Permanent regression seeds; the per-run random seed is added on top of these. */
+    /**
+     * Permanent regression seeds; the per-run random seed is added on top of these.
+     */
     private static final long[] FIXED_SEEDS = {0xDEADBEEFL, 42L, 20240101L};
     private static final String TS_NS = "TIMESTAMP_NS";
     private static final String TS_US = "TIMESTAMP";
-    /** 2024-01-01T00:00:00Z in micros. */
+    /**
+     * 2024-01-01T00:00:00Z in micros.
+     */
     private static final long EPOCH_US = 1704067200000000L;
 
     /**
@@ -609,7 +613,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
                 .longValueExact();
     }
 
-    /** Independent M4: time buckets, first/min/max/last each, deduplicated, capped at target. */
+    /**
+     * Independent M4: time buckets, first/min/max/last each, deduplicated, capped at target.
+     */
     private static int[] referenceM4(Series s, int target) {
         final int[] out = new int[Math.max(target, 4) + 8];
         int outCount = 0;
@@ -686,7 +692,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
         return result;
     }
 
-    /** Independent MinMax: time buckets of target/2, min and max per bucket, capped at target. */
+    /**
+     * Independent MinMax: time buckets of target/2, min and max per bucket, capped at target.
+     */
     private static int[] referenceMinMax(Series s, int target) {
         final int[] out = new int[Math.max(target, 2) + 8];
         int outCount = 0;
@@ -783,7 +791,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
         return result;
     }
 
-    /** Independent cadence with no seed offset. */
+    /**
+     * Independent cadence with no seed offset.
+     */
     private static int[] referenceCadence(int n, int stride) {
         if (stride == 1) {
             return identity(n);
@@ -811,7 +821,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
     // fixtures and helpers
     // ---------------------------------------------------------------------------------------
 
-    /** Fresh per-run seed so every CI run explores new inputs; printed via assertion context. */
+    /**
+     * Fresh per-run seed so every CI run explores new inputs; printed via assertion context.
+     */
     private static long newRootSeed() {
         return System.nanoTime();
     }
@@ -886,7 +898,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
         }
     }
 
-    /** Strictly increasing timestamps at a fixed step, so rows spread across many partitions. */
+    /**
+     * Strictly increasing timestamps at a fixed step, so rows spread across many partitions.
+     */
     private static void generateSpread(Rnd rnd, Series s, long stepMicros) {
         long ts = EPOCH_US;
         double base = 0;
@@ -1001,7 +1015,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
         }
     }
 
-    /** Input fixture: timestamps in MICROS plus per-row NULL / NaN markers. */
+    /**
+     * Input fixture: timestamps in MICROS plus per-row NULL / NaN markers.
+     */
     private static final class Series {
         final int n;
         final boolean[] nans;
@@ -1044,7 +1060,9 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
         }
     }
 
-    /** SQL output rows. {@code tsScale} converts fixture micros into the column's native unit. */
+    /**
+     * SQL output rows. {@code tsScale} converts fixture micros into the column's native unit.
+     */
     private static final class Out {
         final long[] tss;
         final double[] vals;
