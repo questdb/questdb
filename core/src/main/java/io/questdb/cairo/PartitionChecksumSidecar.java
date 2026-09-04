@@ -360,18 +360,6 @@ public class PartitionChecksumSidecar implements QuietCloseable {
         return true;
     }
 
-    public void fdatasync() {
-        if (mem != null) {
-            mem.getFilesFacade().fdatasync(mem.getFd());
-        }
-    }
-
-    public void sync(boolean async) {
-        if (mem != null) {
-            mem.sync(async);
-        }
-    }
-
     /**
      * Verifies every covered block of one file against the stored vector.
      * <p>

@@ -31,6 +31,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
@@ -199,6 +200,64 @@ public class PartitionChecksumSidecarTest extends AbstractCairoTest {
                     Assert.assertEquals(ChecksumTrailer.PRESENT_OK, r.coverage());
                     Assert.assertEquals("must fall back to the intact older generation", 1L, r.generation());
                     Assert.assertEquals(11L, r.blockHash(r.indexOf("v.d"), 0));
+                }
+            }
+        });
+    }
+
+    /**
+     * A covered file that cannot be OPENED must yield no verdict -- never a corruption verdict.
+     * <p>
+     * The scrub races purges, drops and O3 rewrites constantly, so a covered file disappearing
+     * mid-scan is routine rather than exceptional. Reporting MISMATCH there would condemn a partition
+     * for being concurrently maintained, which is the same false-positive family that produced two
+     * real defects on this branch: the nosync short-file verdict and the non-WAL one. The guard exists
+     * ({@code fd < 0 -> ABSENT}, "a purge racing the scrub must not read as corruption") and the
+     * coverage pass found nothing reaching it.
+     * <p>
+     * Distinct from {@code testUnopenableSidecarDegradesRatherThanThrows}, which fails the SIDECAR's
+     * own open. Here the sidecar loads perfectly and the file it describes is the unreadable one.
+     */
+    @Test
+    public void testUnreadableCoveredFileYieldsNoVerdictNotCorruption() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path()) {
+                try (PartitionChecksumSidecar s = new PartitionChecksumSidecar()) {
+                    s.of(configuration.getFilesFacade(), sidecarPath(path, "gone"), BS);
+                    writeOneFileGeneration(s, "v.d", 100, 11L);
+                }
+                // The covered file must EXIST at its recorded length. A MISSING file is a different
+                // path entirely (ff.length() = -1 < storedLength -> MISMATCH), and the scrub never
+                // reaches it because scrubTable skips vanished files first
+                // ("if (len < 0) continue; // vanished under us"). What is untested is the file being
+                // present but UNOPENABLE -- fd exhaustion, a permissions flip, a racing unlink between
+                // the length check and the open.
+                try (Path data = new Path()) {
+                    data.of(sidecarPath(path, "gone").toString()).parent().concat("v.d");
+                    final long fd = configuration.getFilesFacade().openRW(data.$(), configuration.getWriterFileOpenOpts());
+                    Assert.assertTrue("must create the covered file", fd > 0);
+                    try {
+                        Assert.assertTrue(configuration.getFilesFacade().truncate(fd, 100));
+                    } finally {
+                        configuration.getFilesFacade().close(fd);
+                    }
+                }
+                // Sidecar itself opens normally; only the COVERED file refuses to open.
+                final FilesFacade ff = new TestFilesFacadeImpl() {
+                    @Override
+                    public long openRO(LPSZ name) {
+                        return Utf8s.endsWithAscii(name, "v.d") ? -1 : super.openRO(name);
+                    }
+                };
+                try (Path data = new Path(); PartitionChecksumSidecar r = new PartitionChecksumSidecar()) {
+                    r.of(ff, sidecarPath(path, "gone"), BS);
+                    Assert.assertEquals("precondition: the sidecar must have loaded and be covering",
+                            ChecksumTrailer.PRESENT_OK, r.coverage());
+                    Assert.assertTrue("precondition: it must cover the file we are hiding",
+                            r.fileCount() > 0);
+                    data.of(sidecarPath(path, "gone").toString()).parent().concat("v.d");
+                    Assert.assertEquals("an unopenable covered file must read as ABSENT, never MISMATCH",
+                            ChecksumTrailer.ABSENT, r.verifyFile(ff, data.$(), 0));
                 }
             }
         });
