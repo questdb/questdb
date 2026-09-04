@@ -53,13 +53,18 @@ import org.junit.Test;
  * are known gaps and are pinned as such, so that fixing either turns its test red
  * rather than leaving it silently asserting the old answer:
  * <ul>
- *     <li>a fully absent PARQUET partition still drops its rows from a NULL-key covered
- *     scan -- see {@link #testFullyAbsentParquetIsNullCoveredScanDropsRows};</li>
  *     <li>{@code SAMPLE BY} first/last throws over any partition that carries the
  *     indexed column -- see {@link #testSampleByFirstLastThrowsOnPartitionCarryingTheColumn}.</li>
  * </ul>
  */
 public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
+
+    /**
+     * Which plan a query runs: the covering one, the backup the covering factory defers to for a
+     * NULL key over a partition carrying a column top, or a plain index scan on a table that has
+     * no covering index at all. The three declare different factory properties.
+     */
+    private enum PlanKind {BACKUP, COVERING, PLAIN}
 
     @Test
     public void testFullyAbsentEqualsCoveredScan() throws Exception {
@@ -70,6 +75,7 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
             assertCoveredAndReference(
                     "SELECT ts, sym, val FROM m_abs_eq WHERE sym = 'A' AND ts IN '2024-01-01' ORDER BY ts",
                     "ts",
+                    true,
                     "ts\tsym\tval\n"
             );
         });
@@ -108,6 +114,7 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
             assertCoveredAndReference(
                     "SELECT ts, sym, val FROM m_abs_null WHERE sym = null AND ts IN '2024-01-01' ORDER BY ts",
                     "ts",
+                    false,
                     """
                             ts\tsym\tval
                             2024-01-01T00:00:00.000000Z\t\t10.0
@@ -153,6 +160,7 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
             assertCoveredAndReference(
                     "SELECT sym, val FROM m_abs_latest WHERE sym = null LATEST ON ts PARTITION BY sym",
                     null,
+                    false,
                     """
                             sym\tval
                             \t60.0
@@ -161,6 +169,7 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
             assertCoveredAndReference(
                     "SELECT sym, val FROM m_abs_latest WHERE sym = 'A' LATEST ON ts PARTITION BY sym",
                     null,
+                    true,
                     """
                             sym\tval
                             A\t70.0
@@ -170,53 +179,28 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFullyAbsentParquetIsNullCoveredScanDropsRows() throws Exception {
-        // Matrix row 6, a KNOWN GAP pinned as it stands. A Parquet partition keeps its
-        // columns inside data.parquet, so the reader maps no native column memory for
-        // them and there is nothing for the covered read to fall back TO. The partition
-        // is skipped and its rows disappear from a NULL-key covered scan -- which is
-        // exactly what it did before the fall-back existed. Decoding the rows out of
-        // data.parquet is what a real fix takes; doing it turns this test red.
+    public void testFullyAbsentParquetIsNullCoveredScan() throws Exception {
+        // Matrix row 6, the Parquet twin of testFullyAbsentIsNullCoveredScan. This was a known
+        // gap while the covering factory tried to answer such a partition itself: a Parquet
+        // partition keeps its columns inside data.parquet, so the reader maps no native column
+        // memory and there was nothing to read. Deferring the whole query to the plain plan
+        // instead needs no Parquet handling at all -- that plan already decodes Parquet -- so
+        // the rows come back, and the covered scan agrees with the plain one.
         assertMemoryLeak(() -> {
             createMatrixTable("m_pq_abs");
             execute("ALTER TABLE m_pq_abs CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             engine.releaseAllReaders();
 
-            // Iterated by hand rather than through assertQuery: the covered cursor still
-            // reports size() == 2 for this partition (its size() counts index matches,
-            // which the drop does not touch), so size and iteration disagree and the
-            // builder's size cross-check would fail on the gap itself.
-            final String sql = "SELECT ts, sym, val FROM m_pq_abs WHERE sym = null AND ts IN '2024-01-01' ORDER BY ts";
-            TestUtils.assertContains(
-                    "the covering factory must still be the one that drops them",
-                    getPlanSink(sql).getSink(),
-                    "CoveringIndex"
-            );
-            try (RecordCursorFactory factory = select(sql)) {
-                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                    int rows = 0;
-                    while (cursor.hasNext()) {
-                        rows++;
-                    }
-                    Assert.assertEquals("the parquet partition contributes no row", 0, rows);
-                    Assert.assertEquals("size() still counts the index matches it does not return", 2, cursor.size());
-                }
-            }
-
-            // The plain index scan over the same partition still returns them, which is
-            // what makes this a gap rather than a property of the data.
-            assertQuery("""
-                    SELECT /*+ no_covering */ ts, sym, val FROM m_pq_abs
-                    WHERE sym = null AND ts IN '2024-01-01' ORDER BY ts
-                    """)
-                    .noLeakCheck()
-                    .sizeMayVary()
-                    .timestamp("ts")
-                    .returns("""
+            assertCoveredAndReference(
+                    "SELECT ts, sym, val FROM m_pq_abs WHERE sym = null AND ts IN '2024-01-01' ORDER BY ts",
+                    "ts",
+                    false,
+                    """
                             ts\tsym\tval
                             2024-01-01T00:00:00.000000Z\t\t10.0
                             2024-01-01T01:00:00.000000Z\t\t20.0
-                            """);
+                            """
+            );
         });
     }
 
@@ -234,6 +218,7 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
                 assertCoveredAndReference(
                         "SELECT ts, sym, val FROM " + table + " WHERE sym = 'A' AND ts IN '2024-01-03' ORDER BY ts",
                         "ts",
+                        true,
                         """
                                 ts\tsym\tval
                                 2024-01-03T00:00:00.000000Z\tA\t70.0
@@ -242,6 +227,7 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
                 assertCoveredAndReference(
                         "SELECT ts, sym, val FROM " + table + " WHERE sym = null AND ts IN '2024-01-03' ORDER BY ts",
                         "ts",
+                        false,
                         "ts\tsym\tval\n"
                 );
             }
@@ -276,11 +262,12 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
                     2024-01-03T00:00:00.000000Z\tA\t70.0
                     """;
             for (String table : new String[]{"m_cov", "m_bitmap", "m_posting"}) {
-                // Only the covering factory gives up random access; the two plain index
-                // scans keep it, so the flag follows the table.
-                final boolean isCovering = "m_cov".equals(table);
-                assertMatrixRows(table, "null", isCovering, expectedNull);
-                assertMatrixRows(table, "'A'", isCovering, expectedA);
+                // Only the covering factory gives up random access; the two plain index scans
+                // keep it. On the covering table the NULL key defers to the backup, which is a
+                // plain scan wearing the covering factory's declared properties.
+                final boolean isCoveringTable = "m_cov".equals(table);
+                assertMatrixRows(table, "null", isCoveringTable ? PlanKind.BACKUP : PlanKind.PLAIN, expectedNull);
+                assertMatrixRows(table, "'A'", isCoveringTable ? PlanKind.COVERING : PlanKind.PLAIN, expectedA);
             }
         });
     }
@@ -300,6 +287,7 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
                 assertCoveredAndReference(
                         "SELECT ts, sym, val FROM " + table + " WHERE sym = 'A' AND ts IN '2024-01-02' ORDER BY ts",
                         "ts",
+                        true,
                         """
                                 ts\tsym\tval
                                 2024-01-02T02:00:00.000000Z\tA\t50.0
@@ -326,6 +314,7 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
                 assertCoveredAndReference(
                         "SELECT ts, sym, val FROM " + table + " WHERE sym = null AND ts IN '2024-01-02' ORDER BY ts",
                         "ts",
+                        false,
                         """
                                 ts\tsym\tval
                                 2024-01-02T00:00:00.000000Z\t\t30.0
@@ -371,27 +360,61 @@ public class CoveringIndexColumnTopMatrixTest extends AbstractCairoTest {
      * Runs the whole-table scan for one key against one of the three index kinds. Only
      * the covering factory gives up random access, so the flag follows the table.
      */
-    private void assertMatrixRows(String table, String key, boolean isCovering, String expected) throws Exception {
+    private void assertMatrixRows(String table, String key, PlanKind kind, String expected) throws Exception {
         QueryAssertion assertion = assertQuery("SELECT ts, sym, val FROM " + table + " WHERE sym = " + key + " ORDER BY ts")
                 .noLeakCheck()
                 .sizeMayVary()
                 .timestamp("ts");
-        if (isCovering) {
+        if (kind != PlanKind.PLAIN) {
+            // Both the covering plan and the backup it defers to declare no random access.
             assertion = assertion.noRandomAccess();
+        }
+        if (kind == PlanKind.BACKUP) {
+            assertion = assertion.skipRandomAccessProbe();
         }
         assertion.returns(expected);
     }
 
-    private void assertCoveredAndReference(String sql, String designatedTimestamp, String expected) throws Exception {
-        assertQuery(sql)
+    /**
+     * Asserts the rows, and cross-checks them against the same query read through the plain
+     * index scan. The answer must be the same whichever plan runs.
+     */
+    /**
+     * Asserts the rows, which plan runs, and that the two plans agree.
+     * <p>
+     * Every table here is built by ADDing the indexed column, so every partition carries a top
+     * for it. A NULL key therefore has no posting below the top and no sidecar entry to decode,
+     * and the factory serves the query from its backup -- the plan {@code /*+ no_covering *}
+     * {@code /} would have produced. A non-NULL key stays on the covering plan. The two report
+     * The plan is a compile-time artefact, so it names the covering node either way; what it
+     * does show is whether a backup was BUILT ({@code backup: true}), which is the compile-time
+     * half of the decision. That the backup actually RAN is what the rows prove: the covering
+     * plan would answer these with NULL INCLUDE values, having no sidecar entry to decode.
+     */
+    private void assertCoveredAndReference(
+            String sql,
+            String designatedTimestamp,
+            boolean isCoveringPlan,
+            String expected
+    ) throws Exception {
+        QueryAssertion assertion = assertQuery(sql)
                 .noLeakCheck()
                 .noRandomAccess()
                 .sizeMayVary()
                 .timestamp(designatedTimestamp)
-                .withPlanContaining("CoveringIndex")
-                .returns(expected);
+                .withPlanContaining(isCoveringPlan ? "CoveringIndex" : "CoveringIndex backup: true");
+        if (!isCoveringPlan) {
+            // The backup is a PageFrameRecordCursorFactory, which declares no random access for
+            // this query shape but hands out a cursor that implements getRecordB() anyway. Pin
+            // the declaration and skip the probe.
+            assertion = assertion.skipRandomAccessProbe();
+        } else {
+            assertion = assertion.withPlanNotContaining("backup");
+        }
+        assertion.returns(expected);
         assertSqlCursors(sql, sql.replace("SELECT ", "SELECT /*+ no_covering */ "));
     }
+
 
     private static void assertThrowsUnsupported(String sql) throws Exception {
         try (

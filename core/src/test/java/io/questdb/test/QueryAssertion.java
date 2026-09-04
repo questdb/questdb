@@ -89,6 +89,7 @@ public class QueryAssertion {
     private RecordCursorFactory factory;
     private boolean fullFatJoins;
     private boolean isRandomAccessInferred;
+    private boolean isRandomAccessProbeSkipped;
     private boolean isTimestampInferred;
     private boolean leakCheck = true;
     private long memoryUsage = -1;
@@ -384,6 +385,27 @@ public class QueryAssertion {
      */
     public QueryAssertion inferRandomAccess() {
         this.isRandomAccessInferred = true;
+        return this;
+    }
+
+    /**
+     * Skip the probe that a non-random-access cursor throws {@link UnsupportedOperationException}
+     * from {@code getRecordB()} and {@code recordAt()}, while still pinning the factory's declared
+     * capability.
+     * <p>
+     * Some factories declare no random access yet hand out a cursor that implements it anyway --
+     * {@link io.questdb.griffin.engine.table.PageFrameRecordCursorFactory} returns its constructor
+     * flag from {@code recordCursorSupportsRandomAccess()}, but its cursor implements
+     * {@code getRecordB()} unconditionally. For those, neither setting of
+     * {@link #noRandomAccess()} passes: with it the probe fails, without it the declared-capability
+     * assertion does. Use this to assert the declaration and let the cursor be more capable than it
+     * claims.
+     * <p>
+     * It weakens the assertion, so reach for it only when the factory under test is one of those --
+     * never to quiet a cursor that genuinely should refuse random access.
+     */
+    public QueryAssertion skipRandomAccessProbe() {
+        this.isRandomAccessProbeSkipped = true;
         return this;
     }
 
@@ -1261,7 +1283,7 @@ public class QueryAssertion {
                 }
                 TestUtils.assertEquals(expected, sink);
             }
-        } else {
+        } else if (!isRandomAccessProbeSkipped) {
             try {
                 cursor.getRecordB();
                 Assert.fail();
@@ -1933,7 +1955,7 @@ public class QueryAssertion {
     }
 
     private void requireFailsCompatible() {
-        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || !supportsRandomAccess
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || isRandomAccessProbeSkipped || ddl2 != null || !supportsRandomAccess
                 || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             throw new IllegalStateException("fails(...)/failsWith(...) supports only ddl()/fullFatJoins()/withCompiler()/noLeakCheck()/withContext()/withEngine()");
         }
@@ -1948,20 +1970,20 @@ public class QueryAssertion {
     }
 
     private void requirePlanOnlyCompatible() {
-        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || fullFatJoins
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || isRandomAccessProbeSkipped || ddl2 != null || fullFatJoins
                 || !supportsRandomAccess || sizeCanBeVariable || expectedPlan != null || planFragments != null || planFragmentsAbsent != null) {
             throw new IllegalStateException("assertsPlan(...)/assertsPlanContaining(...)/assertsPlanNotContaining(...) supports only ddl()/noLeakCheck()/withCompiler()/withContext()/withEngine()");
         }
     }
 
     private void requireRecordPathCompatible() {
-        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || isRandomAccessInferred || overridden) {
+        if (!leakCheck || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || sizeCanBeVariable || !supportsRandomAccess || isRandomAccessInferred || isRandomAccessProbeSkipped || overridden) {
             throw new IllegalStateException("returnsRecords(...) supports only ddl()/timestamp()/mutateWith()/expectSize()");
         }
     }
 
     private void requireSingleShotCompatible() {
-        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
+        if (expectSize || expectedTimestamp != null || isTimestampInferred || isRandomAccessInferred || isRandomAccessProbeSkipped || ddl2 != null || fullFatJoins || compiler != null || expectedPlan != null || planFragments != null || planFragmentsAbsent != null || !supportsRandomAccess || sizeCanBeVariable) {
             throw new IllegalStateException("returnsOnce(...) supports only ddl()/noLeakCheck()/withContext()/withEngine()");
         }
     }

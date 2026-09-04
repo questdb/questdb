@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.SymbolMapReader;
@@ -108,6 +109,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @TestOnly
     static int heapMergeMinKeysOverride = -1;
     private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
+    // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
+    // partition that carries a column top can be served by it instead. Non-null only when the
+    // key can be NULL, which the compiler knows: see SqlCodeGenerator's covering sites. A
+    // factory that carries one advertises no page-frame cursor, because no index-scan backup
+    // exposes frames.
+    private final RecordCursorFactory backup;
     private final IntList columnIndexes;
 
     private final PartitionFrameCursorFactory dfcFactory;
@@ -141,12 +148,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             @Nullable TableReader reader,
             boolean latestBy,
             @Nullable Function latestByFilter,
-            @Nullable IntList patternKeys
+            @Nullable IntList patternKeys,
+            @Nullable RecordCursorFactory backup
     ) {
         // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
         // mutually exclusive ways to drive the multi-key merge; never both.
         assert keyValueFuncs == null || patternKeys == null;
         this.metadata = metadata;
+        this.backup = backup;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
@@ -275,14 +284,82 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void close() {
-        Misc.free(dfcFactory);
+        // The backup runs the same scan over the same table with the same key, so the two
+        // share the partition-frame factory and the key functions rather than duplicating
+        // them. The BACKUP owns that shared set -- there is no non-owning wrapper for either
+        // -- so freeing it here frees them, and we must not free them again below. With no
+        // backup this factory is the sole owner and frees them itself.
+        if (backup != null) {
+            Misc.free(backup);
+        } else {
+            Misc.free(dfcFactory);
+            Misc.free(symbolFunction);
+            Misc.freeObjList(keyValueFuncs);
+        }
         Misc.free(latestByFilter);
-        Misc.free(symbolFunction);
-        Misc.freeObjList(keyValueFuncs);
         Misc.free(singleKeyCursor);
         Misc.free(multiKeyCursor);
         Misc.free(singleKeyPageFrameCursor);
         Misc.free(multiKeyPageFrameCursor);
+    }
+
+    /**
+     * Whether this open must run the {@link #backup} plan instead of the covering one.
+     * <p>
+     * The sidecar holds one entry per posting and the chain holds no posting for a row below
+     * the indexed column's top, so a NULL key over a partition that carries a top has nothing
+     * to decode. Every other combination the sidecar answers correctly: a non-NULL key matches
+     * only rows at or above the top, which do have postings, and an explicit NULL above the top
+     * has one too.
+     * <p>
+     * The column-top half cannot be answered at compile time -- a top lives in {@code _cv},
+     * which changes without a metadata-version bump that would invalidate this cached factory
+     * -- so it is answered here, from the reader this open resolved.
+     */
+    private boolean mustUseBackup(PartitionFrameCursor frameCursor, boolean anyKeyIsNull) {
+        if (backup == null || !anyKeyIsNull) {
+            return false;
+        }
+        final TableReader reader = frameCursor.getTableReader();
+        return hasAnyColumnTop(reader, reader.getMetadata().getWriterIndex(indexColumnIndex));
+    }
+
+    /**
+     * Whether any partition of the table carries a column top for {@code writerIndex} -- either
+     * an explicit one, or the whole partition predating the column, which reads as a top equal
+     * to the partition's row count.
+     * <p>
+     * Reads {@code _cv} only, which {@link ColumnVersionReader} holds in memory, so no partition
+     * is opened. The first test answers the whole table at once: a column that has existed since
+     * the table's first partition can carry no top anywhere, because the O3 overwrite that
+     * creates one applies only to partitions the column was missing from. Otherwise the walk
+     * mirrors {@code TableReader.reloadColumnAt}'s own present/absent decision, so a table whose
+     * column was added long ago and has since been rewritten into every partition still takes
+     * the covering path.
+     */
+    private static boolean hasAnyColumnTop(TableReader reader, int writerIndex) {
+        final ColumnVersionReader cv = reader.getColumnVersionReader();
+        final long addedAtPartition = cv.getColumnTopPartitionTimestamp(writerIndex);
+        if (addedAtPartition == Long.MIN_VALUE) {
+            return false;
+        }
+        for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+            final long partitionTimestamp = reader.getPartitionTimestampByIndex(i);
+            final int recordIndex = cv.getRecordIndex(partitionTimestamp, writerIndex);
+            if (recordIndex > -1) {
+                if (cv.getColumnTopByIndex(recordIndex) > 0) {
+                    return true;
+                }
+            } else if (addedAtPartition > partitionTimestamp && reader.getPartitionRowCountFromMetadata(i) > 0) {
+                // No record and the partition predates the column: it holds no value for any of
+                // its rows, which is a top equal to its row count. An empty partition has no row
+                // to be wrong about. Read the size from the transaction file, not from
+                // openPartitionInfo, which answers -1 until the partition is opened -- and none
+                // of them are, this early in the open.
+                return true;
+            }
+        }
+        return false;
     }
 
     @Override
@@ -320,6 +397,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                             multiKeyCursor.multiKeys.add(key);
                         }
                     }
+                    if (mustUseBackup(frameCursor, multiKeyCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL))) {
+                        frameCursor = Misc.free(frameCursor);
+                        return backup.getCursor(executionContext);
+                    }
                     // Always wire up the frame cursor and table reader, even when no
                     // keys resolve. Callers wrap us in operators (e.g. ORDER BY on a
                     // SYMBOL column) that probe baseCursor.getSymbolTable() during
@@ -346,6 +427,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // value, so let it, rather than reporting the key as unknown.
                 resolvedKey = symbolMapReader.keyOf(symbolFunction.getStrA(null));
             }
+            if (mustUseBackup(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL)) {
+                frameCursor = Misc.free(frameCursor);
+                return backup.getCursor(executionContext);
+            }
             singleKeyCursor.resolveKey(resolvedKey);
             singleKeyCursor.of(frameCursor);
             singleKeyCursor.circuitBreaker = executionContext.getCircuitBreaker();
@@ -367,6 +452,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
+        // supportsPageFrameCursor() answers false whenever a backup exists, so nobody should
+        // reach here in that state; the backup has no page-frame cursor to hand over to.
+        assert backup == null : "page frames requested from a covering factory that carries a backup";
         if (multiKeyPageFrameCursor == null && singleKeyPageFrameCursor == null) {
             return null;
         }
@@ -449,7 +537,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // resolved key), so it is trivially ts-ordered. Only multi-key
         // latestBy breaks the order: it emits one row per key in key order,
         // not ts order, so it alone advertises no ordering.
-        return latestBy && multiKeyCursor != null ? SCAN_DIRECTION_OTHER : SCAN_DIRECTION_FORWARD;
+        final int own = latestBy && multiKeyCursor != null ? SCAN_DIRECTION_OTHER : SCAN_DIRECTION_FORWARD;
+        if (backup == null || backup.getScanDirection() == own) {
+            return own;
+        }
+        // The backup may order rows differently -- FilterOnValues drains its per-key cursors
+        // one after another under ORDER_BY_INVARIANT, which is not row-id order -- and the
+        // generator elides an ORDER BY ts on whatever we answer here, before either delegate
+        // runs. Advertise no ordering rather than the one only half of the pair keeps.
+        return SCAN_DIRECTION_OTHER;
     }
 
     @Override
@@ -467,12 +563,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * computes last-N via size + skip over the ascending merge.
      */
     public boolean supportsNegativeLimitPageFrame() {
-        return singleKeyPageFrameCursor != null;
+        return backup == null && singleKeyPageFrameCursor != null;
     }
 
     @Override
     public boolean supportsPageFrameCursor() {
-        return singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null;
+        // A backup means this factory may serve the query from a plan that exposes no page
+        // frames -- none of the index-scan factories do -- and the answer is baked at compile
+        // time, before we know which one will run. Say no for both.
+        return backup == null && (singleKeyPageFrameCursor != null || multiKeyPageFrameCursor != null);
     }
 
     /**
@@ -486,12 +585,17 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      */
     @Override
     public boolean producesMaterializedPageFrames() {
-        return multiKeyPageFrameCursor != null;
+        return backup == null && multiKeyPageFrameCursor != null;
     }
 
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("CoveringIndex");
+        if (backup != null) {
+            // Name the alternative in the plan: which of the two runs is decided per open,
+            // and a reader looking at a slow or surprising query needs to see both.
+            sink.meta("backup").val(true);
+        }
         if (latestBy) {
             sink.meta("op").val("latest");
         }

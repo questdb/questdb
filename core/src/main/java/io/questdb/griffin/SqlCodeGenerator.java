@@ -1099,6 +1099,72 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return mapping;
     }
 
+    /**
+     * Whether a covering scan on this key may have to answer the NULL key, and therefore needs
+     * a backup plan for partitions that carry a column top. True for a literal {@code null},
+     * which resolves to {@code VALUE_IS_NULL} at compile time, and for a runtime constant,
+     * whose value is not known until it is bound. A literal that names a real symbol -- or one
+     * that names no symbol at all -- can never be NULL and needs nothing.
+     */
+    private static boolean canKeyBeNull(int symbolKey, Function symbolFunc) {
+        return symbolKey == SymbolTable.VALUE_IS_NULL || symbolFunc.isRuntimeConstant();
+    }
+
+    /**
+     * Whether any element of an IN-list key can resolve to NULL, and so make the scan ask for
+     * the NULL key. See {@link #canKeyBeNull}: a literal {@code null} resolves here, a runtime
+     * constant does not resolve until it is bound.
+     */
+    private static boolean canAnyKeyBeNull(ObjList<Function> keyValueFuncs, SymbolMapReader symbolMapReader) {
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final Function f = keyValueFuncs.getQuick(i);
+            if (f.isRuntimeConstant() || symbolMapReader.keyOf(f.getStrA(null)) == SymbolTable.VALUE_IS_NULL) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The plain single-key index scan a covering factory falls back to: the same plan this
+     * method's caller builds when {@code /*+ no_covering *}{@code /} is set, minus the filter.
+     * The filter stays with the wrapper above the covering factory, which applies it to
+     * whichever of the two delegates runs, so putting it here too would both double-filter and
+     * double-own the function.
+     * <p>
+     * The returned factory OWNS {@code dfcFactory} and {@code symbolFunc}: the covering factory
+     * shares both with it rather than duplicating them, and frees them through this backup.
+     */
+    private static RecordCursorFactory buildSingleSymbolIndexScan(
+            CairoConfiguration configuration,
+            RecordMetadata queryMeta,
+            PartitionFrameCursorFactory dfcFactory,
+            int keyColumnIndex,
+            int symbolKey,
+            Function symbolFunc,
+            int indexDirection,
+            boolean followsOrderByAdvice,
+            IntList columnIndexes,
+            IntList columnSizeShifts,
+            boolean supportsRandomAccess
+    ) {
+        final RowCursorFactory rcf = symbolKey == SymbolTable.VALUE_NOT_FOUND
+                ? new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, symbolFunc, indexDirection)
+                : new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, indexDirection, null);
+        return new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
+                configuration,
+                keyColumnIndex,
+                symbolFunc,
+                rcf,
+                queryMeta,
+                dfcFactory,
+                followsOrderByAdvice,
+                columnIndexes,
+                columnSizeShifts,
+                supportsRandomAccess
+        );
+    }
+
     private static void buildHorizonColumnMappings(
             RecordMetadata innerMetadata,
             CharSequence masterAlias,
@@ -7407,6 +7473,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             null,
                                             true,
                                             filter,
+                                            null,
                                             null
                                     );
                                     symbolValueFunc = null;
@@ -7490,6 +7557,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     reader,
                                     true,
                                     filter,
+                                    null,
                                     null
                             );
                         }
@@ -11965,6 +12033,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             reader, keyReaderColIdx, columnIndexes, queryMeta
                                     );
                                     if (coveringMapping != null) {
+                                        // A NULL key over a partition that carries a column top has no
+                                        // posting, so no sidecar entry to decode. Whether any partition
+                                        // carries one is runtime state (_cv changes without a
+                                        // metadata-version bump, so a cached plan cannot rely on what we
+                                        // see here), but whether the key CAN be null is a property of the
+                                        // SQL: a literal null resolves to VALUE_IS_NULL right here, and a
+                                        // runtime constant is unknown until it is bound. Build the plain
+                                        // plan for those two and let the factory choose per open.
+                                        final RecordCursorFactory backup = canKeyBeNull(symbolKey, symbolFunc)
+                                                ? buildSingleSymbolIndexScan(
+                                                configuration, queryMeta, dfcFactory, keyColumnIndex,
+                                                symbolKey, symbolFunc, indexDirection,
+                                                orderByKeyColumn || orderByTimestamp, columnIndexes,
+                                                columnSizeShifts, supportsRandomAccess)
+                                                : null;
                                         CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                                 queryMeta,
                                                 dfcFactory,
@@ -11977,10 +12060,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                                 null,
                                                 false,
                                                 null,
-                                                null
+                                                null,
+                                                backup
                                         );
-                                        // coveringFactory now owns dfcFactory and symbolFunc; clear our
-                                        // references so the outer catch and finally do not double-free them.
+                                        // coveringFactory now owns dfcFactory and symbolFunc -- or, when a
+                                        // backup exists, owns the backup which owns them. Either way clear
+                                        // our references so the outer catch and finally do not double-free.
                                         dfcFactory = null;
                                         symbolFunc = null;
                                         if (filter != null) {
@@ -12070,6 +12155,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     reader, keyReaderColIdx, columnIndexes, queryMeta
                             );
                             if (coveringMapping != null) {
+                                // See the single-key site above. Any element of the list that is a
+                                // literal null, or whose value is not known until it is bound, can
+                                // make this scan ask for the NULL key.
+                                final RecordCursorFactory backup = canAnyKeyBeNull(
+                                        intrinsicModel.keyValueFuncs,
+                                        reader.getSymbolMapReader(keyReaderColIdx)
+                                )
+                                        ? new FilterOnValuesRecordCursorFactory(
+                                        configuration,
+                                        queryMeta,
+                                        dfcFactory,
+                                        intrinsicModel.keyValueFuncs,
+                                        keyColumnIndex,
+                                        reader,
+                                        null, // the filter stays with the wrapper above us
+                                        model.getOrderByAdviceMnemonic(),
+                                        orderByKeyColumn,
+                                        orderByTimestamp,
+                                        getOrderByDirectionOrDefault(model, 0),
+                                        indexDirection,
+                                        columnIndexes,
+                                        columnSizeShifts
+                                )
+                                        : null;
                                 CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
                                         queryMeta,
                                         dfcFactory,
@@ -12082,10 +12191,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         reader,
                                         false,
                                         null,
-                                        null
+                                        null,
+                                        backup
                                 );
-                                // coveringFactory now owns dfcFactory; clear our reference so the
-                                // outer catch does not double-free it.
+                                // coveringFactory now owns dfcFactory -- or the backup that owns it;
+                                // clear our reference so the outer catch does not double-free it.
                                 dfcFactory = null;
                                 if (filter != null) {
                                     return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
@@ -13203,7 +13313,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             reader,
                             false,
                             null,
-                            effectiveKeys
+                            effectiveKeys,
+                            null
                     );
                 }
             }
