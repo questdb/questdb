@@ -498,6 +498,13 @@ public class TableSnapshotRestore implements QuietCloseable {
             columnVersionReader.ofRO(configuration.getFilesFacade(), tablePath.$());
             columnVersionReader.readUnsafe();
 
+            // Symbols are not append-only data structures, they can be corrupt
+            // when symbol files are copied while written to. We need to rebuild them.
+            //
+            // FIRST, and on a composite table with a barrier after it (below): everything the cell
+            // resolver reads is rebuilt here, so it cannot be opened until this has finished.
+            rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
+
             if (isRoutedComposite && (rebuildPartitionColumnIndexes || hasParquetPartition())) {
                 // Stand up the cell registry + a reader per dimension from the RESTORED files, so a
                 // partition record's cellKey can be turned into the segment that names its directory.
@@ -509,6 +516,24 @@ public class TableSnapshotRestore implements QuietCloseable {
                 //
                 // AFTER columnVersionReader is open -- an IDENTITY dimension's symbol map is named with
                 // its source column's name-txn, which comes from there.
+                //
+                // AND AFTER THE SYMBOL REBUILD HAS DRAINED, which is what this barrier is for. Every
+                // file the resolver maps is one rebuildSymbolFiles recreates: the _cell registry, each
+                // dedicated dictionary, and -- for an IDENTITY dimension -- the SOURCE COLUMN'S OWN
+                // symbol map, which is an ordinary indexed column rebuilt by the per-column workers.
+                // Opened before the drain, the resolver mapped files that were then truncated and
+                // rewritten underneath it, with two failure modes seen on CI and neither of them an
+                // exception: a cellKey resolved through a half-written map named the WRONG CELL (a
+                // 3-cell table rebuilt 2023-01-01/E0 twice and E1 never, so two workers wrote one
+                // cell's index files concurrently and E1's index was silently left stale), and
+                // touching a page of a mapping whose file had shrunk raised SIGBUS in libc and took
+                // the whole JVM down. Local runs won this race every time; a loaded CI agent lost it.
+                //
+                // The barrier costs the overlap between the symbol and index phases, for composite
+                // tables that need cell paths only. Correctness is not available more cheaply here:
+                // the resolver's inputs are these files.
+                finalizeParallelTasks();
+                futures.clear();
                 cellSegmentResolver.of(tablePath.trimTo(pathTableLen), tableMetadata, txWriter, columnVersionReader);
             }
 
@@ -529,10 +554,6 @@ public class TableSnapshotRestore implements QuietCloseable {
             // truncated file to ParquetMetadataWriter.generate. The cost is the
             // in-flight items already running -- wasted I/O on a doomed restore.
             prepareParquetPartitions(tablePath.trimTo(pathTableLen), pathTableLen, rebuildPartitionColumnIndexes);
-
-            // Symbols are not append-only data structures, they can be corrupt
-            // when symbol files are copied while written to. We need to rebuild them.
-            rebuildSymbolFiles(tablePath, recoveredSymbolFiles, pathTableLen);
 
             // Recreate the bitmap indexes for each indexed native partition;
             // parquet partitions were already handled by prepareParquetPartitions.

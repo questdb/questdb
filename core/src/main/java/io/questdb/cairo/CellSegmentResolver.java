@@ -48,6 +48,16 @@ import io.questdb.std.str.Path;
  * Two callers, and they are the reason this is a top-level class rather than a private helper:
  * {@code TableSnapshotRestore} (restoring a checkpoint) and the enterprise checkpoint manifest
  * (describing one). Both walk files that no engine reader is open on.
+ * <p>
+ * THE FILES MUST BE FINAL BEFORE {@link #of} IS CALLED. This maps the _cell registry, the dedicated
+ * dictionaries, and -- for an IDENTITY dimension -- the source column's own symbol map, which is an
+ * ordinary symbol column. "No engine reader" is not the whole precondition: a caller that REWRITES
+ * any of those files while this object is open breaks it two ways, neither of them an exception. A
+ * key resolved through a half-written map returns the wrong segment, so the caller silently addresses
+ * the wrong cell's directory; and touching a page of a mapping whose file has since shrunk raises
+ * SIGBUS, which kills the process. {@code TableSnapshotRestore} rebuilds all three in parallel
+ * workers and therefore drains them before opening this -- see the barrier at its
+ * {@code cellSegmentResolver.of} call site.
  */
 public class CellSegmentResolver implements QuietCloseable {
     private final CairoConfiguration configuration;

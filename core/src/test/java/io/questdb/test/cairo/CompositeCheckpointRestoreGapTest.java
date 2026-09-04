@@ -25,9 +25,17 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Checkpoint/restore of a composite table holding a PARQUET partition, or an INDEXED column.
@@ -203,6 +211,128 @@ public class CompositeCheckpointRestoreGapTest extends AbstractCairoTest {
                 engine.checkpointRelease();
             }
         });
+    }
+
+    /**
+     * The cell resolver must not be opened until the symbol rebuild that recreates its input files has
+     * finished. Found by a CI crash, not by review.
+     * <p>
+     * {@code TableSnapshotRestore} used to open {@link io.questdb.cairo.CellSegmentResolver} before
+     * calling {@code rebuildSymbolFiles}. Every file the resolver maps is one that rebuild recreates:
+     * the {@code _cell} registry, the dedicated dictionaries, and -- for an IDENTITY dimension like
+     * {@code exch} here -- the SOURCE COLUMN'S OWN symbol map, an ordinary symbol column rebuilt by the
+     * per-column workers. The parallel index workers then resolved cell names through mappings whose
+     * files were being truncated and rewritten underneath them.
+     * <p>
+     * Two failure modes, neither an exception. On the CI agent that caught it, a 3-cell table rebuilt
+     * {@code 2023-01-01/E0} TWICE and {@code E1} never: two workers wrote one cell's index files
+     * concurrently while E1's index was silently left stale. The same run then died on
+     * {@code SIGBUS (0x7) ... C [libc.so.6+0x189500]} -- touching a page of a mapping whose file had
+     * shrunk -- taking the JVM down and the surefire fork with it, which is why the job reported no
+     * test results at all rather than a failure.
+     * <p>
+     * WHY THIS ASSERTS AN ORDER RATHER THAN THE CRASH. The crash is a lost race; the box that catches
+     * it is a loaded 11-worker CI agent, and this machine won that race on every local run of the test
+     * above, before and after the fix. Re-running until it crashes is not a regression lock. The
+     * ordering IS the root cause and IS the fix, and it is deterministic: the resolver's reads happen
+     * on the restore thread at a fixed point, so before the fix they land BEFORE the rebuild's writes
+     * and after it they land after. Verified red against the pre-fix ordering: {@code first read #0}
+     * versus {@code last write #2}.
+     * <p>
+     * Scoped to {@code exch.o}/{@code exch.c} at the table root, which only the symbol map uses: a
+     * column file inside a cell directory is {@code exch.d}, so the recording cannot pick one up.
+     */
+    @Test(timeout = 120_000)
+    public void testCellResolverOpensOnlyAfterTheSymbolRebuildHasDrained() throws Exception {
+        final AtomicBoolean recording = new AtomicBoolean(false);
+        final AtomicInteger seq = new AtomicInteger();
+        // -1 == never seen. Read and write are recorded separately so the failure message can say
+        // which side was missing when one of them is.
+        final AtomicInteger firstRead = new AtomicInteger(-1);
+        final AtomicInteger lastWrite = new AtomicInteger(-1);
+
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openCleanRW(LPSZ name, long size) {
+                note(name, false);
+                return super.openCleanRW(name, size);
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                note(name, true);
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                note(name, false);
+                return super.openRW(name, opts);
+            }
+
+            private void note(LPSZ name, boolean read) {
+                if (!recording.get() || !isExchSymbolMapFile(name)) {
+                    return;
+                }
+                final int n = seq.getAndIncrement();
+                if (read) {
+                    firstRead.compareAndSet(-1, n);
+                } else {
+                    lastWrite.set(n);
+                }
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setProperty(PropertyKey.CAIRO_CHECKPOINT_RECOVERY_REBUILD_COLUMN_INDEXES, "true");
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id-before");
+
+            execute("CREATE TABLE c (ts TIMESTAMP, exch SYMBOL, sym SYMBOL INDEX, px DOUBLE) TIMESTAMP(ts) "
+                    + "PARTITION BY DAY, exch LAYOUT PLAIN WAL");
+            execute("INSERT INTO c VALUES ('2023-01-01T01:00:00.000000Z','E0','S0',1.0),"
+                    + "('2023-01-01T02:00:00.000000Z','E1','S1',2.0),"
+                    + "('2023-01-02T01:00:00.000000Z','E0','S0',3.0)");
+            drainWalQueue();
+
+            execute("CHECKPOINT CREATE");
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_LEGACY_SNAPSHOT_INSTANCE_ID, "id-after");
+
+            // Only the restore is recorded: the writes above open the same files for ordinary reasons.
+            recording.set(true);
+            try {
+                engine.checkpointRecover();
+            } finally {
+                recording.set(false);
+                engine.checkpointRelease();
+            }
+
+            // NON-VACUITY: both sides must have happened at all. Without this, a restore that stopped
+            // touching exch's symbol map -- or a rename of the files -- would pass silently.
+            Assert.assertNotEquals("the restore never REBUILT exch's symbol map; this test is not"
+                    + " observing the rebuild it claims to order", -1, lastWrite.get());
+            Assert.assertNotEquals("the restore never READ exch's symbol map; the cell resolver is not"
+                    + " being opened, so this test is vacuous", -1, firstRead.get());
+
+            Assert.assertTrue(
+                    "the cell resolver read exch's symbol map (#" + firstRead.get() + ") BEFORE the"
+                            + " symbol rebuild finished writing it (#" + lastWrite.get() + "):"
+                            + " the resolver is mapping files that are still being recreated, which"
+                            + " resolves cells to the wrong directory and can raise SIGBUS",
+                    firstRead.get() > lastWrite.get()
+            );
+        });
+    }
+
+    /**
+     * {@code exch.o}/{@code exch.c} directly under the table directory -- the symbol map's offset and
+     * char files. Deliberately not {@code .k}/{@code .v}: those names are also used by bitmap indexes
+     * inside partition directories.
+     */
+    private static boolean isExchSymbolMapFile(LPSZ name) {
+        return (Utf8s.endsWithAscii(name, "/exch.o") || Utf8s.endsWithAscii(name, "/exch.c")
+                || Utf8s.endsWithAscii(name, "\\exch.o") || Utf8s.endsWithAscii(name, "\\exch.c"))
+                && !Utf8s.containsAscii(name, "2023-01-");
     }
 
     private String capture(String sql) throws Exception {
