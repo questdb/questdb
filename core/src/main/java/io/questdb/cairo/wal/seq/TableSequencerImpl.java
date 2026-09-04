@@ -292,9 +292,10 @@ public class TableSequencerImpl implements TableSequencer {
                     metadata.isDedupKey(i),
                     metadata.getColumnMetadata(i).isSymbolCacheFlag(),
                     metadata.getColumnMetadata(i).getSymbolCapacity(),
-                    coveringColumnIndices
+                    metadata.isNotNull(i)
             );
             if (columnType > -1) {
+                sink.setColumnCovering(compressedColumnCount, coveringColumnIndices);
                 reorderNeeded |= lastOrder > columnOrder;
                 lastOrder = columnOrder;
                 if (i == timestampIndex) {

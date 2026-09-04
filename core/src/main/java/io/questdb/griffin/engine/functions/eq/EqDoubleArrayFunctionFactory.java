@@ -58,6 +58,18 @@ public class EqDoubleArrayFunctionFactory implements FunctionFactory {
     ) throws SqlException {
         final Function left = args.getQuick(0);
         final Function right = args.getQuick(1);
+        // `x = NULL` / `x IS NULL` on a NOT NULL ARRAY column is always false.
+        // NegatingFunctionFactory flips the constant for IS NOT NULL.
+        if (ColumnType.isNull(left.getType()) && right.isNotNull()) {
+            left.close();
+            right.close();
+            return BooleanConstant.FALSE;
+        }
+        if (ColumnType.isNull(right.getType()) && left.isNotNull()) {
+            left.close();
+            right.close();
+            return BooleanConstant.FALSE;
+        }
         final int leftDims = ColumnType.decodeWeakArrayDimensionality(left.getType());
         final int rightDims = ColumnType.decodeWeakArrayDimensionality(right.getType());
         if (leftDims > 0 && rightDims > 0 && leftDims != rightDims) {

@@ -59,11 +59,18 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
+            if (func.isNullConstant()) {
+                return VarcharConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(func.getTimestamp(null));
             return new VarcharConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0), ColumnType.getTimestampType(args.getQuick(0).getType()));
+        final int timestampType = ColumnType.getTimestampType(func.getType());
+        if (func.isNotNull()) {
+            return new FuncNotNull(func, timestampType);
+        }
+        return new Func(func, timestampType);
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
@@ -93,6 +100,37 @@ public class CastTimestampToVarcharFunctionFactory implements FunctionFactory {
             }
             sink.clear();
             timestampDriver.append(sink, value);
+            return sink;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+        private final TimestampDriver timestampDriver;
+
+        public FuncNotNull(Function arg, int timestampType) {
+            super(arg);
+            timestampDriver = ColumnType.getTimestampDriver(timestampType);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            return format(arg.getTimestamp(rec), sinkA);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            return format(arg.getTimestamp(rec), sinkB);
+        }
+
+        private Utf8Sequence format(long value, Utf8StringSink sink) {
+            sink.clear();
+            if (value == Numbers.LONG_NULL) {
+                Numbers.append(sink, value, false);
+            } else {
+                timestampDriver.append(sink, value);
+            }
             return sink;
         }
     }

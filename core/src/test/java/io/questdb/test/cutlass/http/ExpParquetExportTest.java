@@ -720,19 +720,19 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                     drainWalQueue(engine);
                     params.clear();
                     params.put("fmt", "parquet");
-                    testHttpClient.assertGetParquet("/exp", 42_073, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 42_089, params, "test_table");
                     params.put("row_group_size", "1000");
-                    testHttpClient.assertGetParquet("/exp", 47_889, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 47_905, params, "test_table");
                     params.put("row_group_size", "500");
-                    testHttpClient.assertGetParquet("/exp", 55_290, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 55_306, params, "test_table");
                     params.put("row_group_size", "999");
-                    testHttpClient.assertGetParquet("/exp", 49_384, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 49_400, params, "test_table");
                     params.put("row_group_size", "201");
-                    testHttpClient.assertGetParquet("/exp", 78_094, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 78_110, params, "test_table");
                     params.put("row_group_size", "2001");
-                    testHttpClient.assertGetParquet("/exp", 45_037, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 45_053, params, "test_table");
                     params.put("row_group_size", "10000");
-                    testHttpClient.assertGetParquet("/exp", 42_073, params, "test_table");
+                    testHttpClient.assertGetParquet("/exp", 42_089, params, "test_table");
                     // Each round re-exports the full 10k-row table over the forced byte-level HTTP
                     // fragmentation from getExportTester(), slow on Mac/Windows. The assertGetParquet
                     // calls above already cover every row_group_size, so fewer rounds suffice.
@@ -2456,7 +2456,7 @@ public class ExpParquetExportTest extends AbstractBootstrapTest {
                             ")", sqlExecutionContext);
 
 
-                    testHttpClient.assertGetParquet("/exp", 2192, tableName);
+                    testHttpClient.assertGetParquet("/exp", 2208, tableName);
                 });
     }
 

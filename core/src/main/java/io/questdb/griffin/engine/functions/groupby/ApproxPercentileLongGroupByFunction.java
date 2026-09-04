@@ -41,6 +41,7 @@ import io.questdb.std.Numbers;
 
 public class ApproxPercentileLongGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function exprFunc;
+    private final boolean isArgNotNull;
     private final int funcPosition;
     private final GroupByHistogram histogramA;
     private final GroupByHistogram histogramB;
@@ -50,6 +51,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
 
     public ApproxPercentileLongGroupByFunction(Function exprFunc, Function percentileFunc, int precision, int funcPosition) {
         this.exprFunc = exprFunc;
+        this.isArgNotNull = exprFunc != null && exprFunc.isNotNull();
         this.percentileFunc = percentileFunc;
         this.funcPosition = funcPosition;
         // We pre-size the histogram for [1, 1000] range to avoid resizes in some basic use cases
@@ -67,7 +69,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
-        if (val != Numbers.LONG_NULL) {
+        if (isArgNotNull || val != Numbers.LONG_NULL) {
             histogramA.of(0);
             histogramA.recordValue(val);
             mapValue.putLong(valueIndex, histogramA.ptr());
@@ -79,7 +81,7 @@ public class ApproxPercentileLongGroupByFunction extends DoubleFunction implemen
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long val = exprFunc.getLong(record);
-        if (val != Numbers.LONG_NULL) {
+        if (isArgNotNull || val != Numbers.LONG_NULL) {
             long ptr = mapValue.getLong(valueIndex);
             histogramA.of(ptr).recordValue(val);
             long newPtr = histogramA.ptr();

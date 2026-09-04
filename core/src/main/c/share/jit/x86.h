@@ -500,6 +500,23 @@ namespace questdb::x86 {
         return {int32_or(c, lhs.gp().r32(), rhs.gp().r32()), dt, dk};
     }
 
+    jit_value_t finite_ordering(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs, const jit_value_t &ordering, bool null_check) {
+        if (!null_check) {
+            return ordering;
+        }
+        auto dk = dst_kind(lhs, rhs);
+        jit_value_t lhs_finite;
+        jit_value_t rhs_finite;
+        if (lhs.dtype() == data_type_t::f32) {
+            lhs_finite = {float_is_finite(c, lhs.vec()), data_type_t::i32, dk};
+            rhs_finite = {float_is_finite(c, rhs.vec()), data_type_t::i32, dk};
+        } else {
+            lhs_finite = {double_is_finite(c, lhs.vec()), data_type_t::i32, dk};
+            rhs_finite = {double_is_finite(c, rhs.vec()), data_type_t::i32, dk};
+        }
+        return bin_and(c, ordering, bin_and(c, lhs_finite, rhs_finite));
+    }
+
     jit_value_t cmp_eq(Compiler &c, const jit_value_t &lhs, const jit_value_t &rhs) {
         auto dt = lhs.dtype();
         auto dk = dst_kind(lhs, rhs);
@@ -595,7 +612,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.vec());
                 return { bin_and(c,
                     {float_ne_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    {float_gt(c, l, r), data_type_t::i32, dk})
+                    finite_ordering(c, lhs, rhs, {float_gt(c, l, r), data_type_t::i32, dk}, null_check))
                 };
             }
             case data_type_t::f64: {
@@ -605,7 +622,7 @@ namespace questdb::x86 {
                 c.movsd(r, rhs.vec());
                 return { bin_and(c,
                     {double_ne_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
-                    {double_gt(c, l, r), data_type_t::i32, dk})
+                    finite_ordering(c, lhs, rhs, {double_gt(c, l, r), data_type_t::i32, dk}, null_check))
                 };
             }
             default:
@@ -630,7 +647,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.vec());
                 return { bin_or(c,
                     {float_eq_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    {float_ge(c, l, r), data_type_t::i32, dk})
+                    finite_ordering(c, lhs, rhs, {float_ge(c, l, r), data_type_t::i32, dk}, null_check))
                 };
             }
             case data_type_t::f64: {
@@ -640,7 +657,7 @@ namespace questdb::x86 {
                 c.movsd(r, rhs.vec());
                 return { bin_or(c,
                     {double_eq_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
-                    {double_ge(c, l, r), data_type_t::i32, dk})
+                    finite_ordering(c, lhs, rhs, {double_ge(c, l, r), data_type_t::i32, dk}, null_check))
                 };
             }
             default:
@@ -665,7 +682,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.vec());
                 return { bin_and(c,
                     {float_ne_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    {float_lt(c, l, r), data_type_t::i32, dk})
+                    finite_ordering(c, lhs, rhs, {float_lt(c, l, r), data_type_t::i32, dk}, null_check))
                 };
             }
             case data_type_t::f64: {
@@ -675,7 +692,7 @@ namespace questdb::x86 {
                 c.movsd(r, rhs.vec());
                 return { bin_and(c,
                     {double_ne_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
-                    {double_lt(c, l, r), data_type_t::i32, dk})
+                    finite_ordering(c, lhs, rhs, {double_lt(c, l, r), data_type_t::i32, dk}, null_check))
                 };
             }
             default:
@@ -700,7 +717,7 @@ namespace questdb::x86 {
                 c.movss(r, rhs.vec());
                 return { bin_or(c,
                     {float_eq_epsilon(c, lhs.vec(), rhs.vec(), FLOAT_EPSILON), data_type_t::i32, dk},
-                    {float_le(c, l, r), data_type_t::i32, dk})
+                    finite_ordering(c, lhs, rhs, {float_le(c, l, r), data_type_t::i32, dk}, null_check))
                 };
             }
             case data_type_t::f64: {
@@ -710,7 +727,7 @@ namespace questdb::x86 {
                 c.movsd(r, rhs.vec());
                 return { bin_or(c,
                     {double_eq_epsilon(c, lhs.vec(), rhs.vec(), DOUBLE_EPSILON), data_type_t::i32, dk},
-                    {double_le(c, l, r), data_type_t::i32, dk})
+                    finite_ordering(c, lhs, rhs, {double_le(c, l, r), data_type_t::i32, dk}, null_check))
                 };
             }
             default:

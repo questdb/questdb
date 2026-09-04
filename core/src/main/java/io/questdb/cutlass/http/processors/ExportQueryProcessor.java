@@ -76,6 +76,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.Interval;
+import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -356,42 +357,42 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 && (tok.byteAt(i) | 32) == 'p';
     }
 
-    private static void putDecimal128StringValue(HttpChunkedResponse response, Decimal128 decimal128, int type) {
-        if (!decimal128.isNull()) {
+    private static void putDecimal128StringValue(HttpChunkedResponse response, Decimal128 decimal128, int type, boolean notNull) {
+        if (!decimal128.isNull() || notNull) {
             response.putAscii('\"');
             Decimals.appendNonNull(decimal128, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
             response.putAscii('\"');
         }
     }
 
-    private static void putDecimal16StringValue(HttpChunkedResponse response, short value, int type) {
-        if (value != Decimals.DECIMAL16_NULL) {
+    private static void putDecimal16StringValue(HttpChunkedResponse response, short value, int type, boolean notNull) {
+        if (value != Decimals.DECIMAL16_NULL || notNull) {
             putDecimalLongStringValue(response, value, type);
         }
     }
 
-    private static void putDecimal256StringValue(HttpChunkedResponse response, Decimal256 decimal256, int type) {
-        if (!decimal256.isNull()) {
+    private static void putDecimal256StringValue(HttpChunkedResponse response, Decimal256 decimal256, int type, boolean notNull) {
+        if (!decimal256.isNull() || notNull) {
             response.putAscii('\"');
             Decimals.appendNonNull(decimal256, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
             response.putAscii('\"');
         }
     }
 
-    private static void putDecimal32StringValue(HttpChunkedResponse response, int value, int type) {
-        if (value != Decimals.DECIMAL32_NULL) {
+    private static void putDecimal32StringValue(HttpChunkedResponse response, int value, int type, boolean notNull) {
+        if (value != Decimals.DECIMAL32_NULL || notNull) {
             putDecimalLongStringValue(response, value, type);
         }
     }
 
-    private static void putDecimal64StringValue(HttpChunkedResponse response, long value, int type) {
-        if (value != Decimals.DECIMAL64_NULL) {
+    private static void putDecimal64StringValue(HttpChunkedResponse response, long value, int type, boolean notNull) {
+        if (value != Decimals.DECIMAL64_NULL || notNull) {
             putDecimalLongStringValue(response, value, type);
         }
     }
 
-    private static void putDecimal8StringValue(HttpChunkedResponse response, byte value, int type) {
-        if (value != Decimals.DECIMAL8_NULL) {
+    private static void putDecimal8StringValue(HttpChunkedResponse response, byte value, int type, boolean notNull) {
+        if (value != Decimals.DECIMAL8_NULL || notNull) {
             putDecimalLongStringValue(response, value, type);
         }
     }
@@ -402,8 +403,8 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         response.putAscii('\"');
     }
 
-    private static void putGeoHashStringValue(HttpChunkedResponse response, long value, int type) {
-        if (value == GeoHashes.NULL) {
+    private static void putGeoHashStringValue(HttpChunkedResponse response, long value, int type, boolean notNull) {
+        if (value == GeoHashes.NULL && !notNull) {
             response.putAscii("null");
         } else {
             int bitFlags = GeoHashes.getBitFlags(type);
@@ -1194,23 +1195,27 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 double d = rec.getDouble(columnIndex);
                 if (Numbers.isFinite(d)) {
                     response.put(d);
+                } else if (state.metadata.isNotNull(columnIndex)) {
+                    Numbers.append(response, d);
                 }
                 break;
             case ColumnType.FLOAT:
                 float f = rec.getFloat(columnIndex);
                 if (Numbers.isFinite(f)) {
                     response.put(f);
+                } else if (state.metadata.isNotNull(columnIndex)) {
+                    Numbers.append(response, f);
                 }
                 break;
             case ColumnType.INT:
                 final int i = rec.getInt(columnIndex);
-                if (i != Numbers.INT_NULL) {
+                if (i != Numbers.INT_NULL || state.metadata.isNotNull(columnIndex)) {
                     response.put(i);
                 }
                 break;
             case ColumnType.LONG:
                 l = rec.getLong(columnIndex);
-                if (l != Numbers.LONG_NULL) {
+                if (l != Numbers.LONG_NULL || state.metadata.isNotNull(columnIndex)) {
                     response.put(l);
                 }
                 break;
@@ -1218,12 +1223,16 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 l = rec.getDate(columnIndex);
                 if (l != Numbers.LONG_NULL) {
                     response.putAscii('"').putISODateMillis(l).putAscii('"');
+                } else if (state.metadata.isNotNull(columnIndex)) {
+                    response.put(l);
                 }
                 break;
             case ColumnType.TIMESTAMP:
                 l = rec.getTimestamp(columnIndex);
                 if (l != Numbers.LONG_NULL) {
                     response.putAscii('"').putISODate(ColumnType.getTimestampDriver(columnType), l).putAscii('"');
+                } else if (state.metadata.isNotNull(columnIndex)) {
+                    response.put(l);
                 }
                 break;
             case ColumnType.SHORT:
@@ -1231,7 +1240,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 break;
             case ColumnType.CHAR:
                 char c = rec.getChar(columnIndex);
-                if (c > 0) {
+                if (c > 0 || state.metadata.isNotNull(columnIndex)) {
                     response.put(c);
                 }
                 break;
@@ -1248,54 +1257,75 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
             case ColumnType.SYMBOL:
                 putStringOrNull(response, rec.getSymA(columnIndex));
                 break;
-            case ColumnType.LONG256:
-                rec.getLong256(columnIndex, response);
+            case ColumnType.LONG256: {
+                Long256 value = rec.getLong256A(columnIndex);
+                if (value == null) {
+                    response.putAscii("null");
+                } else {
+                    Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), response,
+                            !state.metadata.isNotNull(columnIndex));
+                }
                 break;
+            }
             case ColumnType.GEOBYTE:
-                putGeoHashStringValue(response, rec.getGeoByte(columnIndex), columnType);
+                putGeoHashStringValue(response, rec.getGeoByte(columnIndex), columnType, state.metadata.isNotNull(columnIndex));
                 break;
             case ColumnType.GEOSHORT:
-                putGeoHashStringValue(response, rec.getGeoShort(columnIndex), columnType);
+                putGeoHashStringValue(response, rec.getGeoShort(columnIndex), columnType, state.metadata.isNotNull(columnIndex));
                 break;
             case ColumnType.GEOINT:
-                putGeoHashStringValue(response, rec.getGeoInt(columnIndex), columnType);
+                putGeoHashStringValue(response, rec.getGeoInt(columnIndex), columnType, state.metadata.isNotNull(columnIndex));
                 break;
             case ColumnType.GEOLONG:
-                putGeoHashStringValue(response, rec.getGeoLong(columnIndex), columnType);
+                putGeoHashStringValue(response, rec.getGeoLong(columnIndex), columnType, state.metadata.isNotNull(columnIndex));
                 break;
-            case ColumnType.UUID:
-                putUuidOrNull(response, rec.getLong128Lo(columnIndex), rec.getLong128Hi(columnIndex));
+            case ColumnType.UUID: {
+                long uLo = rec.getLong128Lo(columnIndex);
+                long uHi = rec.getLong128Hi(columnIndex);
+                if (!Uuid.isNull(uLo, uHi) || state.metadata.isNotNull(columnIndex)) {
+                    Numbers.appendUuid(uLo, uHi, response);
+                }
                 break;
+            }
             case ColumnType.LONG128:
                 throw new UnsupportedOperationException();
-            case ColumnType.IPv4:
-                putIPv4Value(response, rec, columnIndex);
+            case ColumnType.IPv4: {
+                final int ip = rec.getIPv4(columnIndex);
+                if (ip != Numbers.IPv4_NULL || state.metadata.isNotNull(columnIndex)) {
+                    Numbers.intToIPv4Sink(response, ip);
+                }
                 break;
-            case ColumnType.INTERVAL:
-                putInterval(response, rec, columnIndex, columnType);
+            }
+            case ColumnType.INTERVAL: {
+                final Interval interval = rec.getInterval(columnIndex);
+                if (!Interval.NULL.equals(interval) || state.metadata.isNotNull(columnIndex)) {
+                    interval.toSink(response.putQuote(), columnType);
+                    response.putQuote();
+                }
                 break;
+            }
             case ColumnType.ARRAY:
                 putArrayValue(response, state, rec, columnIndex, columnType);
                 break;
             case ColumnType.DECIMAL8:
-                putDecimal8StringValue(response, rec.getDecimal8(columnIndex), columnType);
+                putDecimal8StringValue(response, rec.getDecimal8(columnIndex), columnType, state.metadata.isNotNull(columnIndex));
                 break;
             case ColumnType.DECIMAL16:
-                putDecimal16StringValue(response, rec.getDecimal16(columnIndex), columnType);
+                putDecimal16StringValue(response, rec.getDecimal16(columnIndex), columnType, state.metadata.isNotNull(columnIndex));
                 break;
             case ColumnType.DECIMAL32:
-                putDecimal32StringValue(response, rec.getDecimal32(columnIndex), columnType);
+                putDecimal32StringValue(response, rec.getDecimal32(columnIndex), columnType, state.metadata.isNotNull(columnIndex));
                 break;
             case ColumnType.DECIMAL64:
-                putDecimal64StringValue(response, rec.getDecimal64(columnIndex), columnType);
+                putDecimal64StringValue(response, rec.getDecimal64(columnIndex), columnType, state.metadata.isNotNull(columnIndex));
                 break;
             case ColumnType.DECIMAL128:
                 rec.getDecimal128(columnIndex, decimal128);
-                putDecimal128StringValue(response, decimal128, columnType);
+                putDecimal128StringValue(response, decimal128, columnType, state.metadata.isNotNull(columnIndex));
                 break;
             case ColumnType.DECIMAL256:
                 rec.getDecimal256(columnIndex, decimal256);
-                putDecimal256StringValue(response, decimal256, columnType);
+                putDecimal256StringValue(response, decimal256, columnType, state.metadata.isNotNull(columnIndex));
                 break;
             default:
                 assert false;

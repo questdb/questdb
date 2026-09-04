@@ -40,18 +40,20 @@ import org.jetbrains.annotations.NotNull;
  */
 public class ArgMinDoubleDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function keyArg;
+    private final boolean isArgNotNull;
     private final Function valueArg;
     private int valueIndex;
 
     public ArgMinDoubleDoubleGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
         this.valueArg = valueArg;
         this.keyArg = keyArg;
+        this.isArgNotNull = keyArg != null && keyArg.isNotNull();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         double key = keyArg.getDouble(record);
-        if (Numbers.isNull(key)) {
+        if (!isArgNotNull && Numbers.isNull(key)) {
             mapValue.putDouble(valueIndex, Double.NaN);
             mapValue.putDouble(valueIndex + 1, Double.NaN);
         } else {
@@ -63,11 +65,11 @@ public class ArgMinDoubleDoubleGroupByFunction extends DoubleFunction implements
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         double nextKey = keyArg.getDouble(record);
-        if (Numbers.isNull(nextKey)) {
+        if (!isArgNotNull && Numbers.isNull(nextKey)) {
             return;
         }
         double minKey = mapValue.getDouble(valueIndex + 1);
-        if (Numbers.isNull(minKey) || nextKey < minKey) {
+        if (isArgNotNull ? Numbers.isNull(nextKey) || nextKey < minKey : nextKey < minKey || Numbers.isNull(minKey)) {
             mapValue.putDouble(valueIndex, valueArg.getDouble(record));
             mapValue.putDouble(valueIndex + 1, nextKey);
         }
@@ -123,11 +125,11 @@ public class ArgMinDoubleDoubleGroupByFunction extends DoubleFunction implements
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         double srcMinKey = srcValue.getDouble(valueIndex + 1);
-        if (Numbers.isNull(srcMinKey)) {
+        if (!isArgNotNull && Numbers.isNull(srcMinKey)) {
             return;
         }
         double destMinKey = destValue.getDouble(valueIndex + 1);
-        if (Numbers.isNull(destMinKey) || srcMinKey < destMinKey) {
+        if (isArgNotNull ? Numbers.isNull(srcMinKey) || srcMinKey < destMinKey : srcMinKey < destMinKey || Numbers.isNull(destMinKey)) {
             destValue.putDouble(valueIndex, srcValue.getDouble(valueIndex));
             destValue.putDouble(valueIndex + 1, srcMinKey);
         }

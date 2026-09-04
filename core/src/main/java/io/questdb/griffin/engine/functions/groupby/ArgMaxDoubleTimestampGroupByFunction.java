@@ -40,18 +40,20 @@ import org.jetbrains.annotations.NotNull;
  */
 public class ArgMaxDoubleTimestampGroupByFunction extends DoubleFunction implements GroupByFunction, BinaryFunction {
     private final Function keyArg;
+    private final boolean isArgNotNull;
     private final Function valueArg;
     private int valueIndex;
 
     public ArgMaxDoubleTimestampGroupByFunction(@NotNull Function valueArg, @NotNull Function keyArg) {
         this.valueArg = valueArg;
         this.keyArg = keyArg;
+        this.isArgNotNull = keyArg != null && keyArg.isNotNull();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         long key = keyArg.getTimestamp(record);
-        if (key == Numbers.LONG_NULL) {
+        if (!isArgNotNull && key == Numbers.LONG_NULL) {
             mapValue.putDouble(valueIndex, Double.NaN);
             mapValue.putLong(valueIndex + 1, Numbers.LONG_NULL);
         } else {
@@ -63,7 +65,7 @@ public class ArgMaxDoubleTimestampGroupByFunction extends DoubleFunction impleme
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         long nextKey = keyArg.getTimestamp(record);
-        if (nextKey == Numbers.LONG_NULL) {
+        if (!isArgNotNull && nextKey == Numbers.LONG_NULL) {
             return;
         }
         long maxKey = mapValue.getLong(valueIndex + 1);
@@ -123,7 +125,7 @@ public class ArgMaxDoubleTimestampGroupByFunction extends DoubleFunction impleme
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long srcMaxKey = srcValue.getLong(valueIndex + 1);
-        if (srcMaxKey == Numbers.LONG_NULL) {
+        if (!isArgNotNull && srcMaxKey == Numbers.LONG_NULL) {
             return;
         }
         long destMaxKey = destValue.getLong(valueIndex + 1);

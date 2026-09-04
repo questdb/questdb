@@ -52,5 +52,10 @@ public class CastTimestampToFloatFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             return arg.getFloat(rec);
         }
+
+        @Override
+        public boolean isNotNull() {
+            return arg.isNotNull();
+        }
     }
 }

@@ -244,12 +244,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private final StringSink sink = new StringSink();
     private final ObjList<ExpressionNode> sortedPredicates = new ObjList<>();
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
-    // Operand type codes of the IR walks in hasUnharmonisedOperandWidths() and
-    // ensureOnlyVarSizeHeaderChecks(), mirroring the value stack the backend builds while it emits
-    // the same stream. Deliberately NOT an IntStack: IntStack spells an absent entry as -1, which
-    // is UNDEFINED_CODE itself, so it hands a pushed UNDEFINED back without removing it and the
-    // walk's depth drifts from the backend's on every comparison mask. See popType().
     private final IntList typeStack = new IntList();
+    private boolean allColumnsNotNull;
     private ObjList<Function> bindVarFunctions;
     private final LongObjHashMap.LongObjConsumer<ExpressionNode> backfillNodeConsumer = this::backfillNode;
     private SqlExecutionContext executionContext;
@@ -281,6 +277,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         memory = null;
         metadata = null;
         pageFrameCursor = null;
+        allColumnsNotNull = true;
         forceScalarMode = false;
         hasEmittedWideLaneConversion = false;
         hasI64WidenArithConstant = false;
@@ -323,7 +320,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             return false;
         }
 
-        // Check if we're at the start of an arithmetic expression.
+        // Fold `col = NULL` / `col <> NULL` to a constant boolean when `col` is NOT NULL.
+        // Runs before onNodeDescended so the folded subtree never enters the predicate state
+        // and never emits sentinel-equality IR that a NOT NULL column could spuriously match.
+        if (tryFoldNullEqualityOnNotNullColumn(node)) {
+            return false;
+        }
+
+        // Check if we're at the start of an arithmetic expression
         predicateContext.onNodeDescended(node);
 
         // markIntCmpFloatOperand ran inside onNodeDescended and found a comparison operand it
@@ -457,6 +461,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             PageFrameCursor pageFrameCursor,
             ObjList<Function> bindVarFunctions
     ) {
+        this.allColumnsNotNull = true;
         this.memory = memory;
         this.executionContext = executionContext;
         this.metadata = metadata;
@@ -652,6 +657,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 || typeTag == ColumnType.LONG
                 || typeTag == ColumnType.DATE
                 || typeTag == ColumnType.TIMESTAMP;
+    }
+
+    private boolean isNullConstant(ExpressionNode node) {
+        return node != null && node.type == ExpressionNode.CONSTANT && node.token != null && SqlKeywords.isNullKeyword(node.token);
     }
 
     private boolean isWideLaneIntegerInElement(ExpressionNode node) {
@@ -956,6 +965,12 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put(node.token);
             }
         } else {
+            // Division and remainder can yield a null sentinel even when every
+            // source column is NOT NULL (for example, division by zero). Keep
+            // backend null checks enabled for these derived expressions.
+            if (Chars.equals(node.token, '/') || Chars.equals(node.token, '%')) {
+                allColumnsNotNull = false;
+            }
             serializeOperator(node.position, node.token, argCount, node.type);
             maybeEmitI64ArithRootWidening(node);
         }
@@ -1144,8 +1159,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         };
     }
 
-    private static boolean isNullConstant(ExpressionNode node) {
-        return node != null && node.type == ExpressionNode.CONSTANT && SqlKeywords.isNullKeyword(node.token);
+    private static boolean isNullConstantNode(ExpressionNode n) {
+        return n != null && n.type == ExpressionNode.CONSTANT && n.token != null && SqlKeywords.isNullKeyword(n.token);
     }
 
     // Stands for PredicateType.NUMERIC
@@ -2155,7 +2170,8 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         final int execHint = getExecHint(forceScalar);
         options = options | (execHint << 4);
 
-        options = options | ((nullChecks ? 1 : 0) << 6);
+        boolean effectiveNullChecks = nullChecks && !allColumnsNotNull;
+        options = options | ((effectiveNullChecks ? 1 : 0) << 6);
         return options;
     }
 
@@ -3968,6 +3984,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                         .put(ColumnType.nameOf(columnTypeTag));
             }
 
+            // Bind variables are nullable at execution time even when the
+            // referenced table columns are NOT NULL. Keep JIT null checks
+            // enabled so a NULL bind is not compared as its sentinel value.
+            allColumnsNotNull = false;
             bindVarFunctions.add(varFunction);
             int index = bindVarFunctions.size() - 1;
             putOperand(VAR, typeCode, index);
@@ -3984,6 +4004,10 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int index = metadata.getColumnIndexQuiet(token);
             if (index == -1) {
                 throw SqlException.invalidColumn(position, token);
+            }
+
+            if (!metadata.isNotNull(index)) {
+                allColumnsNotNull = false;
             }
 
             final int columnType = metadata.getColumnType(index);
@@ -5040,6 +5064,81 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         return left / right;
     }
 
+    /**
+     * Folds `col = NULL` / `col <> NULL` / `col != NULL` (and the mirrored `NULL op col`) into a
+     * boolean constant when `col` is a NOT NULL column. Sentinel-equality IR on a NOT NULL column
+     * is semantically wrong: the stored value can legitimately equal the sentinel (it is real data,
+     * not null), so the JIT would produce spurious matches for `IS NULL` and misses for `IS NOT
+     * NULL`. Emitting a constant keeps the JIT consistent with the eq-factory folds done in
+     * {@code Phase 2} of the NOT NULL semantic pass.
+     * <p>
+     * Emits a three-instruction boolean sequence `(i8 a)(i8 b)(=)` that leaves exactly one boolean
+     * on the IR stack: {@code false} for equality ({@code 0 == 1}) and {@code true} for inequality
+     * ({@code 1 == 1}). {@code handledShortCircuitExit} is cleared so the AND-chain short-circuit
+     * loop still emits the trailing {@code AND_SC} between this predicate and the next.
+     *
+     * @return true if the node was folded (caller should skip descent)
+     */
+    private boolean tryFoldNullEqualityOnNotNullColumn(ExpressionNode node) {
+        if (node == null || node.type != ExpressionNode.OPERATION || node.paramCount != 2) {
+            return false;
+        }
+        // Never fold inside an IN expression — its arguments are serialized by serializeIn, not as
+        // standalone equalities, and NULL there means "match the null sentinel of the column type".
+        if (predicateContext.inOperationNode != null) {
+            return false;
+        }
+        final CharSequence tok = node.token;
+        final boolean isEq = Chars.equals(tok, "=");
+        final boolean isNeq = !isEq && (Chars.equals(tok, "<>") || Chars.equals(tok, "!="));
+        if (!isEq && !isNeq) {
+            return false;
+        }
+        final ExpressionNode colSide;
+        if (isNullConstantNode(node.lhs)) {
+            colSide = node.rhs;
+        } else if (isNullConstantNode(node.rhs)) {
+            colSide = node.lhs;
+        } else {
+            return false;
+        }
+        if (colSide == null || colSide.type != ExpressionNode.LITERAL || colSide.token == null) {
+            return false;
+        }
+        final int idx = metadata.getColumnIndexQuiet(colSide.token);
+        if (idx == -1 || !metadata.isNotNull(idx)) {
+            return false;
+        }
+        // Fall through to the normal path (which will emit a proper error) for column types the JIT
+        // cannot represent. We only fold when the column would otherwise have produced a valid
+        // typeCode — that way unsupported types still surface as compile errors.
+        final int columnType = metadata.getColumnType(idx);
+        final int colTypeCode = columnTypeCode(ColumnType.tagOf(columnType));
+        if (colTypeCode == UNDEFINED_CODE) {
+            return false;
+        }
+        if (isEq) {
+            // `= NULL` on NOT NULL column is always false.
+            putOperand(IMM, I1_TYPE, 0);
+            putOperand(IMM, I1_TYPE, 1);
+        } else {
+            // `<>` / `!=` NULL on NOT NULL column is always true.
+            putOperand(IMM, I1_TYPE, 1);
+            putOperand(IMM, I1_TYPE, 1);
+        }
+        putOperator(EQ);
+        // Observe the original column's type code so the filter-wide type/size tracking stays
+        // consistent with scalarModeDetector's pre-pass view of the expression tree. Without this,
+        // a pure-AND chain that mixes column sizes would be routed to serializePredicatesAndSc
+        // (scalar path) but getExecHint would then report SINGLE_SIZE_TYPE and fail the sanity
+        // check, because the fold replaces the column reference with a 1-byte boolean sequence.
+        predicateContext.globalTypesObserver.observe(colTypeCode);
+        // The folded predicate did not emit its own AND_SC / OR_SC, so the outer serialization
+        // loop must still emit the chain-level short-circuit.
+        predicateContext.handledShortCircuitExit = false;
+        return true;
+    }
+
     private static class SqlWrapperException extends RuntimeException {
 
         final SqlException wrappedException;
@@ -5390,6 +5489,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 columnTypeTag = ColumnType.SYMBOL;
             }
 
+            // Bind variables can be NULL at execution time; they must not
+            // participate in the all-columns-NOT-NULL fast path.
+            allColumnsNotNull = false;
             updateType(node.position, columnType == ColumnType.STRING ? ColumnType.SYMBOL : columnType);
             int code = columnTypeCode(columnTypeTag);
             localTypesObserver.observe(code);
@@ -5400,6 +5502,9 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             final int columnIndex = metadata.getColumnIndexQuiet(node.token);
             if (columnIndex == -1) {
                 throw SqlException.invalidColumn(node.position, node.token);
+            }
+            if (!metadata.isNotNull(columnIndex)) {
+                allColumnsNotNull = false;
             }
             final int columnType = metadata.getColumnType(columnIndex);
             final int columnTypeTag = ColumnType.tagOf(columnType);

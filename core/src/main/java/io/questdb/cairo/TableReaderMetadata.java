@@ -361,6 +361,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         origWriterIndex
                 );
                 colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(mem, writerIndex) : 0);
+                colMeta.setNotNullFlag(TableUtils.isColumnNotNull(mem, writerIndex) || writerIndex == timestampIndex);
                 columnMetadata.add(colMeta);
                 int denseIndex = columnMetadata.size() - 1;
                 if (!columnNameIndexMap.put(colName, denseIndex)) {
@@ -419,6 +420,7 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
             int columnType = TableUtils.getColumnType(newMetaMem, writerIndex);
             byte indexType = TableUtils.getColumnIndexType(newMetaMem, writerIndex);
             boolean isDedupKey = TableUtils.isColumnDedupKey(newMetaMem, writerIndex);
+            boolean isNotNull = TableUtils.isColumnNotNull(newMetaMem, writerIndex) || writerIndex == timestampIndex;
             int indexBlockCapacity = TableUtils.getIndexBlockCapacity(newMetaMem, writerIndex);
             boolean symbolIsCached = TableUtils.isSymbolCached(newMetaMem, writerIndex);
             int symbolCapacity = TableUtils.getSymbolCapacity(newMetaMem, writerIndex);
@@ -458,28 +460,28 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
                         || existing.getIndexType() != indexType
                         || existing.getIndexValueBlockCapacity() != indexBlockCapacity
                         || existing.isDedupKeyFlag() != isDedupKey
+                        || existing.isNotNull() != isNotNull
                         || existing.getDenseSymbolIndex() != denseSymbolIndex
                         || existing.getStableIndex() != stableIndex
                 ) {
                     // new
-                    columnMetadata.setQuick(
-                            outIndex,
-                            new TableReaderMetadataColumn(
-                                    newName,
-                                    columnType,
-                                    indexType,
-                                    indexBlockCapacity,
-                                    true,
-                                    null,
-                                    writerIndex,
-                                    isDedupKey,
-                                    denseSymbolIndex,
-                                    stableIndex,
-                                    symbolIsCached,
-                                    symbolCapacity,
-                                    origWriterIndex
-                            )
+                    var colMeta = new TableReaderMetadataColumn(
+                            newName,
+                            columnType,
+                            indexType,
+                            indexBlockCapacity,
+                            true,
+                            null,
+                            writerIndex,
+                            isDedupKey,
+                            denseSymbolIndex,
+                            stableIndex,
+                            symbolIsCached,
+                            symbolCapacity,
+                            origWriterIndex
                     );
+                    colMeta.setNotNullFlag(isNotNull);
+                    columnMetadata.setQuick(outIndex, colMeta);
                     if (existing != null) {
                         // column deleted at existingIndex
                         transitionIndex.markDeleted(existingIndex);

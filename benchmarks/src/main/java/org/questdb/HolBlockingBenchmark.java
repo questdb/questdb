@@ -236,7 +236,7 @@ public class HolBlockingBenchmark {
             stmt.execute("DROP TABLE IF EXISTS events");
             stmt.execute(
                     "CREATE TABLE events (" +
-                            "ts TIMESTAMP, category SYMBOL, value LONG" +
+                            "ts TIMESTAMP NOT NULL, category SYMBOL, value LONG" +
                             ") TIMESTAMP(ts) PARTITION BY HOUR"
             );
 

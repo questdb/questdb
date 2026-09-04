@@ -530,6 +530,11 @@ public class CairoTextWriter implements Closeable, Mutable {
         }
 
         @Override
+        public boolean isNotNull(int columnIndex) {
+            return columnIndex == getTimestampIndex();
+        }
+
+        @Override
         public boolean isWalEnabled() {
             return configuration.getWalEnabledDefault() && PartitionBy.isPartitioned(partitionBy);
         }

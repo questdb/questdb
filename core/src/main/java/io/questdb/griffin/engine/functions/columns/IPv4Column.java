@@ -34,16 +34,26 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class IPv4Column extends IPv4Function implements ColumnFunction {
     private static final ObjList<IPv4Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
+    private final boolean isNotNull;
 
     public IPv4Column(int columnIndex) {
+        this(columnIndex, false);
+    }
+
+    public IPv4Column(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
+        this.isNotNull = isNotNull;
     }
 
     public static IPv4Column newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        return newInstance(columnIndex, false);
+    }
+
+    public static IPv4Column newInstance(int columnIndex, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new IPv4Column(columnIndex);
+        return new IPv4Column(columnIndex, isNotNull);
     }
 
     @Override
@@ -53,10 +63,19 @@ public class IPv4Column extends IPv4Function implements ColumnFunction {
 
     @Override
     public int getIPv4(Record rec) {
+        // Preserve the double-call pattern: upstream random-IP factories (e.g. RndIPv4)
+        // advance their RNG on every getIPv4() invocation, so collapsing to a single call
+        // shifts deterministic test fixtures. Keeping both calls matches the long-standing
+        // pattern other ColumnFunction types follow.
         if (rec.getIPv4(columnIndex) == Numbers.IPv4_NULL) {
             return Numbers.IPv4_NULL;
         }
         return rec.getIPv4(columnIndex);
+    }
+
+    @Override
+    public boolean isNotNull() {
+        return isNotNull;
     }
 
     @Override
@@ -67,7 +86,7 @@ public class IPv4Column extends IPv4Function implements ColumnFunction {
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new IPv4Column(i));
+            COLUMNS.setQuick(i, new IPv4Column(i, false));
         }
     }
 }

@@ -43,6 +43,7 @@ public class QwpEgressColumnDef {
      * real encoded length without a second allocation).
      */
     private byte[] nameUtf8 = new byte[0];
+    private boolean notNull;
     private int precisionBits; // geohash only
     private int questdbColumnType;
     private int scale; // decimal only
@@ -54,6 +55,10 @@ public class QwpEgressColumnDef {
 
     public byte[] getNameUtf8() {
         return nameUtf8;
+    }
+
+    public boolean isNotNull() {
+        return notNull;
     }
 
     public int getPrecisionBits() {
@@ -73,7 +78,12 @@ public class QwpEgressColumnDef {
     }
 
     public void of(String name, int questdbColumnType) {
+        of(name, questdbColumnType, false);
+    }
+
+    public void of(String name, int questdbColumnType, boolean notNull) {
         this.name = name;
+        this.notNull = notNull;
         this.nameUtf8 = name == null ? EMPTY_NAME : name.getBytes(StandardCharsets.UTF_8);
         this.questdbColumnType = questdbColumnType;
         this.wireType = QwpColumnTypeMapper.toWireType(questdbColumnType);

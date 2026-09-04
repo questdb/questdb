@@ -50,11 +50,17 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
+            if (func.isNullConstant()) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             ColumnType.getTimestampDriver(func.getType()).append(sink, func.getTimestamp(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (func.isNotNull()) {
+            return new FuncNotNull(func);
+        }
+        return new Func(func);
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -84,6 +90,39 @@ public class CastTimestampToStrFunctionFactory implements FunctionFactory {
                 return null;
             }
             timestampDriver.append(sink, value);
+            return sink;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+        private final TimestampDriver timestampDriver;
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+            timestampDriver = ColumnType.getTimestampDriver(arg.getType());
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            return format(arg.getTimestamp(rec), sinkA);
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            return format(arg.getTimestamp(rec), sinkB);
+        }
+
+        private CharSequence format(long value, StringSink sink) {
+            sink.clear();
+            // TimestampDriver.append short-circuits on Long.MIN_VALUE. Mirror
+            // CursorPrinter and format the sentinel as the raw numeric bit pattern.
+            if (value == Numbers.LONG_NULL) {
+                Numbers.append(sink, value, false);
+            } else {
+                timestampDriver.append(sink, value);
+            }
             return sink;
         }
     }

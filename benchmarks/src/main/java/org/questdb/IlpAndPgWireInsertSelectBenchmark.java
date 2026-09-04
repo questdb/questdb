@@ -113,7 +113,7 @@ public class IlpAndPgWireInsertSelectBenchmark {
             ) {
                 ddlStatement.execute("DROP TABLE IF EXISTS tango");
                 ddlStatement.execute(
-                        "CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY");
+                        "CREATE TABLE tango (ts TIMESTAMP NOT NULL, n LONG) TIMESTAMP(ts) PARTITION BY DAY");
             }
             long start = System.nanoTime();
             long deadline = start + SECONDS.toNanos(RUNTIME_SECONDS);

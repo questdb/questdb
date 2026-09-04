@@ -123,6 +123,10 @@ public interface TableStructure {
         return false;
     }
 
+    default boolean isNotNull(int columnIndex) {
+        return false;
+    }
+
     default boolean isMatView() {
         return false;
     }

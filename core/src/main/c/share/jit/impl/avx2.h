@@ -388,7 +388,7 @@ namespace questdb::avx2 {
     }
 
     inline Vec cmp_gt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
+        if (!null_check) {
             return cmp_gt(c, type, lhs, rhs);
         } else {
             Vec r = cmp_gt(c, type, lhs, rhs);
@@ -398,7 +398,7 @@ namespace questdb::avx2 {
     }
 
     inline Vec cmp_lt(Compiler &c, data_type_t type, const Vec &lhs, const Vec &rhs, bool null_check) {
-        if(!is_check_for_null(type, null_check)) {
+        if (!null_check) {
             return cmp_lt(c, type, lhs, rhs);
         } else {
             Vec r = cmp_lt(c, type, lhs, rhs);
@@ -428,12 +428,18 @@ namespace questdb::avx2 {
                 Vec eq = cmp_eq_float(c, type, lhs, rhs);
                 Vec dst = c.new_ymm();
                 c.vcmpps(dst.ymm(), lhs.ymm(), rhs.ymm(), CmpImm::kLE);
+                if (null_check) {
+                    dst = mask_and(c, dst, not_nulls_mask(c, type, lhs, rhs));
+                }
                 return mask_or(c, dst, eq);
             }
             case data_type_t::f64: {
                 Vec eq = cmp_eq_double(c, type, lhs, rhs);
                 Vec dst = c.new_ymm();
                 c.vcmppd(dst.ymm(), lhs.ymm(), rhs.ymm(), CmpImm::kLE);
+                if (null_check) {
+                    dst = mask_and(c, dst, not_nulls_mask(c, type, lhs, rhs));
+                }
                 return mask_or(c, dst, eq);
             }
             default:

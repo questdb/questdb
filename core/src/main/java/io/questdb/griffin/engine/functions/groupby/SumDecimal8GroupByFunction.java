@@ -37,17 +37,19 @@ import org.jetbrains.annotations.NotNull;
 
 class SumDecimal8GroupByFunction extends Decimal64Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public SumDecimal8GroupByFunction(@NotNull Function arg) {
         super(ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL64), ColumnType.getDecimalScale(arg.getType())));
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         byte value = arg.getDecimal8(record);
-        if (value == Decimals.DECIMAL8_NULL) {
+        if (!isArgNotNull && value == Decimals.DECIMAL8_NULL) {
             mapValue.putLong(valueIndex, Decimals.DECIMAL64_NULL);
         } else {
             mapValue.putLong(valueIndex, value);
@@ -57,9 +59,9 @@ class SumDecimal8GroupByFunction extends Decimal64Function implements GroupByFun
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         byte value = arg.getDecimal8(record);
-        if (value != Decimals.DECIMAL8_NULL) {
+        if (isArgNotNull || value != Decimals.DECIMAL8_NULL) {
             long curr = mapValue.getLong(valueIndex);
-            if (curr == Decimals.DECIMAL64_NULL) {
+            if (!isArgNotNull && curr == Decimals.DECIMAL64_NULL) {
                 curr = 0;
             }
             mapValue.putLong(valueIndex, curr + value);
@@ -110,9 +112,9 @@ class SumDecimal8GroupByFunction extends Decimal64Function implements GroupByFun
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         long src = srcValue.getLong(valueIndex);
-        if (src != Decimals.DECIMAL64_NULL) {
+        if (isArgNotNull || src != Decimals.DECIMAL64_NULL) {
             long dest = destValue.getLong(valueIndex);
-            if (dest == Decimals.DECIMAL64_NULL) {
+            if (!isArgNotNull && dest == Decimals.DECIMAL64_NULL) {
                 destValue.putLong(valueIndex, src);
             } else {
                 destValue.putLong(valueIndex, src + dest);

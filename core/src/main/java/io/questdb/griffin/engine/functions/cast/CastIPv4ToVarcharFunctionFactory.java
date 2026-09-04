@@ -52,11 +52,17 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function ipv4Func = args.getQuick(0);
         if (ipv4Func.isConstant()) {
+            if (ipv4Func.isNullConstant()) {
+                return VarcharConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             Numbers.intToIPv4Sink(sink, ipv4Func.getIPv4(null));
             return new VarcharConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (ipv4Func.isNotNull()) {
+            return new FuncNotNull(ipv4Func);
+        }
+        return new Func(ipv4Func);
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
@@ -87,6 +93,29 @@ public class CastIPv4ToVarcharFunctionFactory implements FunctionFactory {
                 return sinkB;
             }
             return null;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            Numbers.intToIPv4Sink(sinkA, arg.getIPv4(rec));
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            Numbers.intToIPv4Sink(sinkB, arg.getIPv4(rec));
+            return sinkB;
         }
     }
 }

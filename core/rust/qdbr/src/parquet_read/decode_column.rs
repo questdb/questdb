@@ -76,6 +76,8 @@ pub fn decode_single_timestamp_value(
         format: None,
         ascii: None,
         id: None,
+
+        not_null: false,
     };
     let mut ctx = DecodeContext::new(file_data.as_ptr(), file_data.len() as u64);
     // Safety: caller guarantees `allocator` points to a valid QdbAllocator
@@ -708,6 +710,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         let mut ctx = DecodeContext::new(buf.as_ptr(), buf_len);
@@ -953,6 +957,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         };
 
         // Truncate the column chunk so the page reader can't parse a full page.

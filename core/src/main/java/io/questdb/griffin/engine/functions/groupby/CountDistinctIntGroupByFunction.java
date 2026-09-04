@@ -43,7 +43,7 @@ public class CountDistinctIntGroupByFunction extends AbstractCountDistinctIntGro
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull || value != Numbers.INT_NULL) {
             mapValue.putLong(valueIndex, 1);
             mapValue.putLong(valueIndex + 1, value);
             cardinality++;
@@ -56,7 +56,7 @@ public class CountDistinctIntGroupByFunction extends AbstractCountDistinctIntGro
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final int value = arg.getInt(record);
-        if (value != Numbers.INT_NULL) {
+        if (isArgNotNull || value != Numbers.INT_NULL) {
             final long cnt = mapValue.getLong(valueIndex);
             if (cnt == 0) {
                 mapValue.putLong(valueIndex, 1);

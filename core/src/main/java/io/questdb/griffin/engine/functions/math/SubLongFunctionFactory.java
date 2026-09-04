@@ -87,10 +87,11 @@ public class SubLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             long l = left.getLong(rec);
             long r = right.getLong(rec);
-            if (l != Numbers.LONG_NULL && r != Numbers.LONG_NULL) {
-                return l - r;
+            if ((!left.isNotNull() && l == Numbers.LONG_NULL)
+                    || (!right.isNotNull() && r == Numbers.LONG_NULL)) {
+                return Numbers.LONG_NULL;
             }
-            return Numbers.LONG_NULL;
+            return l - r;
         }
 
         @Override

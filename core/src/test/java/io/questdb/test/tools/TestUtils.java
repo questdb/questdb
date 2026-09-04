@@ -295,6 +295,30 @@ public final class TestUtils {
         assertEquals(expected, sink);
     }
 
+    public static void assertSql(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
+            CharSequence expected
+    ) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+        }
+    }
+
+    public static void assertSql(
+            SqlCompiler compiler,
+            SqlExecutionContext sqlExecutionContext,
+            CharSequence sql,
+            MutableUtf16Sink sink,
+            CharSequence expected
+    ) throws SqlException {
+        printSql(compiler, sqlExecutionContext, sql, sink);
+        assertEquals(expected, sink);
+    }
+
+
     public static void assertEquals(
             RecordCursor cursorExpected,
             RecordMetadata metadataExpected,

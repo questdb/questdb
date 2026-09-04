@@ -254,7 +254,7 @@ public class CompiledFilterTest extends AbstractCairoTest {
                 .ddl("""
                         
                         CREATE TABLE 'market_data' (\s
-                        \ttimestamp TIMESTAMP,
+                        \ttimestamp TIMESTAMP NOT NULL,
                         \tsymbol SYMBOL CAPACITY 16384 CACHE,
                         \tbids DOUBLE[][],
                         \tasks DOUBLE[][]

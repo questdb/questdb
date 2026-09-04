@@ -101,7 +101,25 @@ public interface TimestampDriver {
      * @param stringSink the character sink to append the formatted timestamp to
      * @return true if the operation was successful, false otherwise
      */
-    boolean append(long fixedAddr, CharSink<?> stringSink);
+    /**
+     * Formats a value using the legacy nullable interpretation.
+     *
+     * @deprecated use {@link #append(long, CharSink, boolean)} when the column
+     * nullability is known.
+     */
+    @Deprecated
+    default boolean append(long fixedAddr, CharSink<?> stringSink) {
+        return append(fixedAddr, stringSink, false);
+    }
+
+    /**
+     * Formats a value while optionally treating the null sentinel as a valid
+     * value. The default keeps implementations written against the old API
+     * source and binary compatible.
+     */
+    default boolean append(long fixedAddr, CharSink<?> stringSink, boolean notNull) {
+        return append(fixedAddr, stringSink);
+    }
 
     default void appendToMem(CharSequence value, MemoryA mem) {
         try {

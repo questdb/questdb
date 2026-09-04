@@ -44,4 +44,11 @@ public final class AnyRecordMetadata extends AbstractRecordMetadata {
     public int getColumnType(int columnIndex) {
         return ColumnType.LONG;
     }
+
+    @Override
+    public boolean isNotNull(int columnIndex) {
+        // AnyRecordMetadata is a dummy metadata used for SQL validation before real column
+        // metadata is known. Report nullable conservatively; real metadata takes over at execution.
+        return false;
+    }
 }

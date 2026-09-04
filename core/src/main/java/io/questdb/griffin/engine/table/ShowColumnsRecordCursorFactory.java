@@ -64,6 +64,7 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
     private static final int N_UPSERT_KEY_COL = N_DESIGNATED_COL + 1;
     private static final int N_INDEX_TYPE_COL = N_UPSERT_KEY_COL + 1;
     private static final int N_INDEX_INCLUDE_COL = N_INDEX_TYPE_COL + 1;
+    private static final int N_NOT_NULL_COL = N_INDEX_INCLUDE_COL + 1;
     private static final RecordMetadata METADATA;
     private final ShowColumnsCursor cursor = new ShowColumnsCursor();
     private final TableToken tableToken;
@@ -202,6 +203,9 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
                 if (col == N_DESIGNATED_COL) {
                     return cairoColumn.isDesignated();
                 }
+                if (col == N_NOT_NULL_COL) {
+                    return cairoColumn.isNotNull();
+                }
                 if (col == N_UPSERT_KEY_COL) {
                     return cairoColumn.isDedupKey();
                 }
@@ -313,10 +317,11 @@ public class ShowColumnsRecordCursorFactory extends AbstractRecordCursorFactory 
         metadata.add(new TableColumnMetadata("symbolTableSize", ColumnType.INT));
         metadata.add(new TableColumnMetadata("designated", ColumnType.BOOLEAN));
         metadata.add(new TableColumnMetadata("upsertKey", ColumnType.BOOLEAN));
-        // Posting-index columns appended at the end — keep JDBC ordinals
-        // 0..8 stable with pre-posting-index builds.
+        // Posting-index columns and NOT NULL are appended at the end — keep
+        // existing JDBC ordinals stable.
         metadata.add(new TableColumnMetadata("indexType", ColumnType.STRING));
         metadata.add(new TableColumnMetadata("indexInclude", ColumnType.STRING));
+        metadata.add(new TableColumnMetadata("notNull", ColumnType.BOOLEAN));
         METADATA = metadata;
     }
 }

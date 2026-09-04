@@ -87,6 +87,7 @@ public class ConvertOperatorImpl implements Closeable {
     private final Clock timer;
     private CharSequence columnName;
     private long fixedFd;
+    private boolean isNotNull;
     private int partitionUpdated;
     private SymbolMapReaderImpl symbolMapReader;
     private SymbolMapper symbolMapper;
@@ -130,6 +131,7 @@ public class ConvertOperatorImpl implements Closeable {
     ) {
         clear();
         partitionUpdated = 0;
+        isNotNull = tableWriter.getMetadata().isNotNull(existingColIndex);
         convertColumn0(columnName, existingColIndex, existingType, existingIndexType, columnIndex, newType);
     }
 
@@ -446,7 +448,8 @@ public class ConvertOperatorImpl implements Closeable {
                         symbolMapper,
                         ff,
                         appendPageSize,
-                        noopConversionOffsetSink
+                        noopConversionOffsetSink,
+                        isNotNull
                 );
 
                 if (!ok) {

@@ -43,10 +43,12 @@ import org.jetbrains.annotations.NotNull;
  */
 public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public NSumDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
     }
 
     @Override
@@ -93,7 +95,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
+        if (isArgNotNull || Numbers.isFinite(value)) {
             sum(mapValue, value, 0, 0);
             mapValue.putLong(valueIndex + 2, 1);
         } else {
@@ -106,7 +108,7 @@ public class NSumDoubleGroupByFunction extends DoubleFunction implements GroupBy
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
+        if (isArgNotNull || Numbers.isFinite(value)) {
             sum(mapValue, value, mapValue.getDouble(valueIndex), mapValue.getDouble(valueIndex + 1));
             mapValue.addLong(valueIndex + 2, 1);
         }

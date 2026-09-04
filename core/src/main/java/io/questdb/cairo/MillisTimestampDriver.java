@@ -66,7 +66,7 @@ import static io.questdb.std.datetime.TimeZoneRuleFactory.RESOLUTION_MILLIS;
 public class MillisTimestampDriver implements TimestampDriver {
     public static final TimestampDriver INSTANCE = new MillisTimestampDriver();
     private final Clock clock = MillisecondClockImpl.INSTANCE;
-    private final ColumnTypeConverter.Fixed2VarConverter converterDate2Str = (addr, sink, unused1, unused2) -> append(addr, sink);
+    private final ColumnTypeConverter.Fixed2VarConverter converterDate2Str = (addr, sink, unused1, unused2) -> append(addr, sink, unused1 != 0);
     private final ColumnTypeConverter.Var2FixedConverter<CharSequence> converterStr2Date = this::appendToMem;
 
     private MillisTimestampDriver() {
@@ -119,9 +119,9 @@ public class MillisTimestampDriver implements TimestampDriver {
     }
 
     @Override
-    public boolean append(long fixedAddr, CharSink<?> sink) {
+    public boolean append(long fixedAddr, CharSink<?> sink, boolean notNull) {
         long value = Unsafe.getLong(fixedAddr);
-        if (value != Numbers.LONG_NULL) {
+        if (notNull || value != Numbers.LONG_NULL) {
             DateFormatUtils.appendDateTime(sink, value);
             return true;
         }

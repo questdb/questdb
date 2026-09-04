@@ -84,6 +84,11 @@ public class EqIntervalFunctionFactory implements FunctionFactory {
     private Function createHalfConstantFunc(Function constFunc, Function varFunc) {
         final Interval constValue = constFunc.getInterval(null);
         if (Interval.NULL.equals(constValue)) {
+            // `x = NULL` / `x IS NULL` on a NOT NULL INTERVAL column is always false.
+            // NegatingFunctionFactory flips the constant for IS NOT NULL.
+            if (varFunc.isNotNull()) {
+                return BooleanConstant.FALSE;
+            }
             return new NullCheckFunc(varFunc);
         }
         return new ConstCheckFunc(varFunc, constValue, constFunc.getType());

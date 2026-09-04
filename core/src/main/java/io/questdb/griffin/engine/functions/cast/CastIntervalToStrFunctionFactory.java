@@ -62,7 +62,10 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
             interval.toSink(sink, intervalFunc.getType());
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (intervalFunc.isNotNull()) {
+            return new FuncNotNull(intervalFunc);
+        }
+        return new Func(intervalFunc);
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -93,6 +96,29 @@ public class CastIntervalToStrFunctionFactory implements FunctionFactory {
                 return sinkB;
             }
             return null;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            arg.getInterval(rec).toSink(sinkA, arg.getType());
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            arg.getInterval(rec).toSink(sinkB, arg.getType());
+            return sinkB;
         }
     }
 }

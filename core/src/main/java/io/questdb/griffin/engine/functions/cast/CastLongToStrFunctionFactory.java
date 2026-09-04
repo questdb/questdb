@@ -43,11 +43,17 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         Function func = args.getQuick(0);
         if (func.isConstant()) {
+            if (func.isNullConstant()) {
+                return StrConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(func.getLong(null));
             return new StrConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (func.isNotNull()) {
+            return new FuncNotNull(func);
+        }
+        return new Func(func);
     }
 
     public static class Func extends AbstractCastToStrFunction {
@@ -77,6 +83,30 @@ public class CastLongToStrFunctionFactory implements FunctionFactory {
             }
             sinkB.clear();
             sinkB.put(value);
+            return sinkB;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToStrFunction {
+        private final StringSink sinkA = new StringSink();
+        private final StringSink sinkB = new StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public CharSequence getStrA(Record rec) {
+            sinkA.clear();
+            // checkNaN=false -- Numbers.append would otherwise rewrite LONG_NULL to the text "null".
+            Numbers.append(sinkA, arg.getLong(rec), false);
+            return sinkA;
+        }
+
+        @Override
+        public CharSequence getStrB(Record rec) {
+            sinkB.clear();
+            Numbers.append(sinkB, arg.getLong(rec), false);
             return sinkB;
         }
     }

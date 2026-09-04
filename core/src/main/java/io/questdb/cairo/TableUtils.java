@@ -250,6 +250,7 @@ public final class TableUtils {
     //   11 = reserved
     static final int META_FLAG_BIT_INDEXED = 1;
     static final int META_FLAG_BIT_IS_POSTING = 1 << 1;
+    static final int META_FLAG_BIT_NOT_NULL = 1 << 7;
     static final int META_FLAG_BIT_SYMBOL_CACHE = 1 << 2;
     static final int META_FLAG_BIT_DEDUP_KEY = 1 << 3;
     static final int META_FLAG_BIT_POSTING_VARIANT_LO = 1 << 4;
@@ -335,24 +336,25 @@ public final class TableUtils {
         }
         TableColumnMetadata existingMeta = columnMetadata.getQuick(existingIndex);
         String columnNameStr = existingMeta.getColumnName();
+        boolean preserveNotNull = existingMeta.isNotNull();
         int columnIndex = columnMetadata.size();
-        columnMetadata.add(
-                new TableColumnMetadata(
-                        columnNameStr,
-                        columnType,
-                        indexType,
-                        indexValueBlockCapacity,
-                        false,
-                        null,
-                        columnIndex,
-                        false,
-                        existingIndex + 1, // replacing column index by convention can be 0 if not in use
-                        symbolCacheFlag,
-                        symbolCapacity,
-                        existingMeta.getOriginalWriterIndex()
-                )
+        var newMeta = new TableColumnMetadata(
+                columnNameStr,
+                columnType,
+                indexType,
+                indexValueBlockCapacity,
+                false,
+                null,
+                columnIndex,
+                false,
+                existingIndex + 1, // replacing column index by convention can be 0 if not in use
+                symbolCacheFlag,
+                symbolCapacity,
+                existingMeta.getOriginalWriterIndex()
         );
-        columnMetadata.getQuick(existingIndex).markDeleted();
+        newMeta.setNotNullFlag(preserveNotNull);
+        columnMetadata.add(newMeta);
+        existingMeta.markDeleted();
         columnNameIndexMap.put(columnNameStr, columnIndex);
         return existingIndex;
     }
@@ -1935,13 +1937,14 @@ public final class TableUtils {
                     }
                     final long columnTop = columnVersionReader.getColumnTopByIndexOrDefault(versionRecordIndex, partitionTimestamp, writerIndex, -1L);
                     final long columnRowCount = (columnTop != -1) ? partitionRowCount - columnTop : 0;
-                    final int parquetEncodingConfig = tableColumnMetadata.getParquetEncodingConfig();
+                    final int parquetEncodingConfig = metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
+                    final boolean isNotNull = metadata.isNotNull(columnIndex);
 
                     if (columnRowCount > 0) {
                         if (ColumnType.isSymbol(columnType)) {
                             int encodeColumnType = columnType;
-                            if (!symbolTableProvider.containsNullValue(columnIndex)) {
-                                encodeColumnType |= Integer.MIN_VALUE;
+                            if (isNotNull) {
+                                encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                             }
 
                             partitionDescriptor.addColumn(
@@ -1987,7 +1990,7 @@ public final class TableUtils {
                             // recover the partition path
                             setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
                         } else if (ColumnType.isVarSize(columnType)) {
-                            partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop, parquetEncodingConfig);
+                            partitionDescriptor.addColumn(columnName, isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType, columnId, columnTop, parquetEncodingConfig);
 
                             final ColumnTypeDriver columnTypeDriver = ColumnType.getDriver(columnType);
                             final long auxVectorSize = columnTypeDriver.getAuxVectorSize(columnRowCount);
@@ -2020,7 +2023,7 @@ public final class TableUtils {
                             ff.madvise(fixedAddr, mapBytes, Files.POSIX_MADV_SEQUENTIAL);
                             partitionDescriptor.addColumn(
                                     columnName,
-                                    columnType,
+                                    isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                                     columnId,
                                     columnTop,
                                     fixedAddr,
@@ -2036,7 +2039,7 @@ public final class TableUtils {
                         // no rows in column
                         partitionDescriptor.addColumn(
                                 columnName,
-                                columnType,
+                                isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                                 columnId,
                                 partitionRowCount,
                                 parquetEncodingConfig
@@ -2954,6 +2957,10 @@ public final class TableUtils {
             mem.putInt(tableStruct.getColumnType(i));
             long flags = encodeIndexTypeFlags(tableStruct.getIndexType(i));
 
+            if (tableStruct.isNotNull(i)) {
+                flags |= META_FLAG_BIT_NOT_NULL;
+            }
+
             if (tableStruct.getSymbolCacheFlag(i)) {
                 flags |= META_FLAG_BIT_SYMBOL_CACHE;
             }
@@ -3212,6 +3219,14 @@ public final class TableUtils {
 
     static boolean isColumnIndexed(MemoryR metaMem, int columnIndex) {
         return getColumnIndexType(metaMem, columnIndex) != IndexType.NONE;
+    }
+
+    static boolean isColumnNotNull(MemoryR metaMem, int columnIndex) {
+        return (getColumnFlags(metaMem, columnIndex) & META_FLAG_BIT_NOT_NULL) != 0;
+    }
+
+    public static boolean isEnforceableNotNull(int columnType, boolean isNotNull) {
+        return columnType > 0 && isNotNull;
     }
 
     static int openMetaSwapFile(FilesFacade ff, MemoryMA mem, Path path, int rootLen, int retryCount) {

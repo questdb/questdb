@@ -809,6 +809,29 @@ namespace questdb::x86 {
         return r.as<Gp>();
     }
 
+    inline Gp float_is_finite(Compiler &c, const Vec &value) {
+        Gp bits = c.new_gp32();
+        Gp result = c.new_gp32();
+        c.movd(bits, value);
+        c.and_(bits, 0x7F800000);
+        c.xor_(result, result);
+        c.cmp(bits, 0x7F800000);
+        c.setne(result.r8_lo());
+        return result;
+    }
+
+    inline Gp double_is_finite(Compiler &c, const Vec &value) {
+        Gp bits = c.new_gp64();
+        Gp result = c.new_gp32();
+        Mem inf_memory = c.new_int64_const(ConstPoolScope::kLocal, 0x7FF0000000000000LL);
+        c.movq(bits, value);
+        c.and_(bits, inf_memory);
+        c.xor_(result, result);
+        c.cmp(bits, inf_memory);
+        c.setne(result.r8_lo());
+        return result;
+    }
+
     // (isnan(lhs) && isnan(rhs) || fabs(l - r) <= 0.0000000001);
     // The tolerance test is INCLUSIVE, matching Numbers.equals() ("Math.abs(l - r) <= DOUBLE_TOLERANCE").
     inline Gp double_cmp_epsilon(Compiler &c, const Vec &xmm0, const Vec &xmm1, double epsilon, bool eq) {

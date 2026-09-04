@@ -33,23 +33,29 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class GeoShortColumn extends GeoShortFunction implements ColumnFunction {
     private static final GeoShortColumn[] COLUMNS;
     private final int columnIndex;
+    private final boolean isNotNull;
 
-    private GeoShortColumn(int columnIndex, int columnType) {
+    private GeoShortColumn(int columnIndex, int columnType, boolean isNotNull) {
         super(columnType);
         this.columnIndex = columnIndex;
+        this.isNotNull = isNotNull;
     }
 
     public static GeoShortColumn newInstance(int columnIndex, int columnType) {
+        return newInstance(columnIndex, columnType, false);
+    }
+
+    public static GeoShortColumn newInstance(int columnIndex, int columnType, boolean isNotNull) {
         assert ColumnType.getGeoHashBits(columnType) >= ColumnType.GEOSHORT_MIN_BITS &&
                 ColumnType.getGeoHashBits(columnType) <= ColumnType.GEOSHORT_MAX_BITS;
 
         final int bits = (ColumnType.GEOSHORT_MAX_BITS - ColumnType.GEOSHORT_MIN_BITS + 1);
 
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS[columnIndex * bits + ColumnType.getGeoHashBits(columnType) - ColumnType.GEOSHORT_MIN_BITS];
         }
 
-        return new GeoShortColumn(columnIndex, columnType);
+        return new GeoShortColumn(columnIndex, columnType, isNotNull);
     }
 
     @Override
@@ -63,6 +69,11 @@ public class GeoShortColumn extends GeoShortFunction implements ColumnFunction {
     }
 
     @Override
+    public boolean isNotNull() {
+        return isNotNull;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }
@@ -73,7 +84,7 @@ public class GeoShortColumn extends GeoShortFunction implements ColumnFunction {
 
         for (int col = 0; col < STATIC_COLUMN_COUNT; col++) {
             for (int bit = ColumnType.GEOSHORT_MIN_BITS; bit <= ColumnType.GEOSHORT_MAX_BITS; bit++) {
-                COLUMNS[col * bits + bit - ColumnType.GEOSHORT_MIN_BITS] = new GeoShortColumn(col, ColumnType.getGeoHashTypeWithBits(bit));
+                COLUMNS[col * bits + bit - ColumnType.GEOSHORT_MIN_BITS] = new GeoShortColumn(col, ColumnType.getGeoHashTypeWithBits(bit), false);
             }
         }
     }

@@ -483,6 +483,8 @@ mod tests {
                 format: None,
                 ascii: None,
                 id: None,
+
+                not_null: false,
             });
         bad_meta
             .schema
@@ -492,6 +494,8 @@ mod tests {
                 format: None,
                 ascii: None,
                 id: None,
+
+                not_null: false,
             });
 
         let result =
@@ -1155,6 +1159,8 @@ mod tests {
             format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
             ascii: Some(true),
             id: None,
+
+            not_null: false,
         });
 
         let (parquet_meta_bytes, parquet_meta_file_size) =
@@ -2157,6 +2163,8 @@ mod tests {
             format: None,
             ascii: None,
             id: None,
+
+            not_null: false,
         });
         let qdb_meta_json = qdb_meta.serialize().unwrap();
         chunked

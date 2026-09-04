@@ -33,16 +33,22 @@ import static io.questdb.griffin.engine.functions.columns.ColumnUtils.STATIC_COL
 public class Long128Column extends Long128Function implements ColumnFunction {
     private static final ObjList<Long128Column> COLUMNS = new ObjList<>(STATIC_COLUMN_COUNT);
     private final int columnIndex;
+    private final boolean isNotNull;
 
-    private Long128Column(int columnIndex) {
+    private Long128Column(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
+        this.isNotNull = isNotNull;
     }
 
     public static Long128Column newInstance(int columnIndex) {
-        if (columnIndex < STATIC_COLUMN_COUNT) {
+        return newInstance(columnIndex, false);
+    }
+
+    public static Long128Column newInstance(int columnIndex, boolean isNotNull) {
+        if (!isNotNull && columnIndex < STATIC_COLUMN_COUNT) {
             return COLUMNS.getQuick(columnIndex);
         }
-        return new Long128Column(columnIndex);
+        return new Long128Column(columnIndex, isNotNull);
     }
 
     @Override
@@ -61,6 +67,11 @@ public class Long128Column extends Long128Function implements ColumnFunction {
     }
 
     @Override
+    public boolean isNotNull() {
+        return isNotNull;
+    }
+
+    @Override
     public boolean isThreadSafe() {
         return true;
     }
@@ -68,7 +79,7 @@ public class Long128Column extends Long128Function implements ColumnFunction {
     static {
         COLUMNS.setPos(STATIC_COLUMN_COUNT);
         for (int i = 0; i < STATIC_COLUMN_COUNT; i++) {
-            COLUMNS.setQuick(i, new Long128Column(i));
+            COLUMNS.setQuick(i, new Long128Column(i, false));
         }
     }
 }
