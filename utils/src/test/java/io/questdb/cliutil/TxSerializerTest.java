@@ -189,14 +189,21 @@ public class TxSerializerTest {
     @Test
     public void testToJsonRefusesCompositeTable() throws SqlException {
         String createTableSql = "create table cxx (ts timestamp, sym1 symbol, x long) " +
-                "timestamp(ts) partition by day, sym1";
+                // WAL: composite partitioning is WAL-only, so this is the only shape the product will
+                // create. The assertion is about the stride-8 _txn a composite table writes, which a
+                // WAL table has just the same.
+                "timestamp(ts) partition by day, sym1 wal";
         engine.execute(createTableSql, sqlExecutionContext);
 
         engine.releaseAllWriters();
         engine.releaseAllReaders();
 
         TxSerializer serializer = new TxSerializer();
-        String txPath = root.toString() + Files.SEPARATOR + "cxx" + Files.SEPARATOR + "_txn";
+        // Via the token's DIRECTORY name, not the table name: a WAL table's directory carries a
+        // "~<id>" suffix, so the literal "cxx" resolves to nothing and toJson would fail for the
+        // wrong reason -- which is exactly what it did when this test first went WAL.
+        String txPath = root.toString() + Files.SEPARATOR
+                + engine.verifyTableName("cxx").getDirName() + Files.SEPARATOR + "_txn";
 
         UnsupportedOperationException ex = Assert.assertThrows(
                 UnsupportedOperationException.class,
@@ -217,14 +224,21 @@ public class TxSerializerTest {
     @Test
     public void testSerializeJsonRefusesToOverwriteExistingCompositeTarget() throws SqlException {
         String createTableSql = "create table cxx (ts timestamp, sym1 symbol, x long) " +
-                "timestamp(ts) partition by day, sym1";
+                // WAL: composite partitioning is WAL-only, so this is the only shape the product will
+                // create. The assertion is about the stride-8 _txn a composite table writes, which a
+                // WAL table has just the same.
+                "timestamp(ts) partition by day, sym1 wal";
         engine.execute(createTableSql, sqlExecutionContext);
 
         engine.releaseAllWriters();
         engine.releaseAllReaders();
 
         TxSerializer serializer = new TxSerializer();
-        String txPath = root.toString() + Files.SEPARATOR + "cxx" + Files.SEPARATOR + "_txn";
+        // Via the token's DIRECTORY name, not the table name: a WAL table's directory carries a
+        // "~<id>" suffix, so the literal "cxx" resolves to nothing and toJson would fail for the
+        // wrong reason -- which is exactly what it did when this test first went WAL.
+        String txPath = root.toString() + Files.SEPARATOR
+                + engine.verifyTableName("cxx").getDirName() + Files.SEPARATOR + "_txn";
 
         UnsupportedOperationException ex = Assert.assertThrows(
                 UnsupportedOperationException.class,
