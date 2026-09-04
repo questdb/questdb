@@ -6802,7 +6802,7 @@ public class WindowJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_SPIN_TIMEOUT, 2_000_000_000L);
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
-            TestUtils.execute(
+            executeWithPool(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         // v is LONG256, whose first/last are thread-unsafe, so the planner builds
@@ -6907,9 +6907,7 @@ public class WindowJoinTest extends AbstractCairoTest {
                                 }
                             }
                         }
-                    },
-                    configuration,
-                    LOG
+                    }
             );
         });
     }

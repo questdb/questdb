@@ -567,6 +567,44 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
     }
 
     /**
+     * How many pieces a directory is made of, checked against the geometry the reader resolves
+     * itself, so a drift between the function and the reader would show here.
+     */
+    @Test
+    public void testTablePartitionsReportsPieceCount() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            // Let the pre-split cut the day on every stride, so it ends up as several pieces.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 40_000);
+            append("x", "2024-01-02", 100);
+            // Separated strides inside the day's range: each one cuts a piece off and rewrites the
+            // owning piece at the file tail, leaving its old copy dead.
+            backdate("x", "2024-01-01T02:00:00", 60);
+            backdate("x", "2024-01-01T06:00:00", 60);
+            backdate("x", "2024-01-01T10:00:00", 60);
+
+            final long pieces = pieceCountOfDay("x", "2024-01-01");
+            Assert.assertTrue("fixture must leave a composite day, pieces=" + pieces, pieces > 1);
+            final long dead = deadRowsOfDay("x", "2024-01-01");
+            Assert.assertTrue("fixture must leave dead rows", dead > 0);
+
+            Assert.assertEquals(pieces, scalar("select pieceCount::long from table_partitions('x') where name = '2024-01-01'"));
+            // The untouched day next to it is a single piece.
+            assertQuery("select pieceCount from table_partitions('x') where name = '2024-01-02'")
+                    .noRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            pieceCount
+                            1
+                            """);
+        });
+    }
+
+    /**
      * The table-wide rule fires on the ratio of dead to live rows across the whole table and picks
      * the coldest partition. Here two days are made wasteful and the older one was written to first,
      * so it is the one that must be compacted first.
