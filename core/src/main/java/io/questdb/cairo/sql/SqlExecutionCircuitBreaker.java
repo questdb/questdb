@@ -31,6 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 public interface SqlExecutionCircuitBreaker extends ExecutionCircuitBreaker, CancellationBinding.Source {
 
+    int COOPERATIVE_POLL_STRIDE = 128;
     int STATE_OK = 0;
     SqlExecutionCircuitBreaker NOOP_CIRCUIT_BREAKER = new SqlExecutionCircuitBreaker() {
         @Override

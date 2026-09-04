@@ -1614,7 +1614,9 @@ public final class FiberRuntime {
             @Nullable OwnerContext ownerContext,
             PublicationMode publicationMode
     ) {
-        final boolean isOwnerPublication = ownerContext != null && ownerContext.runtime == this;
+        // Only the carrier that owns the shard may use its single-producer local queue; a grant
+        // completed elsewhere carries the request's captured owner context and must go global.
+        final boolean isOwnerPublication = ownerContext != null && ownerContext == currentOwnerContext();
         if (publicationMode.isLocalPublicationAllowed
                 && isOwnerPublication
                 && ownerContext.shard.ownerState.get() == Shard.ACTIVE

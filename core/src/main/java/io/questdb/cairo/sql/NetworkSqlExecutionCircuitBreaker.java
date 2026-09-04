@@ -40,6 +40,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final MillisecondClock clock;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
     private final long connectionCheckThrottle;
+    private int cooperativePollCountdown;
     private final long defaultMaxTime;
     private final CairoEngine engine;
     private final NetworkFacade nf;
@@ -130,7 +131,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public boolean checkIfTrippedOrYield() {
         final boolean isTripped = checkIfTripped();
         if (!isTripped) {
-            engine.onSqlExecutionCooperativePoll();
+            cooperativePoll();
         }
         return isTripped;
     }
@@ -139,7 +140,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public boolean checkIfTrippedOrYield(long millis, long fd) {
         final boolean isTripped = checkIfTripped(millis, fd);
         if (!isTripped) {
-            engine.onSqlExecutionCooperativePoll();
+            cooperativePoll();
         }
         return isTripped;
     }
@@ -148,9 +149,18 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         secret = -1;
         powerUpTime = Long.MAX_VALUE;
         testCount = 0;
+        cooperativePollCountdown = 0;
         lastConnectionCheckTime = 0;
         fd = -1;
         timeout = defaultMaxTime;
+    }
+
+    private void cooperativePoll() {
+        if (cooperativePollCountdown == 0) {
+            cooperativePollCountdown = COOPERATIVE_POLL_STRIDE;
+            engine.onSqlExecutionCooperativePoll();
+        }
+        cooperativePollCountdown--;
     }
 
     public void clearCancelSentinel() {
@@ -220,7 +230,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public int getStateOrYield() {
         final int state = getState();
         if (state == STATE_OK) {
-            engine.onSqlExecutionCooperativePoll();
+            cooperativePoll();
         }
         return state;
     }
@@ -229,7 +239,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     public int getStateOrYield(long millis, long fd) {
         final int state = getState(millis, fd);
         if (state == STATE_OK) {
-            engine.onSqlExecutionCooperativePoll();
+            cooperativePoll();
         }
         return state;
     }
@@ -326,13 +336,13 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
         statefulThrowExceptionIfTrippedNoThrottle();
-        engine.onSqlExecutionCooperativePoll();
+        cooperativePoll();
     }
 
     @Override
     public void statefulThrowExceptionIfTrippedOrYield() {
         statefulThrowExceptionIfTripped();
-        engine.onSqlExecutionCooperativePoll();
+        cooperativePoll();
     }
 
     @Override
@@ -366,7 +376,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     @Override
     public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
         statefulThrowExceptionIfTrippedTimeThrottled();
-        engine.onSqlExecutionCooperativePoll();
+        cooperativePoll();
     }
 
     @Override

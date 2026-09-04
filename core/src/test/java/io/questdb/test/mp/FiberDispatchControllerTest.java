@@ -49,8 +49,82 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class FiberDispatchControllerTest {
+
+    @Test
+    public void testConcurrentExternalGrantsPublishEveryFiber() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final int count = 64;
+            final TestController controller = new TestController();
+            final FiberRuntime runtime = new FiberRuntime(count, count, 64, 1, controller, FiberWakeSink.NO_OP);
+            final FiberRuntime.OwnerContext owner = runtime.getOwnerContext(0);
+            runtime.activateOwner(owner);
+            final List<DispatchYieldTask> tasks = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                final DispatchYieldTask task = new DispatchYieldTask();
+                tasks.add(task);
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+            }
+            controller.session.grantAll();
+            Assert.assertEquals(count, runtime.drainOwned(owner, count));
+
+            final List<Pending> requests = new ArrayList<>();
+            for (int i = 0; i < count; i++) {
+                final Pending pending = controller.session.removeNext();
+                Assert.assertEquals(0, pending.request.getOwnerWorkerId());
+                requests.add(pending);
+            }
+            final CyclicBarrier barrier = new CyclicBarrier(count);
+            runtime.setBeforeGrantedDispatchPublicationForTesting(() -> {
+                try {
+                    barrier.await(10, TimeUnit.SECONDS);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            final AtomicInteger granted = new AtomicInteger();
+            final AtomicReference<Throwable> error = new AtomicReference<>();
+            final List<Thread> threads = new ArrayList<>();
+            for (Pending pending : requests) {
+                final Thread thread = new Thread(() -> {
+                    try {
+                        if (pending.request.grant(pending.dispatchEpoch, controller.ticket)) {
+                            granted.incrementAndGet();
+                        }
+                    } catch (Throwable th) {
+                        error.compareAndSet(null, th);
+                    }
+                });
+                thread.start();
+                threads.add(thread);
+            }
+            for (Thread thread : threads) {
+                thread.join(15_000);
+                Assert.assertFalse(thread.isAlive());
+            }
+            runtime.setBeforeGrantedDispatchPublicationForTesting(null);
+            Assert.assertNull(error.get());
+            Assert.assertEquals(count, granted.get());
+            Assert.assertEquals("every externally granted Fiber must be queued", count, runtime.getQueuedCount());
+
+            final long deadline = System.nanoTime() + 5_000_000_000L;
+            int resumed = 0;
+            while (resumed < count && System.nanoTime() < deadline) {
+                runtime.drainOwned(owner, 64);
+                resumed = 0;
+                for (int i = 0; i < count; i++) {
+                    resumed += tasks.get(i).resumeCount;
+                }
+            }
+            Assert.assertEquals(count, resumed);
+            close(runtime);
+        });
+    }
 
     @Test
     public void testControllerFailureCannotRunTask() throws Exception {

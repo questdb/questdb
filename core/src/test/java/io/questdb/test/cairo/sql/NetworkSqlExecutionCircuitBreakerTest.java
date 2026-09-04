@@ -80,15 +80,27 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                     pollCount.incrementAndGet();
                 }
             }) {
+                final int stride = SqlExecutionCircuitBreaker.COOPERATIVE_POLL_STRIDE;
                 final AtomicBooleanCircuitBreaker atomicBreaker = new AtomicBooleanCircuitBreaker(pollingEngine);
+                // the first cooperative boundary polls; every variant shares one stride countdown
                 Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
+                Assert.assertEquals(1, pollCount.get());
                 Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield(0, -1));
                 Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield());
                 Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield(0, -1));
                 atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
                 atomicBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                 atomicBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                Assert.assertEquals(7, pollCount.get());
+                Assert.assertEquals(1, pollCount.get());
+                for (int i = 7; i < stride; i++) {
+                    Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
+                }
+                Assert.assertEquals(1, pollCount.get());
+                Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
+                Assert.assertEquals("the stride boundary polls again", 2, pollCount.get());
+                atomicBreaker.clear();
+                atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
+                Assert.assertEquals("a query boundary restarts the stride", 3, pollCount.get());
 
                 final TestMillisecondClock clock = new TestMillisecondClock(1_000);
                 final SqlExecutionCircuitBreakerConfiguration config =
@@ -106,6 +118,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                 ) {
                     networkBreaker.resetTimer();
                     Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
+                    Assert.assertEquals(4, pollCount.get());
                     Assert.assertFalse(networkBreaker.checkIfTrippedOrYield(1_000, -1));
                     Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, networkBreaker.getStateOrYield());
                     Assert.assertEquals(
@@ -115,19 +128,30 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                     networkBreaker.statefulThrowExceptionIfTrippedOrYield();
                     networkBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
                     networkBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                    Assert.assertEquals(14, pollCount.get());
+                    Assert.assertEquals(4, pollCount.get());
+                    for (int i = 7; i < stride; i++) {
+                        Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
+                    }
+                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
+                    Assert.assertEquals(5, pollCount.get());
+                    networkBreaker.clear();
+                    networkBreaker.resetTimer();
+                    networkBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    Assert.assertEquals(6, pollCount.get());
 
+                    // init is a query boundary; afterwards the wrapper's boundaries share the delegate's stride
                     wrapper.init(networkBreaker);
                     Assert.assertFalse(wrapper.checkIfTrippedOrYield());
-                    Assert.assertFalse(wrapper.checkIfTrippedOrYield(1_000, -1));
-                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, wrapper.getStateOrYield());
-                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, wrapper.getStateOrYield(1_000, -1));
-                    wrapper.statefulThrowExceptionIfTrippedOrYield();
-                    wrapper.statefulThrowExceptionIfTrippedNoThrottleOrYield();
-                    wrapper.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
-                    Assert.assertEquals(21, pollCount.get());
+                    Assert.assertEquals(7, pollCount.get());
+                    for (int i = 1; i < stride; i++) {
+                        Assert.assertFalse(wrapper.checkIfTrippedOrYield());
+                    }
+                    Assert.assertEquals(7, pollCount.get());
+                    Assert.assertFalse(wrapper.checkIfTrippedOrYield());
+                    Assert.assertEquals(8, pollCount.get());
                 }
 
+                atomicBreaker.clear();
                 atomicBreaker.setCancelledFlag(new AtomicBoolean(true));
                 Assert.assertTrue(atomicBreaker.checkIfTrippedOrYield());
                 Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, atomicBreaker.getStateOrYield());
@@ -137,7 +161,7 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     Assert.assertTrue(e.isInterruption());
                 }
-                Assert.assertEquals("the engine hook must not run after a tripped breaker", 21, pollCount.get());
+                Assert.assertEquals("the engine hook must not run after a tripped breaker", 8, pollCount.get());
             }
         });
     }

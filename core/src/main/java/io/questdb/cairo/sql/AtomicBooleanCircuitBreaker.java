@@ -39,6 +39,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Deprecated
     protected volatile AtomicBoolean cancelledFlag = new AtomicBoolean(false);
     private final CancellationBinding cancellationBinding;
+    private int cooperativePollCountdown;
     private final CairoEngine engine;
     private final int throttle;
     private long fd = -1;
@@ -89,7 +90,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public boolean checkIfTrippedOrYield() {
         final boolean isTripped = checkIfTripped();
         if (!isTripped) {
-            engine.onSqlExecutionCooperativePoll();
+            cooperativePoll();
         }
         return isTripped;
     }
@@ -98,7 +99,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public boolean checkIfTrippedOrYield(long millis, long fd) {
         final boolean isTripped = checkIfTripped(millis, fd);
         if (!isTripped) {
-            engine.onSqlExecutionCooperativePoll();
+            cooperativePoll();
         }
         return isTripped;
     }
@@ -106,6 +107,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public void clear() {
         fd = -1;
         testCount = 0;
+        cooperativePollCountdown = 0;
     }
 
     @Override
@@ -137,7 +139,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public int getStateOrYield() {
         final int state = getState();
         if (state == STATE_OK) {
-            engine.onSqlExecutionCooperativePoll();
+            cooperativePoll();
         }
         return state;
     }
@@ -146,7 +148,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     public int getStateOrYield(long millis, long fd) {
         final int state = getState(millis, fd);
         if (state == STATE_OK) {
-            engine.onSqlExecutionCooperativePoll();
+            cooperativePoll();
         }
         return state;
     }
@@ -175,6 +177,7 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
         // No timer to reset, but start a fresh throttle window for the new query so the next breaker
         // consultation performs a real cancellation check.
         testCount = 0;
+        cooperativePollCountdown = 0;
     }
 
     @Override
@@ -213,13 +216,13 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Override
     public void statefulThrowExceptionIfTrippedNoThrottleOrYield() {
         statefulThrowExceptionIfTrippedNoThrottle();
-        engine.onSqlExecutionCooperativePoll();
+        cooperativePoll();
     }
 
     @Override
     public void statefulThrowExceptionIfTrippedOrYield() {
         statefulThrowExceptionIfTripped();
-        engine.onSqlExecutionCooperativePoll();
+        cooperativePoll();
     }
 
     @Override
@@ -233,13 +236,22 @@ public class AtomicBooleanCircuitBreaker implements SqlExecutionCircuitBreaker {
     @Override
     public void statefulThrowExceptionIfTrippedTimeThrottledOrYield() {
         statefulThrowExceptionIfTrippedTimeThrottled();
-        engine.onSqlExecutionCooperativePoll();
+        cooperativePoll();
     }
 
     @Override
     public void unsetTimer() {
         // ignore
     }
+
+    private void cooperativePoll() {
+        if (cooperativePollCountdown == 0) {
+            cooperativePollCountdown = COOPERATIVE_POLL_STRIDE;
+            engine.onSqlExecutionCooperativePoll();
+        }
+        cooperativePollCountdown--;
+    }
+
 
     private boolean isCancelled() {
         return cancellationBinding.isCancelledOrUnbound() || engine.isClosing();
