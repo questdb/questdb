@@ -29,12 +29,19 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDimension;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.PartitionTransform;
+import io.questdb.griffin.model.ExpressionNode;
+
+import java.util.function.Function;
+
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.CopyDataProgressReporter;
 import io.questdb.griffin.SqlCompiler;
@@ -49,6 +56,7 @@ import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -80,6 +88,12 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private final CreateTableOperationFuture future = new CreateTableOperationFuture();
     private final IntList parquetEncodingConfigs = new IntList();
     private final String selectText;
+    private ObjList<ExpressionNode> deferredClusterExprs;
+    private final StringSink exprTextSink = new StringSink();
+    private ObjList<CharSequence> deferredDimensionAliases;
+    private ObjList<ExpressionNode> deferredDimensionExprs;
+    private byte deferredNamingMode = PartitionSpec.MODE_HIVE;
+    private int deferredTimeUnit = PartitionBy.NONE;
     private final String sqlText;
     private long batchO3MaxLag;
     private long batchSize;
@@ -93,6 +107,9 @@ public class CreateTableOperationImpl implements CreateTableOperation {
     private long o3MaxLag;
     private int partitionBy;
     private int partitionByPosition;
+    // Resolved composite-partitioning scheme (Task 4). Always non-null: empty/non-composite
+    // for plain (non-composite) tables, LIKE tables and CREATE TABLE AS SELECT.
+    private PartitionSpec partitionSpec = new PartitionSpec();
     private CopyDataProgressReporter reporter = CopyDataProgressReporter.NOOP;
     private int selectSqlScanDirection;
     private int selectTextPosition;
@@ -421,6 +438,16 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         return partitionBy;
     }
 
+    /**
+     * @return the resolved composite-partitioning spec (Task 4). Never null: for plain
+     * (non-composite) tables, LIKE tables and CREATE TABLE AS SELECT this is an empty
+     * spec whose {@link PartitionSpec#isComposite()} is false.
+     */
+    @Override
+    public PartitionSpec getPartitionSpec() {
+        return partitionSpec;
+    }
+
     @Override
     public int getSelectSqlScanDirection() {
         return selectSqlScanDirection;
@@ -588,6 +615,10 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         this.partitionBy = partitionBy;
     }
 
+    public void setPartitionSpec(@NotNull PartitionSpec partitionSpec) {
+        this.partitionSpec = partitionSpec;
+    }
+
     public void setTableKind(int tableKind) {
         this.tableKind = tableKind;
     }
@@ -655,6 +686,107 @@ public class CreateTableOperationImpl implements CreateTableOperation {
         future.tableToken = tableToken;
     }
 
+    /**
+     * Captures the parse-time composite dimension/cluster expressions of a CREATE TABLE AS SELECT so
+     * they can be resolved once the select's metadata exists. A plain CREATE TABLE resolves its spec at
+     * build() time, where the column definitions are already known; a CTAS's columns are not known
+     * until the select has been compiled, which is why this is deferred rather than done there.
+     * <p>
+     * The lists must be SNAPSHOTS -- the builder is pooled and cleared between compilations.
+     */
+    public void setDeferredPartitionDimensions(
+            ObjList<ExpressionNode> dimensionExprs,
+            ObjList<CharSequence> dimensionAliases,
+            ObjList<ExpressionNode> clusterColumnExprs,
+            byte namingMode,
+            int timeUnit
+    ) {
+        this.deferredDimensionAliases = dimensionAliases;
+        this.deferredDimensionExprs = dimensionExprs;
+        this.deferredClusterExprs = clusterColumnExprs;
+        this.deferredNamingMode = namingMode;
+        this.deferredTimeUnit = timeUnit;
+    }
+
+    /**
+     * Builds the composite {@link PartitionSpec} of a CTAS against the select's own columns.
+     * <p>
+     * Everything that does NOT need column knowledge -- time partitioning required, WAL required,
+     * FORMAT PARQUET refused, aliased expression dimensions refused -- has already been checked at
+     * build() time, so a bad statement never reaches here and nothing is created before it is refused.
+     * What is left is exactly the part that needs the columns: mapping each dimension to a column
+     * INDEX, and requiring it to be a SYMBOL.
+     */
+    /**
+     * Every column an aliased expression dimension references must be produced by the SELECT. The
+     * plain CREATE TABLE path checks this against declared columns
+     * ({@code CreateTableOperationBuilderImpl#assertColumnsExist}); for a CTAS the column list is the
+     * select's metadata, so the same walk runs here.
+     */
+    private void assertExpressionColumnsExist(ExpressionNode node, RecordMetadata metadata) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL && metadata.getColumnIndexQuiet(node.token) < 0) {
+            throw SqlException.invalidColumn(node.position, node.token);
+        }
+        assertExpressionColumnsExist(node.lhs, metadata);
+        assertExpressionColumnsExist(node.rhs, metadata);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            assertExpressionColumnsExist(node.args.getQuick(i), metadata);
+        }
+    }
+
+    private void resolveDeferredPartitionSpec(RecordMetadata metadata) throws SqlException {
+        if (deferredDimensionExprs == null && deferredClusterExprs == null) {
+            return;
+        }
+        final PartitionSpec spec = new PartitionSpec();
+        spec.setTimeUnit(deferredTimeUnit);
+        spec.setNamingMode(deferredNamingMode);
+
+        // Missing and non-SYMBOL both resolve to -1, which PartitionTransform.resolve turns into its
+        // own "must be a SYMBOL column" error -- same contract as the plain CREATE TABLE resolver.
+        final Function<CharSequence, Integer> symbolColumnResolver = name -> {
+            final int idx = metadata.getColumnIndexQuiet(name);
+            if (idx < 0 || !ColumnType.isSymbol(metadata.getColumnType(idx))) {
+                return -1;
+            }
+            return idx;
+        };
+
+        for (int i = 0, n = deferredDimensionExprs != null ? deferredDimensionExprs.size() : 0; i < n; i++) {
+            final ExpressionNode node = deferredDimensionExprs.getQuick(i);
+            final CharSequence alias = deferredDimensionAliases != null ? deferredDimensionAliases.getQuick(i) : null;
+            if (alias != null) {
+                // An aliased `(expr) AS alias` dimension. Its determinism was checked at build() time,
+                // where no column knowledge is needed; what is left is that every column it references
+                // is produced by the SELECT.
+                assertExpressionColumnsExist(node, metadata);
+                exprTextSink.clear();
+                node.toSink(exprTextSink);
+                spec.addDimension(new PartitionDimension(
+                        PartitionDimension.KIND_EXPRESSION, -1, 0,
+                        Chars.toString(alias), exprTextSink.toString()));
+                continue;
+            }
+            if (node.type != ExpressionNode.LITERAL && node.type != ExpressionNode.FUNCTION) {
+                throw SqlException.$(node.position, "partition expression must be aliased with AS");
+            }
+            spec.addDimension(PartitionTransform.resolve(node, symbolColumnResolver));
+        }
+
+        for (int i = 0, n = deferredClusterExprs != null ? deferredClusterExprs.size() : 0; i < n; i++) {
+            final ExpressionNode node = deferredClusterExprs.getQuick(i);
+            final int idx = metadata.getColumnIndexQuiet(node.token);
+            if (idx < 0) {
+                throw SqlException.invalidColumn(node.position, node.token);
+            }
+            spec.addClusterColumn(idx);
+        }
+        setPartitionSpec(spec);
+    }
+
     @Override
     public void validateAndUpdateMetadataFromSelect(RecordMetadata metadata, int scanDirection) throws SqlException {
         // This method must only be called in case of "create-as-select".
@@ -680,6 +812,7 @@ public class CreateTableOperationImpl implements CreateTableOperation {
                         .put("designated timestamp column doesn't exist [name=").put(this.timestampColumnName).put(']');
             }
             timestampType = metadata.getColumnType(this.timestampIndex);
+            resolveDeferredPartitionSpec(metadata);
             if (!ColumnType.isTimestamp(timestampType)) {
                 throw SqlException.position(this.timestampColumnNamePosition)
                         .put("TIMESTAMP column expected [actual=").put(ColumnType.nameOf(timestampType)).put(']');

@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.table;
 import io.questdb.cairo.AbstractRecordCursorFactory;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.RecordSink;
@@ -59,11 +58,11 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int RECORD_INDEX_VALUE_IDX = 0;
     private static final int TIMESTAMP_VALUE_IDX = 1;
 
+    private final RecordCursorFactory base;
+    private final LatestByRecordCursor cursor;
     private final RecordSink recordSink;
+    private final DirectLongList rowIndexes;
     private final long rowIndexesInitialCapacity;
-    private RecordCursorFactory base;
-    private LatestByRecordCursor cursor;
-    private DirectLongList rowIndexes;
 
     public LatestByRecordCursorFactory(
             @NotNull CairoConfiguration configuration,
@@ -136,16 +135,9 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
     @Override
     protected void _close() {
-        final RecordCursorFactory base = this.base;
-        this.base = null;
-        final LatestByRecordCursor cursor = this.cursor;
-        this.cursor = null;
-        final DirectLongList rowIndexes = this.rowIndexes;
-        this.rowIndexes = null;
-        Throwable failure = Misc.freeBestEffort(null, rowIndexes);
-        failure = Misc.freeBestEffort(failure, cursor);
-        failure = Misc.freeBestEffort(failure, base);
-        CairoException.rethrowCleanupFailure(failure);
+        Misc.free(rowIndexes);
+        Misc.free(cursor);
+        Misc.free(base);
     }
 
     private static class LatestByRecordCursor implements NoRandomAccessRecordCursor {

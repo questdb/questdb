@@ -469,6 +469,32 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Narrow, fail-safe opt-in consulted ONLY by the four order-indifferent group-by/aggregation
+     * selection sites in {@code SqlCodeGenerator#generateSelectGroupBy} (the vectorized Rosti path, the
+     * parallel/async group-by path, and the filter-stealing assert that follows it). Defaults to
+     * {@link #supportsPageFrameCursor()}, so for every factory that does not override this method the new
+     * capability is identical to the old one -- no behavioural change.
+     * <p>
+     * A factory may override this to {@code true} while keeping {@link #supportsPageFrameCursor()}
+     * {@code false} ONLY when its {@link #getPageFrameCursor} yields frames that are not globally ordered
+     * but are still safe for order-INDIFFERENT consumption -- e.g. a composite (time + dimension
+     * partitioned) table's cell-blind, per-partition physical frames: wrong for anything order-sensitive
+     * (filters, joins, ORDER BY / SAMPLE BY) but correct for aggregation, since the vector aggregate
+     * functions and any {@code GroupByFunction.supportsParallelism()} opt-in combine partials
+     * commutatively.
+     * <p>
+     * Every consumer OTHER than those four aggregation sites MUST keep gating on
+     * {@link #supportsPageFrameCursor()}, not this method -- a factory that overrides this to diverge from
+     * {@link #supportsPageFrameCursor()} is asserting that {@link #getPageFrameCursor} is reachable ONLY
+     * through call sites that have been individually reviewed for order-indifference.
+     *
+     * @return true if the factory's page frames are safe for order-indifferent aggregation
+     */
+    default boolean supportsPageFrameCursorForUnorderedAggregation() {
+        return supportsPageFrameCursor();
+    }
+
+    /**
      * Returns true when this factory's page-frame cursor ({@link #getPageFrameCursor})
      * yields frames whose column page addresses are fully materialized — a raw
      * page-frame consumer that reads {@code frame.getPageAddress(col)} directly (the
@@ -509,6 +535,28 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
      */
     default boolean supportsTimeFrameCursor() {
         return false;
+    }
+
+    /**
+     * Returns true if this factory's time-frame cursor is a full <em>physical</em> cursor whose frames and
+     * rowIds correspond to the table's real partitions and native rows &mdash; the contract the "advanced"
+     * time-frame join paths rely on: the async/parallel WINDOW/HORIZON joins (per-worker cursors via
+     * {@link #newTimeFrameCursor()}) AND the fast ASOF/LT/window joins (which address the slave by native
+     * rowIds / symbol-index positions and {@link TimeFrameCursor#jumpTo} by physical frame index).
+     * <p>
+     * Defaults to {@link #supportsTimeFrameCursor()} so ordinary (physical) time-frame factories keep their
+     * existing fast/parallel behavior unchanged. A factory whose {@link #getTimeFrameCursor} returns a
+     * <em>merged / synthetic</em> cursor &mdash; e.g. the composite cross-cell merge scan, whose frames are
+     * per-day merges and whose rowIds are merge ordinals, not physical cells, and whose
+     * {@link #newTimeFrameCursor()} is null &mdash; must override this to false. The code generator then
+     * routes it to the SERIAL, non-fast WINDOW/HORIZON join (which walks the cursor purely through its own
+     * ordered frame/row space) and to the LIGHT ASOF/LT join, never the async or fast factories, which would
+     * NPE on the null concurrent cursor or mis-address the synthetic frames.
+     *
+     * @return true if a physical (fast/async-capable) time-frame cursor is available
+     */
+    default boolean supportsConcurrentTimeFrameCursor() {
+        return supportsTimeFrameCursor();
     }
 
     /**

@@ -1,0 +1,136 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.cairo;
+
+import io.questdb.std.Misc;
+import io.questdb.std.QuietCloseable;
+import io.questdb.std.str.StringSink;
+
+/**
+ * Thin wrapper over the {@code _cell} symbol map ({@link CompositeInternerLayout#REGISTRY_NAME}):
+ * the write side interns composite-partition dimension-tuples ({@code int[]}) into dense cell
+ * ordinals, the read side reverse-looks-up an ordinal back to its tuple.
+ * <p>
+ * A {@code CellRegistry} is opened around <b>either</b> a {@link MapWriter} (write side) <b>or</b> a
+ * {@link SymbolMapReader} (read side), never both -- {@link #internCell(int[], int)} requires a
+ * writer and {@link #getTuple(int, int[])} requires a reader. Reverse lookup is inherently a
+ * read-side operation: {@link SymbolMapWriter} exposes no {@code valueOf(int)}.
+ */
+public class CellRegistry implements QuietCloseable {
+    private final StringSink sink = new StringSink();
+    private SymbolMapReader reader;
+    private MapWriter writer;
+
+    public CellRegistry(MapWriter writer) {
+        this.writer = writer;
+    }
+
+    public CellRegistry(SymbolMapReader reader) {
+        this.reader = reader;
+    }
+
+    /**
+     * Frees the wrapped writer/reader. WARNING: only call this on a {@code CellRegistry} that OWNS its
+     * writer/reader (e.g. a standalone one you constructed directly, as in unit tests). Do NOT call it on a
+     * registry obtained via {@link CompositeDictionaries#cellRegistry()} on a live {@link TableWriter}/
+     * {@link TableReader}: there the wrapped {@code SymbolMapWriter}/{@code SymbolMapReaderImpl} is owned and
+     * freed elsewhere ({@code TableWriter.denseSymbolMapWriters} / {@code TableReader.compositeInternerReaders}),
+     * so closing it here double-frees. The holder is non-owning and is simply nulled on teardown.
+     */
+    @Override
+    public void close() {
+        writer = Misc.freeIfCloseable(writer);
+        reader = Misc.freeIfCloseable(reader);
+    }
+
+    /**
+     * Reverse-looks-up dense cell ordinal {@code ordinal} back to its dimension-tuple, decoding it
+     * into {@code tupleOut}. Read-side only.
+     *
+     * @throws IllegalStateException if this registry was opened over a writer, not a reader
+     */
+    public void getTuple(int ordinal, int[] tupleOut) {
+        if (reader == null) {
+            throw new IllegalStateException("CellRegistry opened write-only");
+        }
+        CompositeTupleCodec.decode(reader.valueOf(ordinal), tupleOut);
+    }
+
+    /**
+     * Reverse-looks-up dense cell ordinal {@code ordinal} back to its dimension-tuple on the WRITE
+     * side, decoding it into {@code tupleOut} -- the write-mode counterpart of {@link #getTuple(int, int[])}
+     * (which requires a reader). Composite-partitioning path construction (Plan 4a Task 3) runs on
+     * the write side, where a {@code CellRegistry} is opened over a writer only; {@link
+     * MapWriter#valueOf(MapWriter, int)} reads the just-interned hex-tuple string straight back off
+     * the writer's own memory, so no redundant {@link SymbolMapReader} needs to be opened just to
+     * decode a tuple this same writer already holds.
+     *
+     * @throws IllegalStateException if this registry was opened read-only
+     */
+    public void getTupleFromWriter(int ordinal, int[] tupleOut) {
+        if (writer == null) {
+            throw new IllegalStateException("CellRegistry opened read-only");
+        }
+        final CharSequence encoded = MapWriter.valueOf(writer, ordinal);
+        if (encoded == null) {
+            // Defensive and currently unreachable, but the dependency it guards is real and subtle.
+            //
+            // MapWriter#valueOf returns null ONLY for SymbolTable.VALUE_IS_NULL. That NARROW guard is
+            // LOAD-BEARING here: this method reads back an ordinal this same writer just interned,
+            // whose value is not yet within the writer's COMMITTED symbol count, and the narrow guard
+            // lets that read through. Widening valueOf to the reader's `key > -1 && key < symbolCount`
+            // shape -- which looks like a tidy-up -- makes this call return null and decode() NPE,
+            // and was measured to SUSPEND A TABLE on three ordinary distinct symbol values in one
+            // commit, with no NULL anywhere. See .superpowers/sdd/ for the investigation.
+            //
+            // So: do not widen that guard without changing this call site first, and if it ever does
+            // return null, fail loudly here rather than NPE inside the codec.
+            throw CairoException.critical(0)
+                    .put("composite cell registry could not resolve an interned tuple [ordinal=").put(ordinal)
+                    .put(", size=").put(size()).put(']');
+        }
+        CompositeTupleCodec.decode(encoded, tupleOut);
+    }
+
+    /**
+     * Interns dimension-tuple {@code tuple[0, arity)} into a dense cell ordinal: repeated calls
+     * with an equal tuple return the same ordinal (dedup), stable across the life of the
+     * underlying symbol map. Write-side only.
+     *
+     * @throws IllegalStateException if this registry was opened over a reader, not a writer
+     */
+    public int internCell(int[] tuple, int arity) {
+        if (writer == null) {
+            throw new IllegalStateException("CellRegistry opened read-only");
+        }
+        sink.clear();
+        CompositeTupleCodec.encode(tuple, arity, sink);
+        return writer.put(sink);
+    }
+
+    public int size() {
+        return writer != null ? writer.getSymbolCount() : reader.getSymbolCount();
+    }
+}

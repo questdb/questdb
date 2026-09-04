@@ -45,6 +45,9 @@ public class CairoTable implements Sinkable {
     private long metadataVersion = -1;
     private long o3MaxLag;
     private int partitionBy;
+    // Composite-partitioning spec surfaced from _meta; PartitionSpec.EMPTY (non-composite) by default,
+    // never null. Mirrors how partitionBy flows through the cache.
+    private PartitionSpec partitionSpec = PartitionSpec.EMPTY;
     private boolean softLink;
     private int tableFormat;
     private int timestampIndex;
@@ -70,6 +73,7 @@ public class CairoTable implements Sinkable {
         metadataVersion = fromTab.getMetadataVersion();
         timestampType = fromTab.getTimestampType();
         partitionBy = fromTab.getPartitionBy();
+        partitionSpec = fromTab.getPartitionSpec();
         maxUncommittedRows = fromTab.getMaxUncommittedRows();
         o3MaxLag = fromTab.getO3MaxLag();
         timestampIndex = fromTab.getTimestampIndex();
@@ -103,6 +107,35 @@ public class CairoTable implements Sinkable {
 
     public CairoColumn getColumnQuiet(int position) {
         return columns.getQuiet(position);
+    }
+
+    /**
+     * Resolves a column by its stable WRITER index (the create-time physical column index,
+     * persisted in {@code _meta} and unaffected by later {@code DROP COLUMN}s, since dropped
+     * columns are tombstoned rather than renumbered) rather than by dense position.
+     * <p>
+     * {@link #getColumnQuiet(int)} indexes by DENSE position, which only coincides with the
+     * writer index until a lower-writer-index column is dropped; after that, callers holding a
+     * writer index (e.g. {@link PartitionSpec} dimension/cluster-column indices) must translate
+     * through this method instead of {@code getColumnQuiet}, or they will silently resolve the
+     * wrong column (or, once the writer index exceeds the shrunken dense count, null).
+     * <p>
+     * Linear scan: {@code SHOW CREATE}/composite-partitioning rendering is the only current
+     * caller and is rare enough that this is not worth a reverse index. Returns {@code null} for
+     * a negative index or one with no surviving column (never throws), so callers must
+     * null-check rather than assume a hit.
+     */
+    public CairoColumn getColumnByWriterIndex(int writerIndex) {
+        if (writerIndex < 0) {
+            return null;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            CairoColumn c = columns.getQuick(i);
+            if (c != null && c.getWriterIndex() == writerIndex) {
+                return c;
+            }
+        }
+        return null;
     }
 
     public String getDirectoryName() {
@@ -147,6 +180,10 @@ public class CairoTable implements Sinkable {
 
     public @NotNull String getPartitionByName() {
         return PartitionBy.toString(partitionBy);
+    }
+
+    public @NotNull PartitionSpec getPartitionSpec() {
+        return partitionSpec;
     }
 
     public int getTableFormat() {
@@ -227,6 +264,10 @@ public class CairoTable implements Sinkable {
         this.partitionBy = partitionBy;
     }
 
+    public void setPartitionSpec(@NotNull PartitionSpec partitionSpec) {
+        this.partitionSpec = partitionSpec;
+    }
+
     public void setSoftLinkFlag(boolean softLink) {
         this.softLink = softLink;
     }
@@ -263,6 +304,10 @@ public class CairoTable implements Sinkable {
         sink.put("maxUncommittedRows=").put(getMaxUncommittedRows()).put(", ");
         sink.put("o3MaxLag=").put(getO3MaxLag()).put(", ");
         sink.put("partitionBy=").put(getPartitionByName()).put(", ");
+        // Only emitted for composite tables so plain-table output stays byte-identical.
+        if (partitionSpec.isComposite()) {
+            sink.put("compositePartitionDimensions=").put(partitionSpec.getDimensionCount()).put(", ");
+        }
         sink.put("timestampIndex=").put(getTimestampIndex()).put(", ");
         sink.put("timestampName=").put(getTimestampName()).put(", ");
         final int ttlHoursOrMonths = getTtlHoursOrMonths();

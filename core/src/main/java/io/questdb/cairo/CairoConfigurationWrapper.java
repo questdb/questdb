@@ -1540,6 +1540,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getWalCompositeFastAppendMaxOpenCells() {
+        return getDelegate().getWalCompositeFastAppendMaxOpenCells();
+    }
+
+    @Override
     public long getWalDataAppendPageSize() {
         return getDelegate().getWalDataAppendPageSize();
     }
@@ -1872,6 +1877,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isWalApplyParallelSqlEnabled() {
         return getDelegate().isWalApplyParallelSqlEnabled();
+    }
+
+    @Override
+    public boolean isWalCompositeFastAppendEnabled() {
+        return getDelegate().isWalCompositeFastAppendEnabled();
     }
 
     public boolean isWalSupported() {

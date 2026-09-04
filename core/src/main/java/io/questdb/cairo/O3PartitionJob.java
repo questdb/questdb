@@ -61,6 +61,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.tasks.O3OpenColumnTask;
 import io.questdb.tasks.O3PartitionTask;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -109,14 +110,21 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long o3TimestampMin,
             O3Basket o3Basket,
             long newPartitionSize,
-            long oldPartitionSize
+            long oldPartitionSize,
+            // Composite: the CELL whose parquet file is being updated. The caller
+            // (o3ProcessPartitionSafe) already resolved both; before they were threaded
+            // here every path and lookup below answered for the DAY container / cellKey 0,
+            // which is why an O3 write into a converted cell was refused outright rather
+            // than performed. null / 0 for a plain table, i.e. unchanged behaviour.
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
         Path path = Path.getThreadLocal(pathToTable);
-        setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+        setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn, cellSegment);
 
-        final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp);
+        final int partitionIndex = tableWriter.getPartitionIndexByTimestamp(partitionTimestamp, cellKey);
         final long parquetFileSize = tableWriter.getPartitionParquetFileSize(partitionIndex);
         long duplicateCount = 0;
         long newParquetSize;
@@ -291,7 +299,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // Rewrite mode: write to a new partition directory named by txn.
                         // The old directory (srcNameTxn) is left intact and queued for removal on commit.
                         Path newPath = Path.getThreadLocal2(pathToTable);
-                        setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                        setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn, cellSegment);
                         ff.mkdirs(newPath.slash(), cairoConfiguration.getMkDirMode());
                         newPath.concat(PARQUET_PARTITION_NAME).$();
                         writerFd = TableUtils.openRW(ff, newPath.$(), LOG, opts);
@@ -595,10 +603,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // In rewrite mode, the new file is in a txn-named directory.
                 final long txnName = isRewrite ? txn : srcNameTxn;
                 path.of(pathToTable);
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txnName, cellSegment);
                 updateParquetIndexes(
                         partitionBy,
                         partitionTimestamp,
+                        cellSegment,
+                        cellKey,
                         tableWriter,
                         txnName,
                         o3Basket,
@@ -629,7 +639,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
                     Path newPath = Path.getThreadLocal2(pathToTable);
-                    setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn);
+                    setPathForNativePartition(newPath, timestampType, partitionBy, partitionTimestamp, txn, cellSegment);
                     if (!ff.rmdir(newPath.slash())) {
                         LOG.error().$("could not remove new partition directory after failed rewrite [path=").$(newPath).I$();
                     }
@@ -652,7 +662,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // Update mode: truncate the parquet data file back to its
                 // pre-merge size. _pm is never truncated (see below).
                 path.of(pathToTable);
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn, cellSegment);
                 try {
                     // Swallow any error (openRW throws on an FS fault): o3BumpErrorCount
                     // below must still run to suspend the table. A failed truncate leaves
@@ -681,7 +691,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     // Truncating would pull pages from under a concurrent reader's
                     // mmap and SIGBUS the JVM -- the hazard this change removes.
                     path.of(pathToTable);
-                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                    setPathForParquetPartitionMetadata(path.slash(), timestampType, partitionBy, partitionTimestamp, srcNameTxn, cellSegment);
                     try {
                         // Make the leftover _pm tail durable, but swallow any error:
                         // o3BumpErrorCount below must still run to suspend the table.
@@ -712,9 +722,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
             path.of(pathToTable);
             if (isRewrite) {
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, txn, cellSegment);
             } else {
-                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
+                setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn, cellSegment);
             }
             final long fileSize = Files.length(path.$());
             Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
@@ -758,7 +768,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long dedupColSinkAddr,
             boolean isParquet,
             long o3TimestampLo,
-            long o3TimestampHi
+            long o3TimestampHi,
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         // is out of order data hitting the last partition?
         // if so we do not need to re-open files and write to existing file descriptors
@@ -787,7 +799,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         seqTxn,
                         partitionUpdateSinkAddr,
                         o3Basket,
-                        newPartitionSize
+                        newPartitionSize,
+                        cellSegment,
+                        cellKey
                 );
                 return;
             }
@@ -809,7 +823,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     o3TimestampMin,
                     o3Basket,
                     newPartitionSize,
-                    oldPartitionSize
+                    oldPartitionSize,
+                    cellSegment,
+                    cellKey
             );
             return;
         }
@@ -844,7 +860,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             tableWriter.getMetadata().getTimestampType(),
                             partitionBy,
                             partitionTimestamp,
-                            txn - 1
+                            txn - 1,
+                            cellSegment
                     );
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                 } catch (Throwable e) {
@@ -907,7 +924,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnCounter,
                     o3Basket,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    cellSegment,
+                    cellKey
             );
         } else {
             long srcTimestampAddr = 0;
@@ -947,7 +966,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             tableWriter.getMetadata().getTimestampType(),
                             partitionBy,
                             partitionTimestamp,
-                            srcNameTxn
+                            srcNameTxn,
+                            cellSegment
                     );
 
                     // also track the fd that we need to eventually close
@@ -1444,12 +1464,44 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 oldPartitionTimestamp = partitionTimestamp;
                 boolean partitionSplit = false;
 
-                // Split partition if the prefix is large enough (relatively and absolutely)
+                // Split partition if the prefix is large enough (relatively and absolutely).
+                //
+                // The merged-row count is CLAMPED AT ZERO. An empty block is encoded hi = lo - 1, not
+                // hi = lo, so the raw sum can come out NEGATIVE -- and then "prefixHi > 2 * negative" is
+                // true for every prefix, including an empty one, which defeats the whole relative-size
+                // guard and splits on every O3 write regardless of size.
+                //
+                // Measured on a composite table, which hits the degenerate encoding on every write
+                // because it merges into a CELL rather than a whole day:
+                //     composite  prefixHi=0, threshold=0, rhs2x=-2  -> split, 6 of 6 rounds
+                //     plain      prefixHi=0, threshold=0, rhs2x=0   -> no split
+                //                prefixHi=1, threshold=0, rhs2x=0   -> split, 3 of 6 rounds
+                // i.e. the composite table accumulated one split fragment per O3 round where its plain
+                // twin accumulated one per two. Clamping restores the intended comparison for both:
+                // where the sum is already >= 0 -- every plain case measured -- this changes nothing.
+                // SCOPED TO COMPOSITE, corrected 2026-08-28. The first version clamped for every
+                // table on the reasoning that a negative sum is degenerate anyway and no plain case
+                // measured produced one. That was wrong, and an ENTERPRISE test found the counterexample
+                // this repository's own suites did not: StoragePolicyJobTest#
+                // testParquetConversionGivesUpWhenSquashPublishesAsync builds a fixture that RELIES on
+                // 2020-01-01 splitting, and its sum is negative -- pre-clamp, "prefixHi > 2 * negative"
+                // was trivially true and the split happened. Clamping made prefixHi > 0 the requirement
+                // and the fixture stopped splitting. Confirmed by direct experiment: reverting the clamp
+                // makes that test pass again, restoring it composite-only keeps it passing.
+                //
+                // So the clamp genuinely changes PLAIN split behaviour, and plain tables keep the
+                // pre-existing expression exactly. Composite keeps the clamp, which is what stops a cell
+                // splitting on every O3 write (see the measurements below).
+                final long o3MergedRowCountRaw =
+                        mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo;
+                final long o3MergedRowCount = tableWriter.isComposite()
+                        ? Math.max(0L, o3MergedRowCountRaw)
+                        : o3MergedRowCountRaw;
                 if (
                         prefixType == O3_BLOCK_DATA
                                 && (mergeType == O3_BLOCK_MERGE || mergeType == O3_BLOCK_O3)
                                 && prefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                                && prefixHi > 2 * (mergeDataHi - mergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
+                                && prefixHi > 2 * o3MergedRowCount
                 ) {
                     // large prefix copy, better to split the partition
                     long maxSourceTimestamp = Unsafe.getLong(srcTimestampAddr + prefixHi * Long.BYTES);
@@ -1472,8 +1524,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             long shiftLeft = prefixHi - newPrefixHi;
                             long newMergeDataLo = mergeDataLo - shiftLeft;
                             // Check that splitting still makes sense
+                            // Same clamp as above -- this re-check uses the same expression with the
+                            // shifted merge-data low bound, so it underflows the same way.
+                            final long newMergedRaw =
+                                    mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo;
+                            final long newMergedRowCount = tableWriter.isComposite()
+                                    ? Math.max(0L, newMergedRaw)
+                                    : newMergedRaw;
                             if (newPrefixHi >= tableWriter.getPartitionO3SplitThreshold()
-                                    && newPrefixHi > 2 * (mergeDataHi - newMergeDataLo + suffixHi - suffixLo + mergeO3Hi - mergeO3Lo)
+                                    && newPrefixHi > 2 * newMergedRowCount
                             ) {
                                 prefixHi = newPrefixHi;
                                 mergeDataLo = newMergeDataLo;
@@ -1532,7 +1591,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             tableWriter.getMetadata().getTimestampType(),
                             partitionBy,
                             partitionTimestamp,
-                            txn
+                            txn,
+                            cellSegment
                     );
                     createDirsOrFail(ff, path, tableWriter.getConfiguration().getMkDirMode());
                     if (last) {
@@ -1596,7 +1656,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnCounter,
                     o3Basket,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    cellSegment,
+                    cellKey
             );
         }
     }
@@ -1635,6 +1697,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final boolean isParquet = task.isParquet();
         final long o3TimestampLo = task.getO3TimestampLo();
         final long o3TimestampHi = task.getO3TimestampHi();
+        final CharSequence cellSegment = task.getCellSegment();
+        final int cellKey = task.getCellKey();
 
         subSeq.done(cursor);
 
@@ -1664,7 +1728,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 dedupColSinkAddr,
                 isParquet,
                 o3TimestampLo,
-                o3TimestampHi
+                o3TimestampHi,
+                cellSegment,
+                cellKey
         );
     }
 
@@ -1827,6 +1893,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     private static long getDedupRows(
+            @Nullable CharSequence cellSegment,
+            int cellKey,
             long partitionTimestamp,
             long srcNameTxn,
             long srcTimestampAddr,
@@ -1854,6 +1922,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             );
         } else {
             return getDedupRowsWithAdditionalKeys(
+                    cellSegment,
+                    cellKey,
                     partitionTimestamp,
                     srcNameTxn,
                     srcTimestampAddr,
@@ -1873,6 +1943,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     private static long getDedupRowsWithAdditionalKeys(
+            @Nullable CharSequence cellSegment,
+            int cellKey,
             long partitionTimestamp,
             long srcNameTxn,
             long srcTimestampAddr,
@@ -1904,9 +1976,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 int columnType = metadata.getColumnType(i);
                 if (columnType > 0 && metadata.isDedupKey(i) && i != metadata.getTimestampIndex()) {
                     final int columnSize = !ColumnType.isVarSize(columnType) ? ColumnType.sizeOf(columnType) : -1;
-                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, i, mergeDataHi + 1);
+                    // Per-CELL, like the path built below. These two feed the SAME address the native
+                    // comparison walks: columnTop shifts the mapped base
+                    // (Math.abs(fixMappedAddress) - columnTop * columnSize) and columnNameTxn selects
+                    // WHICH file is mapped. Resolved cellKey-0-blind they described a different cell
+                    // than the merge ranges, which is how the second crash --
+                    // is_fixed_column_merge_identical<int> -- survived fixing the path alone.
+                    final long columnTop = tableWriter.getColumnTop(partitionTimestamp, cellKey, i, mergeDataHi + 1);
                     CharSequence columnName = metadata.getColumnName(i);
-                    long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, i);
+                    long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, cellKey, i);
 
                     long addr = DedupColumnCommitAddresses.setColValues(
                             dedupColSinkAddr,
@@ -1951,12 +2029,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     } else { // if (columnTop > mergeDataHi)
                         if (columnSize > 0) {
                             // Fixed length column
+                            // Cell-aware. Without the segment this resolves the DAY container, where a
+                            // 0-byte stray <column>.d sits beside the cell directories -- openRO then
+                            // succeeds and mapAppendColumnBuffer maps fixMapSize bytes PAST its end, so
+                            // the native dedup merge died on first touch with SIGBUS/BUS_ADRERR in
+                            // Vect.mergeDedupTimestampWithLongIndexIntKeys. The dedup KEY column must be
+                            // read from the same cell whose rows the merge ranges describe.
                             TableUtils.setSinkForNativePartition(
                                     tableRootPath.trimTo(tableRootPathLen).slash(),
                                     tableWriter.getMetadata().getTimestampType(),
                                     tableWriter.getPartitionBy(),
                                     partitionTimestamp,
-                                    srcNameTxn
+                                    srcNameTxn,
+                                    cellSegment
                             );
                             long fd = TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG);
 
@@ -1986,12 +2071,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             ColumnTypeDriver driver = ColumnType.getDriver(columnType);
                             long auxMapSize = driver.getAuxVectorSize(rows);
 
+                            // Cell-aware. Without the segment this resolves the DAY container, where a
+                            // 0-byte stray <column>.d sits beside the cell directories -- openRO then
+                            // succeeds and mapAppendColumnBuffer maps fixMapSize bytes PAST its end, so
+                            // the native dedup merge died on first touch with SIGBUS/BUS_ADRERR in
+                            // Vect.mergeDedupTimestampWithLongIndexIntKeys. The dedup KEY column must be
+                            // read from the same cell whose rows the merge ranges describe.
                             TableUtils.setSinkForNativePartition(
                                     tableRootPath.trimTo(tableRootPathLen).slash(),
                                     tableWriter.getMetadata().getTimestampType(),
                                     tableWriter.getPartitionBy(),
                                     partitionTimestamp,
-                                    srcNameTxn
+                                    srcNameTxn,
+                                    cellSegment
                             );
                             long auxFd = TableUtils.openRO(ff, TableUtils.iFile(tableRootPath, columnName, columnNameTxn), LOG);
                             long auxMappedAddress = TableUtils.mapAppendColumnBuffer(
@@ -2005,12 +2097,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             long varMapSize = driver.getDataVectorSizeAt(auxMappedAddress, rows - 1);
                             if (varMapSize > 0) {
+                                // Cell-aware for the same reason as the fixed-size branch above: the
+                                // var-size data vector must come from the cell the merge ranges describe.
                                 TableUtils.setSinkForNativePartition(
                                         tableRootPath.trimTo(tableRootPathLen).slash(),
                                         tableWriter.getMetadata().getTimestampType(),
                                         tableWriter.getPartitionBy(),
                                         partitionTimestamp,
-                                        srcNameTxn
+                                        srcNameTxn,
+                                        cellSegment
                                 );
                             }
                             long varFd = varMapSize > 0 ? TableUtils.openRO(ff, TableUtils.dFile(tableRootPath, columnName, columnNameTxn), LOG) : -1;
@@ -2862,7 +2957,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         while (cursor == -2) {
             Os.pause();
@@ -2916,7 +3013,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn
+                    columnNameTxn,
+                    cellSegment,
+                    cellKey
             );
         } else {
             O3OpenColumnJob.openColumn(
@@ -2964,7 +3063,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn
+                    columnNameTxn,
+                    cellSegment,
+                    cellKey
             );
         }
     }
@@ -3015,7 +3116,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
@@ -3063,7 +3166,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn
+                columnNameTxn,
+                cellSegment,
+                cellKey
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
@@ -3106,7 +3211,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             AtomicInteger columnCounter,
             O3Basket o3Basket,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
@@ -3138,6 +3245,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final Path tempTablePath = Path.getThreadLocal(tableWriter.getConfiguration().getDbRoot()).concat(tableWriter.getTableToken());
 
                     final long dedupRows = getDedupRows(
+                            cellSegment,
+                            cellKey,
                             oldPartitionTimestamp,
                             srcNameTxn,
                             srcTimestampAddr,
@@ -3164,6 +3273,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             // All the rows are duplicates, the commit does not add any new lines.
                             // Check non-key columns if they are exactly the same as the rows they replace
                             if (tableWriter.checkDedupCommitIdenticalToPartition(
+                                    oooColumns,
+                                    cellKey,
                                     oldPartitionTimestamp,
                                     srcNameTxn,
                                     srcDataOldPartitionSize,
@@ -3182,7 +3293,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                                     timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
-                                    removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
+                                    removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn, cellSegment);
 
                                     // nothing to do, skip the partition
                                     updatePartition(
@@ -3248,7 +3359,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // No merge anymore, free the merge index
                         timestampMergeIndexAddr = Unsafe.free(timestampMergeIndexAddr, timestampMergeIndexSize, MemoryTag.NATIVE_O3);
 
-                        removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn);
+                        removePhantomPartitionDir(pathToTable, tableWriter, partitionTimestamp, txn, cellSegment);
 
                         prefixType = O3_BLOCK_DATA;
                         prefixLo = 0;
@@ -3372,7 +3483,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 try {
                     final long cursor = tableWriter.getO3OpenColumnPubSeq().next();
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, i);
+                    // Plan 4b Task 2 (opus review Critical, root cause): cell-aware -- the cell-blind
+                    // 2-arg overload resolved cellKey 0 implicitly, so extending/merging a non-zero-
+                    // cellKey cell after ADD COLUMN read a DIFFERENT sibling cell's columnNameTxn (or the
+                    // day-level default) instead of this cell's own. cellKey == 0 is byte-identical.
+                    final long columnNameTxn = tableWriter.getColumnNameTxn(oldPartitionTimestamp, cellKey, i);
                     if (cursor > -1) {
                         publishOpenColumnTaskHarmonized(
                                 cursor,
@@ -3420,7 +3535,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn
+                                columnNameTxn,
+                                cellSegment,
+                                cellKey
                         );
                     } else {
                         publishOpenColumnTaskContended(
@@ -3469,7 +3586,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn
+                                columnNameTxn,
+                                cellSegment,
+                                cellKey
                         );
                     }
                 } catch (Throwable e) {
@@ -3521,12 +3640,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Path pathToTable,
             TableWriter tableWriter,
             long partitionTimestamp,
-            long txn
+            long txn,
+            @Nullable CharSequence cellSegment
     ) {
         // Remove empty partition dir to not create a partition that is not used but can be counted
         // by partition purging logic as a valid version
+        //
+        // Cell-aware: on a composite table the phantom version is <day>/<cell>.<txn>, so resolving it
+        // without the cell names <day>.<txn> -- a directory that does not exist -- and the rmdir is a
+        // silent no-op. The phantom then SURVIVES, purge logic counts it as a valid version, and a
+        // reader opens its empty column files. That is why the dedup noop path returned uninitialised
+        // memory (empty symbol, px=6.15e-31) rather than crashing.
         Path path = Path.getThreadLocal(pathToTable);
-        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn);
+        setPathForNativePartition(path, tableWriter.getTimestampType(), tableWriter.getPartitionBy(), partitionTimestamp, txn, cellSegment);
         FilesFacade ff = tableWriter.getConfiguration().getFilesFacade();
         if (!ff.rmdir(path)) {
             // This is not critical, the read error will be transient
@@ -3537,6 +3663,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     private static void updateParquetIndexes(
             int partitionBy,
             long partitionTimestamp,
+            // COMPOSITE: the cell whose parquet was just rewritten. Its index files live in the CELL's
+            // directory and its column tops and name txns are keyed by (timestamp, cellKey, column) --
+            // the day-level rebuild below addressed the bare day container, whose sym.pk does not exist.
+            @Nullable CharSequence cellSegment,
+            int cellKey,
             TableWriter tableWriter,
             long srcNameTxn,
             O3Basket o3Basket,
@@ -3584,7 +3715,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     tableWriterMetadata.getTimestampType(),
                     partitionBy,
                     partitionTimestamp,
-                    srcNameTxn
+                    srcNameTxn,
+                    cellSegment
             );
             final int pLen = path.size();
 
@@ -3598,7 +3730,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
 
                     final CharSequence columnName = tableWriterMetadata.getColumnName(columnIndex);
-                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    final long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, cellKey, columnIndex);
 
                     byte indexType = tableWriterMetadata.getColumnIndexType(columnIndex);
 
@@ -3636,7 +3768,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // In rewrite mode all columns exist in the new parquet file
                         // (the Rust encoder fills missing columns with NULLs),
                         // so the index must cover all rows from row 0.
-                        final long columnTop = isRewrite ? 0 : tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, columnIndex);
+                        final long columnTop = isRewrite ? 0 : tableWriter.columnVersionReader().getColumnTop(partitionTimestamp, cellKey, columnIndex);
                         if (columnTop > -1 && newPartitionSize > columnTop) {
                             parquetColumns.clear();
                             parquetColumns.add(parquetColumnIndex);
@@ -3776,9 +3908,38 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long seqTxn,
             long partitionUpdateSinkAddr,
             O3Basket o3Basket,
-            long newPartitionSize
+            long newPartitionSize,
+            // Composite: the CELL this fresh parquet belongs to. Every path build below used the bare
+            // overload, so on a composite table the day's parquet would be written at the DAY container
+            // instead of <day>/<cell>. Unreachable while FORMAT PARQUET is refused at CREATE, but the
+            // refusal is a shadow, not a guarantee -- and this branch has twice seen a "cannot happen"
+            // assumption become live the moment its gate moved. null for a plain table.
+            @Nullable CharSequence cellSegment,
+            // The same cell as a dense key, for the `_cv` lookups the index build makes: `_cv` is
+            // keyed by (timestamp, cellKey, column). 0 for a plain table.
+            int cellKey
     ) {
         assert !tableWriter.getTableToken().isMatView() : "FORMAT PARQUET should be rejected on mat views at SQL level";
+        // DEFENCE IN DEPTH, added 2026-08-26 after auditing every path into the native parquet encoder.
+        // This method builds its target with the bare setPathForParquetPartition overload and never
+        // consults the cellSegment its CALLER has in scope, so for a composite table it would write the
+        // day's parquet at the bare day path -- the same cell-blind shape that makes CONVERT PARTITION
+        // TO PARQUET crash the JVM with a SIGBUS in the encoder.
+        // It is unreachable today only because FORMAT PARQUET is refused earlier, at CREATE. That is a
+        // shadow, not a guarantee: the two gates lifted in this session (ATTACH, DROP COLUMN) both
+        // exposed exactly this kind of site the moment their outer gate came off. Fail loudly here so
+        // that lifting FORMAT PARQUET produces a refusal rather than a wrong-path write.
+        // The message literal is reused verbatim, so the scope-closure audit's key set is unchanged.
+        // The paths below are now cell-aware, so this refusal is no longer about THIS method being
+        // unable to place the file. It stands because FORMAT PARQUET is refused at CREATE for a
+        // composite table and nothing else has been audited for an all-parquet composite table --
+        // lifting the CREATE gate is what needs the audit, not this line.
+        // The composite refusal that stood here is gone. It was defence in depth for a path whose
+        // own paths were already cell-aware, kept only because "nothing else has been audited for an
+        // all-parquet composite table". That audit is now CompositeFormatParquetTest, and it found one
+        // real defect (four cellKey-0 setters in TableWriter#o3ConsumePartitionUpdateSink's brand-new
+        // parquet branch -- see there) rather than a wall of them.
+
 
         final TableRecordMetadata metadata = tableWriter.getMetadata();
         final long partitionRowCount = srcOooHi - srcOooLo + 1;
@@ -3818,7 +3979,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         long parquetMetaFd = -1;
         boolean partitionDirCreated = false;
         try {
-            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             createDirsOrFail(ff, path.slash(), configuration.getMkDirMode());
             partitionDirCreated = true;
 
@@ -3840,10 +4001,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             // Open _pm so the Rust encoder writes parquet metadata alongside
             // the data file.
-            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             parquetMetaFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
 
-            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
 
             final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
             final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
@@ -3891,7 +4052,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             // Stat _pm size and release the writer fd before mmap RO for indexing.
-            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartitionMetadata(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             final long parquetMetaFileSize = ff.length(parquetPath.$());
             ff.close(parquetMetaFd);
             parquetMetaFd = -1;
@@ -3901,13 +4062,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             // existing parquet partitions via updateParquetIndexes; the fresh
             // path must do the same or readers will SIGABRT trying to open
             // missing index files on the first query against this partition.
-            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForParquetPartition(parquetPath.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             // Encoder already cleared the descriptor; clearing the rest of the
             // context resets transient scratch lists before indexing.
             ctx.clear();
             updateParquetIndexes(
                     partitionBy,
                     partitionTimestamp,
+                    cellSegment,
+                    cellKey,
                     tableWriter,
                     partitionNameTxn,
                     o3Basket,
@@ -3948,7 +4111,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 parquetMetaFd = -1;
             }
             if (partitionDirCreated) {
-                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
                 if (!ff.rmdir(path.slash())) {
                     LOG.error().$("could not remove fresh parquet partition dir [path=").$(path).I$();
                 }

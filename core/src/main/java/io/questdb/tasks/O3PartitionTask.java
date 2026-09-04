@@ -36,6 +36,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class O3PartitionTask {
     private AtomicInteger columnCounter;
+    private CharSequence cellSegment;
+    private int cellKey;
     private ObjList<MemoryMA> columns;
     private long dedupColSinkAddr;
     private boolean isParquet;
@@ -67,6 +69,32 @@ public class O3PartitionTask {
 
     public AtomicInteger getColumnCounter() {
         return columnCounter;
+    }
+
+    /**
+     * Composite-partitioning (Plan 4a Task 4): the already-rendered cell-directory segment (e.g.
+     * {@code "exch=BTC"} or {@code "BTC"}, see {@link io.questdb.cairo.TableWriter#renderCellSegment})
+     * this task's partition path must be constructed under, or {@code null} for a plain (non-composite)
+     * table -- {@code null} is byte-identical to today's behavior (see {@code
+     * TableUtils#setPathForNativePartition(io.questdb.std.str.Path, int, int, long, long,
+     * CharSequence)}). Always an immutable snapshot (e.g. a {@code String}, never a reused/mutable
+     * sink) since this task may be consumed by a different thread after the dispatching call returns.
+     */
+    public CharSequence getCellSegment() {
+        return cellSegment;
+    }
+
+    /**
+     * Plan 4b Task 2: the composite {@code cellKey} this task's cell was dispatched for (0 for a plain
+     * or dormant-composite table), mirroring {@link #getCellSegment()}'s own contract -- a plain {@code
+     * int} copy, trivially safe across the same async-consumption boundary {@code cellSegment}'s own docs
+     * describe (no aliasing possible for a primitive). Threaded alongside {@code cellSegment} so the O3
+     * merge machinery (via {@link io.questdb.cairo.O3PartitionJob#publishOpenColumnTasks}) can resolve
+     * THIS cell's own column-version records instead of aliasing whichever sibling cell happens to be
+     * packed at cellKey 0.
+     */
+    public int getCellKey() {
+        return cellKey;
     }
 
     public ObjList<MemoryMA> getColumns() {
@@ -195,7 +223,9 @@ public class O3PartitionTask {
             long dedupColSinkAddr,
             boolean isParquet,
             long o3TimestampLo,
-            long o3TimestampHi
+            long o3TimestampHi,
+            CharSequence cellSegment,
+            int cellKey
     ) {
         this.pathToTable = path;
         this.txn = txn;
@@ -223,5 +253,7 @@ public class O3PartitionTask {
         this.isParquet = isParquet;
         this.o3TimestampLo = o3TimestampLo;
         this.o3TimestampHi = o3TimestampHi;
+        this.cellSegment = cellSegment;
+        this.cellKey = cellKey;
     }
 }

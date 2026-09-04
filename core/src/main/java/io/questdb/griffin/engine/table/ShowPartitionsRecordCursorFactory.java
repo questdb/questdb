@@ -153,12 +153,22 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
 
     private class ShowPartitionsRecordCursor implements NoRandomAccessRecordCursor {
         private final ObjList<String> attachablePartitions = new ObjList<>(4);
+        // Composite-partitioning (Plan 4a Task 5b): dedicated (NOT Misc.getThreadLocalSink()) scratch
+        // sink for renderCellSegment() -- TableReader.renderCellSegment -> valueOfDimensionKey ->
+        // SymbolMapReader.valueOf(key) (IDENTITY reverse lookup) internally decodes through that same
+        // shared thread-local sink, so using it as this accumulator too would be genuinely reentrant
+        // (see TableReader#formatNativePartitionDirName's own docs for the reproduced corruption).
+        private final StringSink cellSegmentSink = new StringSink();
         private final ObjList<String> detachedPartitions = new ObjList<>(8);
         private final StringSink partitionName = new StringSink();
         private final PartitionsRecord partitionRecord = new PartitionsRecord();
         private final StringSink partitionSizeSink = new StringSink();
         private TableReaderMetadata detachedMetaReader;
         private TxReader detachedTxReader;
+        // Composite-partitioning (Plan 4a Task 5b): PartitionSpec.getDimensionCount(), cached once in
+        // initialize() -- 0 for a plain table, gating every cell-aware display change behind it so a
+        // plain table's name/path resolution stays byte-identical to pre-composite behavior.
+        private int dimCount;
         private int dynamicPartitionIndex = -1;
         private boolean hasParquetGenerated;
         private boolean isActive;
@@ -193,6 +203,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             partitionRecord.close();
             tableReader = Misc.free(tableReader);
             partitionSizeSink.clear();
+            cellSegmentSink.clear();
         }
 
         @Override
@@ -247,6 +258,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             tableReader = executionContext.getReader(tableToken);
             timestampType = tableReader.getMetadata().getTimestampType();
             partitionBy = tableReader.getPartitionedBy();
+            dimCount = tableReader.getMetadata().getPartitionSpec().getDimensionCount();
             if (PartitionBy.isPartitioned(partitionBy)) {
                 TableReaderMetadata meta = tableReader.getMetadata();
                 tsColName = meta.getColumnName(meta.getTimestampIndex());
@@ -298,8 +310,12 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 isRemotelyServed = tableTxReader.isPartitionRemotelyServed(partitionIndex);
                 long timestamp = tableTxReader.getPartitionTimestampByIndex(partitionIndex);
                 isActive = timestamp == tableTxReader.getLastPartitionTimestamp();
+                CharSequence cellSegment = resolveCellSegmentOrNull(tableTxReader, partitionIndex);
                 PartitionBy.setSinkForPartition(partitionName, timestampType, partitionBy, timestamp);
-                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex));
+                if (cellSegment != null) {
+                    partitionName.put('/').put(cellSegment);
+                }
+                TableUtils.setPathForNativePartition(path, timestampType, partitionBy, timestamp, tableTxReader.getPartitionNameTxn(partitionIndex), cellSegment);
                 if (isParquet) {
                     openParquetMeta(path, tableTxReader.getPartitionParquetFileSize(partitionIndex));
                 } else if (hasParquetGenerated) {
@@ -417,6 +433,39 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                     maxTimestamp = Long.MIN_VALUE;
                 }
             }
+        }
+
+        /**
+         * Composite-partitioning display support (Plan 4a Task 5b): resolves partition {@code
+         * partitionIndex}'s on-disk cell-directory segment (e.g. {@code "exchange=NYSE"}), or {@code
+         * null} for a plain table ({@code dimCount == 0}) or a DORMANT composite partition -- one
+         * written before real per-row cell routing ever ran for this table, where {@code _txn}'s
+         * cellKey slot holds only a bare structural {@code 0}, not a genuinely-interned ordinal (a
+         * reverse lookup would either throw or return nonsense; see {@link
+         * TableReader#renderCellSegment(io.questdb.std.str.CharSink, int)}'s own docs). Without this,
+         * a composite table with 2+ cells sharing a day would (a) list every cell under the same bare
+         * day {@code name}, and (b) have {@code path} resolve to the wrong physical directory for
+         * every cell but at most one (whichever happens to share the bare day's own {@code nameTxn}),
+         * corrupting min/maxTimestamp and diskSize for the rest -- reproduced directly while
+         * grounding this fix (min/maxTimestamp for a non-first cell was read back as the 1970 epoch,
+         * from a stray, disconnected directory).
+         * <p>
+         * Mirrors {@code TableReader}'s own (private) {@code resolveCellSegmentOrNullIfDormant} using
+         * only public accessors, since this class lives in a different package and already reads the
+         * raw {@link TxReader} ({@code tableTxReader}) directly rather than going through {@code
+         * TableReader}'s cached per-partition slots (as every other field in this method does).
+         */
+        private CharSequence resolveCellSegmentOrNull(TxReader tableTxReader, int partitionIndex) {
+            if (dimCount <= 0) {
+                return null;
+            }
+            int cellKey = tableTxReader.getPartitionCellKey(partitionIndex);
+            if (cellKey >= tableReader.getCompositeDictionaries().cellRegistry().size()) {
+                return null;
+            }
+            cellSegmentSink.clear();
+            tableReader.renderCellSegment(cellSegmentSink, cellKey);
+            return cellSegmentSink;
         }
 
         /**

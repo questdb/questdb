@@ -75,12 +75,18 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
                 if (fwdCursor == null) {
                     fwdCursor = new IntervalFwdPartitionFrameCursor(reader.getConfiguration(), intervalModel, timestampIndex);
                 }
+                // Task 5b: propagate on every getCursor() call (cheap, idempotent) rather than only at
+                // construction -- fwdCursor/bwdCursor are cached and reused across executions of this
+                // same compiled factory, and allowedCellKeys (set once, at most, by SqlCodeGenerator
+                // right after this factory was built) must reach whichever cursor is actually handed out.
+                fwdCursor.setAllowedCellKeys(allowedCellKeys);
                 return fwdCursor.of(reader, executionContext);
             }
 
             if (bwdCursor == null) {
                 bwdCursor = new IntervalBwdPartitionFrameCursor(reader.getConfiguration(), intervalModel, timestampIndex);
             }
+            bwdCursor.setAllowedCellKeys(allowedCellKeys);
             return bwdCursor.of(reader, executionContext);
         } catch (Throwable th) {
             Misc.free(reader);
@@ -125,5 +131,11 @@ public class IntervalPartitionFrameCursorFactory extends AbstractPartitionFrameC
         }
         super.toPlan(sink);
         sink.attr("intervals").val(intervalModel);
+        if (allowedCellKeys != null) {
+            // Task 5b observability: a composite dimension predicate was resolved to a cellKey set --
+            // surfaces in EXPLAIN as evidence pruning is active (cellsPruned == the count of cells this
+            // scan will actually visit, e.g. 0 for a never-matched value, regardless of total day count).
+            sink.attr("cellsPruned").val(allowedCellKeys.size());
+        }
     }
 }

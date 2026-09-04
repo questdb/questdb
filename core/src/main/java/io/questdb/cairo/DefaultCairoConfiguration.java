@@ -1527,6 +1527,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public int getWalCompositeFastAppendMaxOpenCells() {
+        return 64;
+    }
+
+    @Override
     public long getWalDataAppendPageSize() {
         return 1024 * 1024;
     }
@@ -1842,6 +1847,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public boolean isWalApplyParallelSqlEnabled() {
+        return true;
+    }
+
+    @Override
+    public boolean isWalCompositeFastAppendEnabled() {
         return true;
     }
 

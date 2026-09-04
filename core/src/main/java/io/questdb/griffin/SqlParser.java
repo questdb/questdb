@@ -34,6 +34,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -2988,18 +2989,86 @@ public class SqlParser {
         int walSetting = WAL_NOT_SET;
         boolean formatSeen = false;
 
-        final ExpressionNode partitionByExpr = parseCreateTablePartition(lexer, tok);
+        ExpressionNode partitionByExpr = parseCreateTablePartition(lexer, tok);
         if (partitionByExpr != null) {
             // timestamp may be inferred from select query.
             if (builder.getSelectText() == null && builder.getTimestampExpr() == null) {
                 throw SqlException.$(partitionByExpr.position, "partitioning is possible only on tables with designated timestamps");
             }
+
+            // Accept `timestamp(UNIT)` as an alternative spelling of a bare UNIT literal, e.g.
+            // `partition by timestamp(day)` is equivalent to `partition by day`.
+            if (isTimestampKeyword(partitionByExpr.token)) {
+                CharSequence maybeParen = optTok(lexer);
+                if (maybeParen != null && Chars.equals(maybeParen, '(')) {
+                    partitionByExpr = expectLiteral(lexer);
+                    expectTok(lexer, ')');
+                } else if (maybeParen != null) {
+                    lexer.unparseLast();
+                }
+            }
+
             final int partitionBy = PartitionBy.fromString(partitionByExpr.token);
+            // Look ahead one token past the time-unit element before deciding whether an unrecognized
+            // unit is a plain bad-unit error or a composite list whose first element isn't a time unit.
+            tok = optTok(lexer);
             if (partitionBy == -1) {
+                if (tok != null && Chars.equals(tok, ',')) {
+                    throw SqlException.$(partitionByExpr.position, "partition time unit (DAY/HOUR/WEEK/MONTH/YEAR) must come first");
+                }
                 throw SqlException.$(partitionByExpr.position, "'NONE', 'HOUR', 'DAY', 'WEEK', 'MONTH' or 'YEAR' expected");
             }
             builder.setPartitionByExpr(partitionByExpr);
-            tok = optTok(lexer);
+
+            // Composite partitioning dimension list: PARTITION BY <time-unit> [, <dimension> [AS <alias>]]*
+            // Dimensions are collected as raw expressions only; resolution to PartitionSpec happens later.
+            // An optional `AS <alias>` after a dimension expression (composite-partitioning Plan 4e
+            // Task 1) marks an arbitrary-expression dimension (KIND_EXPRESSION, e.g.
+            // `(upper(region)) AS r`) -- resolvePartitionSpec decides the dimension's kind from
+            // whether an alias was captured, not from the expression's shape, so this loop stays
+            // shape-agnostic: it never needs to know identity/hash/truncate from any other call.
+            // Without AS, parsing is byte-for-byte unchanged from before this feature.
+            while (tok != null && Chars.equals(tok, ',')) {
+                final int dimPos = lexer.getPosition();
+                final ExpressionNode dimExpr = expr(lexer, (IQueryModel) null, sqlParserCallback);
+                if (dimExpr == null) {
+                    // The comma was already consumed above, so unlike the WITH-clause loop (which
+                    // uses a null expr as its natural terminator), null here means a dangling comma
+                    // with nothing following it: malformed input that must be rejected, not skipped.
+                    throw SqlException.$(dimPos, "partition dimension expected");
+                }
+
+                CharSequence dimAlias = null;
+                tok = optTok(lexer);
+                if (tok != null && isAsKeyword(tok)) {
+                    dimAlias = expectLiteral(lexer).token;
+                    tok = optTok(lexer);
+                }
+
+                builder.addPartitionDimensionExpr(dimExpr, dimAlias);
+            }
+
+            // Optional data clustering within each partition: ORDER BY <col> [, <col>]*
+            if (tok != null && isOrderKeyword(tok)) {
+                expectTok(lexer, "by");
+                do {
+                    builder.addClusterExpr(expectLiteral(lexer));
+                    tok = optTok(lexer);
+                } while (tok != null && Chars.equals(tok, ','));
+            }
+
+            // Optional partition directory naming scheme: LAYOUT HIVE|PLAIN (default HIVE)
+            if (tok != null && isLayoutKeyword(tok)) {
+                CharSequence modeTok = tok(lexer, "'hive' or 'plain'");
+                if (isPlainKeyword(modeTok)) {
+                    builder.setNamingMode(PartitionSpec.MODE_PLAIN);
+                } else if (isHiveKeyword(modeTok)) {
+                    builder.setNamingMode(PartitionSpec.MODE_HIVE);
+                } else {
+                    throw SqlException.$(lexer.lastTokenPosition(), "'hive' or 'plain' expected");
+                }
+                tok = optTok(lexer);
+            }
 
             tok = sqlParserCallback.parseTtlSettings(lexer, tok, partitionBy, builder, false);
 

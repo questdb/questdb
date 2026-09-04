@@ -64,7 +64,8 @@ final class ParquetRowGroupMaterializer {
                 symbolTableProvider,
                 false,
                 null,
-                Long.MIN_VALUE
+                Long.MIN_VALUE,
+                0
         );
     }
 
@@ -76,6 +77,10 @@ final class ParquetRowGroupMaterializer {
             TableRecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp,
+            // COMPOSITE: the cell being materialized. `_cv` is keyed by (timestamp, cellKey, column),
+            // so a cellKey-0 read gives every cell of a day cell 0's column tops -- where they differ,
+            // a sibling's values encode as absent and read back NULL. 0 for a plain table.
+            int cellKey,
             IntList tableToParquetIndex,
             SymbolTableProvider symbolTableProvider
     ) {
@@ -90,7 +95,8 @@ final class ParquetRowGroupMaterializer {
                 symbolTableProvider,
                 true,
                 columnVersionReader,
-                partitionTimestamp
+                partitionTimestamp,
+                cellKey
         );
     }
 
@@ -105,7 +111,8 @@ final class ParquetRowGroupMaterializer {
             SymbolTableProvider symbolTableProvider,
             boolean changedColumnsOnly,
             ColumnVersionReader columnVersionReader,
-            long partitionTimestamp
+            long partitionTimestamp,
+            int cellKey
     ) {
         final DirectIntList parquetColumns = context.getParquetColumns();
         parquetColumns.clear();
@@ -124,7 +131,7 @@ final class ParquetRowGroupMaterializer {
             // represented by an ordinary column-version top; the reader's -1 sentinel therefore
             // means "no override", not an absent/full-top timestamp.
             final long columnTop = changedColumnsOnly && columnIndex != metadata.getTimestampIndex()
-                    ? columnVersionReader.getColumnTop(partitionTimestamp, metadata.getWriterIndex(columnIndex))
+                    ? columnVersionReader.getColumnTop(partitionTimestamp, cellKey, metadata.getWriterIndex(columnIndex))
                     : 0;
             final boolean materializeColumn = requiresMaterialization(
                     decoder,

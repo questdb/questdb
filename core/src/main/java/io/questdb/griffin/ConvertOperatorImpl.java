@@ -50,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.NotNull;
 
@@ -80,6 +81,7 @@ public class ConvertOperatorImpl implements Closeable {
         public void setSrcOffsets(long primaryOffset, long auxOffset) {
         }
     };
+    private final StringSink cellSink = new StringSink();
     private final Path path;
     private final PurgingOperator purgingOperator;
     private final int rootLen;
@@ -307,14 +309,28 @@ public class ConvertOperatorImpl implements Closeable {
                         // that if the parquet is later converted to native (e.g. by a chained
                         // ALTER TYPE pre-pass), the native reader finds the data at the correct
                         // row offsets.
+                        // Per-CELL, like the native branch below. Every lookup here used to resolve
+                        // BY TIMESTAMP -- i.e. cellKey 0 -- while the upsertColumnTop wrote the result
+                        // into THIS cell's record, so on a composite table each cell inherited cell 0's
+                        // column top. Same read-here/write-there shape that caused silent data loss in
+                        // DropIndexOperator (see CompositeDropIndexColumnTopTest).
+                        //
+                        // This was previously commented as UNREACHABLE, on the grounds that a composite
+                        // table could not hold a parquet partition. That was wrong: CONVERT PARTITION
+                        // TO PARQUET works per cell, so the branch is reachable through ordinary SQL --
+                        // convert a day, then ALTER COLUMN TYPE. MEASURED before this fix, on cells with
+                        // uneven row counts at ADD COLUMN time (BTC top 3, ETH top 1): the ETH cell's
+                        // row vanished from the result entirely while the plain twin kept it. Covered by
+                        // CompositeAlterTypeOverParquetTest.
+                        final int parquetCellKey = tableWriter.getPartitionCellKey(partitionIndex);
                         final long parquetPts = tableWriter.getPartitionTimestamp(partitionIndex);
-                        final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, existingColIndex);
-                        if (parquetColTop != tableWriter.getColumnTop(parquetPts, columnIndex, -1)) {
+                        final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, parquetCellKey, existingColIndex);
+                        if (parquetColTop != tableWriter.getColumnTop(parquetPts, parquetCellKey, columnIndex, -1)) {
                             long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
                                     ? parquetPts
                                     : TxReader.DEFAULT_PARTITION_TIMESTAMP;
                             columnVersionWriter.upsertColumnTop(
-                                    partTs, columnIndex,
+                                    partTs, parquetCellKey, columnIndex,
                                     parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex)
                             );
                         }
@@ -323,8 +339,13 @@ public class ConvertOperatorImpl implements Closeable {
                     try {
                         final long partitionTimestamp = tableWriter.getPartitionTimestamp(partitionIndex);
                         final long maxRow = tableWriter.getPartitionSize(partitionIndex);
+                        // Per-CELL. This walk iterates partition INDEX but resolved everything below BY
+                        // TIMESTAMP, which answers for cellKey 0 on a composite table where several
+                        // cells share one raw timestamp -- so the conversion opened the DAY container's
+                        // column file and failed "could not open, file does not exist: <day>/px.d".
+                        final int cellKey = tableWriter.getPartitionCellKey(partitionIndex);
 
-                        final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
+                        final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, existingColIndex);
                         if (columnTop > -1) {
                             long rowCount = maxRow - columnTop;
                             long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
@@ -336,17 +357,18 @@ public class ConvertOperatorImpl implements Closeable {
                                         tableWriter.getMetadata().getTimestampType(),
                                         tableWriter.getPartitionBy(),
                                         partitionTimestamp,
-                                        partitionNameTxn
+                                        partitionNameTxn,
+                                        cellSegmentOrNull(cellKey)
                                 );
                                 int pathTrimToLen = path.size();
 
                                 long srcFixFd = -1, srcVarFd = -1, dstFixFd = -1, dstVarFd = -1;
                                 try {
-                                    openColumnsRO(columnName, partitionTimestamp, existingColIndex, existingType, pathTrimToLen);
+                                    openColumnsRO(columnName, partitionTimestamp, cellKey, existingColIndex, existingType, pathTrimToLen);
                                     srcFixFd = this.fixedFd;
                                     srcVarFd = this.varFd;
 
-                                    openColumnsRW(columnName, partitionTimestamp, columnIndex, newType, pathTrimToLen);
+                                    openColumnsRW(columnName, partitionTimestamp, cellKey, columnIndex, newType, pathTrimToLen);
                                     dstFixFd = this.fixedFd;
                                     dstVarFd = this.varFd;
 
@@ -377,7 +399,8 @@ public class ConvertOperatorImpl implements Closeable {
                                 }
                             }
 
-                            long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, existingColIndex);
+                            long existingColTxnVer = tableWriter.getColumnNameTxn(partitionTimestamp, cellKey, existingColIndex);
+                            final CharSequence purgeCell = cellSegmentOrNull(cellKey);
                             purgingOperator.add(
                                     existingColIndex,
                                     columnName,
@@ -385,14 +408,15 @@ public class ConvertOperatorImpl implements Closeable {
                                     existingIndexType,
                                     existingColTxnVer,
                                     partitionTimestamp,
-                                    partitionNameTxn);
+                                    partitionNameTxn,
+                                    purgeCell == null ? null : purgeCell.toString());
                             partitionUpdated++;
                         }
-                        if (columnTop != tableWriter.getColumnTop(partitionTimestamp, columnIndex, -1)) {
+                        if (columnTop != tableWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex, -1)) {
                             long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
                                     ? partitionTimestamp
                                     : TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                            columnVersionWriter.upsertColumnTop(partTs, columnIndex, columnTop > -1 ? columnTop : maxRow);
+                            columnVersionWriter.upsertColumnTop(partTs, cellKey, columnIndex, columnTop > -1 ? columnTop : maxRow);
                         }
                     } catch (Throwable th) {
                         LOG.error().$("error converting column [at=").$(tableWriter.getTableToken())
@@ -522,8 +546,21 @@ public class ConvertOperatorImpl implements Closeable {
         return false;
     }
 
-    private void openColumnsRO(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
-        long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+    /**
+     * Cell segment for {@code cellKey}, or {@code null} on a plain table -- where the 6-arg path
+     * overload then behaves exactly like the 5-arg one it replaces.
+     */
+    private CharSequence cellSegmentOrNull(int cellKey) {
+        if (!tableWriter.isComposite()) {
+            return null;
+        }
+        cellSink.clear();
+        tableWriter.renderCellSegment(cellSink, cellKey);
+        return cellSink;
+    }
+
+    private void openColumnsRO(CharSequence name, long partitionTimestamp, int cellKey, int columnIndex, int columnType, int pathTrimToLen) {
+        long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, cellKey, columnIndex);
         if (isVarSize(columnType)) {
             fixedFd = TableUtils.openRO(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG);
             try {
@@ -538,8 +575,8 @@ public class ConvertOperatorImpl implements Closeable {
         }
     }
 
-    private void openColumnsRW(CharSequence name, long partitionTimestamp, int columnIndex, int columnType, int pathTrimToLen) {
-        long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+    private void openColumnsRW(CharSequence name, long partitionTimestamp, int cellKey, int columnIndex, int columnType, int pathTrimToLen) {
+        long columnNameTxn = tableWriter.getColumnNameTxn(partitionTimestamp, cellKey, columnIndex);
         if (isVarSize(columnType)) {
             fixedFd = TableUtils.openRW(ff, iFile(path.trimTo(pathTrimToLen), name, columnNameTxn), LOG, fileOpenOpts);
             try {

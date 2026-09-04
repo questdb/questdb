@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.Misc;
@@ -48,6 +49,9 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     private final boolean updateQuery;
     private final String viewName;
     private final int viewPosition;
+    // Task 5b: set only for a composite table whose dimension equality/IN predicate was resolved by
+    // SqlCodeGenerator; null (default) means "no pruning" -- see setAllowedCellKeys's own doc.
+    protected @Nullable IntHashSet allowedCellKeys;
     private @Nullable ObjList<PushdownFilterExtractor.PushdownFilterCondition> pushdownFilterConditions;
     private long pushdownPartitionTableVersion = -1;
 
@@ -85,6 +89,20 @@ abstract class AbstractPartitionFrameCursorFactory implements PartitionFrameCurs
     @Override
     public TableToken getTableToken() {
         return tableToken;
+    }
+
+    // hasParquetFormatPartitions was removed here with the merge of origin/master. It overrode a
+    // PartitionFrameCursorFactory method that master DELETED: parquet-partition presence is now
+    // tracked on TableReader (hasParquetPartitions) rather than asked of the metadata cache, so the
+    // on-demand hydration this override existed for -- covering the startup window where a table is
+    // registered but not yet cached, during which parquet row-group pruning was silently skipped --
+    // is no longer reachable through this path. Recorded rather than silently dropped, because the
+    // hazard it addressed is a property of the cache, not of this class.
+
+
+    @Override
+    public void setAllowedCellKeys(@Nullable IntHashSet allowedCellKeys) {
+        this.allowedCellKeys = allowedCellKeys;
     }
 
     @Override

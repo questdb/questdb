@@ -44,6 +44,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.BitSet;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -54,7 +55,9 @@ import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf16Sink;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -71,11 +74,20 @@ public class TableReader implements Closeable, SymbolTableSource {
     private static final int PARTITIONS_SLOT_OFFSET_COLUMN_VERSION = PARTITIONS_SLOT_OFFSET_NAME_TXN + 1;
     private static final int PARTITIONS_SLOT_OFFSET_FORMAT = PARTITIONS_SLOT_OFFSET_COLUMN_VERSION + 1;
     private static final int PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN = PARTITIONS_SLOT_OFFSET_FORMAT + 1;
+    // Plan 3 (composite partitioning) Task 6: was a reserved/padding slot; now carries the partition's
+    // cellKey (0 for plain/dormant tables), mirroring TxReader#getPartitionCellKey(int). No stride
+    // change -- PARTITIONS_SLOT_SIZE was already 8.
+    private static final int PARTITIONS_SLOT_OFFSET_CELL_KEY = PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN + 1;
     private static final int PARTITIONS_SLOT_SIZE = 8; // must be power of 2
     private static final int PARTITIONS_SLOT_SIZE_MSB = Numbers.msb(PARTITIONS_SLOT_SIZE);
     private final BitSet activeColumns = new BitSet();
     private final MillisecondClock clock;
     private final ColumnVersionReader columnVersionReader;
+    // Owning list for the read-side composite interners (dedicated dictionaries + _cell registry
+    // SymbolMapReaders), opened in openSymbolMaps() and freed in freeSymbolMapReaders(). These have no
+    // owning table column, so unlike symbolMapReaders they are never sized to columnCount / indexed by
+    // column -- see compositeDicts (the dual-mode, dimension-indexed lookup facade over this list).
+    private final ObjList<SymbolMapReader> compositeInternerReaders = new ObjList<>();
     private final CairoConfiguration configuration;
     private final int dbRootSize;
     private final FilesFacade ff;
@@ -96,6 +108,13 @@ public class TableReader implements Closeable, SymbolTableSource {
     private int columnCountShl;
     private LongList columnTops;
     private ObjList<MemoryCMR> columns;
+    // Non-owning, dual-mode lookup facade over compositeInternerReaders; null for a plain/cluster-only
+    // table (no composite interners). Never closed here -- see compositeInternerReaders for ownership.
+    private CompositeDictionaries compositeDicts;
+    // reused across keyOfDimensionValue() calls to avoid an allocation per TRUNCATE-dimension lookup
+    private final StringSink compositeDimSink = new StringSink();
+    /// Render target for the cell segment handed to a parquet decoder bind; the decoder copies it.
+    private final StringSink decoderCellSink = new StringSink();
     private boolean hasActiveColumns;
     private boolean hasParquetPartitions;
     private ObjList<IndexReader> indexes;
@@ -158,7 +177,26 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$("open [id=").$(metadata.getTableId())
                     .$(", table=").$(tableToken)
                     .I$();
-            txFile = new TxReader(ff).ofRO(
+            // Plan 3b Task 2 investigated retiring this setComposite() call (Task 1's _txn marker makes
+            // it redundant for any table with >= 1 committed partition -- see TxReader#unsafeLoadBaseOffset).
+            // Reverted then: a composite table that had been CREATEd but never yet committed a single
+            // partition had an on-disk marker still at 0 (upgrade-only -- TableUtils#createTxn wrote 0
+            // unconditionally, and nothing had run finishABHeader with stride 8 yet), so a TableReader
+            // opened in that window had no signal at all without this call and silently reported the
+            // plain stride. Confirmed empirically: CompositeTxCellTest#testStrideDerivedFromComposite
+            // opens getReader("c") on a just-CREATEd, zero-partition composite table and asserts
+            // getLongsPerAttachedPartition() == 8; with this call removed it deterministically read back
+            // 4 instead. See Plan 3b Task 2 report.
+            // <p>
+            // Plan 3b Task 3 closed that specific create-time window: createTxn now writes the real
+            // marker (8 for composite) from CREATE, not just from the first commit onward, so the marker
+            // alone would likely suffice here too now. Task 3 deliberately did not re-investigate
+            // removing this call -- kept out of scope to keep that task's diff focused on the
+            // marker-authoritative-from-creation fix -- so it remains, now agreeing with the marker in
+            // every case rather than only for tables with >= 1 committed partition.
+            txFile = new TxReader(ff);
+            txFile.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
+            txFile.ofRO(
                     path.trimTo(rootLen).concat(TXN_FILE_NAME).$(),
                     timestampType,
                     partitionBy
@@ -211,7 +249,13 @@ public class TableReader implements Closeable, SymbolTableSource {
                     .$(", table=").$(tableToken)
                     .$(", srcTxn=").$(srcReader.getTxn())
                     .I$();
-            txFile = new TxReader(ff).ofRO(
+            // Plan 3b Task 2/3: kept -- see the primary constructor's comment above its own txFile.ofRO()
+            // a few dozen lines up (Task 2 reverted removing this call; Task 3 later made createTxn write
+            // the real marker from CREATE, closing the specific create-time gap that revert was about, but
+            // did not re-investigate removal here -- out of that task's scope).
+            txFile = new TxReader(ff);
+            txFile.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
+            txFile.ofRO(
                     path.trimTo(rootLen).concat(TXN_FILE_NAME).$(),
                     timestampType,
                     partitionBy
@@ -313,6 +357,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         txFile.dumpRawTxPartitionInfo(container);
     }
 
+    /**
+     * Returns this reader's attached-partition record stride: {@link TableUtils#LONGS_PER_TX_ATTACHED_PARTITION}
+     * (4, plain) or {@link TableUtils#LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE} (8, composite). Callers
+     * that snapshot this reader's raw partitions via {@link #dumpRawTxPartitionInfo} (e.g. {@code
+     * PartitionOverwriteControl}) must capture this stride at the same time -- the resulting flat
+     * {@link LongList} carries no self-describing marker of its own once decoupled from the mapped
+     * {@code _txn} memory.
+     */
+    public int getLongsPerAttachedPartition() {
+        return txFile.getLongsPerAttachedPartition();
+    }
+
     public long floorToPartitionTimestamp(long timestamp) {
         return txFile.getPartitionTimestampByTimestamp(timestamp);
     }
@@ -337,8 +393,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         long parquetSize = getParquetFileSize(partitionIndex);
         if (decoder.getParquetMetaAddr() != parquetMetaAddr || decoder.getParquetMetaSize() != parquetMetaSize) {
             final long timestamp = getPartitionTimestamp(partitionIndex);
+            // COMPOSITE: the bind carries the cell as well as the timestamp. A decoder that resolves
+            // the partition's bytes remotely (the enterprise cold path) keys them by (day, cell), and
+            // a day's N cells share the timestamp -- without the segment they would all read cell 0's
+            // object, or none. A plain table binds a null segment and is byte-identical.
+            // Its own sink, and one the callee must COPY from: renderCellSegment reenters the shared
+            // thread-local sink (see formatNativePartitionDirName), and this instance is reused across
+            // binds.
+            decoderCellSink.clear();
+            final CharSequence cellSegment = resolveCellSegmentOrNullIfDormant(partitionIndex, decoderCellSink);
             decoder.of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize,
-                    tableToken, partitionBy, timestampType, timestamp,
+                    tableToken, partitionBy, timestampType, timestamp, cellSegment,
                     MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
         }
         return decoder;
@@ -362,6 +427,14 @@ public class TableReader implements Closeable, SymbolTableSource {
 
     public ColumnVersionReader getColumnVersionReader() {
         return columnVersionReader;
+    }
+
+    /**
+     * The read-side composite interners (dedicated dictionaries + {@code _cell} registry) for this
+     * table, or {@code null} if the table has no composite interners (plain or cluster-only table).
+     */
+    public CompositeDictionaries getCompositeDictionaries() {
+        return compositeDicts;
     }
 
     public CairoConfiguration getConfiguration() {
@@ -479,6 +552,38 @@ public class TableReader implements Closeable, SymbolTableSource {
         return mem != null && mem.isOpen() ? mem.size() : 0;
     }
 
+    /**
+     * Plan 3 (composite partitioning) Task 6: returns the cellKey this reader recorded for the given
+     * physical partition index (0 for a plain/dormant table), mirroring {@link TxReader#getPartitionCellKey(int)}.
+     */
+    public int getPartitionCellKey(int partitionIndex) {
+        return (int) openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_CELL_KEY);
+    }
+
+    /**
+     * Test-only: exposes the raw {@code PARTITIONS_SLOT_OFFSET_COLUMN_VERSION} slot (the value
+     * {@code columnVersionReader.getMaxPartitionVersion(...)} resolved for this partition) so a test can
+     * assert directly on the reader's own resolved state instead of independently recomputing it.
+     */
+    @TestOnly
+    public long getPartitionColumnVersion(int partitionIndex) {
+        return openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
+    }
+
+    /**
+     * Test-only: exercises {@link #closeRewrittenPartitionFiles(int, int)} directly -- the same call
+     * {@code reshuffleColumns}/{@code createNewColumnList} make, for each already-open partition, to
+     * decide whether its currently-mapped files are still current before rebuilding the column list on
+     * an ADD/DROP/RENAME COLUMN reload. Plan 3 Task 8 lock: this must resolve the partition's own
+     * current nameTxn/size by its (ts, cellKey) identity, never by re-searching txFile for "the"
+     * partition at this partition's bare timestamp (which, for a composite table with more than one
+     * cell sharing that timestamp, silently returns cellKey 0's record instead of this partition's own).
+     */
+    @TestOnly
+    public long testCloseRewrittenPartitionFiles(int partitionIndex) {
+        return closeRewrittenPartitionFiles(partitionIndex, getColumnBase(partitionIndex));
+    }
+
     public int getPartitionCount() {
         return partitionCount;
     }
@@ -510,6 +615,42 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
+     * Same find-floor search as {@link #getPartitionIndexByTimestamp(long)}, but for an exact match
+     * resolves to the HIGHEST partition index sharing that timestamp instead of the lowest -- i.e. a
+     * composite table's LAST cell (highest cellKey) of the matched day, rather than its first (cellKey
+     * 0). Used exclusively for interval-scan high-boundary resolution (see {@code
+     * AbstractIntervalPartitionFrameCursor#cullPartitions}) so every sibling cell of the highest matched
+     * day is included in {@code [partitionLo, partitionHi)}.
+     * <p>
+     * This is provably identical to {@link #getPartitionIndexByTimestamp(long)} in every case except an
+     * exact match against a multi-entry (multi-cell) run:
+     * <ul>
+     *     <li>NOT-FOUND (timestamp strictly between two days, e.g. a gap day, or before/after every
+     *     partition): {@code LongList#binarySearchBlock}'s scan-up and scan-down both fall through to
+     *     the same linear {@code scanUpBlock}/{@code scanDownBlock} tail search, which normalizes to the
+     *     identical insertion-point index regardless of direction -- there is no equal run to resolve
+     *     differently.</li>
+     *     <li>EXACT match, single-entry run (every day of a PLAIN table, since it has exactly one cell):
+     *     {@code scrollUpBlock}/{@code scrollDownBlock} both degenerate to that same single index --
+     *     there are no neighbouring equal entries for either direction to walk past.</li>
+     * </ul>
+     * Only an exact match against a multi-entry run (a composite table's multi-cell day) resolves
+     * differently -- {@code scrollUpBlock} walks to the lowest index of the run, {@code scrollDownBlock}
+     * to the highest. Do NOT alter {@link #getPartitionIndexByTimestamp(long)} itself -- it has other,
+     * floor-search callers (e.g. the interval low boundary, which is already correct: cellKey 0 is the
+     * lowest index of the low day, so starting there already includes that day's every sibling cell).
+     */
+    public int getPartitionIndexByTimestampScanDown(long timestamp) {
+        int end = openPartitionInfo.binarySearchBlock(PARTITIONS_SLOT_SIZE_MSB, timestamp, Vect.BIN_SEARCH_SCAN_DOWN);
+        if (end < 0) {
+            // This will return -1 if searched timestamp is before the first partition
+            // The caller should handle negative return values
+            return (-end - 2) / PARTITIONS_SLOT_SIZE;
+        }
+        return end / PARTITIONS_SLOT_SIZE;
+    }
+
+    /**
      * Pretty convoluted logic to calculate upper timestamp bound of the given partition, e.g., by partition index.
      * First thing of note - the upper-bound value is inclusive, it must be a value that will be able to reside in the
      * partition.
@@ -530,6 +671,17 @@ public class TableReader implements Closeable, SymbolTableSource {
      * 2. We can access the next partition - great, we get its min timestamp but, next gotcha - there could be a gap,
      * so we take a min between the ceil value and the next timestamp value.
      * <p>
+     * Composite-partitioning gotcha (Task 5a-2): a composite table can attach MULTIPLE partition slots
+     * sharing the exact same raw timestamp -- one per sibling CELL of the same logical (day/month/year)
+     * partition, sorted (ts ASC, cellKey ASC). "The next partition" above is only guaranteed to start a
+     * genuinely LATER day for the day's LAST cell; for any other (non-last) cell, the physically-next slot
+     * is that SAME day's next cellKey, not a later day. We therefore skip past every such sibling (same
+     * timestamp as this partition's own) before treating "the next partition" as the next-day candidate.
+     * For a plain table (or an already-last cell of a day) this is a guaranteed no-op: no two entries ever
+     * share a raw timestamp there, so the skip loop never executes and behaviour is byte-identical to
+     * before this gotcha was handled. Mirrors {@link TxReader}'s own private {@code skipCompositeCellSiblings}
+     * helper (used by {@link TxReader#getNextPartitionTimestamp} / {@link TxReader#getNextExistingPartitionTimestamp}),
+     * which independently established the same "skip same-timestamp siblings" idiom for the write path.
      * <p>
      * Clear?
      *
@@ -537,8 +689,12 @@ public class TableReader implements Closeable, SymbolTableSource {
      * @return upper bound of the timestamp that can possibly be stored in this partition, which is an inclusive value.
      */
     public long getPartitionMaxTimestampFromMetadata(int partitionIndex) {
+        final long ownTimestamp = getPartitionMinTimestampFromMetadata(partitionIndex);
         int next = partitionIndex + 1;
-        long minTimestampCeil = txFile.getNextLogicalPartitionTimestamp(getPartitionMinTimestampFromMetadata(partitionIndex));
+        while (next < getPartitionCount() && getPartitionMinTimestampFromMetadata(next) == ownTimestamp) {
+            next++;
+        }
+        long minTimestampCeil = txFile.getNextLogicalPartitionTimestamp(ownTimestamp);
         return next < getPartitionCount() ? Math.min(getPartitionMinTimestampFromMetadata(next), minTimestampCeil) - 1 : minTimestampCeil;
     }
 
@@ -696,6 +852,62 @@ public class TableReader implements Closeable, SymbolTableSource {
         return tempMem8b != 0;
     }
 
+    /**
+     * Maps a raw dimension value to its dense interned key on the read side -- the mirror of
+     * {@link TableWriter#internDimensionValue(int, CharSequence)}, dispatching on the same
+     * {@link PartitionDimension#getKind()}. Returns
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_NOT_FOUND} when {@code value} was never interned
+     * ({@code IDENTITY}/{@code TRUNCATE} delegate to {@code keyOf}, which already returns it).
+     * {@code EXPRESSION} dimensions are not supported here (Plan 4).
+     */
+    public int keyOfDimensionValue(int dimIndex, CharSequence value) {
+        PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
+        switch (dim.getKind()) {
+            case PartitionDimension.KIND_IDENTITY:
+                return getSymbolMapReader(denseIndexOfDimensionSource(dim)).keyOf(value);
+            case PartitionDimension.KIND_HASH:
+                return CompositeDimensionTransform.hashBucket(value, dim.getParam());
+            case PartitionDimension.KIND_TRUNCATE:
+                return getCompositeDictionaries().dictReaderFor(dimIndex).keyOf(
+                        CompositeDimensionTransform.truncatedPrefix(value, dim.getParam(), compositeDimSink)
+                );
+            default:
+                throw new UnsupportedOperationException("composite expression dimensions land in Plan 4");
+        }
+    }
+
+    /**
+     * Task 5b read-side counterpart of {@link #keyOfDimensionValue}: given a set of already-resolved
+     * per-dimension ordinals for dimension {@code dimIndex} (each produced by {@link
+     * #keyOfDimensionValue}, one call per predicate value), returns the set of cellKeys whose
+     * registered dimension-tuple carries one of those ordinals at position {@code dimIndex} -- i.e.
+     * every cell a {@code WHERE <dimension> = 'v'} / {@code IN (...)} predicate could possibly match.
+     * Enumerates the full {@code _cell} registry (there is no reverse tuple-component index), mirroring
+     * {@link #renderCellSegment}'s existing tuple-decode idiom.
+     * <p>
+     * An empty {@code allowedOrdinals} (every predicate value resolved to
+     * {@link io.questdb.cairo.sql.SymbolTable#VALUE_NOT_FOUND}, i.e. never interned) correctly yields an
+     * EMPTY result -- 0 matching cells, not "every cell" -- so a never-seen predicate value prunes to a
+     * genuinely empty scan rather than falling back to "no pruning".
+     * <p>
+     * Caller ({@code SqlCodeGenerator}) is responsible for verifying {@code dimIndex} actually
+     * corresponds to the predicate's own column and that every value function was safe to evaluate
+     * right now (not a still-unbound runtime constant) before calling this; this method itself performs
+     * no such validation, and does not need to -- it operates purely on already-resolved ordinals.
+     */
+    public IntHashSet resolveDimensionCellKeys(int dimIndex, IntHashSet allowedOrdinals) {
+        final CellRegistry cellRegistry = getCompositeDictionaries().cellRegistry();
+        final int[] tuple = new int[metadata.getPartitionSpec().getDimensionCount()];
+        final IntHashSet allowedCellKeys = new IntHashSet();
+        for (int ck = 0, n = cellRegistry.size(); ck < n; ck++) {
+            cellRegistry.getTuple(ck, tuple);
+            if (allowedOrdinals.contains(tuple[dimIndex])) {
+                allowedCellKeys.add(ck);
+            }
+        }
+        return allowedCellKeys;
+    }
+
     @TestOnly
     public boolean isParquetMetaReaderOpen() {
         return parquetMetaReader.isOpen();
@@ -789,6 +1001,156 @@ public class TableReader implements Closeable, SymbolTableSource {
     public void updateTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
         this.metadata.updateTableToken(tableToken);
+    }
+
+    /**
+     * Reverse-looks-up dense interned key {@code key} for dimension {@code dimIndex} back to its
+     * value -- the read-only half {@code TableWriter} has no counterpart for. {@code IDENTITY} and
+     * {@code TRUNCATE} look the key up in their respective symbol map; {@code HASH} has no reverse (a
+     * bucket cannot be un-hashed), so this returns {@code null}. {@code EXPRESSION} dimensions are
+     * not supported here (Plan 4).
+     */
+    /**
+     * Read-side counterpart of {@link TableWriter#renderCellSegment(CharSink, int)} (composite-
+     * partitioning Plan 4a Task 4): renders this table's on-disk cell-directory segment for a
+     * resolved {@code cellKey}, per {@link PartitionSpec#getNamingMode()} -- {@code MODE_HIVE} renders
+     * each dimension as {@code <sourceColumnName>=<value>}, {@code MODE_PLAIN} the bare {@code <value>};
+     * an arity-&gt;1 spec joins segments with {@code '/'}. Reuses {@link #valueOfDimensionKey(int, int)}
+     * (already dispatches IDENTITY/TRUNCATE reverse-lookup correctly, {@code null} for HASH) rather than
+     * re-deriving the per-kind dispatch the writer's version hand-rolls, since the reader-side reverse
+     * lookup already exists as a public method for an unrelated caller.
+     * <p>
+     * Needed because {@link #formatNativePartitionDirName(int, Path, long)} -- confirmed the SOLE
+     * native-partition-path construction site in this class -- previously called the plain (no cell
+     * segment) {@link TableUtils#setPathForNativePartition(Path, int, int, long, long)} overload
+     * unconditionally; every partition-open path in this class (openPartition0, reconcileOpenPartitions,
+     * etc.) funnels through it, so a composite table's non-dormant (non-zero cellKey) partitions could
+     * never actually be opened for reading before this fix -- confirmed directly (this exact gap is what
+     * surfaced this method's necessity: an O3-routed composite commit's cell files went unread, "file does
+     * not exist" against the bare day directory).
+     *
+     * @throws UnsupportedOperationException if called on a non-composite table
+     */
+    public void renderCellSegment(CharSink<?> sink, int cellKey) {
+        PartitionSpec spec = metadata.getPartitionSpec();
+        int dimCount = spec.getDimensionCount();
+        if (dimCount <= 0) {
+            throw new UnsupportedOperationException(
+                    "renderCellSegment() must not be called on a non-composite table [table=" + tableToken + ']'
+            );
+        }
+        int[] tuple = new int[dimCount];
+        getCompositeDictionaries().cellRegistry().getTuple(cellKey, tuple);
+        byte namingMode = spec.getNamingMode();
+        for (int i = 0; i < dimCount; i++) {
+            if (i > 0) {
+                sink.put('/');
+            }
+            PartitionDimension dim = spec.getDimension(i);
+            if (namingMode == PartitionSpec.MODE_HIVE) {
+                // KIND_EXPRESSION has no source column (getColumnIndex() == -1 by construction --
+                // composite-partitioning Plan 4e Task 2/3): use its alias instead, mirroring
+                // TableWriter#renderDimensionSegment's identical MODE_HIVE prefix choice and how
+                // SHOW CREATE TABLE already renders this dimension via its alias (see
+                // PartitionDimension#toSink). Otherwise metadata.getColumnName(-1) below is an
+                // uncontrolled ArrayIndexOutOfBoundsException -- this is the read-side twin of the
+                // exact landmine Task 1 fixed on the write side.
+                if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
+                    sink.put(dim.getAlias()).put('=');
+                } else {
+                    // denseIndexOfDimensionSource, NOT getColumnIndex(): the latter is a WRITER index
+                    // (create-time physical position, persisted in _meta and deliberately unmoved by a
+                    // later DROP COLUMN, which leaves a tombstone), while THIS metadata is DENSE --
+                    // the reader compacts dropped columns away. The two spaces diverge the moment a
+                    // lower-index column is dropped, and the stale writer index would then name the
+                    // WRONG column: rendering `px=BTC` where the writer wrote `exch=BTC`, i.e. a
+                    // directory the reader cannot find.
+                    //
+                    // The value branch below already translates this way; only this HIVE prefix did
+                    // not, so the two halves of one method disagreed. Unreachable today because DROP
+                    // COLUMN is refused on a routed composite table, but sub-project 2 lifts that
+                    // gate -- CompositeReaderIndexSpaceTest carries the @Ignore'd proof that
+                    // un-ignores when it does.
+                    sink.put(metadata.getColumnName(denseIndexOfDimensionSource(dim))).put('=');
+                }
+            }
+            if (dim.getKind() == PartitionDimension.KIND_HASH) {
+                sink.put(tuple[i]);
+            } else {
+                // putCellSegmentPathSafe(sink, key, value) is ORDINAL-driven, not value-driven: the
+                // NULL token decision is made on tuple[i] itself (== SymbolTable.VALUE_IS_NULL),
+                // byte-identical to TableWriter#renderDimensionSegment, which is what actually
+                // created the directory. Deciding from valueOfDimensionKey's return instead would be
+                // WRONG -- SymbolMapReaderImpl#valueOf (and the shared dictReaderFor(dimIndex)
+                // reader TRUNCATE/EXPRESSION also go through) returns null for ANY key outside
+                // [0, symbolCount), not only VALUE_IS_NULL, so a value-driven check would silently
+                // render the reserved %NULL token for a cell tuple carrying a key the reader's
+                // symbol map does not yet cover -- exactly the "composite must never silently differ
+                // from its plain twin" rule this feature exists to uphold. Before the token existed,
+                // that same state threw an uncontrolled NPE inside putPathSafe -- loud. So: throw
+                // loud again for a non-NULL key that unexpectedly fails to resolve, instead of
+                // guessing it means NULL.
+                TableUtils.putCellSegmentPathSafe(sink, tuple[i], valueOfDimensionKey(i, tuple[i]));
+            }
+        }
+    }
+
+    /**
+     * Reverse-looks-up dense interned key {@code key} for dimension {@code dimIndex} back to its
+     * value -- the read-only half {@code TableWriter} has no counterpart for. {@code IDENTITY} and
+     * {@code TRUNCATE} look the key up in their respective symbol map; {@code HASH} has no reverse (a
+     * bucket cannot be un-hashed), so this returns {@code null}. {@code EXPRESSION} (composite-
+     * partitioning Plan 4e Task 2/3) is a pure dedicated-dict reverse lookup, byte-identical to
+     * {@code TRUNCATE} -- NOT a re-evaluation of the expression (there is no {@code Function}-eval
+     * bridge on the read side at all, nor does there need to be: the ordinal already IS the
+     * dedicated dict's key, interned once at write/eval time -- see {@code
+     * TableWriter#resolveExpressionDimensionOrdinal}/{@code internDimensionValue}). {@code
+     * EXPRESSION} shares {@code TRUNCATE}'s dedicated-dict bucket ({@link CompositeInternerLayout}),
+     * so {@link #getCompositeDictionaries()}'s reader-side {@code dictReaderFor(dimIndex)} is already
+     * populated for it exactly as it is for a real {@code TRUNCATE} dimension -- no additional
+     * provisioning needed here.
+     */
+    public CharSequence valueOfDimensionKey(int dimIndex, int key) {
+        PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
+        switch (dim.getKind()) {
+            case PartitionDimension.KIND_IDENTITY:
+                return getSymbolMapReader(denseIndexOfDimensionSource(dim)).valueOf(key);
+            case PartitionDimension.KIND_TRUNCATE:
+            case PartitionDimension.KIND_EXPRESSION:
+                return getCompositeDictionaries().dictReaderFor(dimIndex).valueOf(key);
+            case PartitionDimension.KIND_HASH:
+                return null;
+            default:
+                throw new UnsupportedOperationException("unknown composite partition dimension kind: " + dim.getKind());
+        }
+    }
+
+    /**
+     * Resolves a composite dimension's stable WRITER index ({@link PartitionDimension#getColumnIndex()})
+     * to the reader's current DENSE column index. {@code getSymbolMapReader}/{@code getColumnType} etc.
+     * are all dense-indexed, but {@code TableReaderMetadata} compacts tombstoned columns out of its
+     * dense list on reload ({@code readFromMem}/{@code applyTransition0} both skip {@code writerIndex < 0}
+     * entries and assign dense position by insertion order), so writer index and dense index diverge
+     * once a lower-writer-index column has been dropped (whole-branch review finding I2) -- unlike
+     * {@code TableWriterMetadata}, which only tombstones in place and never renumbers, so the writer
+     * side ({@link TableWriter#internDimensionValue}) needs no analogous translation. Mirrors the
+     * linear-scan idiom already used for the same writer-to-dense translation in {@code
+     * AbstractPostingIndexReader.denseIndexFromWriter} / {@code IndexBuilder}'s covering-column
+     * resolution.
+     * <p>
+     * DDL guards reject dropping a dimension's own source column, so the "not found" branch should be
+     * unreachable in practice; it is guarded defensively here rather than left to surface as a bare
+     * AIOOBE out of {@code getSymbolMapReader}.
+     */
+    private int denseIndexOfDimensionSource(PartitionDimension dim) {
+        int writerIndex = dim.getColumnIndex();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getWriterIndex(i) == writerIndex) {
+                return i;
+            }
+        }
+        throw CairoException.critical(0)
+                .put("composite dimension source column not found [writerIndex=").put(writerIndex).put(']');
     }
 
     private static int getColumnBits(int columnCount) {
@@ -995,8 +1357,18 @@ public class TableReader implements Closeable, SymbolTableSource {
         final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
         long partitionTs = openPartitionInfo.getQuick(offset);
         long existingPartitionNameTxn = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN);
-        long newNameTxn = txFile.getPartitionNameTxnByPartitionTimestamp(partitionTs);
-        long newSize = txFile.getPartitionRowCountByTimestamp(partitionTs);
+        // Plan 3 Task 8: re-locate this partition by its stable (ts, cellKey) identity, not a bare
+        // timestamp. This method's only callers (reshuffleColumns/createNewColumnList) run inside
+        // reloadSlow, BEFORE reconcileOpenPartitions has resynced partitionCount/openPartitionInfo to
+        // the just-loaded txFile -- so `partitionIndex` cannot be trusted as a raw txFile offset (an
+        // earlier sibling partition insert/delete may already have shifted it there); a plain
+        // by-timestamp scan is shift-safe but would additionally collapse onto cellKey 0's record
+        // whenever more than one cell shares partitionTs. (ts, cellKey) is the same stable total-order
+        // key reconcileOpenPartitions0 merges on, so this is both shift-safe and cell-safe.
+        final int cellKey = (int) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_CELL_KEY);
+        final int rawIndex = txFile.findAttachedPartitionRawIndexBy(partitionTs, cellKey);
+        long newNameTxn = rawIndex > -1 ? txFile.getPartitionNameTxnByRawIndex(rawIndex) : -1;
+        long newSize = rawIndex > -1 ? txFile.getPartitionSizeByRawIndex(rawIndex) : -1;
         if (existingPartitionNameTxn != newNameTxn || newSize < 0) {
             LOG.debug().$("close outdated partition files [table=").$(tableToken).$(", ts=")
                     .$ts(ColumnType.getTimestampDriver(timestampType), partitionTs).$(", nameTxn=").$(newNameTxn).$();
@@ -1145,33 +1517,90 @@ public class TableReader implements Closeable, SymbolTableSource {
         this.indexes = toIndexReaders;
     }
 
+    /**
+     * Composite-partitioning (Plan 4a Task 4): resolves partition {@code partitionIndex}'s cell
+     * segment for path construction, or {@code null} if this partition is DORMANT -- written before
+     * Task 4's real per-row routing ever ran for this table (e.g. via the direct {@code newRow}/
+     * {@code switchPartition} commit path, which never calls {@code resolveCellKey}/{@code
+     * CellRegistry.internCell} at all; also every pre-Task-4-created composite table, such as every
+     * {@code CompositeEndToEndTest}/{@code CompositePartitionDdlTest} fixture -- composite tables
+     * with real rows but an EMPTY {@code _cell} registry, confirmed directly, not hypothetical).
+     * {@code _txn}'s cellKey slot defaults to 0 as a bare structural value in that case (Plan 3:
+     * "real writes only ever produce cellKey 0 today"), NOT as a genuinely-interned ordinal --
+     * reverse-looking it up via {@link #renderCellSegment(CharSink, int)} would either throw
+     * (reading past an empty/short symbol map) or return nonsense. A cellKey is only a safe
+     * reverse-lookup target once the registry has actually interned that many entries ({@code
+     * internCell} assigns dense ordinals {@code [0, size)} in intern order) -- otherwise this
+     * partition predates real routing and must keep the exact pre-Task-4 bare-directory layout.
+     *
+     * @param scratchSink reused as the render target when non-dormant; caller-provided so both call
+     *                    sites (native partition path, error-message path) can pick their own
+     *                    allocation lifetime/sharing policy
+     */
+    private CharSequence resolveCellSegmentOrNullIfDormant(int partitionIndex, StringSink scratchSink) {
+        if (metadata.getPartitionSpec().getDimensionCount() <= 0) {
+            return null;
+        }
+        int cellKey = getPartitionCellKey(partitionIndex);
+        if (cellKey >= getCompositeDictionaries().cellRegistry().size()) {
+            return null;
+        }
+        renderCellSegment(scratchSink, cellKey);
+        return scratchSink;
+    }
+
     private void formatErrorPartitionDirName(int partitionIndex, Utf16Sink sink) {
+        // Composite-partitioning (Plan 4a Task 4): mirrors formatNativePartitionDirName's own
+        // cellSegment rendering -- see that method's and resolveCellSegmentOrNullIfDormant's own
+        // docs. Error-message-only, not a write/read hot path, so a fresh scratch sink (not the
+        // shared thread-local one, to avoid clobbering whatever the CALLER might itself be
+        // assembling into a thread-local sink) is fine here.
         TableUtils.setSinkForNativePartition(
                 sink,
                 timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                -1
+                -1,
+                resolveCellSegmentOrNullIfDormant(partitionIndex, new StringSink())
         );
     }
 
     private void formatNativePartitionDirName(int partitionIndex, Path sink, long nameTxn) {
+        // Composite-partitioning (Plan 4a Task 4): render this partition's own cell segment (null for
+        // a plain/dormant table -- byte-identical to the pre-Task-4 behavior this replaces). Every
+        // native-partition path construction in this class funnels through this one method.
+        // A FRESH StringSink (not the shared Misc.getThreadLocalSink() instance) is deliberate, not
+        // an over-caution: renderCellSegment -> valueOfDimensionKey -> SymbolMapReader.valueOf(key)
+        // (IDENTITY reverse lookup) internally decodes through that SAME shared thread-local sink,
+        // so using it as this method's own accumulator too is genuinely reentrant -- confirmed by
+        // reproducing it directly (the shared sink's own decode of the FIRST dimension's value
+        // clobbered/prefixed what this method had already accumulated for a later dimension/column-
+        // name write, corrupting the rendered segment). Partition-open is not a per-row hot path, so
+        // a small fresh allocation per call is the right trade-off here, unlike the writer-side
+        // per-cell-dispatch sink (cellSegmentSink in dispatchCompositeCellRange), which reuses one
+        // instance across many dispatches within a call but is never handed to a reverse-lookup that
+        // itself reenters the same shared sink.
         TableUtils.setPathForNativePartition(
                 sink,
                 timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                nameTxn
+                nameTxn,
+                resolveCellSegmentOrNullIfDormant(partitionIndex, new StringSink())
         );
     }
 
     private void formatParquetPartitionFileName(int partitionIndex, Path sink, long nameTxn) {
+        // Cell-aware for the same reason formatNativePartitionDirName is: a composite table's parquet
+        // lives per CELL, at <day>/<cell>.<nameTxn>/data.parquet. Without the segment this named the
+        // bare day and the reader reported the cell directory missing.
         TableUtils.setPathForParquetPartition(
                 sink,
                 timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                nameTxn
+                nameTxn,
+                resolveCellSegmentOrNullIfDormant(partitionIndex, new StringSink())
         );
     }
 
@@ -1181,7 +1610,8 @@ public class TableReader implements Closeable, SymbolTableSource {
                 timestampType,
                 partitionBy,
                 openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE),
-                nameTxn
+                nameTxn,
+                resolveCellSegmentOrNullIfDormant(partitionIndex, new StringSink())
         );
     }
 
@@ -1204,6 +1634,14 @@ public class TableReader implements Closeable, SymbolTableSource {
             Misc.freeIfCloseable(symbolMapReaders.getQuick(i));
         }
         symbolMapReaders.clear();
+        // Non-owning: just drop the holder. Its dedicated-dict-reader and registry-reader
+        // SymbolMapReaders are entries in compositeInternerReaders and are freed by the loop below
+        // (freeing here too would double-free).
+        compositeDicts = null;
+        for (int i = 0, n = compositeInternerReaders.size(); i < n; i++) {
+            Misc.freeIfCloseable(compositeInternerReaders.getQuick(i));
+        }
+        compositeInternerReaders.clear();
     }
 
     private void freeTempMem() {
@@ -1259,18 +1697,29 @@ public class TableReader implements Closeable, SymbolTableSource {
             final int baseOffset = i * PARTITIONS_SLOT_SIZE;
             final long partitionTimestamp = txFile.getPartitionTimestampByIndex(i);
             final boolean isParquet = txFile.isPartitionParquet(i);
+            final int cellKey = txFile.getPartitionCellKey(i);
             hasParquetPartitions |= isParquet;
             openPartitionInfo.setQuick(baseOffset, partitionTimestamp);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_SIZE, -1); // -1 means it is not open
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_NAME_TXN, txFile.getPartitionNameTxn(i));
-            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp, cellKey));
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_FORMAT, isParquet ? PartitionFormat.PARQUET : PartitionFormat.NATIVE);
             openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+            openPartitionInfo.setQuick(baseOffset + PARTITIONS_SLOT_OFFSET_CELL_KEY, cellKey);
         }
         return openPartitionInfo;
     }
 
-    private void insertPartition(int partitionIndex, long timestamp) {
+    /**
+     * Plan 3 Task 7 (T7-a): {@code cellKey} MUST be the inserted partition's own cellKey (0 for
+     * plain/dormant-composite tables), sourced by the caller from {@code txFile.getPartitionCellKey(...)}
+     * for the tx-side partition this insert represents. {@code LongList.insert} arraycopy-shifts the
+     * array up WITHOUT zeroing the newly-opened region -- {@code openPartitionInfo.insert} below reveals
+     * slot 6 still holding whatever a sibling record's bytes left there -- so every slot the fresh-open
+     * {@code initOpenPartitionInfo} sets must be set here too, cellKey included, or the inserted
+     * partition silently reads back a stale/wrong cellKey instead of its own.
+     */
+    private void insertPartition(int partitionIndex, long timestamp, int cellKey) {
         final int columnBase = getColumnBase(partitionIndex);
         final int columnSlotSize = getColumnBase(1);
 
@@ -1294,6 +1743,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, -1);
         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_ACTIVE_COLUMNS_OPEN, 0);
+        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_CELL_KEY, cellKey);
         partitionCount++;
         LOG.debug().$("inserted partition [index=").$(partitionIndex).$(", table=").$(tableToken)
                 .$(", timestamp=").$ts(ColumnType.getTimestampDriver(timestampType), timestamp).I$();
@@ -1439,6 +1889,10 @@ public class TableReader implements Closeable, SymbolTableSource {
         try {
             path.trimTo(rootLen);
             final long partitionNameTxn = getPartitionNameTxn(partitionIndex);
+            // Plan 3 Task 6: source this partition's own cellKey (0 for plain/dormant) so the
+            // column-version resolved below doesn't alias another cell sharing this timestamp.
+            final int cellKey = txFile.getPartitionCellKey(partitionIndex);
+
             if (txFile.isPartitionParquet(partitionIndex)) {
                 Path path = pathGenParquetPartitionMetadata(partitionIndex, partitionNameTxn);
                 if (ff.exists(path.$())) {
@@ -1454,7 +1908,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp, cellKey));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.PARQUET);
 
                         final long parquetFileSize = openParquetMetadata(partitionIndex);
@@ -1526,7 +1980,7 @@ public class TableReader implements Closeable, SymbolTableSource {
 
                         final long partitionTimestamp = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_NAME_TXN, partitionNameTxn);
-                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp));
+                        openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION, columnVersionReader.getMaxPartitionVersion(partitionTimestamp, cellKey));
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_FORMAT, PartitionFormat.NATIVE);
                         openPartitionColumns(partitionIndex, path, getColumnBase(partitionIndex), partitionSize);
                         openPartitionInfo.setQuick(offset + PARTITIONS_SLOT_OFFSET_SIZE, partitionSize);
@@ -1593,6 +2047,47 @@ public class TableReader implements Closeable, SymbolTableSource {
                 symbolMapReaders.set(i, newSymbolMapReader(metadata.getDenseSymbolIndex(i), i));
             }
         }
+        // Open the read-side composite interners (dedicated dictionaries + _cell registry), mirroring
+        // TableWriter.configureColumnMemory()'s write-side registration. These are first-class _txn
+        // symbol maps but own no table column, so they are opened into compositeInternerReaders, never
+        // into the column-indexed symbolMapReaders above. The interners are always the LAST
+        // (layout.dedicatedCount() + 1) symbol slots in _txn (the writer appends them after every real
+        // symbol column, and symbol-column DROP compacts real slots but keeps the interners trailing),
+        // so their dense indices are derived from the current getSymbolColumnCount() rather than
+        // assumed fixed.
+        CompositeInternerLayout layout = CompositeInternerLayout.of(metadata.getPartitionSpec());
+        if (layout.hasInterners()) {
+            final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+            final int internerCount = layout.dedicatedCount() + 1;
+            final int n = txFile.getSymbolColumnCount();
+            ObjList<SymbolMapReader> dedicatedDictReaders = new ObjList<>(dimCount);
+            int s = 0;
+            for (int i = 0; i < dimCount; i++) {
+                if (layout.needsDedicatedDict(i)) {
+                    final int denseIndex = n - internerCount + s;
+                    SymbolMapReaderImpl dictReader = new SymbolMapReaderImpl(
+                            configuration,
+                            path,
+                            layout.dictName(i),
+                            layout.dictColumnNameTxn(i),
+                            txFile.getSymbolValueCount(denseIndex)
+                    );
+                    compositeInternerReaders.add(dictReader);
+                    dedicatedDictReaders.extendAndSet(i, dictReader);
+                    s++;
+                }
+            }
+            final int registryDenseIndex = n - 1;
+            SymbolMapReaderImpl registryReader = new SymbolMapReaderImpl(
+                    configuration,
+                    path,
+                    CompositeInternerLayout.REGISTRY_NAME,
+                    CompositeInternerLayout.REGISTRY_TXN,
+                    txFile.getSymbolValueCount(registryDenseIndex)
+            );
+            compositeInternerReaders.add(registryReader);
+            compositeDicts = new CompositeDictionaries(new CellRegistry(registryReader), dedicatedDictReaders);
+        }
     }
 
     private Path pathGenNativePartition(int partitionIndex, long nameTxn) {
@@ -1646,7 +2141,17 @@ public class TableReader implements Closeable, SymbolTableSource {
     private void reconcileOpenPartitions(long prevPartitionVersion, long prevColumnVersion, long prevTruncateVersion) {
         // Reconcile partition full or partial will only update row count of last partition and append new partitions
         boolean truncateHappened = txFile.getTruncateVersion() != prevTruncateVersion;
-        if (txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
+        // The fast path below refreshes the size of ONLY the last open partition (see its own
+        // comment: "will only update row count of last partition and append new partitions") and
+        // then appends any brand-new ones. That is sound for a plain table, where only the active
+        // partition can grow without a partitionTableVersion bump.
+        //
+        // A composite table can grow SEVERAL cells in one commit, and a grown cell that is not the
+        // last (ts ASC, cellKey ASC) entry would keep its stale open size here -- the reader-side
+        // half of the same silent short read fixed in TxReader#unsafeLoadPartitions. Send composite
+        // tables down the full reconcile instead; plain tables keep the fast path unchanged.
+        final boolean composite = getLongsPerAttachedPartition() > TableUtils.LONGS_PER_TX_ATTACHED_PARTITION;
+        if (!composite && txFile.getPartitionTableVersion() == prevPartitionVersion && txFile.getColumnVersion() == prevColumnVersion && !truncateHappened) {
             int partitionIndex = Math.max(0, partitionCount - 1);
             final int txPartitionCount = txFile.getPartitionCount();
             if (partitionIndex < txPartitionCount) {
@@ -1684,7 +2189,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                     partitionIndex++;
                 }
                 for (; partitionIndex < txPartitionCount; partitionIndex++) {
-                    insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+                    insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex), txFile.getPartitionCellKey(partitionIndex));
                     hasParquetPartitions |= txFile.isPartitionParquet(partitionIndex);
                 }
                 reloadSymbolMapCounts();
@@ -1703,21 +2208,33 @@ public class TableReader implements Closeable, SymbolTableSource {
         while (partitionIndex < partitionCount && txPartitionIndex < txPartitionCount) {
             final int offset = partitionIndex * PARTITIONS_SLOT_SIZE;
             final long txPartTs = txFile.getPartitionTimestampByIndex(txPartitionIndex);
+            final int txPartCellKey = txFile.getPartitionCellKey(txPartitionIndex);
             final long openPartitionTimestamp = openPartitionInfo.getQuick(offset);
+            final int openPartitionCellKey = (int) openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_CELL_KEY);
 
-            if (openPartitionTimestamp < txPartTs) {
+            // Plan 3 Task 7: sorted-unique-key two-pointer merge on the total order (ts, cellKey) --
+            // ts primary, cellKey secondary -- NOT ts alone, or two cells sharing a timestamp
+            // misclassify one as a "refresh" of the other's physical partition. Plain/dormant tables
+            // have cellKey 0 on both sides everywhere, so this reduces exactly to the old ts-only
+            // comparison (byte-identical classification, byte-identical behaviour).
+            final int cmp = openPartitionTimestamp != txPartTs
+                    ? Long.compare(openPartitionTimestamp, txPartTs)
+                    : Integer.compare(openPartitionCellKey, txPartCellKey);
+
+            if (cmp < 0) {
                 // Deleted partitions
                 // This will decrement partitionCount
                 closeDeletedPartition(partitionIndex);
-            } else if (openPartitionTimestamp > txPartTs) {
+            } else if (cmp > 0) {
                 // Insert partition
-                insertPartition(partitionIndex, txPartTs);
+                insertPartition(partitionIndex, txPartTs, txPartCellKey);
                 hasParquetPartitions |= txFile.isPartitionParquet(txPartitionIndex);
                 changed = true;
                 txPartitionIndex++;
                 partitionIndex++;
             } else {
-                // Refresh partition
+                // Refresh partition -- (ts, cellKey) both match, so this is genuinely the same physical
+                // partition on both sides, not merely a same-timestamp coincidence.
                 hasParquetPartitions |= txFile.isPartitionParquet(txPartitionIndex);
                 final long txPartitionSize = txFile.getPartitionSize(txPartitionIndex);
                 final long txPartitionNameTxn = txFile.getPartitionNameTxn(partitionIndex);
@@ -1726,7 +2243,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 final long openPartitionColumnVersion = openPartitionInfo.getQuick(offset + PARTITIONS_SLOT_OFFSET_COLUMN_VERSION);
 
                 if (!forceTruncate) {
-                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs)) {
+                    if (openPartitionNameTxn == txPartitionNameTxn && openPartitionColumnVersion == columnVersionReader.getMaxPartitionVersion(txPartTs, txPartCellKey)) {
                         // We used to skip reloading partition size if the row count is the same and name txn is the same.
                         // But in case of dedup, the row count can be same, but the data can be overwritten by splitting and squashing the partition back
                         // This is ok for fixed size columns but var length columns have to be re-mapped to the bigger / smaller sizes
@@ -1775,7 +2292,7 @@ public class TableReader implements Closeable, SymbolTableSource {
         // if while finished on partitionIndex == partitionCount condition
         // inserts new partitions at the end
         for (; partitionIndex < txPartitionCount; partitionIndex++) {
-            insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex));
+            insertPartition(partitionIndex, txFile.getPartitionTimestampByIndex(partitionIndex), txFile.getPartitionCellKey(partitionIndex));
             hasParquetPartitions |= txFile.isPartitionParquet(partitionIndex);
             changed = true;
         }
@@ -1809,6 +2326,28 @@ public class TableReader implements Closeable, SymbolTableSource {
                     int symbolCount = txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(columnIndex));
                     ((SymbolMapReaderImpl) symbolMapReader).of(configuration, path, metadata.getColumnName(columnIndex), symbolTableNameTxn, symbolCount);
                 }
+            }
+        }
+        // The loop above walks columnCount and touches symbolMapReaders only -- i.e. the table's REAL
+        // symbol columns. A composite table's INTERNERS (the _cell registry plus the dedicated
+        // dictionaries) are not columns and live in compositeInternerReaders, so they were left
+        // untouched here, while reloadSymbolMapCounts() -- the other arm of the same if/else in
+        // reconcileOpenPartitions0 -- does refresh them. Whenever the forceTruncate arm was taken, the
+        // reader advanced its partition list while its cell registry stayed at the previous count.
+        //
+        // MEASURED (composite fuzz, seed 1037/591), one reader instance:
+        //   I rdr=139547368 txn=9 cellKey=15                      insertPartition ran
+        //   F rdr=139547368 txn=9 cellKey=15 registry=15          registry never advanced
+        // resolveCellSegmentOrNullIfDormant then reads cellKey >= registry.size() and silently falls
+        // back to the BARE DAY path, so the reader looks for <day>.<txn> and reports
+        // "Partition ... does not exist in table directory".
+        //
+        // Byte-identical for a plain table: compositeDicts is null there and this block is skipped.
+        if (compositeDicts != null) {
+            final int internerCount = compositeInternerReaders.size();
+            final int base = txFile.getSymbolColumnCount() - internerCount;
+            for (int i = 0; i < internerCount; i++) {
+                compositeInternerReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(base + i));
             }
         }
     }
@@ -1846,7 +2385,12 @@ public class TableReader implements Closeable, SymbolTableSource {
             final byte partitionFormat = (byte) openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_FORMAT);
             final long partitionTxn = openPartitionInfo.getQuick(partitionIndex * PARTITIONS_SLOT_SIZE + PARTITIONS_SLOT_OFFSET_NAME_TXN);
             int writerIndex = metadata.getWriterIndex(columnIndex);
-            final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
+            // Plan 4b Task 2: cell-aware lookup -- a plain 2-arg (cellKey-0-only) lookup here would
+            // silently alias a DIFFERENT cell's column-version record whenever this partition's own
+            // cellKey is non-zero and shares its timestamp with a sibling cell (see getPartitionCellKey's
+            // own docs; byte-identical to before for a plain/dormant table, whose cellKey is always 0).
+            final int cellKey = getPartitionCellKey(partitionIndex);
+            final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, cellKey, writerIndex);
             final long columnTop = versionRecordIndex > -1 ? columnVersionReader.getColumnTopByIndex(versionRecordIndex) : 0;
             long columnTxn = versionRecordIndex > -1 ? columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex) : -1;
             if (columnTxn == -1) {
@@ -2039,6 +2583,18 @@ public class TableReader implements Closeable, SymbolTableSource {
                 continue;
             }
             symbolMapReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(metadata.getDenseSymbolIndex(i)));
+        }
+        if (compositeDicts != null) {
+            // The interners are always the LAST compositeInternerReaders.size() (== dedicatedCount() +
+            // 1) symbol slots in _txn -- recompute the base from the current getSymbolColumnCount() on
+            // every reload, since real symbol columns can be added/dropped around them (see
+            // openSymbolMaps()), and compositeInternerReaders' own size (fixed for the table's
+            // lifetime -- composite dimensions aren't alterable) is exactly the interner count.
+            final int internerCount = compositeInternerReaders.size();
+            final int base = txFile.getSymbolColumnCount() - internerCount;
+            for (int i = 0; i < internerCount; i++) {
+                compositeInternerReaders.getQuick(i).updateSymbolCount(txFile.getSymbolValueCount(base + i));
+            }
         }
     }
 

@@ -47,6 +47,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableNameRegistry;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -141,6 +142,7 @@ import io.questdb.std.datetime.TimeZoneRules;
 import io.questdb.std.datetime.millitime.Dates;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Sinkable;
+import io.questdb.std.str.StringSink;
 import io.questdb.tasks.TelemetryTask;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -626,10 +628,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     @TestOnly
     @Override
-    public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
+    public ExpressionNode parseStandaloneExpression(CharSequence expression, IQueryModel model) throws SqlException {
         clear();
         lexer.of(expression);
         return parser.expr(lexer, model, this);
+    }
+
+    @TestOnly
+    @Override
+    public ExpressionNode testParseExpression(CharSequence expression, IQueryModel model) throws SqlException {
+        return parseStandaloneExpression(expression, model);
     }
 
     // test only
@@ -930,7 +938,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private int addColumnWithType(
             @Nullable AlterOperationBuilder addColumn,
             CharSequence columnName,
-            int columnNamePosition
+            int columnNamePosition,
+            @Nullable TableToken gateTableToken
     ) throws SqlException {
         CharSequence tok;
         tok = expectToken(lexer, "column type");
@@ -1075,6 +1084,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             symbolCapacity = configuration.getDefaultSymbolCapacity();
         }
 
+        // A POSTING-family index on a composite table is a landmine: the ALTER is accepted and the
+        // table then SUSPENDS on the next merge commit, when sealPostingIndexForPartition refuses
+        // (that gate is cell-blind and cannot seal a routed composite's per-cell chains). Refuse at
+        // the statement instead, so the failure names the statement that caused it.
+        //
+        // Scope deliberately matches the FORMAT PARQUET precedent on this branch, which refuses at
+        // CREATE for ANY composite table rather than only a routed one: a dormant composite table
+        // accepting a POSTING index works only until a second cell routes, at which point it bricks.
+        // Refusing up front prevents planting the landmine rather than waiting for it.
         if (addColumn != null) {
             addColumn.addColumnToList(
                     columnName,
@@ -1137,7 +1155,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             lexer.unparseLast();
                             // parse and validate the full column definition without adding to the operation
                             CharSequence existingColumnName = tableMetadata.getColumnName(columnIndex);
-                            int columnType = addColumnWithType(null, existingColumnName, columnNamePosition);
+                            int columnType = addColumnWithType(null, existingColumnName, columnNamePosition, null);
                             final int existingType = tableMetadata.getColumnType(columnIndex);
                             if (existingType != columnType) {
                                 throw SqlException
@@ -1180,7 +1198,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.lastTokenPosition(), " new column name contains invalid characters");
             }
 
-            addColumnWithType(addColumn, columnName, columnNamePosition);
+            addColumnWithType(addColumn, columnName, columnNamePosition, tableToken);
             tok = SqlUtil.fetchNext(lexer);
 
             if (tok == null || (!isSingleQueryMode && isSemicolon(tok))) {
@@ -1218,7 +1236,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 tableMetadata.getTableId()
         );
         int existingColumnType = tableMetadata.getColumnType(columnIndex);
-        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition);
+        int newColumnType = addColumnWithType(changeColumn, columnName, columnNamePosition, tableToken);
         CharSequence tok = SqlUtil.fetchNext(lexer);
         if (tok != null && !isSemicolon(tok)) {
             throw SqlException.$(lexer.lastTokenPosition(), "unexpected token [").put(tok).put("] while trying to change column type");
@@ -1450,10 +1468,24 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
-    private void alterTableDedupEnable(int tableNamePosition, TableToken tableToken, TableRecordMetadata tableMetadata, GenericLexer lexer) throws SqlException {
+    private void alterTableDedupEnable(
+            SqlExecutionContext executionContext,
+            int tableNamePosition,
+            TableToken tableToken,
+            TableRecordMetadata tableMetadata,
+            GenericLexer lexer
+    ) throws SqlException {
         if (!tableMetadata.isWalEnabled()) {
             throw SqlException.$(tableNamePosition, "deduplication is only supported for WAL tables");
         }
+        // Plan 4b feature-gate sweep: mirrors the CREATE-time guard in
+        // CreateTableOperationBuilderImpl#resolvePartitionSpec (same rationale: DEDUP UPSERT KEYS is
+        // not yet cell-aware -- see O3PartitionJob#getDedupRowsWithAdditionalKeys). A composite table
+        // can only ever reach this method already-clean of dedup keys (the CREATE-time guard rejects
+        // the combination outright), so this closes the one remaining way SQL could attach dedup keys
+        // to an already-existing composite table. TableRecordMetadata does not expose PartitionSpec,
+        // so a quick TableReader is opened purely for this check, mirroring compileReindex's/
+        // compileVacuum's own idiom elsewhere in this file.
         AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
                 tableNamePosition,
                 tableToken
@@ -1540,6 +1572,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
 
             CharSequence columnName = tok;
+            refuseDroppingCompositePinnedColumn(tableToken, columnName, lexer.lastTokenPosition());
             dropColumnStatement.ofDropColumn(columnName);
             tok = SqlUtil.fetchNext(lexer);
 
@@ -1557,6 +1590,147 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
 
+    /**
+     * Sub-project 1B Task 0: is this a composite (subpartitioned) table?
+     * <p>
+     * Every partition-lifecycle gate lives in {@code TableWriter}, which on a WAL table is the APPLY
+     * side. Measured 2026-08-18: five of the six lifecycle DDLs were ACCEPTED at the statement and then
+     * suspended the table when the apply job hit the writer gate, so the user saw a working statement
+     * and a broken table instead of an error. This lets the compiler refuse at the statement instead,
+     * which is invariant 6. The writer-side gates STAY as the non-SQL backstop — gates move rather
+     * than vanish, exactly as wave 0's FORMAT PARQUET fix kept its writer guard.
+     * <p>
+     * Returns a boolean rather than throwing, so each caller can throw its OWN message literal. That
+     * matters: the scope-closure audit greps {@code core/src/main} for quoted strings containing
+     * "composite", so a dynamically assembled message would introduce a new audit key. Reusing the
+     * writer-side literals verbatim keeps the key set unchanged.
+     * <p>
+     * {@code TableRecordMetadata} does not expose {@code PartitionSpec}, so a reader is opened purely
+     * for the check — the same idiom as the DEDUP gate and {@code alterTableSetFormat} in this file.
+     * <p>
+     * <b>The predicate is {@code dimCount > 0 AND cellRegistry().size() > 0}, mirroring
+     * {@code TableWriter#isRoutedComposite()} — NOT {@code dimCount > 0} alone.</b> A composite table
+     * that has never received a row has no per-cell physical files, so there is nothing for these
+     * operations to corrupt and gating them is over-broad. The first draft of this method used the
+     * bare dimension count and was caught by
+     * {@code CompositeUnsupportedOpsTest#testGatesDoNotFireOnNeverRoutedEmptyCompositeTable} — the
+     * test that exists for exactly this mistake. {@code isRoutedComposite()}'s own javadoc names
+     * {@code SET TTL} as a case where the over-broad predicate previously caused a WAL suspension and
+     * a silently-no-op DDL.
+     */
+    /**
+     * Refuses {@code DROP PARTITION LIST '<day>/<cell>'} on a composite table.
+     * <p>
+     * MEASURED 2026-08-18, and the reason whole-day DROP could not simply un-gate: naming a single
+     * cell dropped the ENTIRE day. A table holding E0/E1/E2 for one day went to EMPTY after
+     * {@code DROP PARTITION LIST '2023-01-01/E0'}. That is the alternative the lifecycle spec
+     * explicitly rejects — "a destructive statement must not do visibly more than it names" — so the
+     * shape stays refused until sub-project 1C implements per-cell removal.
+     * <p>
+     * The WHERE form needs no equivalent guard: its predicate compiles against metadata exposing only
+     * the designated timestamp, so {@code WHERE exch = 'E0'} fails with "Invalid column: exch". Only
+     * the LIST form can name a cell today.
+     */
+    /**
+     * Refuses, AT THE STATEMENT, dropping a column a composite partition pins.
+     * <p>
+     * {@code TableWriter#removeColumn} already rejects both shapes, but on a WAL table that is the
+     * APPLY side: measured 2026-08-25, {@code ALTER TABLE c DROP COLUMN exch} was accepted and then
+     * SUSPENDED the table with "cannot drop column 'exch' referenced by a composite partition
+     * dimension". That is invariant 6 -- a refusal must fire at the statement that caused it.
+     * <p>
+     * Unlike the foreign-artifact ATTACH refusal, there is no plain twin to match here: a plain table
+     * has no dimensions, so suspending is not "behaving like plain", it is simply the wrong place.
+     * <p>
+     * The writer-side guards STAY as the non-SQL backstop -- gates move rather than vanish -- and the
+     * message literals are reused verbatim so the scope-closure audit's key set is unchanged.
+     */
+    private void refuseDroppingCompositePinnedColumn(
+            TableToken tableToken,
+            CharSequence columnName,
+            int position
+    ) throws SqlException {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            final PartitionSpec spec = reader.getMetadata().getPartitionSpec();
+            if (spec.getDimensionCount() == 0 && spec.getClusterColumnCount() == 0) {
+                return;
+            }
+            final int columnIndex = reader.getMetadata().getColumnIndexQuiet(columnName);
+            if (columnIndex < 0) {
+                return;
+            }
+            final int writerIndex = reader.getMetadata().getWriterIndex(columnIndex);
+            for (int i = 0, n = spec.getDimensionCount(); i < n; i++) {
+                if (spec.getDimension(i).getColumnIndex() == writerIndex) {
+                    throw SqlException.$(position, "cannot drop column '").put(columnName)
+                            .put("' referenced by a composite partition dimension");
+                }
+            }
+            for (int i = 0, n = spec.getClusterColumnCount(); i < n; i++) {
+                if (spec.getClusterColumn(i) == writerIndex) {
+                    throw SqlException.$(position, "cannot drop column '").put(columnName)
+                            .put("' referenced by a composite partition ORDER BY column");
+                }
+            }
+        }
+    }
+
+    /**
+     * SP1C: resolves the cell component of {@code <day>/<cell>} to a cellKey, or -1 when the name
+     * names no cell at all.
+     * <p>
+     * The cell is matched by RENDERING each attached cellKey of that day and comparing, rather than by
+     * parsing the segment back into dimension values. Rendering is already the authority
+     * ({@code TableReader#renderCellSegment}), and a parser would be a second implementation of the
+     * same mapping that could disagree with it -- including on the escaping {@code putPathSafe}
+     * applies. This also makes both layouts work for free: PLAIN renders {@code E0}, Hive renders
+     * {@code exch=E0}, and the comparison never needs to know which.
+     *
+     * @return the resolved cellKey, or -1 if {@code partitionName} carries no cell component
+     * @throws SqlException if a cell component is present but matches no attached cell of that day
+     */
+    private int resolveCellQualifiedPartitionName(
+            TableToken tableToken,
+            CharSequence partitionName,
+            long partitionTimestamp,
+            int position
+    ) throws SqlException {
+        final int slash = Chars.indexOf(partitionName, '/');
+        if (slash < 0) {
+            return -1;
+        }
+        final CharSequence wanted = partitionName.subSequence(slash + 1, partitionName.length());
+        try (TableReader reader = engine.getReader(tableToken)) {
+            if (reader.getMetadata().getPartitionSpec().getDimensionCount() == 0) {
+                throw SqlException.$(position, "table is not composite, partition name cannot name a cell [table=")
+                        .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+            }
+            final StringSink rendered = new StringSink();
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionTimestampByIndex(i) != partitionTimestamp) {
+                    continue;
+                }
+                final int cellKey = reader.getPartitionCellKey(i);
+                rendered.clear();
+                reader.renderCellSegment(rendered, cellKey);
+                if (Chars.equals(rendered, wanted)) {
+                    return cellKey;
+                }
+            }
+        }
+        // A name that matches nothing must fail LOUDLY. Dropping zero cells while reporting success is
+        // the silent path the cardinal rule forbids.
+        throw SqlException.$(position, "no such partition cell [table=")
+                .put(tableToken.getTableName()).put(", partition=").put(partitionName).put(']');
+    }
+
+    private boolean isRoutedCompositeTable(TableToken tableToken) {
+        try (TableReader compositeCheckReader = engine.getReader(tableToken)) {
+            return compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0
+                    && compositeCheckReader.getCompositeDictionaries().cellRegistry().size() > 0;
+        }
+    }
+
     private void alterTableDropConvertDetachOrAttachPartition(
             TableRecordMetadata tableMetadata,
             TableToken tableToken,
@@ -1564,6 +1738,55 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             SqlExecutionContext executionContext
     ) throws SqlException {
         final int pos = lexer.lastTokenPosition();
+        // Sub-project 1B Task 0: refuse at the STATEMENT. Skipped during WAL application, where the
+        // writer-side gate is the backstop and re-checking would only open a reader for nothing.
+        if (!executionContext.isWalApplication() && isRoutedCompositeTable(tableToken)) {
+            switch (action) {
+                case PartitionAction.DROP:
+                    // SP1B: whole-day DROP PARTITION is SUPPORTED on a composite table. A
+                    // CELL-QUALIFIED name is not, and is refused per-name below (see
+                    // refuseCellQualifiedPartitionName) rather than here, because the WHERE form
+                    // cannot express one at all: its predicate metadata exposes only the designated
+                    // timestamp, so "WHERE exch = 'E0'" fails with "Invalid column: exch".
+                    break;
+                case PartitionAction.DETACH:
+                case PartitionAction.ATTACH:
+                    // SCOPE DECISION 2026-08-26: composite tables do not support DETACH/ATTACH at all.
+                    //
+                    // Same-table attach/detach DID work (sub-project 1). It is dropped because nothing
+                    // needs it: cold storage -- the feature that actually moves partitions between
+                    // tiers -- does not use attach/detach at all, tiering instead via applyColdSwitch,
+                    // switchNativePartitionWithParquet and removePartition. Verified by grep, not
+                    // assumed.
+                    //
+                    // What it buys is not the deleted code but the removed HAZARD SURFACE: artifact
+                    // reading, per-cell path building and per-cell _txn entries are the family that
+                    // produced several of this branch's cell-blindness defects, and every one of those
+                    // sites needed its own audit.
+                    //
+                    // It also closes the cross-table ATTACH gate outright rather than deferring it.
+                    // That gate was blocked on a format decision, and the format turned out not to be
+                    // the binding constraint anyway: TableWriter#attachPrepare refuses a foreign
+                    // artifact by table_id for EVERY table, plain or composite ("very same table,
+                    // attaching foreign partitions is not allowed"), so no composite-side work could
+                    // ever have reached it.
+                    //
+                    // Gated HERE, at the statement, and not inside TableWriter#attachPartition:
+                    // ParallelCsvFileImporter calls that method too, and a writer-level refusal would
+                    // block the COPY path along with the SQL one.
+                    //
+                    // Predicate matches the surrounding gate (isRoutedCompositeTable): a DORMANT
+                    // composite table has no cell fan-out and takes the plain paths, so it is left
+                    // alone here as it is everywhere else.
+                    throw SqlException.$(pos, "composite partitioning does not support ")
+                            .put(action == PartitionAction.DETACH ? "DETACH" : "ATTACH")
+                            .put(" PARTITION [table=").put(tableToken.getTableName()).put(']');
+                default:
+                    // CONVERT TO PARQUET / NATIVE are sub-project 3's gates; left to the writer side
+                    // deliberately rather than gated here on a guess about their eventual shape.
+                    break;
+            }
+        }
         TableReader reader = null;
         if (!tableMetadata.isWalEnabled() || executionContext.isWalApplication()) {
             reader = executionContext.getReader(tableToken);
@@ -1646,7 +1869,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             int pos,
             int action
     ) throws SqlException {
-        final AlterOperationBuilder alterOperationBuilder;
+        AlterOperationBuilder alterOperationBuilder;
+        // SP1C: a DROP statement is either all whole-day or all cell-qualified; these track which.
+        boolean cellQualified = false;
+        int partitionCount = 0;
         switch (action) {
             case PartitionAction.CONVERT_TO_PARQUET:
             case PartitionAction.CONVERT_TO_NATIVE:
@@ -1685,7 +1911,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             final CharSequence partitionName = unquote(tok); // potentially a full timestamp, or part of it
             final int lastPosition = lexer.lastTokenPosition();
-
             // reader == null means it's compilation for WAL table
             // before applying to WAL writer
             final int timestampType;
@@ -1705,7 +1930,38 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // Otherwise ignore the split time part.
                 int hi = action == PartitionAction.FORCE_DROP ? partitionName.length() : -1;
                 long timestamp = PartitionBy.parsePartitionDirName(partitionName, timestampType, partitionBy, 0, hi);
-                alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
+
+                // SP1C: a DROP naming <day>/<cell> removes THAT CELL only.
+                //
+                // Resolved on BOTH compile paths, deliberately. For a WAL table the ALTER is
+                // RE-COMPILED FROM SQL TEXT when the apply job runs it -- that is what the
+                // "reader == null means compilation for WAL table before applying" distinction below
+                // is about. Gating this on reader == null (as the first draft did) meant the
+                // apply-time compile never saw the cell and fell through to the whole-day branch, so
+                // the statement removed the day's EVERY cell. Measured: an unlink batch of one
+                // (correct) followed by a batch of three.
+                int cellKey = -1;
+                if (action == PartitionAction.DROP) {
+                    cellKey = resolveCellQualifiedPartitionName(tableToken, partitionName, timestamp, lastPosition);
+                }
+                if (cellKey >= 0) {
+                    // A statement is all-cell or all-day: the two need different commands (different
+                    // extraInfo strides), and one statement carries one command. Mixing is refused
+                    // rather than silently splitting, which would break the single-commit atomicity
+                    // the lifecycle spec requires.
+                    if (partitionCount > 0 && !cellQualified) {
+                        throw SqlException.$(lastPosition, "cannot mix whole-day and cell-qualified partition names in one statement");
+                    }
+                    cellQualified = true;
+                    alterOperationBuilder = this.alterOperationBuilder.ofDropPartitionCell(pos, tableToken, tableMetadata.getTableId());
+                    alterOperationBuilder.addPartitionCellToList(timestamp, lastPosition, cellKey);
+                } else {
+                    if (cellQualified) {
+                        throw SqlException.$(lastPosition, "cannot mix whole-day and cell-qualified partition names in one statement");
+                    }
+                    alterOperationBuilder.addPartitionToList(timestamp, lastPosition);
+                }
+                partitionCount++;
             } catch (CairoException e) {
                 throw SqlException.$(lexer.lastTokenPosition(), e.getFlyweightMessage());
             }
@@ -1848,6 +2104,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             if (tableToken.isMatView()) {
                 throw SqlException.$(formatPos, "FORMAT PARQUET is not supported on materialized views");
+            }
+            // Wave 0 -- a refusal must fire at the statement that caused it. Without this, SET FORMAT
+            // PARQUET is accepted on a composite table and the NEXT commit suspends it via
+            // TableWriter's own FORMAT PARQUET guard, so an unrelated insert takes the blame for this
+            // statement. That writer-side guard STAYS: it protects non-SQL paths, and gates move
+            // rather than vanish. Removed by sub-project 3, which makes a parquet cell addressable.
+            //
+            // A TableReader is opened because TableRecordMetadata does not expose PartitionSpec --
+            // the same idiom as the DEDUP gate in this file and the mat-view gate in
+            // executeCreateMatView. alterTableSetFormat has no SqlExecutionContext parameter, so the
+            // engine field is used, exactly as the mat-view gate does.
+            try (TableReader compositeCheckReader = engine.getReader(tableToken)) {
+                if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                    throw SqlException.$(formatPos, "composite partitioning does not yet support FORMAT PARQUET [table=")
+                            .put(tableToken.getTableName()).put(']');
+                }
             }
         }
         final AlterOperationBuilder setFormat = alterOperationBuilder.ofSetTableFormat(
@@ -2700,6 +2972,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             }
                         }
 
+                        // Third and last SQL route to a POSTING index on a composite table (ADD COLUMN
                         alterTableColumnAddIndex(
                                 executionContext,
                                 tableNamePosition,
@@ -2837,6 +3110,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.getSecurityContext().authorizeAlterTableDropPartition(tableToken);
                 tok = expectToken(lexer, "'partitions'");
                 if (isPartitionsKeyword(tok)) {
+                    // Sub-project 1B Task 0: refuse at the statement (invariant 6); the writer-side
+                    // gate stays as the non-SQL backstop. SP1E 2026-08-18: the cell-scoped merge now
+                    // MERGES correctly (right cell, siblings untouched, twin data and ordering intact),
+                    // but the fragment's directory is not purged -- the candidate path renders doubled --
+                    // so the refusal stays until that is resolved.
                     compiledQuery.ofAlter(alterOperationBuilder.ofSquashPartitions(tableNamePosition, tableToken).build());
                 } else {
                     throw SqlException.$(lexer.lastTokenPosition(), "'partitions' expected");
@@ -2854,7 +3132,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     lexer.unparseLast();
                     executionContext.getSecurityContext().authorizeAlterTableDedupEnable(tableToken);
-                    alterTableDedupEnable(tableNamePosition, tableToken, tableMetadata, lexer);
+                    alterTableDedupEnable(executionContext, tableNamePosition, tableToken, tableMetadata, lexer);
                 }
             } else if (isEnableKeyword(tok)) {
                 compileAlterTableEnableExt(executionContext, tok, tableToken, tableNamePosition);
@@ -3916,8 +4194,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         checkViewModification(tableToken);
 
+        // Composite: IndexBuilder holds neither a reader nor a writer, so it cannot reach the
+        // CellRegistry that maps a cellKey to its on-disk directory segment. Resolve the whole mapping
+        // here, from the reader we have to open anyway, and hand it over before the walk starts. Null
+        // for a plain table, which keeps the bare day path unchanged.
+        //
+        // This replaces a refusal. WHAT THE DEFECT WAS, measured 2026-08-26 with the gate lifted and
+        // the builder still cell-blind, using the only test that can tell a rebuild from a no-op --
+        // delete one CELL's index files, REINDEX, and see whether they come back:
+        //     deleted=true; restored=false     -- and REINDEX reported SUCCESS
+        // Row counts and per-symbol counts stayed correct throughout, which is exactly why they cannot
+        // be the assertion: the DATA is fine, it is the INDEX that was not rebuilt. doReindex built a
+        // bare <day> path, failed its own ff.exists guard and logged "partition does not exist".
+        ObjList<CharSequence> cellSegments = null;
+        try (TableReader rdr = executionContext.getReader(tableToken)) {
+            if (rdr.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                final int cellCount = rdr.getCompositeDictionaries().cellRegistry().size();
+                cellSegments = new ObjList<>(cellCount);
+                for (int ck = 0; ck < cellCount; ck++) {
+                    final StringSink cellSink = new StringSink();
+                    rdr.renderCellSegment(cellSink, ck);
+                    cellSegments.add(cellSink.toString());
+                }
+            }
+        }
+
         try (IndexBuilder indexBuilder = new IndexBuilder(configuration)) {
             indexBuilder.of(path.of(configuration.getDbRoot()).concat(tableToken.getDirName()));
+            indexBuilder.withCellSegments(cellSegments);
 
             tok = SqlUtil.fetchNext(lexer);
             CharSequence columnName = null;
@@ -4608,6 +4912,23 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(createMatViewOp.getTableNamePosition(), "unexpected refresh type: ").put(createMatViewOp.getRefreshType());
         }
 
+        // Composite-partitioning gate (sub-project 8). A materialized view over a composite base is
+        // currently NEITHER supported NOR refused: cairo/mv/ contains no composite awareness and no
+        // composite mat-view test exists, so the combination is simply unexercised. Refresh reads the
+        // base through ordinary SQL, which IS twin-correct, so it may well work -- but "may well work"
+        // is not a guarantee, and this feature's rule is that composite either behaves exactly like
+        // its plain twin or fails loudly. Until sub-project 7 proves it with differential tests, the
+        // honest answer is a loud refusal rather than an unverified silent path.
+        //
+        // Deliberately positioned before any table is created, and thrown at the base table name so
+        // the error carries a caret like its siblings ("base table must be a WAL table", "live views
+        // are not allowed as base tables in V1"). Removing this gate is sub-project 7's deliverable.
+        // SP7 (2026-08-26): a materialized view over a composite-partitioned base is SUPPORTED, and the
+        // gate that stood here is gone. Lifted on measurement rather than inspection: a view over a
+        // composite base and one over its plain twin produce identical results both at creation AND
+        // after incremental refresh, including an out-of-order insert into an existing cell and a new
+        // day. See CompositeMatViewTest.
+
         final long sqlId = queryRegistry.register(createMatViewOp.getSqlText(), executionContext);
         final long beginNanos = configuration.getNanosecondClock().getTicks();
         QueryProgress.logStart(sqlId, createMatViewOp.getSqlText(), executionContext, false);
@@ -5274,6 +5595,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         TableToken updateTableToken = updateQueryModel.getUpdateTableToken();
         final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
 
+        // INVARIANT 6, fixed 2026-08-26: refuse at the STATEMENT, not on apply.
+        //
+        // UPDATE is permanently unsupported for composite tables -- UpdateOperatorImpl.executeUpdate
+        // documents why the ban is load-bearing for column-file purge correctness rather than a mere
+        // scope reduction. But that gate runs inside the WAL APPLY job, so the statement returned OK and
+        // the table SUSPENDED afterwards: the same "successful statement, bricked table" shape as the
+        // FORMAT PARQUET and POSTING gates fixed earlier on this branch.
+        //
+        // MEASURED: the composite twin suspended with "composite partitioning does not support UPDATE"
+        // in every one of six random-seed fuzz sweeps, while the harness still reported 0 failures --
+        // it classifies UPDATE as a gated op and tolerates the suspension. The suspension was real.
+        //
+        // Skipped during WAL application: by then the statement has already been accepted and recorded,
+        // and UpdateOperatorImpl's own gate is the correct backstop there. Gating here too would only
+        // change which of the two raises the identical error.
+        if (!executionContext.isWalApplication()) {
+            try (TableReader compositeCheckReader = engine.getReader(updateTableToken)) {
+                if (compositeCheckReader.getMetadata().getPartitionSpec().getDimensionCount() > 0) {
+                    throw SqlException.$(lexer.lastTokenPosition(),
+                                    "composite partitioning does not support UPDATE [table=")
+                            .put(updateTableToken.getTableName()).put(']');
+                }
+            } catch (CairoException ignored) {
+                // Table not readable here (dropped, or a type this check cannot open). Not this gate's
+                // business to report -- the normal path raises the accurate error a moment later.
+            }
+        }
+
         // Update IQueryModel structure is
         // IQueryModel with SET column expressions
         // |-- IQueryModel of select-virtual or select-choose of data selected for update
@@ -5763,6 +6112,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
             PartitionBy.validateTtlGranularity(metadata.getPartitionBy(), ttlHoursOrMonths, ttlValuePos);
         }
+        // Sub-project 1B Task 0: TTL is the worst of the six for invariant 6 -- it is not evaluated at
+        // this DDL but at every subsequent COMMIT, so before this gate a composite table accepted the
+        // TTL and then suspended on the next ordinary INSERT. The user's DDL and the statement that
+        // actually broke were different statements, and neither reported the problem.
+        // SP1D: SET TTL no longer refuses on a composite table -- eviction is cell-aware. The
+        // statement-time gate added in 1B Task 0 goes with the writer-side one it fronted.
         final AlterOperationBuilder setTtl = alterOperationBuilder.ofSetTtl(
                 tableNamePosition,
                 tableToken,

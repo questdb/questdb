@@ -362,7 +362,20 @@ public final class Files {
                 LPSZ lpsz = path.$();
                 if (path.size() > 0 && !Files.exists(lpsz)) {
                     int r = Files.mkdir(lpsz, mode);
-                    if (r != 0) {
+                    // Losing a race to create this component is SUCCESS, not failure. The exists()
+                    // check above already makes an existing directory fine; without this, the window
+                    // between that check and mkdir() turns a concurrent creator into a hard error.
+                    // Re-checking exists() rather than comparing errno to EEXIST keeps it portable --
+                    // the codes differ across platforms, and what the caller actually needs to know
+                    // is whether the directory is there now.
+                    //
+                    // Composite partitioning is what made this reachable: cells of one day SHARE a
+                    // parent directory (<day>/<cell>), so two O3 cell tasks of the same day race on
+                    // creating <day>. A plain table's partition directories are leaves under the
+                    // table root and share no parent, which is why this went unnoticed. Observed as
+                    // "[17] could not create directories [file=.../2023-01-02/exch=E1/]", which
+                    // failed the WAL apply and SUSPENDED the table.
+                    if (r != 0 && !Files.exists(lpsz)) {
                         path.put(i, (byte) Files.SEPARATOR);
                         return r;
                     }

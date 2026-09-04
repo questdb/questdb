@@ -28,7 +28,9 @@ import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -36,6 +38,10 @@ import org.jetbrains.annotations.TestOnly;
  */
 public abstract class AbstractFullPartitionFrameCursor implements PartitionFrameCursor {
     protected final FullTablePartitionFrame frame = new FullTablePartitionFrame();
+    // Task 5b: set by the owning factory (see PartitionFrameCursorFactory#setAllowedCellKeys) right
+    // before this cursor is handed out; null means "no pruning" (every plain table, and every composite
+    // query whose predicate was not resolved to a dimension cellKey set).
+    protected @Nullable IntHashSet allowedCellKeys;
     // Partition high boundary.
     protected int partitionHi;
     // Current partition index.
@@ -62,6 +68,18 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
     @Override
     public TableReader getTableReader() {
         return reader;
+    }
+
+    /**
+     * Task 5b: {@code true} unless a composite dimension predicate was resolved to an allowed-cellKey
+     * set AND this slot's cell is not in it. Both {@link FullFwdPartitionFrameCursor} and
+     * {@link FullBwdPartitionFrameCursor} compose this with their existing empty-partition check --
+     * never replace it. {@code allowedCellKeys == null} (no pruning attempted, or a plain table)
+     * short-circuits to {@code true} unconditionally, so this is a zero-cost no-op for every case this
+     * task does not touch.
+     */
+    protected boolean isCellAllowed(int partitionIndex) {
+        return allowedCellKeys == null || allowedCellKeys.contains(reader.getPartitionCellKey(partitionIndex));
     }
 
     @Override
@@ -92,9 +110,29 @@ public abstract class AbstractFullPartitionFrameCursor implements PartitionFrame
         return moreData;
     }
 
+    /**
+     * Task 5b: see {@link io.questdb.cairo.sql.PartitionFrameCursorFactory#setAllowedCellKeys}'s own doc.
+     * Called by the owning factory on every {@code getCursor()}, not just once, since this cursor
+     * instance is cached and reused across executions of the same compiled factory.
+     */
+    public void setAllowedCellKeys(@Nullable IntHashSet allowedCellKeys) {
+        this.allowedCellKeys = allowedCellKeys;
+    }
+
     @Override
     public long size() {
-        return reader.size();
+        // Task #26: allowedCellKeys pruning narrows the actual visited row set below reader.size() (the
+        // WHOLE table's cheap cached total) -- a cheap, accurate PRUNED count isn't available here (that
+        // is exactly what the separate, allowed-to-be-slower calculateSize(Counter) is for, see
+        // FullFwd/BwdPartitionFrameCursor), so report -1 (undetermined) rather than the wrong, too-large
+        // reader.size() -- mirrors AbstractIntervalPartitionFrameCursor's own size(), which always
+        // honestly returns -1 for the identical reason. Every pre-#26 caller of setAllowedCellKeys only
+        // ever paired it with a row-filtering RowCursorFactory (isEntity()==false, e.g.
+        // SymbolIndexRowCursorFactory), which already made PageFrameRecordCursorImpl.size() report -1
+        // regardless of this method; Task #26's multi-cell IDENTITY prune is the first to pair pruning
+        // with an ENTITY row cursor (PageFrameRowCursorFactory, the general 6a merge routing), the first
+        // caller for which this method's own return value becomes observable.
+        return allowedCellKeys == null ? reader.size() : -1;
     }
 
     @Override
