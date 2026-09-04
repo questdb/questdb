@@ -167,6 +167,16 @@ public class WalWriterTest extends AbstractCairoTest {
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 16);
     }
 
+    /**
+     * Adaptive coverage for the 1-row-commit apply path, at a row count chosen to fit the 20-minute rule
+     * with margin. 20k is the count docs/adaptive-commit-mode.md §3 benchmarks (~31.7 s there); the 1M
+     * arms stay on nosync because under adaptive they time out on real storage.
+     */
+    @Test
+    public void apply1RowCommitsAdaptive() throws Exception {
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 20_000, 1, "adaptive");
+    }
+
     @Test
     public void apply1RowCommitsManyWritersExceedsBlockSortRanges() throws Exception {
         testApply1RowCommitManyWriters(Micros.YEAR_10000 / 300, 265, 16);
@@ -6861,6 +6871,29 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount) throws Exception {
+        // Volume arm: nosync. See the overload's javadoc for why the commit mode must be explicit here.
+        testApply1RowCommitManyWriters(tsStep, totalRows, walWriterCount, "nosync");
+    }
+
+    /**
+     * Applies {@code totalRows} single-row commits across {@code walWriterCount} writers.
+     * <p>
+     * The commit mode is EXPLICIT rather than inherited, because at these row counts it decides whether
+     * the test finishes at all. The durability cost is per commit and is a real device barrier, so the
+     * 1M-commit arms are storage benchmarks under any fsync-ing mode: measured on ext4,
+     * {@code apply1RowCommits1Writer} under {@code adaptive} hit
+     * {@code TestTimedOutException: test timed out after 1200000 milliseconds} -- the 20-minute
+     * AbstractCairoTest rule -- while {@code nosync} completes in seconds. (docs/adaptive-commit-mode.md
+     * §3 records the same thing: at 1M commits "sync and adaptive both exceed the 20-minute test
+     * timeout... while nosync finishes in 4.7 s".)
+     * <p>
+     * Do NOT let these inherit the suite default. It is {@code adaptive}, and CI passing today is a
+     * function of runner storage being fast enough, not of headroom -- a slower runner turns it into a
+     * timeout. The behaviour under test is 1-row commit APPLICATION, which is orthogonal to the commit
+     * mode; {@link #apply1RowCommitsAdaptive()} keeps the adaptive path covered at a row count that fits.
+     */
+    private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount, String commitMode) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
