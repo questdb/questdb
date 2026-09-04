@@ -24,9 +24,12 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
+import io.questdb.mp.Job;
 import io.questdb.cairo.PartitionChecksumScrubJob;
 import io.questdb.cairo.PartitionChecksumSidecar;
 import io.questdb.cairo.TableToken;
+import io.questdb.std.Os;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
@@ -41,6 +44,86 @@ import java.io.File;
  * design -- so without it the whole vector is written and never read.
  */
 public class PartitionChecksumScrubJobTest extends AbstractCairoTest {
+
+    /**
+     * The shipped default is OFF ({@code cairo.partition.checksum.scrub.bytes.per.second} = 0), and
+     * off must mean the job touches nothing at all -- not "runs but finds nothing". Nothing asserted
+     * that before: every other test sets no rate and reaches the scrub through {@code runFully()},
+     * which bypasses the guard entirely, so a regression that started scrubbing unthrottled by
+     * default would not have failed a single test.
+     */
+    @Test
+    public void testDisabledByDefaultDoesNoWork() throws Exception {
+        assertMemoryLeak(() -> {
+            createSealed("s7");
+            engine.getCorruptPartitionRegistry().clear();
+            flipByteInFirstCoveredFile(partitionDir("s7", "2024-01-01"));
+
+            final PartitionChecksumScrubJob job = new PartitionChecksumScrubJob(engine);
+            for (int i = 0; i < 5; i++) {
+                Assert.assertFalse("a disabled scrub must report no work done", job.run(Job.RUNNING_STATUS));
+                Os.sleep(5);
+            }
+            Assert.assertEquals("a disabled scrub must not hash a single byte", 0L, job.bytesHashed());
+            // And it must not condemn: the partition IS corrupt, so a job that ran would have found it.
+            Assert.assertTrue("a disabled scrub must reach no verdict, even on genuinely corrupt bytes",
+                    engine.getCorruptPartitionRegistry().isEmpty());
+        });
+    }
+
+    /**
+     * Drives the PRODUCTION entry point, {@code runSerially()} via {@code run()}, rather than
+     * {@code runFully()}.
+     * <p>
+     * Every other test in this class calls {@code runFully()}, whose own javadoc says it "ignores the
+     * throttle. For tests." -- so before this test {@code runSerially()} had ZERO covered instructions
+     * (JaCoCo: mi=9, ci=0 on its first line). That left the entire throttle untested: the
+     * enable/rate guard, the budget accrual arithmetic, the first-tick stamp initialisation, the
+     * table-cursor rotation, and the {@code spent > 0} contract that tells the worker pool whether
+     * this job did work.
+     * <p>
+     * The throttle is exactly what earns this feature the right to exist as a background job -- the
+     * documented worry is a scrub perturbing engine resource accounting, and the rate limit is the
+     * mitigation. A defect in the budget arithmetic (a bad divisor, an overflow, a cursor that never
+     * advances) could not have been caught by any existing test.
+     */
+    @Test
+    public void testProductionPathThrottlesThenCondemns() throws Exception {
+        // Read in the job's CONSTRUCTOR, so it must be set before the job is built.
+        setProperty(PropertyKey.CAIRO_PARTITION_CHECKSUM_SCRUB_BYTES_PER_SECOND, "104857600");
+        assertMemoryLeak(() -> {
+            createSealed("s6");
+            engine.getCorruptPartitionRegistry().clear();
+            final File dir = partitionDir("s6", "2024-01-01");
+            flipByteInFirstCoveredFile(dir);
+
+            final PartitionChecksumScrubJob job = new PartitionChecksumScrubJob(engine);
+
+            // First tick banks the clock stamp and MUST do nothing: budgetStampMs starts at 0, so
+            // elapsedMs is 0, so no budget accrues and the job returns false before touching a table.
+            // Asserting this pins the documented "0 disables / nothing before time passes" behaviour
+            // rather than leaving it to chance.
+            Assert.assertFalse("the first tick has no elapsed time, so it must not scrub",
+                    job.run(Job.RUNNING_STATUS));
+            Assert.assertEquals("nothing may be hashed before any budget has accrued",
+                    0L, job.bytesHashed());
+
+            // Let real time pass -- the job reads configuration.getMillisecondClock(), which is the
+            // real wall clock and is not redirected by setCurrentMicros. A generous rate keeps the
+            // wait short while still exercising the accrual arithmetic.
+            long deadline = System.currentTimeMillis() + 30_000;
+            while (engine.getCorruptPartitionRegistry().isEmpty() && System.currentTimeMillis() < deadline) {
+                Os.sleep(20);
+                job.run(Job.RUNNING_STATUS);
+            }
+
+            final TableToken token = engine.verifyTableName("s6");
+            final String reason = engine.getCorruptPartitionRegistry().reasonFor(token, dir.getName());
+            Assert.assertNotNull("the throttled production path must still reach and condemn the"
+                    + " corrupted partition", reason);
+            Assert.assertTrue("the production path must have hashed real bytes", job.bytesHashed() > 0);
+        });
+    }
 
     @Test
     public void testCorruptedBlockIsFoundAndCondemned() throws Exception {
