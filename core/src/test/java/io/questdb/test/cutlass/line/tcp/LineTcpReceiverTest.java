@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.line.tcp;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -61,6 +62,7 @@ import io.questdb.std.CharSequenceIntHashMap;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
@@ -1933,9 +1935,15 @@ public class LineTcpReceiverTest extends AbstractLineTcpReceiverTest {
                             halfDoneLatch.countDown();
                         }
                     }
+                } finally {
+                    // drainWalQueue() applies WAL on this thread, and a merge-append commit lands in
+                    // O3PartitionJob, whose per-thread context owns native buffers of its own - two
+                    // Paths among them. A pool worker frees them on halt; this thread has to do it
+                    // itself, or the leak check charges them to the test.
+                    Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
+                    doneLatch.countDown();
                 }
-                Path.clearThreadLocals();
-                doneLatch.countDown();
             }).start();
 
             // Finally, ingest rows with same symbols, but opposite direction, into the

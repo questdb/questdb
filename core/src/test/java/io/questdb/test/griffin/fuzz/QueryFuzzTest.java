@@ -454,8 +454,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 // Wire the storage diff to rewrite master_p -> master_s, slave_p -> slave_s.
                 final FuzzTable masterShadow = new FuzzTable("master_s", new ObjList<>(), "ts");
                 final FuzzTable slaveShadow = new FuzzTable("slave_s", new ObjList<>(), "ts");
-                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, masterShadow);
-                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, slaveShadow);
+                final FuzzTable master = new FuzzTable("master_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, null, masterShadow);
+                final FuzzTable slave = new FuzzTable("slave_p", new ObjList<>(), "ts", FuzzTableFactory.ParquetMode.NONE, null, null, slaveShadow);
                 final ObjList<FuzzTable> tables = new ObjList<>();
                 tables.add(master);
                 tables.add(slave);
@@ -718,6 +718,9 @@ public class QueryFuzzTest extends AbstractCairoTest {
         if (t.getParquetPartitions() != null) {
             sb.append(" partitions=[").append(t.getParquetPartitions()).append(']');
         }
+        if (t.getCompositeDay() != null) {
+            sb.append(" composite=").append(t.getCompositeDay());
+        }
         sb.append("):");
         for (int j = 0, n = t.getColumnCount(); j < n; j++) {
             FuzzColumn c = t.getColumn(j);
@@ -743,6 +746,12 @@ public class QueryFuzzTest extends AbstractCairoTest {
                 ? TestUtils.generateRandom(LOG, s0, s1)
                 : TestUtils.generateRandom(LOG);
         FuzzConfig config = new FuzzConfig(rnd);
+
+        // Global prerequisite for FuzzTableFactory's per-table composite-partition
+        // backdate (see its class javadoc). A no-op for any table the coin flip
+        // misses -- merge-append only changes behaviour on a backdated/overlapping
+        // write, which an in-order table never makes.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
 
         LOG.info().$("fuzz config: tables=").$(config.getNumTables())
                 .$(", rows=").$(config.getRowsPerTable())

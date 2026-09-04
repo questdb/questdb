@@ -24,6 +24,8 @@
 
 package io.questdb.cairo.frm;
 
+import org.jetbrains.annotations.Nullable;
+
 import java.io.Closeable;
 
 /**
@@ -35,11 +37,44 @@ public interface Frame extends Closeable {
 
     int columnCount();
 
+    /**
+     * Forwards {@link ColumnTopSink#commitColumnTops()} to this frame's sink, if it has one. A frame
+     * that tracks its own tops has nothing to commit - {@link #saveChanges} already lands the final
+     * value - so this is a no-op there.
+     */
+    void commitColumnTops();
+
     FrameColumn createColumn(int columnIndex);
+
+    /**
+     * Opens a COVERING posting-indexed column as a plain one, so this frame writes its data but adds no
+     * index entries. The caller indexes the rows it appended itself, after every column is on disk, with
+     * the covered columns described. Default: index as usual.
+     */
+    default void setDeferCoveredIndexing(boolean deferCoveredIndexing) {
+    }
+
+    /**
+     * The fan-out this frame's per-column work can run on, or {@code null} when it has none and every
+     * operation against it stays on the calling thread. Only a writable frame has one - it is the
+     * TARGET of an operation that owns it - and one frame runs one operation at a time, so the same
+     * instance is handed out for every call.
+     */
+    @Nullable
+    FrameColumnFanOut getColumnFanOut();
 
     long getOffset();
 
     long getRowCount();
+
+    /**
+     * Reports every column's self-tracked top to {@code sink}, one {@link ColumnTopSink#setColumnTop}
+     * call per column this frame actually wrote through (see {@link #saveChanges}). A {@link ColumnTopSink}
+     * rather than a {@code ColumnVersionWriter} directly, so a caller can defer applying the values - e.g.
+     * record them off the writer thread and push them into the real {@code ColumnVersionWriter} only once
+     * it holds the writer - instead of writing straight into a table-wide, non-thread-safe instance.
+     */
+    void publishColumnTops(ColumnTopSink sink);
 
     void saveChanges(FrameColumn column);
 

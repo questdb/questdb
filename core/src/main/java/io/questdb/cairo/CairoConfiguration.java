@@ -607,6 +607,12 @@ public interface CairoConfiguration {
 
     long getO3MinLag();
 
+    /**
+     * How many PRE-SPLIT cuts one commit may make in a partition. A cut moves no bytes, but each one adds
+     * a piece the partition then carries, so the budget trades write amplification against piece count.
+     */
+    int getO3PartitionPreSplitMaxCuts();
+
     int getO3OpenColumnQueueCapacity();
 
     int getO3PartitionQueueCapacity();
@@ -646,6 +652,95 @@ public interface CairoConfiguration {
     CharSequence getParquetExportTableNamePrefix();
 
     int getParquetExportVersion();
+
+    /**
+     * The piece-count rule's target average piece size, in rows - see
+     * {@link #getPartitionCompactionPieceThreshold()}. A folder is allowed {@code liveRows / this} pieces
+     * before the rule fires, never fewer than the flat floor, so a large folder is allowed proportionally
+     * more before the rule fires - a piece's fixed per-frame read cost is the same regardless of how many
+     * live rows sit around it, so a flat cap alone would punish a big folder for a fragmentation level a
+     * small one would never be flagged for.
+     */
+    long getPartitionCompactionAvgRowsPieceLim();
+
+    /**
+     * How often {@link io.questdb.cairo.PartitionCompactionScanJob} sweeps every table for idle
+     * composite or Parquet-format partitions, in milliseconds. Independent of
+     * {@link #getPartitionCompactionIdleTimeout()}: this is the scan cadence, that is the age threshold
+     * a partition must clear before the sweep (or the per-commit age rule) will act on it.
+     */
+    long getPartitionCompactionCheckInterval();
+
+    /**
+     * The minimum wasted BYTES a folder must hold before the waste-ratio rule will fire on it. The
+     * comparison is made in rows, through the writer's average record size.
+     */
+    long getPartitionCompactionDeadMinSize();
+
+    /**
+     * The waste-ratio rule fires when a folder's dead rows exceed this multiple of its live rows.
+     */
+    double getPartitionCompactionDeadRowsRatio();
+
+    /**
+     * The ceiling of the doubling back-off applied to a folder whose compaction was declined, in
+     * microseconds.
+     */
+    long getPartitionCompactionDeclineBackoffMax();
+
+    /**
+     * How long a folder's geometry must have been unchanged before the age rule will compact it, in
+     * microseconds.
+     */
+    long getPartitionCompactionIdleTimeout();
+
+    /**
+     * The piece-count rule fires when a folder holds more pieces than this - a FLOOR, not the whole
+     * story: the effective cap is {@code max(getPartitionCompactionPieceThreshold(), liveRows /
+     * getPartitionCompactionAvgRowsPieceLim())}, so a small folder is held to this number exactly, but a
+     * large one is allowed proportionally more before the rule fires.
+     */
+    int getPartitionCompactionPieceThreshold();
+
+    /**
+     * MOVE-TAIL only splits off the tail when the clean front is at least this percentage of the
+     * partition's live rows - below it, a two-way split is not worth the extra directory and REWRITE runs
+     * instead.
+     */
+    int getPartitionCompactionPrefixMinPercent();
+
+    /**
+     * The table-pressure rule turns off again only once the table's dead rows fall below this
+     * percentage. Two thresholds rather than one, or the rule would switch on and off around a single
+     * point and queue a folder on every commit forever. Clamped to at most
+     * {@link #getPartitionCompactionTableDeadThresholdPercent()}.
+     */
+    int getPartitionCompactionTableDeadStopPercent();
+
+    /**
+     * The table-pressure rule never turns on from the percentage check alone while the table's estimated
+     * dead BYTES stay below this floor - a handful of dead rows in an otherwise tiny table should not
+     * force a copy. The absolute-size check ({@link #getPartitionCompactionTableDeadTrigger()}) ignores
+     * this floor, since it is itself already well above it.
+     */
+    long getPartitionCompactionTableDeadThreshold();
+
+    /**
+     * The table-pressure rule turns on when the table's dead rows reach this percentage of its total.
+     */
+    int getPartitionCompactionTableDeadThresholdPercent();
+
+    /**
+     * The table-pressure rule turns on when the table's estimated dead BYTES exceed this, whatever the
+     * percentage says.
+     */
+    long getPartitionCompactionTableDeadTrigger();
+
+    /**
+     * The wall-clock budget one housekeeping pass may spend compacting, in milliseconds. Checked
+     * between folders, never inside one.
+     */
+    long getPartitionCompactionTimeBudgetMs();
 
     double getPartitionEncoderParquetBloomFilterFpp();
 
@@ -1258,6 +1353,14 @@ public interface CairoConfiguration {
     boolean isMatViewRefreshMissingWalFilesFatal();
 
     boolean isMultiKeyDedupEnabled();
+
+    /**
+     * Whether a partition may be written as a COMPOSITE - several pieces over one set of column files,
+     * with the incoming rows appended at the tail and the untouched pieces left exactly where they are.
+     * <p>
+     * With it off, every write of a partition rewrites the whole partition, which is what master does.
+     */
+    boolean isO3PartitionMergeAppendEnabled();
 
     boolean isO3QuickSortEnabled();
 

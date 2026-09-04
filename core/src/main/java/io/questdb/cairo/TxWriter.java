@@ -429,6 +429,37 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         }
     }
 
+    /**
+     * Publishes a partition's geometry pointer into its {@code _txn} record - the offset-3 word, whose
+     * VALUE field a composite NATIVE partition spends on the pointer instead of on a seqTxn stamp. The
+     * value comes from the composite write path and is opaque here: this class stores it, and only
+     * {@link TxReader#isPartitionComposite} and the resolver take it apart. Pass
+     * {@link TableWriter#NO_GEOMETRY_REF} to drop the partition back to plain.
+     * <p>
+     * REMOTE and the reserved flags survive; {@link TxReader#PARTITION_SEQ_TXN_VALID_BIT} does not,
+     * because a composite word holds no stamp - that is what makes
+     * {@link TxReader#getNativePartitionSeqTxn} read the seqTxn out of the {@code _geometry} record
+     * instead. A caller dropping back to plain is free to stamp one afterwards.
+     * <p>
+     * Ordering is the crash-consistency contract and belongs to the caller: the {@code _geometry} record
+     * must be durable BEFORE the {@code _txn} that points at it, the same ordering {@code _cv} obeys. A
+     * crash between the two leaves an unreferenced record, which is harmless; the reverse is durably
+     * inconsistent.
+     */
+    public void setPartitionGeometryRef(long timestamp, long geometryRef) {
+        final int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(timestamp);
+        if (indexRaw > -1) {
+            assert !isPartitionParquetByRawIndex(indexRaw) : "slot 3 of a parquet partition is its file size";
+            assert (geometryRef & PARTITION_VERSION_FLAGS_MASK & ~PARTITION_COMPOSITE_FLAG) == 0
+                    : "a geometry ref must not carry foreign flag bits";
+            final long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
+                    & ~(PARTITION_COMPOSITE_FLAG | PARTITION_SEQ_TXN_VALID_BIT);
+            attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, flags | geometryRef);
+            recordStructureVersion++;
+            partitionTableVersion++;
+        }
+    }
+
     public void setPartitionNative(long timestamp, long seqTxn) {
         setPartitionFormat(timestamp, false, seqTxn);
     }
@@ -516,8 +547,18 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * reads back as the -1 "no version" sentinel.
      */
     public void setPartitionSeqTxnByRawIndex(int indexRaw, long seqTxn) {
+        if (isPartitionCompositeByRawIndex(indexRaw)) {
+            // A composite partition spends the offset-3 value field on its geometry pointer, so there is
+            // nowhere here to put a stamp; its seqTxn goes into the _geometry record instead. Leaving the
+            // pointer alone is what keeps an in-place rewrite - ALTER COLUMN TYPE, UPDATE - from losing a
+            // partition's piece layout. A caller that rewrites the partition into a NEW directory must
+            // clear the pointer itself, because the new directory has no _geometry file: see the native
+            // mutate branch of o3ConsumePartitionUpdateSink.
+            return;
+        }
         setPartitionParquetGeneratedByRawIndex(indexRaw, false);
-        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
+        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
+                & ~(PARTITION_REMOTE_BIT | PARTITION_SEQ_TXN_VALID_BIT);
         final long valid = seqTxn > 0 ? PARTITION_SEQ_TXN_VALID_BIT : 0L;
         attachedPartitions.setQuick(indexRaw + PARTITION_VERSION_OFFSET, (seqTxn & PARTITION_VERSION_VALUE_MASK) | flags | valid);
     }
@@ -808,7 +849,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
         attachedPartitions.setQuick(offset, maskedSize);
 
-        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK & ~PARTITION_SEQ_TXN_VALID_BIT;
+        // A parquet partition is materialized whole and is never composite; the value field it is
+        // about to take is its file size, not a geometry pointer.
+        long flags = getPartitionOffset3(indexRaw) & PARTITION_VERSION_FLAGS_MASK
+                & ~(PARTITION_SEQ_TXN_VALID_BIT | PARTITION_COMPOSITE_FLAG);
         if (!isParquetFormat && version > 0) {
             flags |= PARTITION_SEQ_TXN_VALID_BIT;
         }

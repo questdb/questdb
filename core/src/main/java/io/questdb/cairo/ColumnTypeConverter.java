@@ -124,7 +124,7 @@ public class ColumnTypeConverter {
                 default -> throw unsupportedConversion(srcColumnType, dstColumnType);
             };
         } else if (ColumnType.isFixedSize(srcColumnType) && ColumnType.isFixedSize(dstColumnType)) {
-            return convertFixedToFixed(rowCount, skipRows, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
+            return convertFixedToFixed(rowCount, skipRows, 0, srcFixFd, dstFixFd, srcColumnType, dstColumnType, ff, columnSizesSink);
         } else if (ColumnType.isVarSize(srcColumnType)) {
             return switch (srcColumnType) {
                 case ColumnType.STRING ->
@@ -167,9 +167,10 @@ public class ColumnTypeConverter {
         };
     }
 
-    private static boolean convertFixedToFixed(
+    public static boolean convertFixedToFixed(
             long rowCount,
             long skipRows,
+            long dstRowOffset,
             long srcFixFd,
             long dstFixFd,
             int srcColumnType,
@@ -184,15 +185,18 @@ public class ColumnTypeConverter {
 
         long skipBytes = skipRows * srcColumnTypeSize;
         long mapBytes = rowCount * srcColumnTypeSize;
+        long dstByteOffset = dstRowOffset * dstColumnTypeSize;
         long dstMapBytes = rowCount * dstColumnTypeSize;
 
         try {
             srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
-            TableUtils.allocateDiskSpace(ff, dstFixFd, dstMapBytes);
-            dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, dstMapBytes, true, memoryTag);
-            columnSizesSink.setDestSizes(dstMapBytes, -1);
+            // Exact, not page-rounded: the destination file must end up exactly as long as the rows
+            // written into it. dstByteOffset is the composite append point, 0 for a plain partition.
+            TableUtils.allocateDiskSpace(ff, dstFixFd, dstByteOffset + dstMapBytes);
+            dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, dstByteOffset, dstMapBytes, true, memoryTag);
+            columnSizesSink.setDestSizes(dstByteOffset + dstMapBytes, -1);
 
             long succeeded = ConvertersNative.fixedToFixed(srcMapAddress, srcColumnType, dstMapAddress, dstColumnType, rowCount);
             return switch ((int) succeeded) {
@@ -207,8 +211,418 @@ public class ColumnTypeConverter {
                 TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
             }
             if (dstMapAddress != 0) {
-                TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddress, 0, dstMapBytes, memoryTag);
+                TableUtils.mapAppendColumnBufferRelease(ff, dstMapAddress, dstByteOffset, dstMapBytes, memoryTag);
             }
+        }
+    }
+
+    public static void padFixedGap(long dstRowOffset, long gapRowCount, int dstColumnType, long dstFixFd, FilesFacade ff) {
+        if (gapRowCount <= 0) {
+            return;
+        }
+        final long dstColumnTypeSize = ColumnType.sizeOf(dstColumnType);
+        final long dstByteOffset = dstRowOffset * dstColumnTypeSize;
+        final long padBytes = gapRowCount * dstColumnTypeSize;
+        TableUtils.allocateDiskSpaceToPage(ff, dstFixFd, dstByteOffset + padBytes);
+        long addr = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, dstByteOffset, padBytes, true, memoryTag);
+        try {
+            TableUtils.setNull(dstColumnType, addr, gapRowCount);
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, addr, dstByteOffset, padBytes, memoryTag);
+        }
+    }
+
+    /**
+     * Converts one live STRING piece to VARCHAR at the same absolute row range, reading and writing
+     * only that piece - the source aux/data offsets come from the on-disk aux vector at
+     * {@code segmentOffset}, not from any state carried over from a previous piece.
+     */
+    public static void convertStringToVarcharPiece(
+            long segmentOffset,
+            long rowCount,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize
+    ) {
+        StringTypeDriver typeDriver = StringTypeDriver.INSTANCE;
+        long skipDataSize;
+        long dataSize;
+        try {
+            skipDataSize = segmentOffset > 0 ? typeDriver.getDataVectorSizeAtFromFd(ff, srcFixFd, segmentOffset - 1) : 0;
+            dataSize = typeDriver.getDataVectorSizeAtFromFd(ff, srcFixFd, segmentOffset + rowCount - 1);
+        } catch (CairoException ex) {
+            LOG.error().$("cannot read STRING column data vector size, column data is corrupt [srcFixFd=").$(srcFixFd).I$();
+            throw ex;
+        }
+
+        MemoryCMORImpl srcVarMem = srcVarMemTL.get();
+        try {
+            srcVarMem.ofOffset(ff, srcVarFd, true, null, skipDataSize, dataSize, memoryTag, CairoConfiguration.O_NONE);
+
+            long dstDataOffset = segmentOffset > 0
+                    ? VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, dstFixFd, segmentOffset - 1)
+                    : 0;
+            long dstAuxOffset = VarcharTypeDriver.INSTANCE.getAuxVectorSize(segmentOffset);
+
+            MemoryCMARW dstVarMem = dstVarMemTL.get();
+            MemoryCMARW dstFixMem = dstFixMemTL.get();
+            Utf8StringSink sink = sinkUtf8TL.get();
+            try {
+                dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+                dstVarMem.jumpTo(dstDataOffset);
+                dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, appendPageSize, memoryTag);
+                dstFixMem.jumpTo(dstAuxOffset);
+
+                long offset = skipDataSize;
+                for (long i = 0; i < rowCount; i++) {
+                    CharSequence str = srcVarMem.getStrA(offset);
+                    offset += Vm.getStorageLength(str);
+
+                    if (str != null) {
+                        sink.clear();
+                        sink.put(str);
+                        VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
+                    } else {
+                        VarcharTypeDriver.appendValue(dstFixMem, dstVarMem, null);
+                    }
+                }
+            } finally {
+                sink.clear();
+                sink.resetCapacity();
+                dstVarMem.detachFdClose();
+                dstFixMem.detachFdClose();
+            }
+        } finally {
+            srcVarMem.detachFdClose();
+        }
+    }
+
+    /**
+     * Converts one live VARCHAR piece to STRING at the same absolute row range - the counterpart of
+     * {@link #convertStringToVarcharPiece}.
+     */
+    public static void convertVarcharToStringPiece(
+            long segmentOffset,
+            long rowCount,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize
+    ) {
+        final VarcharTypeDriver driverInstance = VarcharTypeDriver.INSTANCE;
+        long skipDataSize;
+        long dataHi;
+        try {
+            skipDataSize = segmentOffset > 0 ? driverInstance.getDataVectorSizeAtFromFd(ff, srcFixFd, segmentOffset - 1) : 0;
+            dataHi = driverInstance.getDataVectorSizeAtFromFd(ff, srcFixFd, segmentOffset + rowCount - 1);
+        } catch (CairoException ex) {
+            LOG.error().$("cannot read VARCHAR column data vector size, column data is corrupt [srcFixFd=").$(srcFixFd).I$();
+            throw ex;
+        }
+
+        MemoryCMORImpl srcVarMem = null;
+        MemoryCMORImpl srcFixMem = srcFixMemTL.get();
+        long skipAuxOffset = driverInstance.getAuxVectorSize(segmentOffset);
+        try {
+            if (dataHi > skipDataSize) {
+                srcVarMem = srcVarMemTL.get();
+                srcVarMem.ofOffset(ff, srcVarFd, true, null, skipDataSize, dataHi, memoryTag, CairoConfiguration.O_NONE);
+            }
+            srcFixMem.ofOffset(ff, srcFixFd, true, null, skipAuxOffset, skipAuxOffset + driverInstance.getAuxVectorSize(rowCount), memoryTag, CairoConfiguration.O_NONE);
+
+            long dstDataOffset = segmentOffset > 0
+                    ? StringTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, dstFixFd, segmentOffset - 1)
+                    : 0;
+            long dstAuxOffset = StringTypeDriver.INSTANCE.getAuxVectorSize(segmentOffset);
+
+            MemoryCMARW dstFixMem = dstFixMemTL.get();
+            MemoryCMARW dstVarMem = dstVarMemTL.get();
+            StringSink sink = sinkUtf16TL.get();
+            try {
+                dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+                dstVarMem.jumpTo(dstDataOffset);
+                dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, appendPageSize, memoryTag);
+                dstFixMem.jumpTo(dstAuxOffset);
+
+                for (long i = segmentOffset; i < segmentOffset + rowCount; i++) {
+                    Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
+
+                    if (utf8 != null) {
+                        sink.clear();
+                        sink.put(utf8);
+                        StringTypeDriver.appendValue(dstFixMem, dstVarMem, sink);
+                    } else {
+                        StringTypeDriver.INSTANCE.appendNull(dstFixMem, dstVarMem);
+                    }
+                }
+            } finally {
+                dstVarMem.detachFdClose();
+                dstFixMem.detachFdClose();
+            }
+        } finally {
+            if (srcVarMem != null) {
+                srcVarMem.detachFdClose();
+            }
+            srcFixMem.detachFdClose();
+        }
+    }
+
+    /**
+     * Pads a dead gap in a var-size destination column with proper nulls, at the row's real absolute
+     * position - the aux (index) vector grows by one entry per gap row, like a live write would, but the
+     * data vector grows only by the type's minimum null entry size (zero for VARCHAR), never by
+     * {@code gapRowCount} - the dead rows contribute no bytes to the data file.
+     */
+    public static void padVarGap(long dstRowOffset, long gapRowCount, int dstColumnType, long dstFixFd, long dstVarFd, FilesFacade ff) {
+        if (gapRowCount <= 0) {
+            return;
+        }
+        final ColumnTypeDriver driver = ColumnType.getDriver(dstColumnType);
+        final long targetDataOffset = dstRowOffset > 0 ? driver.getDataVectorSizeAtFromFd(ff, dstFixFd, dstRowOffset - 1) : 0;
+        final long dataSize = gapRowCount * driver.getDataVectorMinEntrySize();
+        if (dataSize > 0) {
+            TableUtils.allocateDiskSpaceToPage(ff, dstVarFd, targetDataOffset + dataSize);
+            long dataAddr = TableUtils.mapAppendColumnBuffer(ff, dstVarFd, targetDataOffset, dataSize, true, memoryTag);
+            try {
+                driver.setDataVectorEntriesToNull(dataAddr, gapRowCount);
+            } finally {
+                TableUtils.mapAppendColumnBufferRelease(ff, dataAddr, targetDataOffset, dataSize, memoryTag);
+            }
+        }
+
+        final long dstAuxOffset = driver.getAuxVectorSize(dstRowOffset);
+        final long auxSize = driver.getAuxVectorSize(gapRowCount);
+        TableUtils.allocateDiskSpaceToPage(ff, dstFixFd, dstAuxOffset + auxSize);
+        long auxAddr = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, dstAuxOffset, auxSize, true, memoryTag);
+        try {
+            driver.setPartAuxVectorNull(auxAddr, targetDataOffset + driver.getDataVectorMinEntrySize(), gapRowCount);
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, auxAddr, dstAuxOffset, auxSize, memoryTag);
+        }
+    }
+
+    /**
+     * Seeds a brand-new STRING aux file with its mandatory entry 0 (offset 0) - the N+1-offset scheme
+     * a live write always assumes is already there. Every other var-size destination this converter
+     * piece-walks (VARCHAR) has no such bootstrap entry and needs no seed.
+     */
+    public static void seedStringAuxVector(long dstFixFd, FilesFacade ff) {
+        TableUtils.allocateDiskSpaceToPage(ff, dstFixFd, Long.BYTES);
+        long addr = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, 0, Long.BYTES, true, memoryTag);
+        try {
+            Unsafe.getUnsafe().putLong(addr, 0L);
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, addr, 0, Long.BYTES, memoryTag);
+        }
+    }
+
+    /**
+     * Converts one live FIXED piece to VARCHAR at the same absolute row range - the mixed-direction
+     * counterpart of {@link #convertStringToVarcharPiece}. The per-row conversion loop
+     * ({@link #convertFixedToVarchar0}) is shared with the whole-column path; only the destination's
+     * starting position differs.
+     */
+    public static void convertFixedToVarcharPiece(
+            long segmentOffset,
+            long rowCount,
+            long srcFixFd,
+            int srcColumnType,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize
+    ) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        final long skipBytes = segmentOffset * srcColumnTypeSize;
+        final long mapBytes = rowCount * srcColumnTypeSize;
+        final long srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        try {
+            final long dstDataOffset = segmentOffset > 0
+                    ? VarcharTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, dstFixFd, segmentOffset - 1)
+                    : 0;
+            final long dstAuxOffset = VarcharTypeDriver.INSTANCE.getAuxVectorSize(segmentOffset);
+
+            MemoryCMARW dstVarMem = dstVarMemTL.get();
+            MemoryCMARW dstFixMem = dstFixMemTL.get();
+            Utf8StringSink sink = sinkUtf8TL.get();
+            try {
+                dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+                dstVarMem.jumpTo(dstDataOffset);
+                dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, appendPageSize, memoryTag);
+                dstFixMem.jumpTo(dstAuxOffset);
+
+                Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.VARCHAR);
+                convertFixedToVarchar0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converter);
+            } finally {
+                sink.clear();
+                sink.resetCapacity();
+                dstVarMem.detachFdClose();
+                dstFixMem.detachFdClose();
+            }
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
+        }
+    }
+
+    /**
+     * Converts one live FIXED piece to STRING at the same absolute row range - the mixed-direction
+     * counterpart of {@link #convertVarcharToStringPiece}. Callers seed the destination's N+1 entry 0
+     * once per column via {@link #seedStringAuxVector} before walking pieces, exactly as the
+     * STRING/VARCHAR piece walk does.
+     */
+    public static void convertFixedToStringPiece(
+            long segmentOffset,
+            long rowCount,
+            long srcFixFd,
+            int srcColumnType,
+            long dstFixFd,
+            long dstVarFd,
+            FilesFacade ff,
+            long appendPageSize
+    ) {
+        final long srcColumnTypeSize = ColumnType.sizeOf(srcColumnType);
+        final long skipBytes = segmentOffset * srcColumnTypeSize;
+        final long mapBytes = rowCount * srcColumnTypeSize;
+        final long srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
+        try {
+            final long dstDataOffset = segmentOffset > 0
+                    ? StringTypeDriver.INSTANCE.getDataVectorSizeAtFromFd(ff, dstFixFd, segmentOffset - 1)
+                    : 0;
+            final long dstAuxOffset = StringTypeDriver.INSTANCE.getAuxVectorSize(segmentOffset);
+
+            MemoryCMARW dstVarMem = dstVarMemTL.get();
+            MemoryCMARW dstFixMem = dstFixMemTL.get();
+            StringSink sink = sinkUtf16TL.get();
+            try {
+                dstVarMem.of(ff, dstVarFd, true, null, appendPageSize, appendPageSize, memoryTag);
+                dstVarMem.jumpTo(dstDataOffset);
+                dstFixMem.of(ff, dstFixFd, true, null, appendPageSize, appendPageSize, memoryTag);
+                dstFixMem.jumpTo(dstAuxOffset);
+
+                Fixed2VarConverter converter = getFixedToVarConverter(srcColumnType, ColumnType.STRING);
+                convertFixedToString0(rowCount, srcMapAddress, dstFixMem, dstVarMem, sink, srcColumnType, converter);
+            } finally {
+                dstVarMem.detachFdClose();
+                dstFixMem.detachFdClose();
+            }
+        } finally {
+            TableUtils.mapAppendColumnBufferRelease(ff, srcMapAddress, skipBytes, mapBytes, memoryTag);
+        }
+    }
+
+    /**
+     * Converts one live STRING piece to a FIXED destination at the same absolute row range - the
+     * mixed-direction counterpart of {@link #convertFixedToVarcharPiece}. STRING's data vector is
+     * self-length-prefixed, so the source is walked directly off the data vector in row order; no aux
+     * vector read is needed on the source side.
+     */
+    public static void convertStringToFixedPiece(
+            long segmentOffset,
+            long rowCount,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            int dstColumnType,
+            FilesFacade ff
+    ) {
+        StringTypeDriver typeDriver = StringTypeDriver.INSTANCE;
+        long skipDataSize;
+        long dataSize;
+        try {
+            skipDataSize = segmentOffset > 0 ? typeDriver.getDataVectorSizeAtFromFd(ff, srcFixFd, segmentOffset - 1) : 0;
+            dataSize = typeDriver.getDataVectorSizeAtFromFd(ff, srcFixFd, segmentOffset + rowCount - 1);
+        } catch (CairoException ex) {
+            LOG.error().$("cannot read STRING column data vector size, column data is corrupt [srcFixFd=").$(srcFixFd).I$();
+            throw ex;
+        }
+
+        MemoryCMORImpl srcVarMem = srcVarMemTL.get();
+        try {
+            srcVarMem.ofOffset(ff, srcVarFd, true, null, skipDataSize, dataSize, memoryTag, CairoConfiguration.O_NONE);
+
+            final int dstTypeSize = ColumnType.sizeOf(dstColumnType);
+            final long dstByteOffset = segmentOffset * dstTypeSize;
+            Var2FixedConverter<CharSequence> converter = getConverterFromVarToFixed(ColumnType.STRING, dstColumnType);
+
+            MemoryCMARW dstFixMem = dstFixMemTL.get();
+            try {
+                dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, dstByteOffset + rowCount * dstTypeSize, memoryTag);
+                dstFixMem.jumpTo(dstByteOffset);
+
+                long offset = skipDataSize;
+                for (long i = 0; i < rowCount; i++) {
+                    CharSequence str = srcVarMem.getStrA(offset);
+                    offset += Vm.getStorageLength(str);
+                    converter.convert(str, dstFixMem);
+                }
+            } finally {
+                dstFixMem.detachFdClose();
+            }
+        } finally {
+            srcVarMem.detachFdClose();
+        }
+    }
+
+    /**
+     * Converts one live VARCHAR piece to a FIXED destination at the same absolute row range - the
+     * mixed-direction counterpart of {@link #convertFixedToStringPiece}.
+     */
+    public static void convertVarcharToFixedPiece(
+            long segmentOffset,
+            long rowCount,
+            long srcFixFd,
+            long srcVarFd,
+            long dstFixFd,
+            int dstColumnType,
+            FilesFacade ff
+    ) {
+        final VarcharTypeDriver driverInstance = VarcharTypeDriver.INSTANCE;
+        long skipDataSize;
+        long dataHi;
+        try {
+            skipDataSize = segmentOffset > 0 ? driverInstance.getDataVectorSizeAtFromFd(ff, srcFixFd, segmentOffset - 1) : 0;
+            dataHi = driverInstance.getDataVectorSizeAtFromFd(ff, srcFixFd, segmentOffset + rowCount - 1);
+        } catch (CairoException ex) {
+            LOG.error().$("cannot read VARCHAR column data vector size, column data is corrupt [srcFixFd=").$(srcFixFd).I$();
+            throw ex;
+        }
+
+        MemoryCMORImpl srcVarMem = null;
+        MemoryCMORImpl srcFixMem = srcFixMemTL.get();
+        long skipAuxOffset = driverInstance.getAuxVectorSize(segmentOffset);
+        try {
+            if (dataHi > skipDataSize) {
+                srcVarMem = srcVarMemTL.get();
+                srcVarMem.ofOffset(ff, srcVarFd, true, null, skipDataSize, dataHi, memoryTag, CairoConfiguration.O_NONE);
+            }
+            srcFixMem.ofOffset(ff, srcFixFd, true, null, skipAuxOffset, skipAuxOffset + driverInstance.getAuxVectorSize(rowCount), memoryTag, CairoConfiguration.O_NONE);
+
+            final int dstTypeSize = ColumnType.sizeOf(dstColumnType);
+            final long dstByteOffset = segmentOffset * dstTypeSize;
+            Var2FixedConverter<CharSequence> converter = getConverterFromVarToFixed(ColumnType.VARCHAR, dstColumnType);
+
+            MemoryCMARW dstFixMem = dstFixMemTL.get();
+            try {
+                dstFixMem.of(ff, dstFixFd, true, null, Files.PAGE_SIZE, dstByteOffset + rowCount * dstTypeSize, memoryTag);
+                dstFixMem.jumpTo(dstByteOffset);
+
+                for (long i = segmentOffset; i < segmentOffset + rowCount; i++) {
+                    Utf8Sequence utf8 = VarcharTypeDriver.getSplitValue(srcFixMem, srcVarMem, i, 1);
+                    converter.convert(utf8 != null ? utf8.asAsciiCharSequence() : null, dstFixMem);
+                }
+            } finally {
+                dstFixMem.detachFdClose();
+            }
+        } finally {
+            if (srcVarMem != null) {
+                srcVarMem.detachFdClose();
+            }
+            srcFixMem.detachFdClose();
         }
     }
 
@@ -465,7 +879,9 @@ public class ColumnTypeConverter {
             ColumnConversionOffsetSink columnSizesSink
     ) {
         columnSizesSink.setSrcOffsets(skipRows * Integer.BYTES, -1);
-        long symbolMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipRows * Integer.BYTES, rowCount * Integer.BYTES, false, memoryTag);
+        final long skipBytes = skipRows * Integer.BYTES;
+        final long mapBytes = rowCount * Integer.BYTES;
+        long symbolMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
 
         try {
             switch (ColumnType.tagOf(dstColumnType)) {

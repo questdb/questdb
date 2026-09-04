@@ -882,6 +882,12 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         // merge with the max. A released-base word (a parquet file size, no VALID bit) on one split
         // must not be promoted into a trusted stamp by that read -- the gated read quarantines it to
         // -1 (floored to 0 by the merge), so the result is max(trusted sources), never the file size.
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);
@@ -934,6 +940,12 @@ public class NativePartitionSeqTxnTest extends AbstractCairoTest {
         // table high-water. Build a split partition last written at seqTxn S, let the high-water climb
         // past S (a later partition + the squash command), then squash: the merged partition keeps S,
         // not the high-water -- otherwise a manager switch would spuriously re-upload unchanged bytes.
+        // Drives squashSplitPartitions over SPLIT sub-partitions. Merge-append folds a backdated
+        // write into the partition's own composite geometry instead of opening a split directory, so
+        // the split this test's setup asserts never appears. Squash over composite partitions is a
+        // known gap; until it closes, pin the production default so the test keeps covering what it
+        // was written for.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 4 << 10);
             node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 2);

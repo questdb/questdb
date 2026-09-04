@@ -755,6 +755,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public int getO3PartitionPreSplitMaxCuts() {
+        return getDelegate().getO3PartitionPreSplitMaxCuts();
+    }
+
+    @Override
     public int getO3OpenColumnQueueCapacity() {
         return getDelegate().getO3OpenColumnQueueCapacity();
     }
@@ -837,6 +842,71 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getParquetExportVersion() {
         return getDelegate().getParquetExportVersion();
+    }
+
+    @Override
+    public long getPartitionCompactionAvgRowsPieceLim() {
+        return getDelegate().getPartitionCompactionAvgRowsPieceLim();
+    }
+
+    @Override
+    public long getPartitionCompactionCheckInterval() {
+        return getDelegate().getPartitionCompactionCheckInterval();
+    }
+
+    @Override
+    public long getPartitionCompactionDeadMinSize() {
+        return getDelegate().getPartitionCompactionDeadMinSize();
+    }
+
+    @Override
+    public double getPartitionCompactionDeadRowsRatio() {
+        return getDelegate().getPartitionCompactionDeadRowsRatio();
+    }
+
+    @Override
+    public long getPartitionCompactionDeclineBackoffMax() {
+        return getDelegate().getPartitionCompactionDeclineBackoffMax();
+    }
+
+    @Override
+    public long getPartitionCompactionIdleTimeout() {
+        return getDelegate().getPartitionCompactionIdleTimeout();
+    }
+
+    @Override
+    public int getPartitionCompactionPieceThreshold() {
+        return getDelegate().getPartitionCompactionPieceThreshold();
+    }
+
+    @Override
+    public int getPartitionCompactionPrefixMinPercent() {
+        return getDelegate().getPartitionCompactionPrefixMinPercent();
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadStopPercent() {
+        return getDelegate().getPartitionCompactionTableDeadStopPercent();
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadThreshold() {
+        return getDelegate().getPartitionCompactionTableDeadThreshold();
+    }
+
+    @Override
+    public int getPartitionCompactionTableDeadThresholdPercent() {
+        return getDelegate().getPartitionCompactionTableDeadThresholdPercent();
+    }
+
+    @Override
+    public long getPartitionCompactionTableDeadTrigger() {
+        return getDelegate().getPartitionCompactionTableDeadTrigger();
+    }
+
+    @Override
+    public long getPartitionCompactionTimeBudgetMs() {
+        return getDelegate().getPartitionCompactionTimeBudgetMs();
     }
 
     @Override
@@ -1737,6 +1807,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
+    }
+
+    @Override
+    public boolean isO3PartitionMergeAppendEnabled() {
+        return getDelegate().isO3PartitionMergeAppendEnabled();
     }
 
     @Override

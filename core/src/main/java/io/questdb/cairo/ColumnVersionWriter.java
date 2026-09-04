@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.frm.ColumnTopSink;
+import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
@@ -34,6 +36,7 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
+    private final ColumnTopSinkImpl columnTopSink = new ColumnTopSinkImpl();
     private final CairoConfiguration configuration;
     private final MemoryCMARW mem;
     private final boolean partitioned;
@@ -54,6 +57,18 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         if (this.size > 0) {
             this.version = super.readUnsafe();
         }
+    }
+
+    /**
+     * Arms this writer's {@link ColumnTopSink} view for one partition and returns it: every
+     * {@link ColumnTopSink#setColumnTop} call the caller makes on the returned reference merges into
+     * {@code partitionTimestamp}'s own record, until the next {@code asColumnTopSink} call re-arms it
+     * for a different partition. Always the same reused instance, so passing it straight to
+     * {@link Frame#publishColumnTops} costs no per-call allocation.
+     */
+    public ColumnTopSink asColumnTopSink(long partitionTimestamp) {
+        columnTopSink.partitionTimestamp = partitionTimestamp;
+        return columnTopSink;
     }
 
     @Override
@@ -102,6 +117,25 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     public boolean hasChanges() {
         return hasChanges;
+    }
+
+    /**
+     * Records a column top a Frame write just established, reconciled against what this writer already
+     * resolves for {@code (partitionTimestamp, columnIndex)} instead of blindly recorded like {@link
+     * #upsertColumnTop} does.
+     * <p>
+     * A non-zero top always goes straight through - {@link #upsertColumnTop} already records those
+     * outright. Zero is the one value that needs the check first: it is what BOTH "confirmed, no top"
+     * and "nothing recorded yet, resolved from a default that may not apply here" collapse to, and only
+     * comparing against what is already on record can tell those two apart. Already 0 here (an explicit
+     * record, or this writer's own added-before-this-partition default): nothing changed, skip the
+     * write. Anything else - most commonly -1, "column does not exist in the partition" - is a real
+     * partition this column has data in contradicting that, and gets corrected with an explicit 0.
+     */
+    public void mergeColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
+        if (colTop != 0 || getColumnTop(partitionTimestamp, columnIndex) != 0) {
+            upsertColumnTop(partitionTimestamp, columnIndex, colTop);
+        }
     }
 
     public void overrideColumnVersions(long partitionTimestamp, ColumnVersionReader src) {
@@ -184,6 +218,11 @@ public class ColumnVersionWriter extends ColumnVersionReader {
                 if (defaultPartitionTimestamp == sourcePartitionTimestamp) {
                     // replace with target block
                     cachedColumnVersionList.set(i + TIMESTAMP_ADDED_PARTITION_OFFSET, targetPartitionTimestamp);
+                    // removePartition() above only flags a change when the source had explicit records.
+                    // A source that carried nothing but this marker would otherwise leave hasChanges
+                    // false, commit() would return without writing, and on the next open the marker
+                    // would still name a partition that no longer exists - reading as "column absent".
+                    hasChanges = true;
                 }
             } else {
                 break;
@@ -423,5 +462,26 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     static {
         //noinspection ConstantValue
         assert HEADER_SIZE == TableUtils.COLUMN_VERSION_FILE_HEADER_SIZE;
+    }
+
+    /**
+     * The {@link ColumnTopSink} view {@link #asColumnTopSink} hands out - one reused instance rather
+     * than a lambda, so a {@link Frame} publishing its column tops through it costs no per-call
+     * allocation. {@link #setColumnTop} forwards to the outer writer's own {@link #mergeColumnTop}
+     * against whichever partition was last armed.
+     * <p>
+     * Keeps {@link ColumnTopSink#isThreadSafe}'s default {@code false}: every report goes straight into
+     * the outer writer's record list, which a single upsert can insert into the middle of. Callers only
+     * ever drive it from the writer thread, after a frame has already joined - see
+     * {@link Frame#publishColumnTops}.
+     */
+    private final class ColumnTopSinkImpl implements ColumnTopSink {
+        private long partitionTimestamp = Long.MIN_VALUE;
+
+        @Override
+        public void setColumnTop(int columnIndex, long columnTop) {
+            assert partitionTimestamp != Long.MIN_VALUE : "asColumnTopSink not called";
+            mergeColumnTop(partitionTimestamp, columnIndex, columnTop);
+        }
     }
 }

@@ -28,7 +28,12 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 
 /**
- * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
+ * Frame-level algebra: whole partitions and pieces in, bytes appended at a target's tail.
+ * <p>
+ * Used for partition squashing in {@link io.questdb.cairo.TableWriter}, and for writing COMPOSITE
+ * partitions, where the two operations map onto the two actions that write anything: a NEW_PIECE is
+ * {@link #append} of the incoming rows, and a MERGE is {@link #merge} of a piece with the rows landing
+ * inside it. A KEEP writes nothing at all, which is why it has no operation here.
  */
 public class FrameAlgebra {
 
@@ -46,19 +51,113 @@ public class FrameAlgebra {
      */
     public static void append(Frame target, Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode) {
         if (sourceLo < sourceHi) {
-            for (int i = 0, n = source.columnCount(); i < n; i++) {
-                try (
-                        FrameColumn sourceColumn = source.createColumn(i);
-                        FrameColumn targetColumn = target.createColumn(i)
-                ) {
-                    if (sourceColumn.getColumnType() >= 0) {
-                        targetColumn.setUpcomingTableTxn(upcomingTableTxn);
-                        append(targetColumn, target.getRowCount(), sourceColumn, sourceLo, sourceHi, commitMode);
-                        target.saveChanges(targetColumn);
+            final int columnCount = source.columnCount();
+            final FrameColumnFanOut fanOut = target.getColumnFanOut();
+            if (fanOut != null && fanOut.isWorthwhile(columnCount)) {
+                fanOut.append(target, source, sourceLo, sourceHi, upcomingTableTxn, commitMode);
+            } else {
+                for (int i = 0; i < columnCount; i++) {
+                    try (
+                            FrameColumn sourceColumn = source.createColumn(i);
+                            FrameColumn targetColumn = target.createColumn(i)
+                    ) {
+                        if (sourceColumn.getColumnType() >= 0) {
+                            targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+                            append(targetColumn, target.getRowCount(), sourceColumn, sourceLo, sourceHi, commitMode);
+                            target.saveChanges(targetColumn);
+                        }
                     }
                 }
             }
+            // Every column of this append has reported, so the join point is here: the sink applies
+            // whatever the per-column reports staged. See ColumnTopSink#commitColumnTops.
+            target.commitColumnTops();
             target.setRowCount(target.getRowCount() + (sourceHi - sourceLo));
+        }
+    }
+
+    /**
+     * Appends the MERGE of two frames to {@code target}'s tail, interleaved by {@code mergeIndexAddr}.
+     * <p>
+     * {@link #append} carries ONE source through unchanged, and is what writes a brand-new piece: the
+     * incoming rows go down at the tail as they are. This carries TWO, in the order the merge index
+     * dictates, and is what rewrites a piece the incoming rows land inside - the piece and the batch go out
+     * as one image at the tail, in timestamp order, and the piece's old bytes become dead space.
+     * <p>
+     * The index is the standard 16-bytes-per-row form {@code Vect.mergeTwoLongIndexesAsc} produces from the
+     * piece's designated-timestamp slice and the sorted O3 index: a timestamp, then a row id whose top bit
+     * says which side it came from. So the row count appended is the index's row count, and both sources
+     * are read in a single pass.
+     * <p>
+     * Column TOPS are each column's own business, exactly as they are in {@link #append}: a source column
+     * knows the row its data starts at and offsets its own reads, and the target knows where its data
+     * starts and offsets its own writes. Nothing here has to reason about them.
+     *
+     * @param mergeIndexAddr native address of the merge index over {@code [source1Lo, source1Hi)} and
+     *                       {@code [source2Lo, source2Hi)}
+     */
+    public static void merge(
+            Frame target,
+            Frame source1,
+            long source1Lo,
+            long source1Hi,
+            Frame source2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            long upcomingTableTxn,
+            int commitMode
+    ) {
+        // The caller passes the index's OWN length rather than letting this derive it from the two source
+        // ranges. A deduplicating commit drops rows, so the merged image is shorter than both sides added
+        // together, and only whoever built the index knows by how much.
+        assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
+        if (mergeIndexRows > 0) {
+            final int columnCount = source1.columnCount();
+            final FrameColumnFanOut fanOut = target.getColumnFanOut();
+            if (fanOut != null && fanOut.isWorthwhile(columnCount)) {
+                fanOut.merge(
+                        target,
+                        source1,
+                        source1Lo,
+                        source1Hi,
+                        source2,
+                        source2Lo,
+                        source2Hi,
+                        mergeIndexAddr,
+                        mergeIndexRows,
+                        upcomingTableTxn,
+                        commitMode
+                );
+            } else {
+                for (int i = 0; i < columnCount; i++) {
+                    try (
+                            FrameColumn sourceColumn1 = source1.createColumn(i);
+                            FrameColumn sourceColumn2 = source2.createColumn(i);
+                            FrameColumn targetColumn = target.createColumn(i)
+                    ) {
+                        if (sourceColumn1.getColumnType() >= 0) {
+                            targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+                            targetColumn.merge(
+                                    target.getRowCount(),
+                                    sourceColumn1,
+                                    source1Lo,
+                                    source1Hi,
+                                    sourceColumn2,
+                                    source2Lo,
+                                    source2Hi,
+                                    mergeIndexAddr,
+                                    mergeIndexRows,
+                                    commitMode
+                            );
+                            target.saveChanges(targetColumn);
+                        }
+                    }
+                }
+            }
+            target.commitColumnTops();
+            target.setRowCount(target.getRowCount() + mergeIndexRows);
         }
     }
 
@@ -121,7 +220,11 @@ public class FrameAlgebra {
         }
     }
 
-    private static void append(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
+    /**
+     * One column's share of {@link #append}. Package private because {@link FrameColumnFanOut} runs
+     * exactly this, one column per task, when the loop above fans out instead of stepping through.
+     */
+    static void append(FrameColumn targetColumn, long targetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
         int columnType = sourceColumn.getColumnType();
         if (columnType != targetColumn.getColumnType()) {
             throw new UnsupportedOperationException();

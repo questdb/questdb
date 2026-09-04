@@ -623,8 +623,22 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_REPEAT_MIGRATION_FROM_VERSION("cairo.repeat.migration.from.version"),
     CAIRO_O3_LAST_PARTITION_MAX_SPLITS("cairo.o3.last.partition.max.splits"),
     CAIRO_O3_MID_PARTITION_MAX_SPLITS("cairo.o3.mid.partition.max.splits"),
+    CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED("cairo.o3.partition.merge.append.enabled"),
+    CAIRO_O3_PARTITION_PRESPLIT_MAX_CUTS("cairo.o3.partition.presplit.max.cuts"),
     CAIRO_O3_PARTITION_SPLIT_MIN_SIZE("cairo.o3.partition.split.min.size"),
     CAIRO_O3_PARTITION_OVERWRITE_CONTROL_ENABLED("cairo.o3.partition.overwrite.control.enabled"),
+    CAIRO_PARTITION_COMPACTION_DEAD_ROWS_RATIO("cairo.partition.compaction.dead.rows.ratio"),
+    CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE("cairo.partition.compaction.dead.min.size"),
+    CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD("cairo.partition.compaction.piece.threshold"),
+    CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM("cairo.partition.compaction.avg.rows.piece.lim"),
+    CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT("cairo.partition.compaction.idle.timeout"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT("cairo.partition.compaction.table.dead.threshold.percent"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_STOP_PERCENT("cairo.partition.compaction.table.dead.stop.percent"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_TRIGGER("cairo.partition.compaction.table.dead.trigger"),
+    CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD("cairo.partition.compaction.table.dead.threshold"),
+    CAIRO_PARTITION_COMPACTION_TIME_BUDGET("cairo.partition.compaction.time.budget"),
+    CAIRO_PARTITION_COMPACTION_DECLINE_BACKOFF_MAX("cairo.partition.compaction.decline.backoff.max"),
+    CAIRO_PARTITION_COMPACTION_PREFIX_MIN_PERCENT("cairo.partition.compaction.prefix.min.percent"),
     CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE("cairo.write.back.off.timeout.on.mem.pressure"),
     DEBUG_WAL_PURGE_WAIT_BEFORE_DELETE("debug.wal.purge.wait.before.delete", false, true),
     RAM_USAGE_LIMIT_BYTES("ram.usage.limit.bytes"),
@@ -732,7 +746,8 @@ public enum PropertyKey implements ConfigPropertyKey {
     DEBUG_MAT_VIEW_REFRESH_MISSING_WAL_FILES_FATAL("debug.mat.view.refresh.missing.wal.files.fatal", false, true),
     CAIRO_QUERY_MEMORY_LIMIT_BYTES("cairo.query.memory.limit.bytes"),
     CAIRO_MAT_VIEW_REFRESH_MEMORY_LIMIT_BYTES("cairo.mat.view.refresh.memory.limit.bytes"),
-    CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes");
+    CAIRO_WAL_APPLY_MEMORY_LIMIT_BYTES("cairo.wal.apply.memory.limit.bytes"),
+    CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL("cairo.partition.compaction.check.interval");
 
     private static final Map<String, PropertyKey> nameMapping;
     private final boolean debug;

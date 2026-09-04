@@ -35,13 +35,15 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 
-public class CheckWalTransactionsJob extends SynchronizedJob {
+public class CheckWalTransactionsJob extends SynchronizedJob implements QuietCloseable {
     private final long checkInterval;
     private final TableSequencerAPI.TableSequencerCallback checkNotifyOutstandingTxnInWalRef;
     private final CharSequence dbRoot;
@@ -67,6 +69,11 @@ public class CheckWalTransactionsJob extends SynchronizedJob {
         checkNotifyOutstandingTxnInWalRef = (tableId, token, txn) -> checkNotifyOutstandingTxnInWal(token, txn);
         checkInterval = engine.getConfiguration().getSequencerCheckInterval();
         lastRunMs = millisecondClock.getTicks();
+    }
+
+    @Override
+    public void close() {
+        Misc.free(txReader);
     }
 
     private void checkMissingWalTransactions() {

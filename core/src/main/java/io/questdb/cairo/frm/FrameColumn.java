@@ -51,6 +51,33 @@ public interface FrameColumn extends Closeable {
      */
     void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode);
 
+    /**
+     * Appends the MERGE of two sources to this column's tail, interleaved by {@code mergeIndexAddr}.
+     * <p>
+     * The append primitive above carries one source through unchanged; this one carries two, in the order
+     * a merge index dictates. That index is the standard 16-bytes-per-row form {@code mergeTwoLongIndexesAsc}
+     * produces - timestamp, then a row id whose top bit says which side it came from - so both sources are
+     * read in one pass and the result lands contiguously at {@code appendOffsetRowCount}.
+     * <p>
+     * The row ids in the index are ABSOLUTE within each source, so the bounds below say which rows a source
+     * has to be readable over; they are not offsets the implementation adds to anything.
+     *
+     * @param mergeIndexAddr native address of the merge index
+     * @param mergeIndexRows number of rows the index describes, which is the number of rows appended
+     */
+    void merge(
+            long appendOffsetRowCount,
+            FrameColumn sourceColumn1,
+            long source1Lo,
+            long source1Hi,
+            FrameColumn sourceColumn2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            int commitMode
+    );
+
     void appendNulls(long rowCount, long sourceColumnTop, int commitMode);
 
     void close();
@@ -70,6 +97,16 @@ public interface FrameColumn extends Closeable {
     long getSecondaryFd();
 
     int getStorageType();
+
+    /**
+     * Whether this column's data is the 16-bytes-per-row SORTED TIMESTAMP INDEX rather than a column of
+     * timestamps. True only for the designated timestamp of an O3 frame, which is where the index lives -
+     * the O3 buffers hold no timestamp column of their own, so every read of one goes through the index,
+     * exactly as the per-column O3 path does.
+     */
+    default boolean isTimestampIndex() {
+        return false;
+    }
 
     void setRecycleBin(RecycleBin<FrameColumn> pool);
 

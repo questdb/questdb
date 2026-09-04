@@ -113,19 +113,21 @@ class LatestByValueIndexedFilteredRecordCursor extends AbstractLatestByValueReco
         while ((frame = frameCursor.next()) != null) {
             circuitBreaker.statefulThrowExceptionIfTripped();
             final IndexReader indexReader = frame.getIndexReader(columnIndex, IndexReader.DIR_BACKWARD);
-            final long partitionLo = frame.getPartitionLo();
-            final long partitionHi = frame.getPartitionHi() - 1;
+            final long indexRowLo = frame.getIndexRowLo();
+            final long indexRowHi = frame.getIndexRowHi() - 1;
 
             frameAddressCache.add(frameCount, frame);
             frameMemoryPool.navigateTo(frameCount++, recordA);
 
-            try (RowCursor cursor = indexReader.getCursor(symbolKey, partitionLo, partitionHi)) {
+            try (RowCursor cursor = indexReader.getCursor(symbolKey, indexRowLo, indexRowHi)) {
                 while (cursor.hasNext()) {
                     // Per the IndexReader.getCursor(key, minValue, maxValue) contract, returned rows are
-                    // already relative to minValue == partitionLo here, so cursor.next() is already
-                    // frame-relative. Subtracting partitionLo again here positioned the record partitionLo
-                    // rows too early whenever the match fell in a page frame with partitionLo > 0,
-                    // returning a neighbouring row (often a different symbol).
+                    // already relative to minValue == indexRowLo here, so cursor.next() is already
+                    // frame-relative. Subtracting indexRowLo again here positioned the record indexRowLo
+                    // rows too early whenever the match fell in a page frame with indexRowLo > 0,
+                    // returning a neighbouring row (often a different symbol). For a COMPOSITE partition
+                    // indexRowLo carries the piece's file-row shift, the same shift the frame's page
+                    // addresses carry, so the un-subtracted row lines up there too.
                     recordA.setRowIndex(cursor.next());
                     if (filter.getBool(recordA)) {
                         isRecordFound = true;

@@ -428,10 +428,16 @@ public class CoveringCompressor {
         if (count <= 1) {
             return compressLongs(srcAddr, count, destAddr);
         }
-        // Caller guarantees sorted ascending, non-null values (designated timestamp).
         long firstValue = Unsafe.getLong(srcAddr);
         long lastValue = Unsafe.getLong(srcAddr + (long) (count - 1) * Long.BYTES);
-        assert lastValue >= firstValue : "linear-pred requires sorted ascending input";
+        if (lastValue < firstValue) {
+            // A composite partition mixes pieces that a merge-append relocated to the tail of the
+            // shared column files, so ascending physical row ids no longer mean ascending timestamps:
+            // one key's posting list steps backwards at a piece boundary. Linear prediction stays exact
+            // for such input - decode is first + i*stride + residual and nothing binary-searches a
+            // sidecar - but its stride carries no signal, so plain FoR encodes it at least as tightly.
+            return compressLongs(srcAddr, count, destAddr);
+        }
         long stride = (lastValue - firstValue) / (count - 1);
 
         long resMin = Long.MAX_VALUE;

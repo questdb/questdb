@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MetadataCacheWriter;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -151,6 +152,7 @@ public class CopyExportTest extends AbstractCairoTest {
                     LOG.error().$("Unexpected error in test insert thread: ").$(e).$();
                 } finally {
                     Path.clearThreadLocals();
+                    Misc.free(O3PartitionJob.THREAD_LOCAL_CLEANER);
                 }
             });
 

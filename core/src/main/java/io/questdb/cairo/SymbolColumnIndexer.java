@@ -122,9 +122,23 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
             long partitionTimestamp,
             long partitionNameTxn
     ) {
+        configureFollowerAndWriter(path, name, columnNameTxn, columnMem, columnTop, partitionTimestamp, partitionNameTxn, false);
+    }
+
+    @Override
+    public void configureFollowerAndWriter(
+            Path path,
+            CharSequence name,
+            long columnNameTxn,
+            MemoryMA columnMem,
+            long columnTop,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            boolean allowFreshIfMissing
+    ) {
         this.columnTop = columnTop;
         try {
-            this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
+            this.writer.of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn, allowFreshIfMissing);
             this.ff = columnMem.getFilesFacade();
             // we don't own the fd, it comes from column mem
             this.fd = columnMem.getFd();
@@ -185,25 +199,42 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     @Override
     public void index(FilesFacade ff, long dataColumnFd, long loRow, long hiRow) {
+        // A commit with no net new rows (loRow == hiRow, e.g. updateIndexesSlow after a
+        // housekeeping-only compaction commit) must be a TRUE no-op, including the rollback and
+        // setMaxValue below. A REWRITE compaction reseal can leave this indexer bound to the
+        // freshly rebuilt (non-last) partition, while the caller computes [loRow, hiRow) from the
+        // LAST partition's live row count; letting rollbackConditionally(loRow) run then truncates
+        // the rebuilt chain at the last partition's size, silently dropping every indexed row above
+        // it from index-backed scans.
+        if (hiRow <= loRow) {
+            return;
+        }
         // while we may have to read column starting with zero offset
         // index values have to be adjusted to partition-level row id
         writer.rollbackConditionally(loRow);
 
         long lo = Math.max(loRow, columnTop);
-        int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
-        for (int i = 0; i < bufferCount; i++) {
-            long fileOffset = (lo - columnTop) * 4;
-            long bytesToRead = Math.min(bufferSize, (hiRow - lo) * 4);
-            long read = ff.read(dataColumnFd, buffer, bytesToRead, fileOffset);
-            if (read == -1) {
-                throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
-                        .put(", fileOffset=").put(fileOffset)
-                        .put(", bytesToRead=").put(bytesToRead)
-                        .put(']');
-            }
-            long pHi = buffer + read;
-            for (long p = buffer; p < pHi; p += 4, lo++) {
-                writer.add(TableUtils.toIndexKey(Unsafe.getInt(p)), lo);
+        // An indexer configured with configureWriter (no live follower - see its own javadoc) never gets
+        // ff/dataColumnFd wired up, on the assumption that nothing indexes through it before a later
+        // configureFollowerAndWriter call fixes that up. The no-op guard above already returned for a
+        // zero-row range, but a column top above hiRow can still zero this read - skip it rather than
+        // dereference a possibly-null ff for zero bytes.
+        if (hiRow > lo) {
+            int bufferCount = (int) (((hiRow - lo) * 4 - 1) / bufferSize + 1);
+            for (int i = 0; i < bufferCount; i++) {
+                long fileOffset = (lo - columnTop) * 4;
+                long bytesToRead = Math.min(bufferSize, (hiRow - lo) * 4);
+                long read = ff.read(dataColumnFd, buffer, bytesToRead, fileOffset);
+                if (read == -1) {
+                    throw CairoException.critical(ff.errno()).put("could not read symbol column during indexing [fd=").put(dataColumnFd)
+                            .put(", fileOffset=").put(fileOffset)
+                            .put(", bytesToRead=").put(bytesToRead)
+                            .put(']');
+                }
+                long pHi = buffer + read;
+                for (long p = buffer; p < pHi; p += 4, lo++) {
+                    writer.add(TableUtils.toIndexKey(Unsafe.getInt(p)), lo);
+                }
             }
         }
         writer.setMaxValue(hiRow - 1);
@@ -247,6 +278,11 @@ public class SymbolColumnIndexer implements ColumnIndexer, Mutable {
 
     public void releaseIndexWriter() {
         Misc.free(writer);
+    }
+
+    @Override
+    public void releaseIndexWriterNoTruncate() {
+        writer.abandon();
     }
 
     @Override

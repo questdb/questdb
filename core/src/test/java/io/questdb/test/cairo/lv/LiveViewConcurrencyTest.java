@@ -389,7 +389,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         } catch (Throwable th) {
                             errors.add(th);
                         } finally {
-                            Path.clearThreadLocals();
+                            clearWorkerThreadLocals();
                         }
                     },
                     "lv-checkpoint-agent"
@@ -402,7 +402,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         } catch (Throwable th) {
                             errors.add(th);
                         } finally {
-                            Path.clearThreadLocals();
+                            clearWorkerThreadLocals();
                         }
                     },
                     "lv-apply-worker"
@@ -617,7 +617,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         errors.add(t);
                         guardReadsSplit.countDown();
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-stale-base-head-scan");
                 fallbackThread.start();
@@ -720,7 +720,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-worker");
 
@@ -893,7 +893,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-dropper");
 
@@ -967,7 +967,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-worker");
 
@@ -981,7 +981,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-dropper");
 
@@ -1068,7 +1068,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-worker");
 
@@ -1082,7 +1082,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-dropper");
 
@@ -1362,7 +1362,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-paced-varsize-writer-" + writerId);
     }
@@ -1404,7 +1404,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-paced-writer-" + writerId);
     }
@@ -1461,7 +1461,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-writer-" + writerId);
     }
@@ -1687,7 +1687,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-driver");
             final Thread agent = new Thread(() -> {
@@ -1707,7 +1707,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-checkpoint-agent");
 
@@ -1809,7 +1809,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-worker");
 
@@ -1824,7 +1824,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             } catch (Throwable th) {
                 errors.add(th);
             } finally {
-                Path.clearThreadLocals();
+                clearWorkerThreadLocals();
             }
         }, "lv-checkpoint-agent");
 
@@ -1921,7 +1921,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-driver") : null;
 
@@ -2220,7 +2220,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-driver");
 
@@ -2307,7 +2307,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-driver");
 
@@ -2392,7 +2392,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-driver");
 
@@ -2502,7 +2502,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 } catch (Throwable th) {
                     errors.add(th);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-apply-driver");
 
@@ -2519,7 +2519,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-refresh-worker-" + w);
             }
@@ -2537,7 +2537,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-reader-" + r);
             }
@@ -2729,7 +2729,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     // surface.
                     refreshTicks.addAndGet(Long.MAX_VALUE / 2);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-driver");
 
@@ -2745,7 +2745,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-filter-reader-" + r);
             }
@@ -2936,7 +2936,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     // the run through the errors queue rather than hanging it.
                     refreshTicks.addAndGet(Long.MAX_VALUE / 2);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-driver");
 
@@ -2956,7 +2956,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-reader-" + r);
             }
@@ -3137,7 +3137,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     errors.add(th);
                     refreshTicks.addAndGet(Long.MAX_VALUE / 2);
                 } finally {
-                    Path.clearThreadLocals();
+                    clearWorkerThreadLocals();
                 }
             }, "lv-refresh-driver");
 
@@ -3153,7 +3153,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     } catch (Throwable th) {
                         errors.add(th);
                     } finally {
-                        Path.clearThreadLocals();
+                        clearWorkerThreadLocals();
                     }
                 }, "lv-varsize-reader-" + r);
             }

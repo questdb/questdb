@@ -48,6 +48,21 @@ import java.io.Closeable;
 public interface IndexWriter extends Closeable, Mutable {
 
     /**
+     * Releases this writer's resources because the files it has open were rewritten, out from under it, by
+     * a different writer instance - this writer's own view of them (cached sizes, pending generations,
+     * anything still unsealed) is entirely superseded and must not be persisted in any form: no truncate,
+     * and - unlike {@link #closeNoTruncate()} - no best-effort seal either, since a seal publishes a chain
+     * entry and this writer has nothing left that is safe to publish.
+     * <p>
+     * Default implementation just calls {@link #closeNoTruncate()}, which is safe for an index type with
+     * no seal/publish concept (e.g. BITMAP). POSTING overrides this to skip the emergency seal that
+     * {@code closeNoTruncate()} performs.
+     */
+    default void abandon() {
+        closeNoTruncate();
+    }
+
+    /**
      * Adds a key-value pair to the index.
      *
      * @param key   the symbol key (must be >= 0)
@@ -208,6 +223,24 @@ public interface IndexWriter extends Closeable, Mutable {
 
     default void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn) {
         of(path, name, columnNameTxn);
+    }
+
+    /**
+     * Same as {@link #of(Path, CharSequence, long, long, long)}, but for a caller that has already
+     * established the column had no data before the writer session now reopening it began - so any file
+     * really sitting under this path is that same session's own earlier, already-committed-to-disk
+     * write, not something an older commit left behind. {@code allowFreshIfMissing} lets such a caller
+     * skip the implementation's own key-file existence probe and rely on whatever weaker validity check
+     * it performs next instead (e.g. a length check) - it never fabricates content: a file this session
+     * genuinely just created is found and reopened as normal, while a truly absent one still fails
+     * that weaker check and still throws. Callers that cannot rule out an older, unrelated commit having
+     * left real content under this path must keep {@code false}.
+     *
+     * @param allowFreshIfMissing true to skip the key-file existence probe in favor of a weaker validity
+     *                            check when reopening; false preserves {@link #of(Path, CharSequence, long, long, long)}
+     */
+    default void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn, boolean allowFreshIfMissing) {
+        of(path, name, columnNameTxn, partitionTimestamp, partitionNameTxn);
     }
 
     /**

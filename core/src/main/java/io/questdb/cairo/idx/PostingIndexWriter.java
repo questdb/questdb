@@ -371,6 +371,41 @@ public class PostingIndexWriter implements IndexWriter {
     }
 
     @Override
+    public void abandon() {
+        // Unlike closeNoTruncate(), no seal here: the caller's files were already rewritten by a different
+        // writer instance, so this writer's own pending/sealed state - however consistent it looks locally
+        // - describes bytes that are no longer there. A seal would still succeed (it reads back through
+        // this writer's own stale keyMem/valueMem, not the file another writer wrote), and could publish a
+        // chain entry that shadows the correct one the other writer already published.
+        try {
+            if (keyMem.isOpen()) {
+                keyMem.close(false);
+            }
+        } finally {
+            try {
+                Misc.free(sealValueMem);
+                Misc.free(stagingValueMem);
+                if (valueMem.isOpen()) {
+                    valueMem.close(false);
+                }
+            } finally {
+                closeSidecarMems();
+                freeNativeBuffers();
+                keyCount = 0;
+                valueMemSize = 0;
+                genCount = 0;
+                maxValue = 0;
+                hasPendingData = false;
+                activeKeyCount = 0;
+                coverCount = 0;
+                pendingTxnAtSeal = -1;
+                releasePendingPurges();
+                chain.resetState();
+            }
+        }
+    }
+
+    @Override
     public void add(int key, long value) {
         checkNotPoisoned();
         if (key < 0) {
@@ -1314,7 +1349,18 @@ public class PostingIndexWriter implements IndexWriter {
         of(path, name, columnNameTxn, false);
     }
 
+    @Override
+    public void of(Path path, CharSequence name, long columnNameTxn, long partitionTimestamp, long partitionNameTxn, boolean allowFreshIfMissing) {
+        this.partitionTimestamp = partitionTimestamp;
+        this.partitionNameTxn = partitionNameTxn;
+        of(path, name, columnNameTxn, false, allowFreshIfMissing);
+    }
+
     public void of(Path path, CharSequence name, long columnNameTxn, boolean isInit) {
+        of(path, name, columnNameTxn, isInit, false);
+    }
+
+    private void of(Path path, CharSequence name, long columnNameTxn, boolean isInit, boolean allowFreshIfMissing) {
         // close() releases resources but does NOT flush pending add() calls,
         // so the caller must have already committed or sealed. On the
         // TableWriter path this is guaranteed by commit() in switchPartition
@@ -1337,7 +1383,14 @@ public class PostingIndexWriter implements IndexWriter {
                 this.blockCapacity = BLOCK_CAPACITY;
                 initKeyMemory(keyMem);
             } else {
-                if (!ff.exists(keyFile)) {
+                // allowFreshIfMissing skips this exists() pre-check rather than falling back to a fresh,
+                // empty index: the caller has independently established this column had no data before
+                // the writer session now reopening it began, so any real content under this path is that
+                // same session's own earlier, already-committed-to-disk write - genuine, not something
+                // safe to discard. Trust the length() probe below instead: a file this session itself
+                // just created reads back its real size regardless of what exists() claims, while a
+                // truly-absent one still fails the size check just below and still throws.
+                if (!allowFreshIfMissing && !ff.exists(keyFile)) {
                     throw CairoException.critical(0).put("index does not exist [path=").put(path).put(']');
                 }
 
@@ -1638,6 +1691,42 @@ public class PostingIndexWriter implements IndexWriter {
         this.coveredColumnAddrSizes.clear();
         this.coveredColumnAuxAddrs.clear();
         this.coveredColumnAuxAddrSizes.clear();
+    }
+
+    /**
+     * Drops this writer's mappings of its covered sidecar files, before ANOTHER writer instance appends
+     * to those same files - the O3 composite executor and the seal sweep both open their own
+     * {@link PostingIndexWriter} on a partition the TableWriter's live indexer may hold as well.
+     * <p>
+     * A sidecar mapping is released with a truncate to its own append offset (see
+     * {@link #closeSidecarMems}), which is right only while that offset is the file's true end. Once
+     * another instance has appended past it, that same release cuts the newer generation's bytes off
+     * the file - the chain still points at them, and a covered read of that generation faults. Releasing
+     * here, while nothing has been appended since this instance last wrote, trims exactly what it wrote.
+     * The next flush through this writer reopens the files in append mode at their then-current end.
+     * <p>
+     * The covering schema, the cover end offsets this writer last published and everything else stay
+     * as they are: a later chain publish still carries a correct cover footer (see
+     * {@link #captureCoverEndOffsets}).
+     */
+    public void releaseSidecarWriteMappings() {
+        closeSidecarMems();
+    }
+
+    /**
+     * True when {@link #rollbackConditionally(long)} at {@code row} would evict entries, i.e. the
+     * index already holds rows at or above {@code row} - a stale tail an earlier failed attempt at
+     * the same commit left behind. Mirrors that method's own predicate.
+     * <p>
+     * The eviction re-encodes the head, and a covered generation appended straight on top of that
+     * fresh re-encode reads back NULL, so the O3 composite executor uses this to fall back to a
+     * plain index plus a seal-sweep rebuild.
+     */
+    public boolean hasIndexedRowsAtOrAbove(long row) {
+        if (row < 0 || (genCount == 0 && !hasPendingData)) {
+            return false;
+        }
+        return row == 0 || getMaxValue() >= row;
     }
 
     @Override

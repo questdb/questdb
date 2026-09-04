@@ -4925,6 +4925,55 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveringIndexIntervalFilterAfterO3MergeExcludesRowsOutsideInterval() throws Exception {
+        // A composite partition's posting scan is widened to the partition's whole physical extent (a
+        // relocated tail piece would otherwise be missed), so an interval (ts) filter alongside the
+        // indexed one can no longer rely on the scan's own row bound to exclude a row outside the
+        // interval - the row is physically inside the widened bound, just outside the requested window.
+        // This proves isRowInFrame's cumulative-range check, not just its dead-space check, is load-bearing.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_interval (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_interval VALUES
+                    ('2024-01-01T08:00:00', 'A', 1.0),
+                    ('2024-01-01T09:00:00', 'A', 2.0),
+                    ('2024-01-01T10:00:00', 'A', 3.0)
+                    """);
+            drainWalQueue();
+
+            // O3 insert triggers a merge-append, leaving the original piece as dead space.
+            execute("""
+                    INSERT INTO t_o3_interval VALUES
+                    ('2024-01-01T07:00:00', 'A', 0.5),
+                    ('2024-01-01T09:30:00', 'A', 2.5)
+                    """);
+            drainWalQueue();
+
+            // The interval covers three of the five live rows, and neither of the two it excludes is the
+            // dead-space row's timestamp: this isolates the cumulative-range check from the liveness one.
+            assertQuery("""
+                    SELECT price FROM t_o3_interval
+                    WHERE sym = 'A' AND ts BETWEEN '2024-01-01T08:00:00' AND '2024-01-01T09:30:00'
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            price
+                            1.0
+                            2.0
+                            2.5
+                            """);
+        });
+    }
+
+    @Test
     public void testCoveringIndexNoCorruptionAfterO3Merge() throws Exception {
         // O3CopyJob.updateIndex calls rollbackConditionally before writing.
         // Before the fix, PostingIndexWriter.rollbackConditionally would trigger
@@ -5354,6 +5403,49 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("(SELECT sym FROM t_ord_no_match WHERE sym = 'NONEXISTENT' ORDER BY price) ORDER BY 1")
                     .noLeakCheck()
                     .returns("sym\n");
+        });
+    }
+
+    @Test
+    public void testCoveringIndexParallelPageFrameAfterO3MergeExcludesDeadSpace() throws Exception {
+        // Same dead-space shape as testAlterTableAddIndexO3DuplicateInsertWal, but with a residual filter
+        // on a non-indexed column, forcing the Async Filter (parallel) dispatch -- CoveringPageFrameCursor's
+        // openOrContinueCoveringCursor -- rather than the serial CoveringCursor path most other composite
+        // tests here exercise. A phantom duplicate from dead space would surface as an extra row here too.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_o3_parallel (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_o3_parallel VALUES
+                    ('2024-01-01T08:00:00', 'A', 1.0),
+                    ('2024-01-01T09:00:00', 'A', 2.0),
+                    ('2024-01-01T10:00:00', 'A', 3.0)
+                    """);
+            drainWalQueue();
+
+            // O3 insert triggers a merge-append, leaving the original piece as dead space.
+            execute("""
+                    INSERT INTO t_o3_parallel VALUES
+                    ('2024-01-01T07:00:00', 'A', 0.5),
+                    ('2024-01-01T09:30:00', 'A', 2.5)
+                    """);
+            drainWalQueue();
+
+            assertQuery("SELECT price FROM t_o3_parallel WHERE sym = 'A' AND price > 0.6")
+                    .noLeakCheck()
+                    .withPlanContaining("Async Filter")
+                    .returns("""
+                            price
+                            1.0
+                            2.0
+                            2.5
+                            3.0
+                            """);
         });
     }
 
@@ -5950,6 +6042,72 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .returns("""
                             price\tqty
                             40.0\t400
+                            """);
+        });
+    }
+
+    @Test
+    public void testCoveringLatestOnMultiPieceComposite() throws Exception {
+        // findLatestRow (the covering LATEST ON path) walks pieces of a composite partition BACKWARD --
+        // from the highest cumulative (most recent) piece down to the lowest -- and returns as soon as
+        // ONE piece has a match, on the assumption that a higher piece always holds a more recent row for
+        // the key than a lower one. This proves that assumption holds through the wrapper's own piece
+        // ordering: 'A' occurs in two DIFFERENT pieces of the same composite partition, at two different
+        // prices, and only the row from the later (higher-cumulative) piece is the true latest.
+        assertMemoryLeak(() -> {
+            node1.setProperty(io.questdb.PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+            execute("""
+                    CREATE TABLE t_latest_multipiece (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (price),
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // A full day of filler rows, committed first.
+            execute("""
+                    INSERT INTO t_latest_multipiece
+                    SELECT timestamp_sequence('2020-02-03', 15 * 1000000L) ts,
+                           'F'::SYMBOL sym,
+                           x * 1.0 price
+                    FROM long_sequence(5760)
+                    """);
+            drainWalQueue();
+
+            // Two backdated, cold-gap-separated batches submitted as one bundled WAL apply (no drain
+            // between them), each padded wide enough to be worth its own piece. 'A' appears once in each,
+            // at two different prices; the later batch (08:00) is the true latest.
+            execute("INSERT INTO t_latest_multipiece VALUES ('2020-02-03T02:00:07', 'A', 111.0)");
+            execute("""
+                    INSERT INTO t_latest_multipiece
+                    SELECT timestamp_sequence('2020-02-03T02:00:08', 5 * 1000000L) ts,
+                           'G'::SYMBOL sym,
+                           x * 1.0 price
+                    FROM long_sequence(120)
+                    """);
+            execute("INSERT INTO t_latest_multipiece VALUES ('2020-02-03T08:00:11', 'A', 222.0)");
+            execute("""
+                    INSERT INTO t_latest_multipiece
+                    SELECT timestamp_sequence('2020-02-03T08:00:12', 5 * 1000000L) ts,
+                           'G'::SYMBOL sym,
+                           x * 1.0 price
+                    FROM long_sequence(120)
+                    """);
+            drainWalQueue();
+
+            final TableToken tt = engine.verifyTableName("t_latest_multipiece");
+            try (TableReader reader = engine.getReader(tt)) {
+                Assert.assertTrue(
+                        "test precondition: the partition must have gone composite with more than one piece",
+                        reader.getGeometry().getPieceCount(0) > 1
+                );
+            }
+
+            assertQuery("SELECT price FROM t_latest_multipiece WHERE sym = 'A' LATEST ON ts PARTITION BY sym")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            price
+                            222.0
                             """);
         });
     }
@@ -10497,6 +10655,59 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns("count_distinct\n100\n");
+        });
+    }
+
+    @Test
+    public void testDistinctSymMergeAppendComposite() throws Exception {
+        // PostingIndexDistinctRecordCursorFactory had no composite-partition coverage: scanPartitions()
+        // fed PartitionFrame's directory-cumulative rowLo/rowHi straight into collectDistinctKeysInRange,
+        // which expects physical file row ids. A backdated O3 insert into an already-committed partition
+        // forces a merge-append (a composite partition) -- exactly the shape CoveringIndexTest's O3-merge
+        // tests use -- and an interval (ts) filter that covers only PART of the partition forces the
+        // ranged scan (a full, unfiltered DISTINCT takes the fullPartition fast path regardless of the
+        // bug, so it cannot tell physical from cumulative apart).
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_distinct_merge_append (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            execute("""
+                    INSERT INTO t_distinct_merge_append VALUES
+                    ('2024-01-01T08:00:00', 'A', 1.0),
+                    ('2024-01-01T09:00:00', 'B', 2.0),
+                    ('2024-01-01T10:00:00', 'C', 3.0)
+                    """);
+            drainWalQueue();
+
+            // O3 insert into the already-committed day triggers a merge-append, leaving the original
+            // piece as dead space.
+            execute("""
+                    INSERT INTO t_distinct_merge_append VALUES
+                    ('2024-01-01T07:00:00', 'D', 0.5),
+                    ('2024-01-01T09:30:00', 'E', 2.5)
+                    """);
+            drainWalQueue();
+            engine.releaseAllWriters();
+
+            // The interval covers A, B and E; it excludes both D (07:00, below the window) and
+            // C (10:00, above it) -- neither excluded row is the dead-space row's own timestamp, so this
+            // isolates the cumulative-vs-physical bound translation from a liveness/dead-space check.
+            assertQuery("""
+                    SELECT DISTINCT sym FROM t_distinct_merge_append
+                    WHERE ts BETWEEN '2024-01-01T08:00:00' AND '2024-01-01T09:30:00'
+                    """)
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            sym
+                            A
+                            B
+                            E
+                            """);
         });
     }
 

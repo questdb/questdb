@@ -24,10 +24,12 @@
 
 package io.questdb.cairo.frm.file;
 
+import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.TableWriterMetadata;
+import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.Frame;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -37,16 +39,22 @@ import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     private final FrameColumnPool columnPool;
     private final ConcurrentPool<FrameImpl> framePool = new ConcurrentPool<>();
+    // Handed to every frame this factory hands out, and through them to
+    // io.questdb.cairo.frm.FrameColumnFanOut - the shared column-task pool a frame operation spreads
+    // its per-column work over. Null leaves every operation on its calling thread.
+    private final MessageBus messageBus;
     private boolean closed;
 
-    public FrameFactory(CairoConfiguration configuration) {
+    public FrameFactory(CairoConfiguration configuration, @Nullable MessageBus messageBus) {
         this.columnPool = new ContiguousFileColumnPool(configuration);
+        this.messageBus = messageBus;
     }
 
     // This method is used to clear the frame pool and release all frames.
@@ -89,6 +97,24 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         return frame;
     }
 
+    /**
+     * Same as {@link #createRW(Path, long, RecordMetadata, ColumnVersionWriter, long)}, but column-top
+     * updates go to {@code columnTopSink} instead of a {@code ColumnVersionWriter} - see {@link ColumnTopSink}.
+     * This method is thread safe.
+     */
+    public Frame createRW(
+            Path partitionPath,
+            long partitionTimestamp,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            ColumnTopSink columnTopSink,
+            long size
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.createRW(partitionPath, partitionTimestamp, metadata, cvr, columnTopSink, size);
+        return frame;
+    }
+
     @Override
     public boolean isClosed() {
         return closed;
@@ -114,6 +140,19 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     /**
+     * Same as {@link #open(boolean, Path, long, RecordMetadata, ColumnVersionWriter, long)}, but when
+     * {@code rw} is true, column-top updates go to {@code columnTopSink} instead of a
+     * {@code ColumnVersionWriter} - see {@link ColumnTopSink}. This method is thread safe.
+     */
+    public Frame open(boolean rw, Path path, long targetPartition, RecordMetadata metadata, ColumnVersionReader cvr, ColumnTopSink columnTopSink, long size) {
+        if (rw) {
+            return openRW(path, targetPartition, metadata, cvr, columnTopSink, size);
+        } else {
+            return openRO(path, targetPartition, metadata, cvr, size);
+        }
+    }
+
+    /**
      * Opens a frame from memory columns, used to create frames from the data to be committed. This method is thread safe.
      *
      * @param columns  the memory columns to create the frame from
@@ -124,6 +163,25 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     public Frame openROFromMemoryColumns(ReadOnlyObjList<? extends MemoryCR> columns, TableWriterMetadata metadata, long rowCount) {
         FrameImpl frame = getOrCreate();
         frame.createROFromMemoryColumns(columns, metadata, rowCount);
+        return frame;
+    }
+
+    /**
+     * Opens a frame over the O3 buffers whose designated timestamp comes from the SORTED TIMESTAMP INDEX.
+     * The O3 buffers hold no timestamp column of their own - depending on how the commit arrived, that slot
+     * is either the index itself or a WAL segment's own encoding - so the index is the one source that
+     * always answers, which is why the per-column O3 path reads it too.
+     *
+     * @param timestampIndexAddr native address of the sorted timestamp index, 16 bytes per row
+     */
+    public Frame openROFromMemoryColumns(
+            ReadOnlyObjList<? extends MemoryCR> columns,
+            TableWriterMetadata metadata,
+            long rowCount,
+            long timestampIndexAddr
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.createROFromMemoryColumns(columns, metadata, rowCount, timestampIndexAddr);
         return frame;
     }
 
@@ -198,6 +256,32 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     }
 
     /**
+     * Opens a frame for reading and writing whose column-top updates go to {@code columnTopSink}
+     * rather than straight into a {@code ColumnVersionWriter}. For a caller reachable from an O3
+     * worker thread - see {@link ColumnTopSink}. This method is thread safe.
+     *
+     * @param partitionPath      the path to the partition directory
+     * @param partitionTimestamp the timestamp of the partition
+     * @param metadata           the metadata for the frame
+     * @param cvr                the column version reader, for column name txns and pre-existing tops
+     * @param columnTopSink      where this frame's column-top updates are reported instead
+     * @param size               the size of the frame, in row count
+     * @return a new frame ready for reading and writing
+     */
+    public Frame openRW(
+            Path partitionPath,
+            long partitionTimestamp,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            ColumnTopSink columnTopSink,
+            long size
+    ) {
+        FrameImpl frame = getOrCreate();
+        frame.openRW(partitionPath, partitionTimestamp, metadata, cvr, columnTopSink, size);
+        return frame;
+    }
+
+    /**
      * Returns the frame to the pool used by this factory. This method is thread safe.
      */
     @Override
@@ -211,7 +295,7 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
         if (frm != null) {
             return frm;
         }
-        FrameImpl frame = new FrameImpl(columnPool);
+        FrameImpl frame = new FrameImpl(columnPool, messageBus);
         frame.setRecycleBin(this);
         return frame;
     }
