@@ -212,6 +212,20 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
     /**
      * (4) After a NOSYNC WAL insert, getLocalDurableSeqTxn(tableDir) remains -1.
      * No fdatasync was issued, so no local-durable guarantee.
+     * <p>
+     * TWO gates keep the frontier at -1 for a non-adaptive table, in two different files, and the
+     * WAL must be APPLIED for this test to exercise the second:
+     * <ul>
+     *   <li>{@code WalWriter} advances it only inside its {@code commitMode == ADAPTIVE} branch;</li>
+     *   <li>{@code ApplyWal2TableJob.maybeAdvanceDurableEpoch} returns early unless the table's
+     *       effective mode is ADAPTIVE -- and the durable EPOCH is the other caller of
+     *       {@code setLocalDurableSeqTxn} ({@code TableWriter}).</li>
+     * </ul>
+     * Without the drain below the apply job never runs, the epoch cannot fire whatever its gate says,
+     * and this test passes for the wrong reason: verified by deleting the epoch's ADAPTIVE gate, at
+     * which point the undrained test still passed. It is the operator-visible guarantee that is at
+     * stake -- doc §4: an opted-in QWP client gets "the handshake but no frames" on a non-adaptive
+     * table -- so both gates need pinning, not just the commit-path one.
      */
     @Test
     public void testNosyncCommitDoesNotAdvanceLocalDurableSeqTxn() throws Exception {
@@ -220,6 +234,9 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table nosync_tbl (ts timestamp, v long) timestamp(ts) partition by day wal");
             execute("insert into nosync_tbl values ('2024-01-01T00:00:00.000000Z', 1)");
+            // Reaches the epoch gate: without this the apply job never runs and only the commit-path
+            // gate is exercised.
+            drainWalQueue();
 
             TableToken tt = engine.verifyTableName("nosync_tbl");
             DurableAckRegistry registry = engine.getDurableAckRegistry();
