@@ -25,7 +25,6 @@
 package io.questdb.cairo;
 
 import io.questdb.MessageBus;
-import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.IndexBwdNullReader;
 import io.questdb.cairo.idx.IndexFactory;
 import io.questdb.cairo.idx.IndexFwdNullReader;
@@ -380,6 +379,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader != null && isStandInNullReader(indexReader) != (columns.getQuick(index) instanceof NullMemoryCMR)) {
+            // The partition gained the column since this reader was cached (an O3 insert
+            // or an ATTACH rewrites a partition that predated it), or lost it again. The
+            // two reader kinds are not interchangeable and of() cannot turn one into the
+            // other: a stand-in null reader would keep answering the NULL key with EVERY
+            // row of a partition that now holds real values, and a real reader would open
+            // an index file the writer never created. Drop it and build the right one.
+            final int indexSlot = direction == IndexReader.DIR_BACKWARD ? index : index + 1;
+            Misc.free(indexes.getAndSetQuick(indexSlot, null));
+            indexReader = null;
+        }
         if (indexReader != null) {
             // Single choke point for refreshing the scoreboard pin on cached
             // readers. TableReader.txn advances through several paths
@@ -392,45 +402,17 @@ public class TableReader implements Closeable, SymbolTableSource {
             ) {
                 int plen = path.size();
                 try {
-                    //noinspection resource
-                    final Path partitionPath = pathGenNativePartition(partitionIndex, partitionTxn);
-                    final CharSequence columnName = metadata.getColumnName(columnIndex);
-                    final long columnTop = getColumnTop(columnBase, columnIndex);
-                    // Re-initialising has to repeat the absent-vs-present call that
-                    // createIndexReaderAt() made when it built this reader: a partition
-                    // that predates the indexed column carries no index file on disk, so
-                    // of() would open a .pk the writer never created. The cached reader
-                    // gets here whenever its column or partition txn moved, and also
-                    // whenever closeIndexReader() closed it in place (partition reload)
-                    // without dropping it from `indexes`.
-                    if (
-                            columns.getQuick(index) instanceof NullMemoryCMR
-                                    && indexReader instanceof AbstractPostingIndexReader postingReader
-                    ) {
-                        postingReader.ofColumnAbsentFromPartition(
-                                configuration,
-                                partitionPath,
-                                columnName,
-                                columnNameTxn,
-                                partitionTxn,
-                                columnTop,
-                                metadata,
-                                columnVersionReader,
-                                partitionTimestamp
-                        );
-                    } else {
-                        indexReader.of(
-                                configuration,
-                                partitionPath,
-                                columnName,
-                                columnNameTxn,
-                                partitionTxn,
-                                columnTop,
-                                metadata,
-                                columnVersionReader,
-                                partitionTimestamp
-                        );
-                    }
+                    indexReader.of(
+                            configuration,
+                            pathGenNativePartition(partitionIndex, partitionTxn),
+                            metadata.getColumnName(columnIndex),
+                            columnNameTxn,
+                            partitionTxn,
+                            getColumnTop(columnBase, columnIndex),
+                            metadata,
+                            columnVersionReader,
+                            partitionTimestamp
+                    );
                 } finally {
                     path.trimTo(plen);
                 }
@@ -1078,31 +1060,23 @@ public class TableReader implements Closeable, SymbolTableSource {
         }
     }
 
+    /**
+     * Whether {@code reader} is one of the stand-in readers {@link #createIndexReaderAt}
+     * installs for a partition that does not contain the indexed column at all. They
+     * answer the NULL key with every row of the partition and hold no files, so they are
+     * valid only while the column really is absent there.
+     */
+    private static boolean isStandInNullReader(IndexReader reader) {
+        return reader instanceof IndexFwdNullReader || reader instanceof IndexBwdNullReader;
+    }
+
     private IndexReader createIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long partitionTxn) {
         IndexReader reader;
         if (!metadata.isColumnIndexed(columnIndex)) {
             throw CairoException.critical(0).put("Not indexed: ").put(metadata.getColumnName(columnIndex));
         }
         MemoryR col = columns.getQuick(globalIndex);
-        final int partitionIndex = getPartitionIndex(columnBase);
-        // A partition that does not contain the column at all answers the NULL key with
-        // every one of its rows, and the stand-in null reader does that correctly -- its
-        // only shortcoming is that it cannot carry INCLUDE values. So it stays in use for
-        // every index that returns row numbers alone, and only a COVERING posting index
-        // needs the real reader. That reader serves such a partition as an empty index
-        // with a full column top, so its ordinary null-prefix cursor reads the covered
-        // values from the INCLUDE columns' own native .d/.i files.
-        // A Parquet partition has no such files -- its columns live inside data.parquet --
-        // so the covering reader would find nothing to read and render every INCLUDE
-        // column, the designated timestamp among them, as NULL. The null reader stays in
-        // place there: the covered scan then skips the partition, which is what it did
-        // before the covering reader learned to serve absent partitions at all. Decoding
-        // the prefix rows' INCLUDE values out of data.parquet is what a real fix takes.
-        boolean isColumnAbsentFromPartition = col instanceof NullMemoryCMR;
-        boolean isCoveringIndex = IndexType.isPosting(metadata.getColumnIndexType(columnIndex))
-                && metadata.getColumnMetadata(columnIndex).isCovering();
-        boolean isParquetPartition = getPartitionFormat(partitionIndex) == PartitionFormat.PARQUET;
-        if (isColumnAbsentFromPartition && (!isCoveringIndex || isParquetPartition)) {
+        if (col instanceof NullMemoryCMR) {
             if (direction == IndexReader.DIR_BACKWARD) {
                 reader = new IndexBwdNullReader(columnNameTxn, partitionTxn);
                 indexes.setQuick(globalIndex, reader);
@@ -1111,6 +1085,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                 indexes.setQuick(globalIndex + 1, reader);
             }
         } else {
+            int partitionIndex = getPartitionIndex(columnBase);
             Path path = pathGenNativePartition(partitionIndex, partitionTxn);
             try {
                 final byte indexType = metadata.getColumnIndexType(columnIndex);
@@ -1127,8 +1102,7 @@ public class TableReader implements Closeable, SymbolTableSource {
                         metadata,
                         columnVersionReader,
                         partitionTimestamp,
-                        txn,
-                        isColumnAbsentFromPartition
+                        txn
                 );
                 if (direction == IndexReader.DIR_BACKWARD) {
                     indexes.setQuick(globalIndex, reader);

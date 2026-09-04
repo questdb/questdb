@@ -14675,54 +14675,51 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullKeyOnPartitionEntirelyPredatingIndexedColumnReaderClosedInPlaceIsReinitialised() throws Exception {
-        // A reload that revisits an already-open partition whose files did not change
-        // (TableReader.reloadColumnFiles, here driven by dropping another partition)
-        // closes the partition's cached index readers in place: Misc.free() on the
-        // reader, which stays in the TableReader's `indexes` list. The next
-        // getIndexReader() finds it closed and re-initialises it, and that must repeat
-        // the absent-vs-present decision createIndexReaderAt() made -- of() would open
-        // the sym.pk that 2024-01-01 never had.
+    public void testNullKeyOnPartitionEntirelyPredatingIndexedColumnSurvivesReload() throws Exception {
+        // A partition that predates the indexed column keeps the stand-in null reader
+        // across a reload driven by dropping another partition, and the covered scan
+        // still serves every one of its rows with its INCLUDE values.
         assertMemoryLeak(() -> {
             createPartitionPredatingIndexedColumnTable();
             try (TableReader reader = engine.getReader("t_np_historic")) {
                 final int symIndex = reader.getMetadata().getColumnIndex("sym");
                 final long rowCount = reader.openPartition(0);
                 assertEquals(2, rowCount);
-                final IndexReader fwd = reader.getIndexReader(0, symIndex, IndexReader.DIR_FORWARD);
-                final IndexReader bwd = reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD);
-                assertTrue(fwd instanceof PostingIndexFwdReader);
-                assertTrue(bwd instanceof PostingIndexBwdReader);
-                assertTrue(fwd.isOpen());
-                assertTrue(bwd.isOpen());
+                assertTrue(reader.getIndexReader(0, symIndex, IndexReader.DIR_FORWARD) instanceof IndexFwdNullReader);
+                assertTrue(reader.getIndexReader(0, symIndex, IndexReader.DIR_BACKWARD) instanceof IndexBwdNullReader);
 
                 execute("ALTER TABLE t_np_historic DROP PARTITION LIST '2024-01-03'");
                 assertTrue(reader.reload());
-                assertFalse("the reload must close the cached forward reader in place", fwd.isOpen());
-                assertFalse("the reload must close the cached backward reader in place", bwd.isOpen());
 
                 for (int direction : new int[]{IndexReader.DIR_FORWARD, IndexReader.DIR_BACKWARD}) {
-                    final IndexReader cached = direction == IndexReader.DIR_FORWARD ? fwd : bwd;
                     final IndexReader again = reader.getIndexReader(0, symIndex, direction);
-                    assertSame("getIndexReader must re-initialise the cached instance, direction=" + direction, cached, again);
-                    assertTrue(again.isOpen());
-                    // Key 0 is the implicit NULL key; every row of the partition matches
-                    // it, and price (cover column 1 of INCLUDE (grp, price)) has to come
-                    // from price.d through the null-prefix cursor.
-                    try (RowCursor cursor = again.getCursor(0, 0, rowCount - 1, new int[]{1})) {
-                        final CoveringRowCursor coveringCursor = (CoveringRowCursor) cursor;
-                        double sum = 0;
-                        int rows = 0;
-                        while (coveringCursor.hasNext()) {
-                            coveringCursor.next();
-                            sum += coveringCursor.getCoveredDouble(1);
+                    assertTrue("direction=" + direction, again.isOpen());
+                    // Key 0 is the implicit NULL key; every row of the partition matches it.
+                    int rows = 0;
+                    try (RowCursor cursor = again.getCursor(0, 0, rowCount - 1)) {
+                        while (cursor.hasNext()) {
+                            cursor.next();
                             rows++;
                         }
-                        assertEquals(rowCount, rows);
-                        assertEquals(3.0, sum, 0.0);
                     }
+                    assertEquals("direction=" + direction, rowCount, rows);
                 }
             }
+
+            // End to end: price (cover column 1 of INCLUDE (grp, price)) comes back for
+            // every row of the partition, read from price.d rather than from a sidecar.
+            assertQuery("SELECT sym, price FROM t_np_historic WHERE sym = null ORDER BY ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: sym with: price")
+                    .returns("""
+                            sym\tprice
+                            \t1.0
+                            \t2.0
+                            \t11.0
+                            \t12.0
+                            """);
         });
     }
 
@@ -14918,6 +14915,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
         // This has to go through the reader directly. The covering SQL path resolves the
         // symbol key against the partition's own symbol table first, so a non-null key
         // never reaches the index reader of a partition that lacks the column at all.
+        //
+        // Every getCursor() below passes the partition's real inclusive row bound, as
+        // every production caller does. The stand-in reader answers "every row in the
+        // requested range", so an unbounded Long.MAX_VALUE bound would mean an unbounded
+        // row count and says nothing about the partition.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t_np_nonnull (ts TIMESTAMP, val LONG)" +
                     " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
@@ -14940,12 +14942,13 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             // Columns are ts(0), val(1), sym(2). Partition 0 is the one without sym.
             try (TableReader reader = engine.getReader("t_np_nonnull")) {
-                reader.openPartition(0);
+                final long rowCount = reader.openPartition(0);
+                assertEquals(2, rowCount);
                 for (int direction : new int[]{IndexReader.DIR_FORWARD, IndexReader.DIR_BACKWARD}) {
                     final IndexReader indexReader = reader.getIndexReader(0, 2, direction);
                     // The synthetic NULL key still serves every row of the partition.
                     int nullRows = 0;
-                    try (RowCursor cursor = indexReader.getCursor(0, 0, Long.MAX_VALUE)) {
+                    try (RowCursor cursor = indexReader.getCursor(0, 0, rowCount - 1)) {
                         while (cursor.hasNext()) {
                             cursor.next();
                             nullRows++;
@@ -14954,7 +14957,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     assertEquals("the null key serves the whole predating partition", 2, nullRows);
                     // Every non-null key is empty, and asking must not throw.
                     for (int key = 1; key < 4; key++) {
-                        try (RowCursor cursor = indexReader.getCursor(key, 0, Long.MAX_VALUE)) {
+                        try (RowCursor cursor = indexReader.getCursor(key, 0, rowCount - 1)) {
                             assertFalse(
                                     "key " + key + " cannot exist on a partition that predates the column",
                                     cursor.hasNext()
@@ -14982,13 +14985,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullKeyScanUsesNullReaderOnlyForNonCoveringIndex() throws Exception {
-        // A partition that predates the indexed column has no rows for it, so the stand-in
-        // null index reader answers the NULL key with every row -- which is correct for any
-        // index that returns row numbers alone. Only a COVERING index has to carry INCLUDE
-        // values too, and only it needs the real posting reader. This pins both sides of
-        // that choice: drop the isCovering() test in TableReader.createIndexReaderAt and
-        // the non-covering half fails.
+    public void testNullKeyScanUsesNullReaderForEveryIndexKind() throws Exception {
+        // A partition that predates the indexed column has no rows for it and no index
+        // files on disk, so the stand-in null index reader answers the NULL key with every
+        // row. That reader carries no INCLUDE values, and a covering index does not ask it
+        // to: such a partition is not covered at all -- the covered scan takes its row ids
+        // from the stand-in reader and its values from the partition's own columns. So both
+        // index kinds keep the cheap stand-in reader, and neither opens an index file the
+        // writer never created.
         assertMemoryLeak(() -> {
             for (String table : new String[]{"t_nc_split", "t_cov_split"}) {
                 execute("CREATE TABLE " + table + " (ts TIMESTAMP, val LONG)" +
@@ -15015,14 +15019,25 @@ public class CoveringIndexTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader("t_cov_split")) {
                 reader.openPartition(0);
                 Assert.assertTrue(
-                        "a covering index must carry INCLUDE values, so it needs the real reader",
-                        reader.getIndexReader(0, 2, IndexReader.DIR_FORWARD) instanceof PostingIndexFwdReader
+                        "a covering index does not decode this partition either, so it keeps the stand-in reader",
+                        reader.getIndexReader(0, 2, IndexReader.DIR_FORWARD) instanceof IndexFwdNullReader
                 );
             }
 
-            // Both still answer the NULL key with every row of the predating partition.
+            // Both still answer the NULL key with every row of the predating partition,
+            // and the covered scan carries the INCLUDE value with it.
             assertQuery("SELECT sym, val FROM t_nc_split WHERE sym = null ORDER BY ts")
                     .noLeakCheck()
+                    .returns("""
+                            sym\tval
+                            \t10
+                            \t20
+                            """);
+            assertQuery("SELECT sym, val FROM t_cov_split WHERE sym = null ORDER BY ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex on: sym with: val")
                     .returns("""
                             sym\tval
                             \t10
@@ -15032,13 +15047,12 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullKeyScanUsesNullReaderOnlyForNonCoveringIndexBackward() throws Exception {
-        // Backward twin of testNullKeyScanUsesNullReaderOnlyForNonCoveringIndex. The
-        // direction argument selects the reader class independently in each branch of
+    public void testNullKeyScanUsesNullReaderForEveryIndexKindBackward() throws Exception {
+        // Backward twin of testNullKeyScanUsesNullReaderForEveryIndexKind. The direction
+        // argument selects the reader class independently in each branch of
         // TableReader.createIndexReaderAt, so the forward assertions say nothing about
-        // DIR_BACKWARD. Both halves are pinned here: the non-covering index keeps the
-        // cheap IndexBwdNullReader, the covering one gets the real backward posting
-        // reader -- and, below, the INCLUDE value that reader exists to carry.
+        // DIR_BACKWARD. Both index kinds keep the cheap IndexBwdNullReader here, and the
+        // LATEST ON below still reads the INCLUDE value -- from the partition's own column.
         assertMemoryLeak(() -> {
             for (String table : new String[]{"t_nc_split_bwd", "t_cov_split_bwd"}) {
                 execute("CREATE TABLE " + table + " (ts TIMESTAMP, val LONG)" +
@@ -15065,15 +15079,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
             try (TableReader reader = engine.getReader("t_cov_split_bwd")) {
                 reader.openPartition(0);
                 Assert.assertTrue(
-                        "a covering index must carry INCLUDE values, so it needs the real reader",
-                        reader.getIndexReader(0, 2, IndexReader.DIR_BACKWARD) instanceof PostingIndexBwdReader
+                        "a covering index does not decode this partition either, so it keeps the stand-in reader",
+                        reader.getIndexReader(0, 2, IndexReader.DIR_BACKWARD) instanceof IndexBwdNullReader
                 );
             }
 
-            // What the reader type buys: a backward LATEST ON over the predating
-            // partition still reads its INCLUDE value. An IndexBwdNullReader here
-            // returns row numbers only, so the covering factory would drop the
-            // partition and the query would come back empty.
+            // What the fall-back buys: a backward LATEST ON over the predating partition
+            // still reads its INCLUDE value. Without it the covering factory would see a
+            // row cursor that carries no values, drop the partition, and come back empty.
             assertQuery("SELECT sym, val FROM t_cov_split_bwd WHERE sym = null LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
                     .noLeakCheck()
@@ -15083,40 +15096,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             \t20
                             """);
         });
-    }
-
-    @Test
-    public void testNullPrefixCoveredMmapFailureOrphansNoMappingsBwd() throws Exception {
-        assertNullPrefixCoveredMmapFailureOrphansNoMappings(
-                "SELECT sym2, tag FROM t_np_mmap WHERE sym2 = null LATEST ON ts PARTITION BY sym2"
-        );
-    }
-
-    @Test
-    public void testNullPrefixCoveredMmapFailureOrphansNoMappingsFwd() throws Exception {
-        assertNullPrefixCoveredMmapFailureOrphansNoMappings(
-                "SELECT sym2, tag FROM t_np_mmap WHERE sym2 = null ORDER BY ts"
-        );
-    }
-
-    @Test
-    public void testNullPrefixCoveredMmapFailureRetryServesNoCoveredDataBwd() throws Exception {
-        assertNullPrefixCoveredMmapFailureRetryServesNoCoveredData(IndexReader.DIR_BACKWARD);
-    }
-
-    @Test
-    public void testNullPrefixCoveredMmapFailureRetryServesNoCoveredDataFwd() throws Exception {
-        assertNullPrefixCoveredMmapFailureRetryServesNoCoveredData(IndexReader.DIR_FORWARD);
-    }
-
-    @Test
-    public void testNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumnsBwd() throws Exception {
-        assertNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumns(IndexReader.DIR_BACKWARD);
-    }
-
-    @Test
-    public void testNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumnsFwd() throws Exception {
-        assertNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumns(IndexReader.DIR_FORWARD);
     }
 
     @Test
@@ -15178,8 +15157,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullPrefixQueryMapsOnlyRequiredCoveredColumnsBwd() throws Exception {
-        assertNullPrefixQueryMapsOnlyRequiredCoveredColumns(
+    public void testNullPrefixQueryOpensNoColumnMappingsBwd() throws Exception {
+        assertNullPrefixQueryOpensNoColumnMappings(
                 "SELECT price FROM t_np_filter WHERE sym2 = null LATEST ON ts PARTITION BY sym2",
                 false,
                 """
@@ -15190,8 +15169,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullPrefixQueryMapsOnlyRequiredCoveredColumnsFwd() throws Exception {
-        assertNullPrefixQueryMapsOnlyRequiredCoveredColumns(
+    public void testNullPrefixQueryOpensNoColumnMappingsFwd() throws Exception {
+        assertNullPrefixQueryOpensNoColumnMappings(
                 "SELECT price FROM t_np_filter WHERE sym2 = null ORDER BY ts",
                 true,
                 """
@@ -15200,73 +15179,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         20.0
                         """
         );
-    }
-
-    @Test
-    public void testNullPrefixRecoversCoversFromMetadataWhenSidecarInfoMissing() throws Exception {
-        // of() learns the INCLUDE set from the partition's .pci. When that file is
-        // unreadable the reader still has to serve the partition's null prefix, whose
-        // covered values come from the INCLUDE columns' own .d files and not from the
-        // sidecar -- so of() recovers the set from table metadata instead. Without that
-        // recovery coverCount stays 0 and every covered column reads back NULL.
-        //
-        // The shape needs a partition that goes through of() rather than
-        // ofColumnAbsentFromPartition (which recovers the set unconditionally): the
-        // indexed column must have rows above its column top, which means a .pci exists
-        // on disk. Hiding it is the only way to reach the branch -- no ordinary DDL/DML
-        // sequence produces a .pk with rows and no .pci.
-        final FilesFacade hidePci = new TestFilesFacadeImpl() {
-            @Override
-            public boolean exists(LPSZ path) {
-                return !Utf8s.containsAscii(path, ".pci") && super.exists(path);
-            }
-        };
-        ff = hidePci;
-        assertMemoryLeak(hidePci, () -> {
-            execute("CREATE TABLE t_np_nopci (ts TIMESTAMP, price DOUBLE)" +
-                    " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            // Both halves live in ONE partition: rows 0-1 predate sym (the null prefix),
-            // rows 2-3 carry sym values, so the writer builds a real chain entry and a
-            // .pci for this partition -- the file the facade above then hides.
-            execute("""
-                    INSERT INTO t_np_nopci VALUES
-                    ('2024-01-01T00:00:00', 10.0),
-                    ('2024-01-01T01:00:00', 20.0)
-                    """);
-            execute("ALTER TABLE t_np_nopci ADD COLUMN sym SYMBOL");
-            execute("""
-                    INSERT INTO t_np_nopci VALUES
-                    ('2024-01-01T02:00:00', 30.0, 'A'),
-                    ('2024-01-01T03:00:00', 40.0, 'B')
-                    """);
-            execute("ALTER TABLE t_np_nopci ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
-            assertQuery("SELECT sym, price FROM t_np_nopci WHERE sym = null ORDER BY ts")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("CoveringIndex on: sym with: price")
-                    .returns("""
-                            sym\tprice
-                            \t10.0
-                            \t20.0
-                            """);
-
-            // The injected fault's blast radius, and the proof it really took effect:
-            // rows the sidecar would have served lose their covered value, because the
-            // metadata recovery restores the INCLUDE set but not the sidecar bytes.
-            assertQuery("SELECT sym, price FROM t_np_nopci WHERE sym = 'A'")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("CoveringIndex on: sym with: price")
-                    .returns("""
-                            sym\tprice
-                            A\tnull
-                            """);
-        });
     }
 
     @Test
@@ -19557,249 +19469,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Fails the second of the two mmaps a var-size INCLUDE column needs, so
-     * {@code ensureNullPrefixColumnsOpen()} throws with {@code tag.d} already mapped,
-     * then asserts the leak checker finds nothing once the cursor closes.
-     * <p>
-     * What this pins is the persistent-field design: the loop maps straight into
-     * {@code npColAddrs}/{@code npAuxAddrs} rather than into locals it publishes only on
-     * success, so the regions the loop already mapped stay reachable and
-     * {@code closeCoveringResources()} still frees them. Buffering in locals -- the
-     * variant the production comment argues against -- orphans them and turns this red.
-     * <p>
-     * It does NOT pin the {@code closeNullPrefixColumns()} call in the
-     * {@code catch (Throwable)}: deleting that call leaves this green, because
-     * {@code closeCoveringResources()} frees the very same regions on cursor close. The
-     * invariant that call exists for is all-or-nothing visibility -- after a partial map
-     * no covered read may serve raw data, not even from a column that mapped cleanly --
-     * and {@link #assertNullPrefixCoveredMmapFailureRetryServesNoCoveredData(int)} pins
-     * that one.
-     */
-    private static void assertNullPrefixCoveredMmapFailureOrphansNoMappings(String query) throws Exception {
-        final AtomicBoolean isFailArmed = new AtomicBoolean(false);
-        final AtomicInteger failedMmapCount = new AtomicInteger(0);
-        final long[] targetFd = {-1};
-        ff = new TestFilesFacadeImpl() {
-            @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                // MMAP_INDEX_READER is the tag openRawColumnFile uses; the plain
-                // table reader maps the same files under MMAP_TABLE_READER.
-                if (isFailArmed.get() && fd == targetFd[0] && memoryTag == MemoryTag.MMAP_INDEX_READER) {
-                    failedMmapCount.incrementAndGet();
-                    return FilesFacade.MAP_FAILED;
-                }
-                return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                long fd = super.openRO(name);
-                if (isFailArmed.get() && fd > -1 && name != null && Utf8s.endsWithAscii(name, "tag.i")) {
-                    targetFd[0] = fd;
-                }
-                return fd;
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            execute("""
-                    CREATE TABLE t_np_mmap (
-                        ts TIMESTAMP,
-                        tag VARCHAR
-                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
-                    """);
-            // VARCHAR inlines values of up to 9 bytes into the aux entry and
-            // leaves tag.d empty, which would skip the first mmap entirely.
-            // These values are longer, so tag.d really is mapped before the
-            // reader opens tag.i.
-            execute("""
-                    INSERT INTO t_np_mmap VALUES
-                    ('2024-01-01T00:00:00', 'HELLO-FROM-ROW-ONE'),
-                    ('2024-01-01T01:00:00', 'HELLO-FROM-ROW-TWO')
-                    """);
-            // sym2 arrives late, so it carries a column top and rows 0..1 match
-            // sym2 = null through the reader's synthetic null prefix.
-            execute("ALTER TABLE t_np_mmap ADD COLUMN sym2 SYMBOL");
-            execute("""
-                    INSERT INTO t_np_mmap VALUES
-                    ('2024-01-01T02:00:00', 'HELLO-FROM-ROW-THREE', 'A'),
-                    ('2024-01-01T03:00:00', 'HELLO-FROM-ROW-FOUR', 'B')
-                    """);
-            execute("ALTER TABLE t_np_mmap ALTER COLUMN sym2 ADD INDEX TYPE POSTING INCLUDE (tag)");
-            engine.releaseAllWriters();
-            engine.releaseAllReaders();
-
-            isFailArmed.set(true);
-            try {
-                CairoException caught = null;
-                try (RecordCursorFactory factory = select(query)) {
-                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        final Record record = cursor.getRecord();
-                        while (cursor.hasNext()) {
-                            record.getVarcharA(1);
-                        }
-                    } catch (CairoException e) {
-                        caught = e;
-                    }
-                }
-                assertNotNull("expected a CairoException from the null-prefix aux mmap failure", caught);
-                TestUtils.assertContains(
-                        caught.getFlyweightMessage(),
-                        "could not mmap covering INCLUDE column for null-prefix read"
-                );
-                // openRawColumnFile closes the .d fd before opening .i, so a recycled fd
-                // number could make the .d mmap match targetFd. The first mmap would then
-                // fail, nothing would be orphaned, and this test would pass with the leak
-                // reintroduced. The message embeds the file path, so pin the aux file.
-                TestUtils.assertContains(caught.getFlyweightMessage(), "tag.i");
-            } finally {
-                isFailArmed.set(false);
-            }
-            assertEquals("the injected mmap failure must have fired exactly once", 1, failedMmapCount.get());
-        });
-    }
-
-    /**
-     * Pins the {@code closeNullPrefixColumns()} call in {@code ensureNullPrefixColumnsOpen()}'s
-     * {@code catch (Throwable)}, which the leak-checking pair above cannot reach.
-     * <p>
-     * The cursor declares cover columns 0 ({@code tag}, VARCHAR) and 1 ({@code price},
-     * DOUBLE), and the injected fault fails only {@code price.d}. The loop walks the
-     * cover columns in INCLUDE order, so {@code tag.d} and {@code tag.i} map cleanly
-     * before {@code price.d} throws. The {@code catch} block drops the whole set and
-     * leaves {@code npColumnsOpened} true, so the next covered read on the same cursor
-     * short-circuits and serves nothing -- all-or-nothing, exactly as it stood before
-     * any column was mapped. Without that call the half-mapped set survives and the
-     * retry hands back {@code tag}'s real value, which is what this asserts against.
-     * <p>
-     * The fault stays disarmed for the retry on purpose: it also catches a regression
-     * that clears {@code npColumnsOpened} in the {@code catch}, because that would let
-     * the retry re-map every column and read {@code tag} successfully.
-     */
-    private static void assertNullPrefixCoveredMmapFailureRetryServesNoCoveredData(int direction) throws Exception {
-        final AtomicBoolean isFailArmed = new AtomicBoolean(false);
-        final AtomicInteger failedMmapCount = new AtomicInteger(0);
-        final long[] targetFd = {-1};
-        ff = new TestFilesFacadeImpl() {
-            @Override
-            public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
-                // MMAP_INDEX_READER is the tag openRawColumnFile uses; the plain
-                // table reader maps the same files under MMAP_TABLE_READER.
-                if (isFailArmed.get() && fd == targetFd[0] && memoryTag == MemoryTag.MMAP_INDEX_READER) {
-                    failedMmapCount.incrementAndGet();
-                    return FilesFacade.MAP_FAILED;
-                }
-                return super.mmap(fd, len, offset, flags, memoryTag);
-            }
-
-            @Override
-            public long openRO(LPSZ name) {
-                final long fd = super.openRO(name);
-                if (isFailArmed.get() && fd > -1 && name != null && Utf8s.endsWithAscii(name, "price.d")) {
-                    targetFd[0] = fd;
-                }
-                return fd;
-            }
-        };
-        assertMemoryLeak(ff, () -> {
-            createNullPrefixCoveringTable();
-            try (TableReader reader = engine.getReader("t_np_filter")) {
-                // getIndexReader() seeds the reader's columnTop from the partition's
-                // open column state, so the partition has to be opened first;
-                // otherwise the index reader sees columnTop 0 and never takes the
-                // null-prefix branch at all.
-                reader.openPartition(0);
-                // Columns are ts(0), tag(1), price(2), qty(3), sym2(4), and
-                // INCLUDE (tag, price, qty) makes tag cover column 0 and price 1.
-                final IndexReader indexReader = reader.getIndexReader(0, 4, direction);
-                try (RowCursor cursor = indexReader.getDetachedCursor(0, 0, Long.MAX_VALUE, new int[]{0, 1})) {
-                    final CoveringRowCursor coveringCursor = (CoveringRowCursor) cursor;
-                    assertTrue("the null prefix must serve at least one row", coveringCursor.hasNext());
-                    coveringCursor.next();
-                    // Arm only now: the raw column files open lazily, on the first
-                    // covered read, and openPartition() above maps price.d too.
-                    isFailArmed.set(true);
-                    CairoException caught = null;
-                    try {
-                        coveringCursor.getCoveredDouble(1);
-                    } catch (CairoException e) {
-                        caught = e;
-                    } finally {
-                        isFailArmed.set(false);
-                    }
-                    assertNotNull("expected a CairoException from the null-prefix price.d mmap failure", caught);
-                    TestUtils.assertContains(
-                            caught.getFlyweightMessage(),
-                            "could not mmap covering INCLUDE column for null-prefix read"
-                    );
-                    // tag.d and tag.i open and close before price.d, so a recycled fd
-                    // number could make one of tag's mmaps match targetFd instead. The
-                    // loop would then fail on cover column 0 with nothing yet mapped,
-                    // and the retry below would read null whether or not the catch
-                    // block cleans up. The message embeds the path, so pin the file.
-                    TestUtils.assertContains(caught.getFlyweightMessage(), "price.d");
-                    assertEquals("the injected mmap failure must have fired exactly once", 1, failedMmapCount.get());
-                    assertNull(
-                            "tag mapped cleanly before price failed, but the failure voids the whole set",
-                            coveringCursor.getCoveredVarcharA(0)
-                    );
-                }
-            }
-        });
-    }
-
-    /**
-     * Drives one detached null-prefix cursor that declares a single cover column
-     * and asserts the reader maps only that column's file. Pins the
-     * {@code getDetachedCursor()} NullCursor branch, which the SQL paths above do
-     * not reach (the parallel covered-decode pipeline is the only production
-     * caller, and it decodes frames forward only).
-     */
-    private static void assertNullPrefixDetachedCursorMapsOnlyRequiredCoveredColumns(int direction) throws Exception {
-        final CoveredColumnMapCounter counter = new CoveredColumnMapCounter("tag.d", "tag.i", "price.d", "qty.d");
-        ff = counter;
-        assertMemoryLeak(counter, () -> {
-            createNullPrefixCoveringTable();
-            try (TableReader reader = engine.getReader("t_np_filter")) {
-                // getIndexReader() seeds the reader's columnTop from the partition's
-                // open column state, so the partition has to be opened first;
-                // otherwise the index reader sees columnTop 0 and never takes the
-                // null-prefix branch at all.
-                reader.openPartition(0);
-                // Columns are ts(0), tag(1), price(2), qty(3), sym2(4), and
-                // INCLUDE (tag, price, qty) makes price cover column 1.
-                final IndexReader indexReader = reader.getIndexReader(0, 4, direction);
-                counter.isArmed.set(true);
-                try (RowCursor cursor = indexReader.getDetachedCursor(0, 0, Long.MAX_VALUE, new int[]{1})) {
-                    final CoveringRowCursor coveringCursor = (CoveringRowCursor) cursor;
-                    int seen = 0;
-                    while (coveringCursor.hasNext()) {
-                        final long row = coveringCursor.next();
-                        assertEquals(
-                                "null-prefix row " + row + " must read its own price",
-                                row == 0 ? 10.0 : 20.0,
-                                coveringCursor.getCoveredDouble(1),
-                                0.0
-                        );
-                        seen++;
-                    }
-                    assertEquals("both null-prefix rows must be served", 2, seen);
-                } finally {
-                    counter.isArmed.set(false);
-                }
-            }
-            assertRequiredCoveredColumnMappedAlone(counter);
-        });
-    }
-
-    private static void assertRequiredCoveredColumnMappedAlone(CoveredColumnMapCounter counter) {
-        assertTrue(
-                "the projected INCLUDE column must still be mapped for the null-prefix rows",
-                counter.countOf("price.d") > 0
-        );
-        assertEquals("tag is not projected, so tag.d must not be mapped", 0, counter.countOf("tag.d"));
-        assertEquals("tag is not projected, so tag.i must not be mapped", 0, counter.countOf("tag.i"));
-        assertEquals("qty is not projected, so qty.d must not be mapped", 0, counter.countOf("qty.d"));
+    private static void assertNoIndexReaderColumnMappings(CoveredColumnMapCounter counter) {
+        for (String name : new String[]{"tag.d", "tag.i", "price.d", "qty.d"}) {
+            assertEquals(
+                    "the fall-back reads the table reader's own mapping of " + name
+                            + ", so the index reader must map nothing",
+                    0,
+                    counter.countOf(name)
+            );
+        }
     }
 
     /**
@@ -20024,12 +19702,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     /**
-     * Runs {@code query} -- which must read exactly one of the three INCLUDE
-     * columns over the reader's synthetic null prefix -- and asserts the reader
-     * mapped that column's file and none of the others. Counts mmap calls rather
-     * than wall-clock time, so the assertion is deterministic.
+     * Runs {@code query} over a partition whose indexed column carries a column top,
+     * and asserts the covered scan opened no column mapping of its own. That is the
+     * point of falling back per partition rather than decoding the prefix inside the
+     * index reader: every value comes from a file the table reader already mapped to
+     * serve the partition, so the fall-back costs no extra mmap. Counts mmap calls
+     * rather than wall-clock time, so the assertion is deterministic.
      */
-    private void assertNullPrefixQueryMapsOnlyRequiredCoveredColumns(String query, boolean isSizeKnown, String expected) throws Exception {
+    private void assertNullPrefixQueryOpensNoColumnMappings(String query, boolean isSizeKnown, String expected) throws Exception {
         final CoveredColumnMapCounter counter = new CoveredColumnMapCounter("tag.d", "tag.i", "price.d", "qty.d");
         ff = counter;
         assertMemoryLeak(counter, () -> {
@@ -20044,7 +19724,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             } finally {
                 counter.isArmed.set(false);
             }
-            assertRequiredCoveredColumnMappedAlone(counter);
+            assertNoIndexReaderColumnMappings(counter);
         });
     }
 

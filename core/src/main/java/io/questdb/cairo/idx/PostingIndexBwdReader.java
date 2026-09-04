@@ -26,33 +26,16 @@ package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.ColumnTypeDriver;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptyRowCursor;
-import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.VarcharTypeDriver;
-import io.questdb.cairo.arr.ArrayTypeDriver;
-import io.questdb.cairo.arr.ArrayView;
-import io.questdb.cairo.arr.BorrowedArray;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
-import io.questdb.std.BinarySequence;
-import io.questdb.std.DirectBinarySequence;
-import io.questdb.std.Files;
-import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
-import io.questdb.std.str.DirectString;
-import io.questdb.std.str.DirectUtf8String;
-import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
-import io.questdb.std.str.Utf8Sequence;
-
-import java.util.Arrays;
 
 public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private static final int MIN_BUFFER_CAPACITY = 4;
@@ -83,15 +66,10 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             RecordMetadata metadata,
             ColumnVersionReader columnVersionReader,
             long partitionTimestamp,
-            long pinnedTableTxn,
-            boolean isColumnAbsentFromPartition
+            long pinnedTableTxn
     ) {
         setPinnedTableTxn(pinnedTableTxn);
-        if (isColumnAbsentFromPartition) {
-            ofColumnAbsentFromPartition(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
-        } else {
-            of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
-        }
+        of(configuration, path, name, columnNameTxn, partitionTxn, columnTop, metadata, columnVersionReader, partitionTimestamp);
     }
 
     @Override
@@ -125,12 +103,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            // See PostingIndexFwdReader.getCursor: a NullCursor also walks the chain's
-            // REAL key-0 postings (rows at or above columnTop carrying an explicit NULL),
-            // and those read the sidecars just like the real-posting branch below, so arm
-            // them here too. The call runs before the cursor is acquired, so a throw
-            // cannot strand one.
-            openRequiredSidecars(requiredCoverColumns);
             NullCursor nc;
             if (freeNullCursors.size() > 0) {
                 nc = freeNullCursors.popLast();
@@ -149,7 +121,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 nc.releaseResources();
                 throw th;
             }
-            nc.npRequiredColumns = requiredCoverColumns;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
             nc.nullPos = nc.nullCount;
@@ -206,11 +177,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         long indexMaxValue = entryMaxValue >= 0 ? Math.min(maxValue, entryMaxValue) : maxValue;
 
         if (key == 0 && columnTop > 0 && minValue < columnTop) {
-            // See getCursor: the chain's real key-0 postings served after the synthetic
-            // prefix read the sidecars, so arm them on this branch as well. While the
-            // reader is frozen this is the documented no-op -- the pre-freeze production
-            // pass through getCursor already opened the same subset.
-            openRequiredSidecars(requiredCoverColumns);
             NullCursor nc = new NullCursor();
             nc.isDetached = true;
             // of() can throw (e.g. OOM growing the block buffer). A detached cursor is
@@ -222,7 +188,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
                 nc.releaseResources();
                 throw th;
             }
-            nc.npRequiredColumns = requiredCoverColumns;
             final long hi = maxValue == Long.MAX_VALUE ? Long.MAX_VALUE : maxValue + 1;
             nc.nullCount = Math.min(columnTop, hi);
             nc.nullPos = nc.nullCount;
@@ -1140,51 +1105,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
     private class NullCursor extends Cursor {
         private long nullCount;
         private long nullPos;
-        // Raw-column fallback for the implicit null-prefix (rows [minValue, columnTop)
-        // of the INDEXED column, which the posting chain carries no entries for). An
-        // INCLUDEd column can predate the indexed column -- have real, non-null data
-        // over that same row range -- so the covered read for these synthetic rows
-        // cannot use the sidecar (built only from the chain's real postings): it must
-        // read the INCLUDEd column's own .d/.i files directly, honouring THAT column's
-        // own column top. Opened lazily, once per checkout; released in
-        // closeCoveringResources() (called on every close, pooled or final -- see
-        // Cursor.close()/releaseResources()), so a reused cursor always re-resolves
-        // against whatever partition the outer reader is currently bound to. The
-        // arrays themselves outlive the checkout: the cursor is pooled, and
-        // reallocating seven of them per checkout is a GC allocation on the query
-        // path for nothing.
-        private long[] npAuxAddrs;
-        private long[] npAuxFds;
-        private long[] npAuxSizes;
-        private long[] npColAddrs;
-        private long[] npColFds;
-        private long[] npColSizes;
-        private long[] npColTops;
-        private boolean npColumnsOpened;
-        // True while the arrays above describe this checkout's partition: set once
-        // ensureNullPrefixColumnsOpen() has populated them, cleared whenever
-        // closeNullPrefixColumns() releases what they point at. A null array no
-        // longer means "nothing mapped", since the arrays are kept across checkouts.
-        private boolean hasNullPrefixColumns;
-        // The cover-column subset this checkout's caller declared it reads (the query
-        // projection), captured at getCursor()/getDetachedCursor().
-        // ensureNullPrefixColumnsOpen() maps only these columns, mirroring
-        // openRequiredSidecars() on the real-posting branch: a covered getter for a
-        // column outside the declared subset breaks the same contract there, and both
-        // branches answer it with a miss (a 0 address here, an unmapped sidecar there).
-        // null means the caller declared no subset at all, and every cover column is
-        // mapped, exactly as it was before this filter.
-        private int[] npRequiredColumns;
-        // True only while hasNext() is currently serving a synthetic null-prefix row
-        // (as opposed to a real posting reached via super.hasNext()). Gates every
-        // getCoveredXxx override below: false means behave exactly as inherited.
-        // While true the overrides answer ONLY from the INCLUDEd columns' own .d/.i
-        // files. A prefix row has no posting in the chain, so the sidecar carries no
-        // entry for it, and a raw miss (the INCLUDEd column's own column top, a
-        // dropped column, a column outside npRequiredColumns) is a genuine NULL.
-        // Falling through to super here would hand back whatever sidecar slot the
-        // cursor happens to sit on -- a different row's value.
-        private boolean isNullPrefixRow;
 
         @Override
         public void close() {
@@ -1212,179 +1132,12 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
         }
 
         @Override
-        public ArrayView getCoveredArray(int includeIdx, int columnType) {
-            if (isNullPrefixRow) {
-                return readRawCoveredArray(includeIdx, next, columnType, arrayView);
-            }
-            return super.getCoveredArray(includeIdx, columnType);
-        }
-
-        @Override
-        public BinarySequence getCoveredBin(int includeIdx) {
-            if (isNullPrefixRow) {
-                return readRawCoveredBin(includeIdx, next, binView);
-            }
-            return super.getCoveredBin(includeIdx);
-        }
-
-        @Override
-        public long getCoveredBinLen(int includeIdx) {
-            if (isNullPrefixRow) {
-                BinarySequence v = readRawCoveredBin(includeIdx, next, binView);
-                return v != null ? v.length() : TableUtils.NULL_LEN;
-            }
-            return super.getCoveredBinLen(includeIdx);
-        }
-
-        @Override
-        public byte getCoveredByte(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, Byte.BYTES);
-            if (addr != 0) {
-                return Unsafe.getByte(addr);
-            }
-            return isNullPrefixRow ? nullPrefixByte(includeIdx) : super.getCoveredByte(includeIdx);
-        }
-
-        @Override
-        public double getCoveredDouble(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, Double.BYTES);
-            if (addr != 0) {
-                return Unsafe.getDouble(addr);
-            }
-            return isNullPrefixRow ? Double.NaN : super.getCoveredDouble(includeIdx);
-        }
-
-        @Override
-        public float getCoveredFloat(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, Float.BYTES);
-            if (addr != 0) {
-                return Unsafe.getFloat(addr);
-            }
-            return isNullPrefixRow ? Float.NaN : super.getCoveredFloat(includeIdx);
-        }
-
-        @Override
-        public int getCoveredInt(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, Integer.BYTES);
-            if (addr != 0) {
-                return Unsafe.getInt(addr);
-            }
-            return isNullPrefixRow ? nullPrefixInt(includeIdx) : super.getCoveredInt(includeIdx);
-        }
-
-        @Override
-        public long getCoveredLong(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, Long.BYTES);
-            if (addr != 0) {
-                return Unsafe.getLong(addr);
-            }
-            return isNullPrefixRow ? nullPrefixWord(includeIdx, 0) : super.getCoveredLong(includeIdx);
-        }
-
-        @Override
-        public long getCoveredLong128Hi(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, 16);
-            if (addr != 0) {
-                return Unsafe.getLong(addr + 8);
-            }
-            return isNullPrefixRow ? nullPrefixWord(includeIdx, 1) : super.getCoveredLong128Hi(includeIdx);
-        }
-
-        @Override
-        public long getCoveredLong128Lo(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, 16);
-            if (addr != 0) {
-                return Unsafe.getLong(addr);
-            }
-            return isNullPrefixRow ? nullPrefixWord(includeIdx, 0) : super.getCoveredLong128Lo(includeIdx);
-        }
-
-        @Override
-        public long getCoveredLong256_0(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, 32);
-            if (addr != 0) {
-                return Unsafe.getLong(addr);
-            }
-            return isNullPrefixRow ? nullPrefixWord(includeIdx, 0) : super.getCoveredLong256_0(includeIdx);
-        }
-
-        @Override
-        public long getCoveredLong256_1(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, 32);
-            if (addr != 0) {
-                return Unsafe.getLong(addr + 8);
-            }
-            return isNullPrefixRow ? nullPrefixWord(includeIdx, 1) : super.getCoveredLong256_1(includeIdx);
-        }
-
-        @Override
-        public long getCoveredLong256_2(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, 32);
-            if (addr != 0) {
-                return Unsafe.getLong(addr + 16);
-            }
-            return isNullPrefixRow ? nullPrefixWord(includeIdx, 2) : super.getCoveredLong256_2(includeIdx);
-        }
-
-        @Override
-        public long getCoveredLong256_3(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, 32);
-            if (addr != 0) {
-                return Unsafe.getLong(addr + 24);
-            }
-            return isNullPrefixRow ? nullPrefixWord(includeIdx, 3) : super.getCoveredLong256_3(includeIdx);
-        }
-
-        @Override
-        public short getCoveredShort(int includeIdx) {
-            long addr = resolveRawFixedAddr(includeIdx, next, Short.BYTES);
-            if (addr != 0) {
-                return Unsafe.getShort(addr);
-            }
-            return isNullPrefixRow ? nullPrefixShort(includeIdx) : super.getCoveredShort(includeIdx);
-        }
-
-        @Override
-        public CharSequence getCoveredStrA(int includeIdx) {
-            if (isNullPrefixRow) {
-                return readRawCoveredStr(includeIdx, next, stringViewA);
-            }
-            return super.getCoveredStrA(includeIdx);
-        }
-
-        @Override
-        public CharSequence getCoveredStrB(int includeIdx) {
-            if (isNullPrefixRow) {
-                return readRawCoveredStr(includeIdx, next, stringViewB);
-            }
-            return super.getCoveredStrB(includeIdx);
-        }
-
-        @Override
-        public Utf8Sequence getCoveredVarcharA(int includeIdx) {
-            if (isNullPrefixRow) {
-                return readRawCoveredVarchar(includeIdx, next, varcharViewA);
-            }
-            return super.getCoveredVarcharA(includeIdx);
-        }
-
-        @Override
-        public Utf8Sequence getCoveredVarcharB(int includeIdx) {
-            if (isNullPrefixRow) {
-                return readRawCoveredVarchar(includeIdx, next, varcharViewB);
-            }
-            return super.getCoveredVarcharB(includeIdx);
-        }
-
-        @Override
         public boolean hasNext() {
             if (super.hasNext()) {
-                isNullPrefixRow = false;
                 return true;
             }
             if (--nullPos >= minValue) {
                 next = nullPos;
-                isNullPrefixRow = true;
                 return true;
             }
             return false;
@@ -1398,380 +1151,6 @@ public class PostingIndexBwdReader extends AbstractPostingIndexReader {
             // bound and would under-count nulls when entryMaxValue < columnTop.
             long indexSize = super.size();
             return indexSize < 0 ? -1 : indexSize + Math.max(0L, nullCount - minValue);
-        }
-
-        /**
-         * Unmaps every null-prefix raw-column region this cursor currently owns and
-         * closes its fds, keeping the arrays for the next checkout. Shared by
-         * closeCoveringResources() and by ensureNullPrefixColumnsOpen()'s failure
-         * path, which must not leave a half-mapped set behind.
-         */
-        private void closeNullPrefixColumns() {
-            hasNullPrefixColumns = false;
-            if (npColAddrs == null) {
-                return;
-            }
-            for (int i = 0; i < npColAddrs.length; i++) {
-                if (npColAddrs[i] != 0) {
-                    ff.munmap(npColAddrs[i], npColSizes[i], MemoryTag.MMAP_INDEX_READER);
-                    npColAddrs[i] = 0;
-                }
-                if (npColFds[i] != -1) {
-                    ff.close(npColFds[i]);
-                    npColFds[i] = -1;
-                }
-                if (npAuxAddrs[i] != 0) {
-                    ff.munmap(npAuxAddrs[i], npAuxSizes[i], MemoryTag.MMAP_INDEX_READER);
-                    npAuxAddrs[i] = 0;
-                }
-                if (npAuxFds[i] != -1) {
-                    ff.close(npAuxFds[i]);
-                    npAuxFds[i] = -1;
-                }
-            }
-        }
-
-        /**
-         * Lazily opens every INCLUDEd column's own raw .d (and .i, for var-size
-         * types) file for this partition, read-only, mapped over the rows the
-         * null prefix can reach. Runs at most once per checkout (see
-         * closeCoveringResources(), which resets npColumnsOpened on every close --
-         * pooled or final -- so a reused cursor always re-resolves against
-         * whatever partition the outer reader is currently bound to). Mirrors
-         * PostingIndexWriter#mapCoveredColumn / #mapColumnFile, which build the
-         * sidecar from these same files.
-         * <p>
-         * The mapping is sized from the row count, never from the file length.
-         * TableReader.reloadColumnAt maps the same .d/.i at their data length and
-         * keeps the fd open, so a request at offset 0 that is no longer than its
-         * mapping is served by MmapCache as a refcount bump on TableReader's own
-         * mapping. A whole-file map is longer whenever the file carries slack past
-         * the committed rows, and then MmapCache both misses and replaces
-         * TableReader's record with the longer map. Reading the length back from
-         * the file is also a no-go on the read path in its own right: the writer
-         * grows column files ahead of the rows it has committed.
-         *
-         * @return true iff at least the per-column top/address arrays were
-         * populated (individual columns can still be unavailable -- dropped,
-         * or genuinely missing their .d file -- tracked by a 0 address).
-         */
-        private boolean ensureNullPrefixColumnsOpen() {
-            if (npColumnsOpened) {
-                return hasNullPrefixColumns;
-            }
-            npColumnsOpened = true;
-            if (coverCount <= 0 || metadata == null || columnVersionReader == null) {
-                return false;
-            }
-            // Map straight into the persistent fields rather than into locals the
-            // loop publishes only on success: openRawColumnFile throws when mmap
-            // fails, and a var-size column alone issues two mmaps (.d then .i), so
-            // buffering in locals orphans every region the loop already mapped --
-            // closeCoveringResources() would find nothing to free.
-            // PostingIndexWriter#mapColumnFile targets its persistent array for the
-            // same reason. The arrays are kept across checkouts and only ever grow,
-            // so a reused cursor resets them instead of allocating seven more.
-            if (npColAddrs == null || npColAddrs.length < coverCount) {
-                npAuxAddrs = new long[coverCount];
-                npAuxFds = new long[coverCount];
-                npAuxSizes = new long[coverCount];
-                npColAddrs = new long[coverCount];
-                npColFds = new long[coverCount];
-                npColSizes = new long[coverCount];
-                npColTops = new long[coverCount];
-            } else {
-                Arrays.fill(npAuxAddrs, 0);
-                Arrays.fill(npAuxSizes, 0);
-                Arrays.fill(npColAddrs, 0);
-                Arrays.fill(npColSizes, 0);
-                Arrays.fill(npColTops, 0);
-            }
-            Arrays.fill(npAuxFds, -1);
-            Arrays.fill(npColFds, -1);
-            Path p = Path.getThreadLocal(sidecarBasePath);
-            int pLen = p.size();
-            try {
-                for (int c = 0; c < coverCount; c++) {
-                    if (!isCoverColumnRequired(c)) {
-                        continue; // the query never reads this INCLUDE column
-                    }
-                    int writerIdx = sidecarColumnIndices.getQuick(c);
-                    int colType = sidecarColumnTypes.getQuick(c);
-                    if (writerIdx < 0 || colType < 0) {
-                        continue; // column dropped, or absent from this chain entry
-                    }
-                    int denseIdx = denseIndexFromWriter(metadata, writerIdx);
-                    if (denseIdx < 0) {
-                        continue;
-                    }
-                    // -1 is ColumnVersionReader.getColumnTop's "the column has no files in
-                    // this partition" sentinel, not a column top: leave the address at 0 so
-                    // every prefix row reads this column as NULL. It is not a real value the
-                    // arithmetic below could absorb (row - (-1) targets the next row).
-                    long top = columnVersionReader.getColumnTop(partitionTimestamp, writerIdx);
-                    if (top < 0) {
-                        continue;
-                    }
-                    npColTops[c] = top;
-                    // The prefix cursor only ever reads rows [top, columnTop): the indexed
-                    // column's top bounds the prefix, and rows below this column's own top
-                    // are its genuine NULLs. Map exactly those rows.
-                    long rowCount = columnTop - top;
-                    if (rowCount <= 0) {
-                        continue;
-                    }
-                    CharSequence name = metadata.getColumnName(denseIdx);
-                    long nameTxn = sidecarCovTs.getQuick(c);
-                    p.trimTo(pLen);
-                    if (ColumnType.isVarSize(colType)) {
-                        // Aux first: the data vector's length is only known from its last
-                        // aux entry, exactly as TableReader.reloadColumnAt sizes it.
-                        final ColumnTypeDriver driver = ColumnType.getDriver(colType);
-                        openRawColumnFile(p, name, nameTxn, true, driver.getAuxVectorSize(rowCount), c);
-                        if (npAuxAddrs[c] == 0) {
-                            continue;
-                        }
-                        long dataSize = driver.getDataVectorSizeAt(npAuxAddrs[c], rowCount - 1);
-                        if (dataSize > 0) {
-                            p.trimTo(pLen);
-                            openRawColumnFile(p, name, nameTxn, false, dataSize, c);
-                        }
-                    } else {
-                        openRawColumnFile(p, name, nameTxn, false, rowCount << ColumnType.pow2SizeOf(colType), c);
-                    }
-                }
-            } catch (Throwable th) {
-                // Release now, and keep the all-or-nothing contract this method
-                // documents: npColumnsOpened stays true, so a retry on the same
-                // cursor short-circuits to false, and with isNullPrefixRow set the
-                // covered getters answer every prefix row with the column's typed
-                // NULL sentinel (see the field comment) -- they never fall through
-                // to the sidecar, which has no entry for a prefix row.
-                closeNullPrefixColumns();
-                throw th;
-            } finally {
-                p.trimTo(pLen);
-            }
-            hasNullPrefixColumns = true;
-            return true;
-        }
-
-        /**
-         * True when this checkout's caller declared cover column {@code c} among the
-         * ones it reads. A null subset means the caller declared nothing, so every
-         * column stays eligible.
-         */
-        private boolean isCoverColumnRequired(int c) {
-            final int[] required = npRequiredColumns;
-            if (required == null) {
-                return true;
-            }
-            for (int r : required) {
-                if (r == c) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        private Utf8Sequence readRawCoveredVarchar(int includeIdx, long row, DirectUtf8String view) {
-            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
-                return null;
-            }
-            long fileRow = row - npColTops[includeIdx];
-            if (fileRow < 0) {
-                return null;
-            }
-            long auxAddr = resolveRawAuxAddr(includeIdx, VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES * fileRow, VarcharTypeDriver.VARCHAR_AUX_WIDTH_BYTES);
-            if (auxAddr == 0) {
-                return null;
-            }
-            int header = Unsafe.getInt(auxAddr);
-            if ((header & VarcharTypeDriver.VARCHAR_HEADER_FLAG_NULL) != 0) {
-                return null;
-            }
-            if ((header & 1) != 0) {
-                // inlined: the payload starts 1 byte into the aux entry
-                // (VarcharTypeDriver.FULLY_INLINED_STRING_OFFSET). The size field
-                // is 4 bits wide, so the mask admits 15, but the writer inlines at
-                // most VARCHAR_MAX_BYTES_FULLY_INLINED (9) bytes.
-                int size = (header >>> 4) & 0xF;
-                return view.of(auxAddr + 1, auxAddr + 1 + size);
-            }
-            int size = (header >>> 4) & 0x0FFFFFFF;
-            if (size <= 0) {
-                return view.of(auxAddr, auxAddr);
-            }
-            long dataOffset = Unsafe.getLong(auxAddr + 8) >>> 16;
-            long dataAddr = resolveRawDataAddr(includeIdx, dataOffset, size);
-            if (dataAddr == 0) {
-                return null;
-            }
-            return view.of(dataAddr, dataAddr + size);
-        }
-
-        /**
-         * Maps the first {@code size} bytes of one INCLUDE column file. The fd stays
-         * open for as long as the mapping does (closeNullPrefixColumns() releases
-         * both): closing it right after mmap would drop the FdCache record, and with
-         * it the key under which MmapCache shares the mapping with TableReader and
-         * with sibling cursors on the same partition.
-         */
-        private void openRawColumnFile(Path p, CharSequence name, long nameTxn, boolean isAux, long size, int idx) {
-            LPSZ fileName = isAux ? TableUtils.iFile(p, name, nameTxn) : TableUtils.dFile(p, name, nameTxn);
-            long fd = ff.openRO(fileName);
-            if (fd < 0) {
-                return; // no data below the indexed column's top for this column -- normal
-            }
-            long mapped = ff.mmap(fd, size, 0, Files.MAP_RO, MemoryTag.MMAP_INDEX_READER);
-            if (mapped == FilesFacade.MAP_FAILED) {
-                int errno = ff.errno();
-                ff.close(fd);
-                throw CairoException.critical(errno)
-                        .put("could not mmap covering INCLUDE column for null-prefix read [file=").put(fileName)
-                        .put(", size=").put(size).put(']');
-            }
-            if (isAux) {
-                npAuxAddrs[idx] = mapped;
-                npAuxSizes[idx] = size;
-                npAuxFds[idx] = fd;
-            } else {
-                npColAddrs[idx] = mapped;
-                npColSizes[idx] = size;
-                npColFds[idx] = fd;
-            }
-        }
-
-        private ArrayView readRawCoveredArray(int includeIdx, long row, int columnType, BorrowedArray view) {
-            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
-                return null;
-            }
-            long fileRow = row - npColTops[includeIdx];
-            if (fileRow < 0) {
-                return null;
-            }
-            long auxAddr = resolveRawAuxAddr(includeIdx, ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES * fileRow, ArrayTypeDriver.ARRAY_AUX_WIDTH_BYTES);
-            if (auxAddr == 0) {
-                return null;
-            }
-            int size = Unsafe.getInt(auxAddr + Long.BYTES);
-            if (size <= 0) {
-                view.ofNull();
-                return view;
-            }
-            long dataOffset = Unsafe.getLong(auxAddr) & ArrayTypeDriver.OFFSET_MAX;
-            long dataAddr = resolveRawDataAddr(includeIdx, dataOffset, size);
-            if (dataAddr == 0) {
-                return null;
-            }
-            int dims = ColumnType.decodeArrayDimensionality(columnType);
-            short elemType = ColumnType.decodeArrayElementType(columnType);
-            int elemSize = ColumnType.sizeOf(elemType);
-            int cardinality = 1;
-            for (int d = 0; d < dims; d++) {
-                cardinality *= Unsafe.getInt(dataAddr + (long) d * Integer.BYTES);
-            }
-            int valueSize = cardinality * elemSize;
-            long valuePtr = dataAddr + size - valueSize;
-            return view.of(columnType, dataAddr, valuePtr, valueSize);
-        }
-
-        private BinarySequence readRawCoveredBin(int includeIdx, long row, DirectBinarySequence view) {
-            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
-                return null;
-            }
-            long fileRow = row - npColTops[includeIdx];
-            if (fileRow < 0) {
-                return null;
-            }
-            long auxAddr = resolveRawAuxAddr(includeIdx, fileRow << 3, Long.BYTES);
-            if (auxAddr == 0) {
-                return null;
-            }
-            long dataOffset = Unsafe.getLong(auxAddr);
-            long lenAddr = resolveRawDataAddr(includeIdx, dataOffset, Long.BYTES);
-            if (lenAddr == 0) {
-                return null;
-            }
-            long len = Unsafe.getLong(lenAddr);
-            if (len < 0) {
-                return null;
-            }
-            long dataAddr = resolveRawDataAddr(includeIdx, dataOffset, Long.BYTES + len);
-            if (dataAddr == 0) {
-                return null;
-            }
-            return view.of(dataAddr + Long.BYTES, len);
-        }
-
-        private CharSequence readRawCoveredStr(int includeIdx, long row, DirectString view) {
-            if (!ensureNullPrefixColumnsOpen() || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
-                return null;
-            }
-            long fileRow = row - npColTops[includeIdx];
-            if (fileRow < 0) {
-                return null;
-            }
-            long auxAddr = resolveRawAuxAddr(includeIdx, fileRow << 3, Long.BYTES);
-            if (auxAddr == 0) {
-                return null;
-            }
-            long dataOffset = Unsafe.getLong(auxAddr);
-            long lenAddr = resolveRawDataAddr(includeIdx, dataOffset, Integer.BYTES);
-            if (lenAddr == 0) {
-                return null;
-            }
-            int len = Unsafe.getInt(lenAddr);
-            if (len < 0) {
-                return null;
-            }
-            long dataAddr = resolveRawDataAddr(includeIdx, dataOffset, (long) Integer.BYTES + (long) len * Character.BYTES);
-            if (dataAddr == 0) {
-                return null;
-            }
-            return view.of(dataAddr + Integer.BYTES, len);
-        }
-
-        @Override
-        protected void closeCoveringResources() {
-            super.closeCoveringResources();
-            closeNullPrefixColumns();
-            npColumnsOpened = false;
-            npRequiredColumns = null;
-        }
-
-        private long resolveRawAuxAddr(int includeIdx, long offset, long needed) {
-            if (includeIdx < 0 || npAuxAddrs == null || includeIdx >= npAuxAddrs.length) {
-                return 0;
-            }
-            long addr = npAuxAddrs[includeIdx];
-            if (addr == 0 || offset < 0 || offset + needed > npAuxSizes[includeIdx]) {
-                return 0;
-            }
-            return addr + offset;
-        }
-
-        private long resolveRawDataAddr(int includeIdx, long offset, long needed) {
-            if (includeIdx < 0 || npColAddrs == null || includeIdx >= npColAddrs.length) {
-                return 0;
-            }
-            long addr = npColAddrs[includeIdx];
-            if (addr == 0 || offset < 0 || offset + needed > npColSizes[includeIdx]) {
-                return 0;
-            }
-            return addr + offset;
-        }
-
-        private long resolveRawFixedAddr(int includeIdx, long row, int size) {
-            if (!isNullPrefixRow || !ensureNullPrefixColumnsOpen()
-                    || includeIdx < 0 || npColTops == null || includeIdx >= npColTops.length) {
-                return 0;
-            }
-            long fileRow = row - npColTops[includeIdx];
-            if (fileRow < 0) {
-                return 0; // genuinely null (below the INCLUDEd column's own top)
-            }
-            return resolveRawDataAddr(includeIdx, fileRow * size, size);
         }
     }
 }
