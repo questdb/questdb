@@ -159,8 +159,11 @@ jobs:
           includeTests: "**/cairo/**"
           # Exclude O3 tests: run in windows-other-2
           # Exclude Fuzz tests: run in windows-fuzz1 (cairo/fuzz) and windows-fuzz2 (other fuzz)
-          # Exclude mv/o3 subdirs: run in windows-cairo-2
-          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/mv/**,**/cairo/o3/**"
+          # Exclude lv/mv/o3 subdirs: run in windows-cairo-2. cairo/lv moved here
+          # from this group in Sep 2026: cairo-1 had grown to 55 min against the
+          # 60-minute job cap (build 267306 timed out ~90s from the end) while
+          # cairo-2 sat at 20 min. lv is ~16 min, so the move balances the pair.
+          excludeTests: "**/O3*Test**,**/**Fuzz**,**/cairo/lv/**,**/cairo/mv/**,**/cairo/o3/**"
           javadoc_step: ""
           javadoc_profile: ""
         windows-cairo-2:
@@ -170,8 +173,9 @@ jobs:
           os: Windows
           jdk: "1.25"
           testset: "all"
-          includeTests: "**/cairo/mv/**,**/cairo/o3/**"
-          # Exclude Fuzz tests: run in windows-fuzz2
+          includeTests: "**/cairo/lv/**,**/cairo/mv/**,**/cairo/o3/**"
+          # Exclude Fuzz tests: run in windows-fuzz2 (LiveViewFuzzTest included:
+          # it is not under cairo/fuzz, so windows-fuzz1 does not claim it)
           excludeTests: "**/**Fuzz**"
           javadoc_step: ""
           javadoc_profile: ""
@@ -219,8 +223,10 @@ jobs:
           # Heavier cutlass groups (http, qwp, text) plus O3 tests; balances wall-clock with windows-other-1
           includeTests: "**/cutlass/http/**,**/cutlass/qwp/**,**/cutlass/text/**,**/O3*Test**"
           # Exclude Fuzz tests: run in windows-fuzz2
-          # Exclude cairo/o3 and cairo/mv: run in windows-cairo-2
-          excludeTests: "**/**Fuzz**,**/cairo/o3/**,**/cairo/mv/**"
+          # Exclude cairo/lv, cairo/o3 and cairo/mv: run in windows-cairo-2.
+          # Only cairo/o3 holds O3*Test classes today; the other two keep the
+          # invariant so a future O3*Test there cannot run in both groups.
+          excludeTests: "**/**Fuzz**,**/cairo/lv/**,**/cairo/o3/**,**/cairo/mv/**"
           javadoc_step: ""
           javadoc_profile: ""
 
