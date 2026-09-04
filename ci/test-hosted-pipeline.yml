@@ -18,9 +18,25 @@ pr:
       - master
   drafts: false
 
+# Weekly run on master to seed the hosted .m2 caches. Azure pipeline caches are
+# branch-scoped: PR builds can only restore caches created on the default
+# branch, and this pipeline otherwise never runs on plain master (PR runs are
+# on-demand, merge-queue branches are one-shot, so their caches die with the
+# branch). Without a master-scoped cache every first macwin run of every PR
+# cold-downloads the whole dependency tree from Maven Central on ~16 hosted
+# agents at once, and Central answers the burst with HTTP 429 (build 266975).
+schedules:
+  - cron: "0 3 * * 1"
+    displayName: "Weekly master run to seed hosted .m2 caches"
+    branches:
+      include:
+        - master
+    always: true
+
 variables:
-  # Supplies GIT_GITHUB_TOKEN, which the submodule-clone steps hand to gh so the
-  # clones do not go out anonymously. See templates/detect-local-client.yml.
+  # Supplies GIT_GITHUB_TOKEN, which the fetch steps feed to ci/git-auth-env.sh
+  # (as GH_TOKEN) so github.com fetches do not go out anonymously. Fork PRs
+  # never receive it and rely on the scripts' backoff retry instead.
   - group: github-public-read
   - name: QDB_LOG_W_FILE_LOCATION
     value: "$(Build.BinariesDirectory)/tests.log"
@@ -32,15 +48,33 @@ variables:
     value: ""
   - name: includeTests
     value: "%regex[.*[^o].class]"
+  # $(Pipeline.Workspace), not $(HOME): Windows agents define no HOME pipeline
+  # variable, so Azure left the macro as literal "$(HOME)" text and Maven wrote
+  # the repo to a directory literally named "$(HOME)" under the sources dir.
+  # Pipeline.Workspace exists on every hosted agent and is absolute on all OSes.
   - name: MAVEN_CACHE_FOLDER
-    value: $(HOME)/.m2/repository
+    value: $(Pipeline.Workspace)/.m2/repository
   - name: MAVEN_OPTS
     value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx3g -XX:+UseParallelGC"
-  # Kept in sync with test-pipeline.yml. These hosted (macOS/Windows) agents resolve from
-  # Maven Central, not the cache, so the retry is a harmless no-op for them; keeping
-  # MAVEN_RUN_OPTS identical across pipelines avoids drift. See test-pipeline.yml for rationale.
+  # Unlike the Hetzner pipeline, these hosted (macOS/Windows) agents cannot reach
+  # the private maven.internal Reposilite cache and resolve straight from Maven
+  # Central, whose rate limiter answers the fleet's cold-cache bursts with HTTP
+  # 429 (build 266975). Maven 3.9's default (native) resolver transport backs
+  # off on 429/503 and obeys the server's Retry-After header (MRESOLVER-396,
+  # resolver 1.9.16+); wagon's GET retries have no backoff, so this pipeline
+  # must NOT pin transport=wagon the way test-pipeline.yml does for the
+  # Reposilite keepalive tuning.
+  #
+  # The backoff ramps linearly, interval x attempt number: 7.5s, 15s, ... and
+  # applies only when the server sends no Retry-After. intervalMax is a
+  # bail-out, not a clamp: a computed wait, or a server Retry-After, above it
+  # stops the retry chain (ResolverServiceUnavailableRetryStrategy returns
+  # null). 120s leaves headroom for a count bump up to 16 and obeys a
+  # Retry-After of up to two minutes instead of aborting on it; the cost is a
+  # slower failure when Central throttles persistently, still bounded by the
+  # job timeout.
   - name: MAVEN_RUN_OPTS
-    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException "
+    value: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Daether.connector.http.retryHandler.count=8 -Daether.connector.http.retryHandler.interval=7500 -Daether.connector.http.retryHandler.intervalMax=120000"
   - name: MAVEN_VERSION
     value: "version"
   - name: MAVEN_VERSION_OPTION
