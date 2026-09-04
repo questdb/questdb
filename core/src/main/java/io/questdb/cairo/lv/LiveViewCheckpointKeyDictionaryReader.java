@@ -296,10 +296,10 @@ public class LiveViewCheckpointKeyDictionaryReader implements Closeable {
     }
 
     /**
-     * Rebuilds {@code target} from {@code columnIndex}'s chunks: clears it, then interns every
-     * entry in id order, validating page framing/checksums, UTF-8 well-formedness and string
-     * uniqueness as it goes, and finally checks the reconstructed size against the directory's
-     * frozen {@code symbolCount}. Clearing rather than merging is deliberate: a restore's
+     * Rebuilds {@code target} from {@code columnIndex}'s chunks: clears it, then appends every
+     * entry in id order, validates page framing/checksums and UTF-8 well-formedness, builds the
+     * reverse index with uniqueness checks, and finally checks the reconstructed size against
+     * the directory's frozen {@code symbolCount}. Clearing rather than merging is deliberate: a restore's
      * per-root-chain invariant means it replaces a slot's dictionary wholesale, so an id a
      * caller already assigned past this root's {@code symbolCount} (a rollback fork) is
      * discarded along with it.
@@ -405,8 +405,8 @@ public class LiveViewCheckpointKeyDictionaryReader implements Closeable {
                 throw LiveViewCheckpointMetadata.invalid("key dictionary chunk entry body truncated");
             }
             // Decoded straight into the dictionary, which validates the UTF-8 as it goes and
-            // appends without a probe: restoreInto indexes the whole column in one sorted pass
-            // once every chunk is in, and that pass makes the duplicate check.
+            // appends without a probe: restoreInto indexes the whole column once every chunk
+            // is in, selecting direct or sorted insertion by cardinality and checking duplicates.
             if (target.appendUtf8ForRestore(reader.payloadAddressOf(offset, length), length) < 0) {
                 throw malformedUtf8();
             }

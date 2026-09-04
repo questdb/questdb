@@ -447,6 +447,35 @@ public class DirectSymbolMapTest {
 
 
     @Test
+    public void testBulkRestoreSelectsReverseIndexBuildByCardinality() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                final int n = 100_000;
+                map.ensureCapacity(n, 40L * n);
+                for (int i = 0; i < n; i++) {
+                    Assert.assertEquals(i, appendUtf8(map, "medium-" + i));
+                }
+                Assert.assertEquals(-1, map.buildReverseIndex());
+                Assert.assertEquals(0, map.getBulkReverseIndexSortedEntries());
+                Assert.assertEquals(0, map.keyOf("medium-0"));
+                Assert.assertEquals(n - 1, map.keyOf("medium-" + (n - 1)));
+            }
+
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                final int n = 100_001;
+                map.ensureCapacity(n, 40L * n);
+                for (int i = 0; i < n; i++) {
+                    Assert.assertEquals(i, appendUtf8(map, "large-" + i));
+                }
+                Assert.assertEquals(-1, map.buildReverseIndex());
+                Assert.assertEquals(n, map.getBulkReverseIndexSortedEntries());
+                Assert.assertEquals(0, map.keyOf("large-0"));
+                Assert.assertEquals(n - 1, map.keyOf("large-" + (n - 1)));
+            }
+        });
+    }
+
+    @Test
     public void testBulkRestoreBuildsReverseIndexAndDetectsDuplicates() throws Exception {
         assertMemoryLeak(() -> {
             try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {

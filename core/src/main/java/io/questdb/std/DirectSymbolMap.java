@@ -60,6 +60,7 @@ import org.jetbrains.annotations.Nullable;
  * array indexed by key; put-mode keys go through a hash map.
  */
 public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
+    private static final int BULK_REVERSE_INDEX_DIRECT_INSERT_THRESHOLD = 100_000;
     private static final int NO_ENTRY_KEY = Integer.MIN_VALUE;
     private static final int NO_ENTRY_VALUE = -1;
 
@@ -82,10 +83,11 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     private int denseOffsetsCapacity;
     private long denseOffsetsPtr;
     private int denseSize;
+    private long bulkReverseIndexSortedEntries;
     // (hash, key) pairs appended by appendForRestore and not yet in the reverse index;
-    // buildReverseIndex rewrites them in place as (homeSlot, hash | key), sorts them by
-    // home slot with the native radix sort and fills the table sequentially. Kept closed
-    // between loads so a dictionary that never bulk-loads holds no scratch.
+    // buildReverseIndex inserts medium dictionaries directly and uses a native radix sort
+    // to fill larger ones sequentially. Kept closed between loads so a dictionary that
+    // never bulk-loads holds no scratch.
     private final DirectLongList pendingReverse;
     private long explicitRebuildScannedEntries;
     private boolean explicitValueToKeyDirty;
@@ -194,6 +196,15 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
      */
     public long getExplicitRebuildScannedEntries() {
         return explicitRebuildScannedEntries;
+    }
+
+    /**
+     * Cumulative number of bulk-restore entries sent through the native radix-sort path.
+     * Diagnostic hook for tests: medium dictionaries insert directly, while larger ones
+     * retain the cache-friendly sorted fill.
+     */
+    public long getBulkReverseIndexSortedEntries() {
+        return bulkReverseIndexSortedEntries;
     }
 
     /**
@@ -343,11 +354,11 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
     }
 
     /**
-     * Indexes every entry {@link #appendForRestore} appended: computes each one's home slot,
-     * radix-sorts the pairs by it and fills the table in slot order, so the writes walk the
-     * table sequentially instead of missing the cache once per entry. The probe past a home
-     * slot compares hashes, and on a hash match the strings, which is the same duplicate
-     * check {@link #intern} makes.
+     * Indexes every entry {@link #appendUtf8ForRestore} appended. Medium dictionaries insert
+     * directly from their already decoded and hashed pending pairs. Larger dictionaries
+     * compute each entry's home slot, radix-sort the pairs by it, and fill the table in slot
+     * order so the writes walk the table sequentially. Both paths compare hashes and, on a
+     * hash match, strings, which is the same duplicate check {@link #intern} makes.
      *
      * @return the key of the first duplicate string found, or -1 when every entry is distinct
      */
@@ -356,21 +367,33 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
         if (n == 0) {
             return -1;
         }
-        ensureValueToKeyMap();
-        valueToKey.ensureCapacity(valueToKey.size() + n);
-        // Rewrite each (hash, key) pair in place as (homeSlot, hash | key): the native sort
-        // orders by the first long and carries the second through untouched. It also needs
-        // a copy region as large as the pairs behind them.
-        pendingReverse.setCapacity(4L * n);
-        for (int i = 0; i < n; i++) {
-            final int h = (int) pendingReverse.get(2L * i);
-            final int key = (int) pendingReverse.get(2L * i + 1);
-            pendingReverse.set(2L * i, valueToKey.homeSlot(h));
-            pendingReverse.set(2L * i + 1, ((long) h << 32) | (key & 0xffffffffL));
-        }
-        final long address = pendingReverse.getAddress();
-        Vect.radixSortLongIndexAscChecked(address, n, address + 2L * n * Long.BYTES, 0, valueToKey.capacity() - 1L);
         try {
+            ensureValueToKeyMap();
+            valueToKey.ensureCapacity(valueToKey.size() + n);
+            if (n <= BULK_REVERSE_INDEX_DIRECT_INSERT_THRESHOLD) {
+                for (int i = 0; i < n; i++) {
+                    final int h = (int) pendingReverse.get(2L * i);
+                    final int key = (int) pendingReverse.get(2L * i + 1);
+                    if (valueToKey.insertStored(h, key)) {
+                        return key;
+                    }
+                }
+                return -1;
+            }
+
+            bulkReverseIndexSortedEntries += n;
+            // Rewrite each (hash, key) pair in place as (homeSlot, hash | key): the native sort
+            // orders by the first long and carries the second through untouched. It also needs
+            // a copy region as large as the pairs behind them.
+            pendingReverse.setCapacity(4L * n);
+            for (int i = 0; i < n; i++) {
+                final int h = (int) pendingReverse.get(2L * i);
+                final int key = (int) pendingReverse.get(2L * i + 1);
+                pendingReverse.set(2L * i, valueToKey.homeSlot(h));
+                pendingReverse.set(2L * i + 1, ((long) h << 32) | (key & 0xffffffffL));
+            }
+            final long address = pendingReverse.getAddress();
+            Vect.radixSortLongIndexAscChecked(address, n, address + 2L * n * Long.BYTES, 0, valueToKey.capacity() - 1L);
             return valueToKey.fillSorted(pendingReverse, n);
         } finally {
             pendingReverse.close();
@@ -869,6 +892,27 @@ public class DirectSymbolMap implements Mutable, QuietCloseable, Reopenable {
                 index = (index + 1) & mask;
             }
             insertAt(index, h, symbolKey);
+        }
+
+        /**
+         * Inserts a pending bulk-restore entry by probing from its home slot.
+         *
+         * @return true if the reverse index already holds the same string
+         */
+        public boolean insertStored(int h, int symbolKey) {
+            long index = homeSlot(h);
+            while (true) {
+                final long p = slotsPtr + (index << 3);
+                final int key = Unsafe.getUnsafe().getInt(p + 4);
+                if (key == EMPTY_KEY) {
+                    insertAt(index, h, symbolKey);
+                    return false;
+                }
+                if (Unsafe.getUnsafe().getInt(p) == h && matchesStored(offsetOf(key), offsetOf(symbolKey))) {
+                    return true;
+                }
+                index = (index + 1) & mask;
+            }
         }
 
         /**
