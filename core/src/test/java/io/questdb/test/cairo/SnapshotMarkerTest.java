@@ -107,6 +107,94 @@ public class SnapshotMarkerTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * {@code loadCandidates()} must fall back to the surviving slot when the LIVE one is torn.
+     * <p>
+     * {@code testLiveSlotCorruptionFallsBackToPriorSlot} and {@code testBothSlotsCorruptedReturnsFalse}
+     * read as though they cover this, but they exercise {@code tryLoad()} -- a different method with
+     * its own fallback. {@code loadCandidates()} is the one {@code RecoveryCoordinator} calls to
+     * choose which epoch generation to adopt, and the coverage pass on PR #7411 found its
+     * single-survivor and no-survivor branches unreached.
+     * <p>
+     * That distinction matters here more than usual: the selector word carries no checksum and can
+     * "tear or revert independently during a power loss" (this class's own javadoc), so returning the
+     * OTHER slot when the selected one is unreadable is the entire reason two slots exist.
+     */
+    @Test
+    public void testCandidatesFallBackToTheSurvivingSlotWhenTheLiveOneIsTorn() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path().of(root).concat(TableUtils.SNAPSHOT_FILE_NAME)) {
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    marker.write(3L, 2L, 3_000_000L, 0);
+                }
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    marker.write(7L, 5L, 7_000_000L, 1);
+                }
+                // Precondition: both slots valid, so the fallback below is genuinely a fallback and
+                // not an artefact of the other slot never having been written.
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    Assert.assertEquals("precondition: both slots must be valid",
+                            2, marker.loadCandidates().length);
+                }
+                // Tear the LIVE slot. Version is 2 => even => live is A, and A holds the NEWEST cut
+                // (epochSeqTxn 7), because the second write landed there. So tearing it models losing
+                // the newest epoch and leaves the PREVIOUS fully-bound one as the only survivor --
+                // "it may reject the newest generation and adopt the previous", per loadCandidates'
+                // own javadoc.
+                pokeLong(ff, path.$(), SnapshotMarker.OFFSET_SLOT_A, 0xDEADBEEFL);
+
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    final SnapshotMarker.Candidate[] candidates = marker.loadCandidates();
+                    Assert.assertEquals("exactly the surviving slot must be offered", 1, candidates.length);
+                    Assert.assertEquals("the survivor must be the previous cut, not the torn newest one",
+                            3L, candidates[0].epochSeqTxn);
+                    Assert.assertEquals("and it must carry that cut's generation",
+                            0, candidates[0].generation);
+                }
+            }
+        });
+    }
+
+    /**
+     * Both slots torn: {@code loadCandidates()} must offer NOTHING rather than guess. Recovery then
+     * has no candidate to adopt and falls back to full WAL replay, which is the safe direction --
+     * returning a half-read slot here would hand recovery an anchor nobody validated.
+     */
+    @Test
+    public void testCandidatesAreEmptyWhenBothSlotsAreTorn() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path().of(root).concat(TableUtils.SNAPSHOT_FILE_NAME)) {
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    marker.write(3L, 2L, 3_000_000L, 0);
+                }
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    marker.write(7L, 5L, 7_000_000L, 1);
+                }
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    Assert.assertEquals("precondition: both slots must start valid",
+                            2, marker.loadCandidates().length);
+                }
+                pokeLong(ff, path.$(), SnapshotMarker.OFFSET_SLOT_A, 0xDEADBEEFL);
+                pokeLong(ff, path.$(), SnapshotMarker.OFFSET_SLOT_B, 0xDEADBEEFL);
+
+                try (SnapshotMarker marker = new SnapshotMarker(configuration)) {
+                    marker.of(path);
+                    Assert.assertEquals("two torn slots must yield no candidate at all",
+                            0, marker.loadCandidates().length);
+                }
+            }
+        });
+    }
+
     // ---- CRC fallback tests ----
 
     /**
