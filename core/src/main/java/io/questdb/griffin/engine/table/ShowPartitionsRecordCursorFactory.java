@@ -137,7 +137,10 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         DEAD_ROWS(18, "deadRows", ColumnType.LONG),
         // Wall clock, always microseconds whatever the table's designated timestamp resolution is: it
         // comes from the writer's clock, not from the data.
-        LAST_WRITE_TIMESTAMP(19, "lastWriteTimestamp", ColumnType.TIMESTAMP_MICRO);
+        LAST_WRITE_TIMESTAMP(19, "lastWriteTimestamp", ColumnType.TIMESTAMP_MICRO),
+        // Pieces the partition's column files are made of: 1 for a plain partition, more for a
+        // COMPOSITE one. Null for a detached or attachable partition, which has no live geometry.
+        PIECE_COUNT(20, "pieceCount", ColumnType.INT);
 
         private final int idx;
         private final TableColumnMetadata metadata;
@@ -184,6 +187,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         private int partitionBy = -1;
         private int partitionIndex = -1;
         private long partitionSize = -1L;
+        private int pieceCount = Numbers.INT_NULL;
         private int rootLen;
         private long seqTxn;
         private TableReader tableReader;
@@ -293,6 +297,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
             numRows = -1L;
             partitionSize = -1L;
             deadRows = Numbers.LONG_NULL;
+            pieceCount = Numbers.INT_NULL;
             lastWriteTimestamp = Numbers.LONG_NULL;
             partitionName.clear();
             dynamicPartitionIndex = partitionIndex;
@@ -338,6 +343,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 numRows = tableTxReader.getPartitionSize(partitionIndex);
                 long physicalRows = tableReader.getPartitionPhysicalRowCount(partitionIndex);
                 deadRows = physicalRows - numRows;
+                pieceCount = tableReader.getGeometry().getPieceCount(partitionIndex);
                 long lastWriteMicros = tableReader.getGeometry().getLastWriteMicros(partitionIndex);
                 lastWriteTimestamp = lastWriteMicros > 0 ? lastWriteMicros : Numbers.LONG_NULL;
             } else {
@@ -542,6 +548,9 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
                 if (Column.PARTITION_INDEX.is(col)) {
                     return dynamicPartitionIndex;
                 }
+                if (Column.PIECE_COUNT.is(col)) {
+                    return pieceCount;
+                }
                 throw new UnsupportedOperationException();
             }
 
@@ -614,6 +623,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadata.add(Column.IS_REMOTELY_SERVED.metadata());
         metadata.add(Column.DEAD_ROWS.metadata());
         metadata.add(Column.LAST_WRITE_TIMESTAMP.metadata());
+        metadata.add(Column.PIECE_COUNT.metadata());
         METADATA_TIMESTAMP = metadata;
         final GenericRecordMetadata metadataNs = new GenericRecordMetadata();
         metadataNs.add(Column.PARTITION_INDEX.metadata());
@@ -636,6 +646,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         metadataNs.add(Column.IS_REMOTELY_SERVED.metadata());
         metadataNs.add(Column.DEAD_ROWS.metadata());
         metadataNs.add(Column.LAST_WRITE_TIMESTAMP.metadata());
+        metadataNs.add(Column.PIECE_COUNT.metadata());
         METADATA_TIMESTAMP_NS = metadataNs;
     }
 }
