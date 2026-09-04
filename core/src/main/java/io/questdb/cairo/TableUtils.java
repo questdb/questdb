@@ -1413,24 +1413,6 @@ public final class TableUtils {
         };
     }
 
-    /**
-     * Reads the table's PER-TABLE commit-mode override (the value stored in {@code _meta}, possibly
-     * {@link CommitMode#UNSET}). This is the RAW stored value, NOT yet resolved against the global
-     * {@code cairo.commit.mode}; resolve with {@link CommitMode#effectiveCommitMode(int, int)}. Mirrors
-     * {@link #getO3MaxLag(TableRecordMetadata, CairoEngine)}: when the caller already holds a writer
-     * metadata it is read directly, otherwise the physical {@code _meta} is consulted via the engine's
-     * pooled table metadata. Because ALTER ... SET PARAM commit_mode is a WAL transaction, a WAL-side
-     * reader may briefly observe the pre-ALTER value until the change has been applied — acceptable for a
-     * durability-policy knob, identical to the staleness window of the other per-table physical settings.
-     */
-    public static int getCommitMode(TableRecordMetadata metadata, CairoEngine engine) {
-        if (metadata instanceof TableWriterMetadata) {
-            return ((TableWriterMetadata) metadata).getCommitMode();
-        }
-        try (TableMetadata tableMetadata = engine.getTableMetadata(metadata.getTableToken())) {
-            return tableMetadata.getCommitMode();
-        }
-    }
 
     public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
         if (!metadata.isWalEnabled()) {
