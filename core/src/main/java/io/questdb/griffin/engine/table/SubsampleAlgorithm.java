@@ -31,12 +31,18 @@ import io.questdb.std.Unsafe;
 /**
  * Strategy interface for SUBSAMPLE downsampling algorithms.
  * <p>
- * Implementations receive a native buffer of (rowId, timestamp, value) entries
- * and write selected buffer indices to the output list. The buffer layout per
- * entry is: [rowId: long (8)][timestamp: long (8)][value: double (8)] = 24 bytes.
+ * Implementations receive a native buffer of (timestamp, value) entries and
+ * write selected buffer indices to the output list. The buffer layout per
+ * entry is: [timestamp: long (8)][value: double (8)] = 16 bytes.
+ * <p>
+ * There is deliberately no stored ordinal/rowId field: an entry's ordinal IS
+ * its buffer index, which every caller already holds, so storing it cost 8
+ * bytes per input row and was never read back. Keep the stride a power of two
+ * - it turns {@code index * ENTRY_SIZE} into a shift and packs exactly 4
+ * entries per 64-byte cache line instead of straddling lines.
  */
 public interface SubsampleAlgorithm {
-    int ENTRY_SIZE = 24;
+    int ENTRY_SIZE = 16;
 
     /**
      * Select representative points from the buffer and add their indices
@@ -72,13 +78,13 @@ public interface SubsampleAlgorithm {
      * Read timestamp from buffer entry at the given index.
      */
     static long getTimestamp(long buffer, long index) {
-        return Unsafe.getUnsafe().getLong(buffer + index * ENTRY_SIZE + 8);
+        return Unsafe.getUnsafe().getLong(buffer + index * ENTRY_SIZE);
     }
 
     /**
      * Read value from buffer entry at the given index.
      */
     static double getValue(long buffer, long index) {
-        return Unsafe.getUnsafe().getDouble(buffer + index * ENTRY_SIZE + 16);
+        return Unsafe.getUnsafe().getDouble(buffer + index * ENTRY_SIZE + 8);
     }
 }

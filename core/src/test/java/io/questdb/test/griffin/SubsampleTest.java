@@ -1091,6 +1091,162 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLttbGapThresholdScaledToNanoTimestampUnits() throws Exception {
+        // Regression: the gap threshold is parsed to micros, but LttbAlgorithm compares it against
+        // RAW column timestamps. On a TIMESTAMP_NS column an unscaled threshold is 1000x too small,
+        // so '1h' used to split every 3.6s - here that would make all 8 rows their own segment and
+        // return all 8 rows instead of 4. This is the exact wall-clock series as
+        // testLttbGapPreserving, only the column unit differs, so the answer must be identical.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000000Z'),
+                    (20.0, '2024-01-01T00:10:00.000000000Z'),
+                    (30.0, '2024-01-01T00:20:00.000000000Z'),
+                    (40.0, '2024-01-01T00:30:00.000000000Z'),
+                    (50.0, '2024-01-01T05:00:00.000000000Z'),
+                    (60.0, '2024-01-01T05:10:00.000000000Z'),
+                    (70.0, '2024-01-01T05:20:00.000000000Z'),
+                    (80.0, '2024-01-01T05:30:00.000000000Z')
+                    """);
+            // Only the 4.5h hole between 00:30 and 05:00 exceeds '1h': two segments, 2 points each.
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 4, '1h')").timestamp("ts").returns("price\tts\n" +
+                    "10.0\t2024-01-01T00:00:00.000000000Z\n" +
+                    "40.0\t2024-01-01T00:30:00.000000000Z\n" +
+                    "50.0\t2024-01-01T05:00:00.000000000Z\n" +
+                    "80.0\t2024-01-01T05:30:00.000000000Z\n");
+        });
+    }
+
+    @Test
+    public void testLttbGapThresholdNanoWindowFunctionForm() throws Exception {
+        // Same regression through the direct window-function overload rather than the SUBSAMPLE
+        // clause: both spellings share LttbFunctionFactory.parseGapThreshold, so both must scale.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000000Z'),
+                    (20.0, '2024-01-01T00:10:00.000000000Z'),
+                    (30.0, '2024-01-01T00:20:00.000000000Z'),
+                    (40.0, '2024-01-01T00:30:00.000000000Z')
+                    """);
+            // One segment (no hole beyond '1h'), target 2 -> first and last only.
+            assertQuery("SELECT price, ts FROM (SELECT price, ts, lttb(ts, price, 2, '1h') OVER (ORDER BY ts) keep FROM t) WHERE keep")
+                    .timestamp("ts")
+                    .returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000000Z\n" +
+                            "40.0\t2024-01-01T00:30:00.000000000Z\n");
+        });
+    }
+
+    @Test
+    public void testLttbGapThresholdNanoBoundaryIsExclusive() throws Exception {
+        // The split predicate is `currTs > prevTs + threshold`, so a hole of exactly the threshold
+        // is NOT a gap and one nanosecond more is. Pins the comparison at nanosecond resolution,
+        // which only holds if the threshold was scaled into nanos.
+        assertMemoryLeak(() -> {
+            // hole is exactly 1h -> single segment -> target 2 keeps first and last only
+            execute("CREATE TABLE t_exact (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t_exact VALUES
+                    (10.0, '2024-01-01T00:00:00.000000000Z'),
+                    (20.0, '2024-01-01T00:00:10.000000000Z'),
+                    (30.0, '2024-01-01T01:00:10.000000000Z'),
+                    (40.0, '2024-01-01T01:00:20.000000000Z')
+                    """);
+            assertQuery("SELECT price, ts FROM t_exact SUBSAMPLE lttb(price, 2, '1h')").timestamp("ts")
+                    .returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000000Z\n" +
+                            "40.0\t2024-01-01T01:00:20.000000000Z\n");
+
+            // hole is 1h + 1ns -> two segments -> each keeps its own endpoints
+            execute("CREATE TABLE t_over (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t_over VALUES
+                    (10.0, '2024-01-01T00:00:00.000000000Z'),
+                    (20.0, '2024-01-01T00:00:10.000000000Z'),
+                    (30.0, '2024-01-01T01:00:10.000000001Z'),
+                    (40.0, '2024-01-01T01:00:20.000000000Z')
+                    """);
+            assertQuery("SELECT price, ts FROM t_over SUBSAMPLE lttb(price, 2, '1h')").timestamp("ts")
+                    .returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000000Z\n" +
+                            "20.0\t2024-01-01T00:00:10.000000000Z\n" +
+                            "30.0\t2024-01-01T01:00:10.000000001Z\n" +
+                            "40.0\t2024-01-01T01:00:20.000000000Z\n");
+        });
+    }
+
+    @Test
+    public void testLttbGapThresholdNanoSaturatesInsteadOfWrapping() throws Exception {
+        // '1000000d' fits in micros (so the existing "gap threshold overflow" compile error does not
+        // fire) but overflows long when scaled to nanos. It must saturate to "no gap can ever exceed
+        // this" - a wrapping multiply would produce a small or negative threshold and shatter the
+        // series into segments.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000000Z'),
+                    (20.0, '2024-01-01T00:10:00.000000000Z'),
+                    (30.0, '2024-06-01T00:00:00.000000000Z'),
+                    (40.0, '2025-01-01T00:00:00.000000000Z')
+                    """);
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE lttb(price, 2, '1000000d')").timestamp("ts")
+                    .returns("price\tts\n" +
+                            "10.0\t2024-01-01T00:00:00.000000000Z\n" +
+                            "40.0\t2025-01-01T00:00:00.000000000Z\n");
+        });
+    }
+
+    @Test
+    public void testLttbGapThresholdUnitEquivalenceAcrossTimestampTypes() throws Exception {
+        // Differential across timestamp units: the same wall-clock series and the same threshold must
+        // select the same rows whether the column is TIMESTAMP or TIMESTAMP_NS. Sweeps every
+        // supported interval unit so a future unit-handling change cannot silently diverge.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_us (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE t_ns (price DOUBLE, ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            // 40 rows, 30s apart, with a 12h hole punched in the middle.
+            execute("INSERT INTO t_us SELECT x::double, " +
+                    "CASE WHEN x <= 20 THEN (x * 30000000L)::timestamp ELSE (x * 30000000L + 43200000000L)::timestamp END " +
+                    "FROM long_sequence(40)");
+            execute("INSERT INTO t_ns SELECT x::double, " +
+                    "CASE WHEN x <= 20 THEN (x * 30000000000L)::timestamp_ns ELSE (x * 30000000000L + 43200000000000L)::timestamp_ns END " +
+                    "FROM long_sequence(40)");
+
+            final String[] thresholds = {"90s", "5m", "1h", "2h", "1d"};
+            for (String threshold : thresholds) {
+                final String ctx = "threshold=" + threshold;
+                final String q = "SELECT price FROM (SELECT price, ts FROM %s SUBSAMPLE lttb(price, 8, '" + threshold + "'))";
+                final String us = selectPrices(String.format(q, "t_us"));
+                final String ns = selectPrices(String.format(q, "t_ns"));
+                Assert.assertEquals(ctx, us, ns);
+                Assert.assertTrue(ctx + " produced no rows", us.length() > 0);
+            }
+        });
+    }
+
+    // Renders just the price column of a subsample query, so results from a TIMESTAMP and a
+    // TIMESTAMP_NS table can be compared directly (their timestamp renderings differ by design).
+    private String selectPrices(String sql) throws Exception {
+        final StringBuilder sink = new StringBuilder();
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        sink.append(record.getDouble(0)).append('\n');
+                    }
+                }
+            }
+        }
+        return sink.toString();
+    }
+
+    @Test
     public void testLttbGapInvalidUnit() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");

@@ -63,8 +63,18 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * {@code sdt(ts, value, compdev) over (order by ts)} marks each row {@code true} (keep) or
  * {@code false} (drop) according to the Swinging Door Trending line-simplification algorithm: a
- * point is kept only when it cannot be represented, within {@code compdev}, by a straight line
- * drawn between the last two kept points.
+ * point is dropped while it stays inside the {@code compdev} corridor swung from the last kept
+ * point, and is kept as soon as that corridor closes.
+ * <p>
+ * <b>Reconstruction error is bounded by {@code 2 * compdev}, not {@code compdev}.</b> The corridor
+ * proves each dropped point lies within {@code compdev} of SOME line in the still-feasible slope
+ * cone - not specifically of the line later drawn between the two kept points that bracket it.
+ * Each of those lines can sit up to {@code compdev} from a given point, so the error is additive
+ * and reconstructing the series by joining consecutive kept points can deviate by up to twice
+ * {@code compdev}. Size {@code compdev} accordingly: treat it as a half-budget. This is inherent
+ * to classic SDT, not an implementation artefact, and is pinned by
+ * {@code SubsampleFuzzTest.testSdtCompressionBandInvariants}, whose fuzzing drives the observed
+ * worst-case ratio to ~1.9x {@code compdev}.
  * <p>
  * ORDER BY is required and custom framing is not allowed. PARTITION BY is supported via a
  * map-backed per-partition {@link SwingingDoor} state (see {@link SdtOverPartitionFunction}).

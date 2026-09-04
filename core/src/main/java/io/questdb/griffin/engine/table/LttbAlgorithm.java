@@ -38,9 +38,16 @@ import org.jetbrains.annotations.Nullable;
  * bucket that forms the largest triangle with the previously selected point
  * and the average of the next bucket. First and last points are always kept.
  * <p>
- * Supports gap-preserving mode: when gapThresholdMicros > 0, the data is
+ * Supports gap-preserving mode: when gapThreshold > 0, the data is
  * split into contiguous segments where consecutive timestamps are within
  * the threshold, and each segment is downsampled independently.
+ * <p>
+ * The threshold is expressed in the SAME unit as the timestamps it is compared
+ * against (micros for TIMESTAMP, nanos for TIMESTAMP_NS) - callers scale the
+ * parsed interval into the column's native unit before constructing this
+ * algorithm. It is deliberately not named "...Micros": treating it as micros
+ * while comparing against nanosecond timestamps makes every threshold 1000x
+ * too small.
  * <p>
  * <b>Gap-preserving mode uses soft target semantics:</b> target_points is a
  * goal, not a hard maximum. Each segment receives at least
@@ -79,7 +86,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     // cheap scan saves too little triangle work to matter, and staying on the
     // plain path keeps small-range selections bit-identical to classic LTTB.
     private static final int PRESELECT_MIN_SHRINK = 2;
-    private final long gapThresholdMicros;
+    private final long gapThreshold;
     // Reusable native lists for segment bookkeeping and MinMaxLTTB preselection.
     // Stored as cursor-lifetime fields to avoid per-execution allocation.
     // Cleared per execution.
@@ -89,8 +96,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     private DirectLongList segments;
     private DirectLongList targets;
 
-    public LttbAlgorithm(long gapThresholdMicros) {
-        this.gapThresholdMicros = gapThresholdMicros;
+    public LttbAlgorithm(long gapThreshold) {
+        this.gapThreshold = gapThreshold;
     }
 
     public void close() {
@@ -125,7 +132,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     public void select(long buffer, int bufferSize, int targetPoints,
                        DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         selectedIndices.clear();
-        if (gapThresholdMicros > 0) {
+        if (gapThreshold > 0) {
             selectGapPreserving(buffer, bufferSize, targetPoints, selectedIndices, circuitBreaker);
         } else {
             selectOnRange(buffer, 0, bufferSize, targetPoints, selectedIndices, circuitBreaker);
@@ -173,17 +180,17 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             }
             boolean isGap = false;
             if (i < n) {
-                long prevTs = Unsafe.getUnsafe().getLong(buffer + (long) (i - 1) * ENTRY_SIZE + 8);
-                long currTs = Unsafe.getUnsafe().getLong(buffer + (long) i * ENTRY_SIZE + 8);
+                long prevTs = Unsafe.getUnsafe().getLong(buffer + (long) (i - 1) * ENTRY_SIZE);
+                long currTs = Unsafe.getUnsafe().getLong(buffer + (long) i * ENTRY_SIZE);
                 // Overflow-safe gap detection: currTs - prevTs can overflow on
                 // extreme timestamp ranges. Use currTs > prevTs + threshold
                 // when the addition does not overflow. If it overflows, the
                 // gap threshold exceeds the representable range past prevTs,
                 // so currTs (bounded by Long.MAX_VALUE) cannot exceed it.
-                if (prevTs > Long.MAX_VALUE - gapThresholdMicros) {
+                if (prevTs > Long.MAX_VALUE - gapThreshold) {
                     isGap = false;
                 } else {
-                    isGap = currTs > prevTs + gapThresholdMicros;
+                    isGap = currTs > prevTs + gapThreshold;
                 }
             }
             if (isGap || i == n) {

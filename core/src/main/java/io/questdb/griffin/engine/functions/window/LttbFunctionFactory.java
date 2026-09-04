@@ -136,9 +136,9 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         final long resolvedTarget = M4FunctionFactory.BucketSelectWindowFunction.coerceAndValidateConstantTarget(
                 targetArg, targetPosition, sqlExecutionContext);
 
-        long gapThresholdMicros = 0;
+        long gapThreshold = 0;
         if (hasGap) {
-            gapThresholdMicros = parseGapThreshold(args.getQuick(3), argPositions.getQuick(3));
+            gapThreshold = parseGapThreshold(args.getQuick(3), argPositions.getQuick(3), tsArg.getType());
         }
 
         return new LttbBucketSelectWindowFunction(
@@ -147,7 +147,7 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
                 targetArg,
                 targetPosition,
                 resolvedTarget,
-                new LttbAlgorithm(gapThresholdMicros),
+                new LttbAlgorithm(gapThreshold),
                 NAME,
                 configuration.getSubsampleMaxRows(),
                 position
@@ -158,13 +158,19 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     // supported units, errors, and positions. The optimiser validates the raw (possibly quoted)
     // SUBSAMPLE token; here the direct window function receives an already-compiled STRING constant
     // (guaranteed by the lowercase 's' in "lttb(NDls)"), so getStrA() returns unquoted content.
-    private static long parseGapThreshold(Function gapArg, int gapPosition) throws SqlException {
+    //
+    // The interval is parsed to micros and then scaled into the timestamp column's NATIVE unit.
+    // LttbAlgorithm compares the threshold against raw column timestamps, so on a TIMESTAMP_NS
+    // column an unscaled micros threshold would be 1000x too small - '1h' would split segments
+    // every 3.6 seconds, over-segmenting the series and blowing past target_points (gap mode uses
+    // soft targets, so every extra segment adds rows).
+    private static long parseGapThreshold(Function gapArg, int gapPosition, int timestampType) throws SqlException {
         final CharSequence interval = gapArg.getStrA(null);
         int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapPosition, "gap threshold");
         long n = TimestampSamplerFactory.parsePositiveInterval(
                 interval, k, gapPosition, "gap threshold", Numbers.INT_NULL, '?'
         );
-        return switch (interval.charAt(k)) {
+        final long micros = switch (interval.charAt(k)) {
             case 's' -> safeMultiplyMicros(n, Micros.SECOND_MICROS, gapPosition);
             case 'm' -> safeMultiplyMicros(n, Micros.MINUTE_MICROS, gapPosition);
             case 'h' -> safeMultiplyMicros(n, Micros.HOUR_MICROS, gapPosition);
@@ -172,6 +178,21 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
             default -> throw SqlException.$(gapPosition + k, "unsupported interval unit: ").put(interval.charAt(k))
                     .put(". Supported: s, m, h, d");
         };
+        return toTimestampUnits(micros, timestampType);
+    }
+
+    // Scales a micros threshold into the timestamp column's native unit: identity for TIMESTAMP,
+    // x1000 for TIMESTAMP_NS. Saturates rather than wrapping - a threshold beyond the column's
+    // representable span can never be exceeded by a real gap, which is exactly how LttbAlgorithm
+    // already reads a saturated threshold (its `prevTs > Long.MAX_VALUE - gapThreshold` guard
+    // reports "no gap"). Saturating here also keeps the "gap threshold overflow" compile error
+    // attached to the micros computation above, so the micros-column contract is unchanged.
+    private static long toTimestampUnits(long micros, int timestampType) {
+        final long unitsPerMicro = ColumnType.getTimestampDriver(timestampType).fromMicros(1);
+        if (unitsPerMicro <= 1) {
+            return micros;
+        }
+        return micros > Long.MAX_VALUE / unitsPerMicro ? Long.MAX_VALUE : micros * unitsPerMicro;
     }
 
     // Preserve the gap-threshold overflow contract: n * unitMicros can overflow long for large n

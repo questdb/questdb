@@ -60,7 +60,7 @@ import org.jetbrains.annotations.Nullable;
  * <p>
  * Boolean "keep this row?" flag that marks up to 4 representative points (first, min, max, last) per
  * time bucket, using the same selection rule as SUBSAMPLE's M4 algorithm ({@link M4Algorithm#select}),
- * re-homed here over a per-partition native buffer of {@code (ordinal, ts, value)} entries built during
+ * re-homed here over a per-partition native buffer of {@code (ts, value)} entries built during
  * pass1 rather than SUBSAMPLE's whole-cursor buffer. Unlike the position-only {@code uniform}/{@code
  * cadence} window functions, m4 must inspect the value column to compute per-bucket min/max, so it
  * materializes every row before {@link BucketSelectWindowFunction#preparePass2()} runs the bucketing selection.
@@ -403,9 +403,11 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             appendNullFlag(false);
             ensureCapacity();
             final long offset = count * SubsampleAlgorithm.ENTRY_SIZE;
-            Unsafe.getUnsafe().putLong(buffer + offset, count);
-            Unsafe.getUnsafe().putLong(buffer + offset + 8, ts);
-            Unsafe.getUnsafe().putDouble(buffer + offset + 16, value);
+            // No ordinal is stored: an entry's ordinal is `count`, which is exactly the buffer
+            // index the algorithms hand back in `selected`, so it is derived rather than kept.
+            // See SubsampleAlgorithm for the entry layout.
+            Unsafe.getUnsafe().putLong(buffer + offset, ts);
+            Unsafe.getUnsafe().putDouble(buffer + offset + 8, value);
             count++;
         }
 

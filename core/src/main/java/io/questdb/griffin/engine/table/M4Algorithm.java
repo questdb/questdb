@@ -94,7 +94,7 @@ public class M4Algorithm implements SubsampleAlgorithm {
                 if ((dataIdx & 0xFFF) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                 }
-                long ts = Unsafe.getUnsafe().getLong(buffer + (long) dataIdx * ENTRY_SIZE + 8);
+                long ts = Unsafe.getUnsafe().getLong(buffer + (long) dataIdx * ENTRY_SIZE);
                 // Final bucket processes all remaining rows (no end boundary)
                 if (bucket < numBuckets - 1 && ts >= bucketEndTs) {
                     break;
