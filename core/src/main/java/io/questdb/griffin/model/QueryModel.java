@@ -91,6 +91,7 @@ public class QueryModel implements IQueryModel {
     private final LowerCaseCharSequenceIntHashMap orderHash = new LowerCaseCharSequenceIntHashMap(4, 0.5, -1);
     private final IntList orderedJoinModels1 = new IntList();
     private final IntList orderedJoinModels2 = new IntList();
+    private final LowerCaseCharSequenceHashSet auditedDecls = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet overridableDecls = new LowerCaseCharSequenceHashSet();
     // collect frequency of column names from each join model
     // and check if any of columns with frequency > 0 are selected
@@ -102,6 +103,7 @@ public class QueryModel implements IQueryModel {
     private final ObjList<PivotForColumn> pivotForColumns = new ObjList<>();
     private final ObjList<QueryColumn> pivotGroupByColumns = new ObjList<>();
     private final ObjList<ViewDefinition> referencedViews = new ObjList<>();
+    private final ObjList<ViewAuditModel> viewAudits = new ObjList<>();
     private final ObjList<ExpressionNode> sampleByFill = new ObjList<>();
     private final ObjList<QueryModelWrapper> sharedRefs = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
@@ -493,6 +495,7 @@ public class QueryModel implements IQueryModel {
         skipped = false;
         allowPropagationOfOrderByAdvice = true;
         decls.clear();
+        auditedDecls.clear();
         overridableDecls.clear();
         orderDescendingByDesignatedTimestampOnly = false;
         forceBackwardScan = false;
@@ -505,6 +508,7 @@ public class QueryModel implements IQueryModel {
         cacheable = true;
         pivotGroupByColumnHasNoAlias = false;
         referencedViews.clear();
+        viewAudits.clear();
         columnAliasRefCounts.clear();
         correlatedDepths.clear();
         Misc.clearObjList(correlatedColumns);
@@ -985,6 +989,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public LowerCaseCharSequenceHashSet getAuditedDecls() {
+        return auditedDecls;
+    }
+
+    @Override
     public LowerCaseCharSequenceHashSet getOverridableDecls() {
         return overridableDecls;
     }
@@ -1022,6 +1031,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public ObjList<ViewDefinition> getReferencedViews() {
         return referencedViews;
+    }
+
+    @Override
+    public ObjList<ViewAuditModel> getViewAudits() {
+        return viewAudits;
     }
 
     @Override
@@ -1584,6 +1598,16 @@ public class QueryModel implements IQueryModel {
             }
         }
         return getParsedWhere();
+    }
+
+    @Override
+    public void recordViewAudits(ObjList<ViewAuditModel> viewAudits) {
+        for (int i = 0, n = viewAudits.size(); i < n; i++) {
+            final ViewAuditModel viewAudit = viewAudits.getQuick(i);
+            if (!this.viewAudits.contains(viewAudit)) {
+                this.viewAudits.add(viewAudit);
+            }
+        }
     }
 
     @Override

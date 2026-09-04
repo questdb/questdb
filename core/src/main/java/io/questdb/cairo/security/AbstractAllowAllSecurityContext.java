@@ -245,6 +245,10 @@ public abstract class AbstractAllowAllSecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeAuditView() {
+    }
+
+    @Override
     public void authorizeViewCreate() {
     }
 

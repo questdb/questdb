@@ -47,6 +47,7 @@ import org.jetbrains.annotations.NotNull;
  */
 public class ViewDefinition implements Mutable {
     public static final String VIEW_DEFINITION_FILE_NAME = "_view";
+    public static final int VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE = 1;
     public static final int VIEW_DEFINITION_FORMAT_MSG_TYPE = 0;
     /**
      * Maps table names to the set of column names referenced from each table.
@@ -62,6 +63,7 @@ public class ViewDefinition implements Mutable {
      * cycle detection, and schema validation.
      */
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+    private boolean audited;
     private long seqTxn = -1L;
     private String viewSql;
     private TableToken viewToken;
@@ -89,10 +91,17 @@ public class ViewDefinition implements Mutable {
     }
 
     public static void append(@NotNull ViewDefinition viewDefinition, @NotNull BlockFileWriter writer) {
-        final AppendableBlock block = writer.append();
+        AppendableBlock block = writer.append();
         append(viewDefinition, block);
         block.commit(VIEW_DEFINITION_FORMAT_MSG_TYPE);
+        block = writer.append();
+        appendExtra(viewDefinition, block);
+        block.commit(VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE);
         writer.commit();
+    }
+
+    public static void appendExtra(@NotNull ViewDefinition viewDefinition, @NotNull AppendableBlock block) {
+        block.putBool(viewDefinition.isAudited());
     }
 
     public static void readFrom(
@@ -104,17 +113,30 @@ public class ViewDefinition implements Mutable {
     ) {
         path.trimTo(rootLen).concat(viewToken.getDirName()).concat(VIEW_DEFINITION_FILE_NAME);
         reader.of(path.$());
+        boolean definitionBlockFound = false;
         final BlockFileReader.BlockCursor cursor = reader.getCursor();
         while (cursor.hasNext()) {
             final ReadableBlock block = cursor.next();
             if (block.type() == VIEW_DEFINITION_FORMAT_MSG_TYPE) {
+                definitionBlockFound = true;
                 readDefinitionBlock(destDefinition, block, viewToken);
+                // keep going, the extra block may follow
+                continue;
+            }
+            if (block.type() == VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE) {
+                readExtraBlock(destDefinition, block);
                 return;
             }
         }
-        throw CairoException.critical(0)
-                .put("cannot read view definition, block not found [path=").put(path)
-                .put(']');
+
+        if (!definitionBlockFound) {
+            throw CairoException.critical(0)
+                    .put("cannot read view definition, block not found [path=").put(path)
+                    .put(']');
+        }
+        // Views created before auditing existed carry no extra block. readDefinitionBlock()
+        // has already defaulted the flag to false for them, which is the correct reading:
+        // a view that never opted in is not audited.
     }
 
     @Override
@@ -122,6 +144,7 @@ public class ViewDefinition implements Mutable {
         viewToken = null;
         viewSql = null;
         seqTxn = -1L;
+        audited = false;
         dependencies.clear();
     }
 
@@ -144,23 +167,35 @@ public class ViewDefinition implements Mutable {
     public void init(
             @NotNull TableToken viewToken,
             @NotNull String viewSql,
-            long seqTxn
+            long seqTxn,
+            boolean audited
     ) {
         this.viewToken = viewToken;
         this.viewSql = viewSql;
         this.seqTxn = seqTxn;
+        this.audited = audited;
     }
 
     public void init(
             @NotNull TableToken viewToken,
             @NotNull String viewSql,
             @NotNull LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies,
-            long seqTxn
+            long seqTxn,
+            boolean audited
     ) {
-        init(viewToken, viewSql, seqTxn);
+        init(viewToken, viewSql, seqTxn, audited);
 
         // shallow copy, all table and column names should be string objects in the dependencies map
         this.dependencies.putAll(dependencies);
+    }
+
+    /**
+     * Reports whether queries reading this view emit a row into the view audit table.
+     * The flag is set by {@code CREATE VIEW ... WITH AUDIT} and lives in the definition's
+     * extra block, so a view created before auditing existed reads back as not audited.
+     */
+    public boolean isAudited() {
+        return audited;
     }
 
     private static void readDefinitionBlock(
@@ -206,6 +241,11 @@ public class ViewDefinition implements Mutable {
             dependencies.put(tableName, columns);
         }
 
-        destDefinition.init(viewToken, viewSqlStr, seqTxn);
+        destDefinition.init(viewToken, viewSqlStr, seqTxn, false);
+    }
+
+    private static void readExtraBlock(ViewDefinition destDefinition, ReadableBlock block) {
+        assert block.type() == VIEW_DEFINITION_FORMAT_EXTRA_MSG_TYPE;
+        destDefinition.audited = block.getBool(0);
     }
 }
