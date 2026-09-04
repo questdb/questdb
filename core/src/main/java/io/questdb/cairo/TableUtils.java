@@ -3435,7 +3435,7 @@ public final class TableUtils {
      * <p>
      * FORWARD-COMPAT INVARIANT: this gates purely on {@code minorVersion >= COMPOSITE_PARTITIONING (3)}.
      * That is correct ONLY because {@link #writeMetadata} / {@link #writeCompositePartitionBlock}
-     * raise the minor version to 3 IFF the table is composite (v3 <=> block present). A future,
+     * raise the minor version to 3 IFF the table is composite (v3 if and only if the block is present). A future,
      * always-written feature that bumps the metadata baseline to >= 3 MUST preserve this property
      * (write v3 only when the composite block is actually present) or introduce an explicit presence
      * flag; otherwise this reader would parse a block that was never written. As a safety net every
