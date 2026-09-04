@@ -78,6 +78,10 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 public class MatViewRefreshJob implements Job, QuietCloseable {
     private static final String DEFERRED_INVALIDATION_NEEDS_REASON = "a deferred invalidation must carry a reason (null is the full-refresh marker)";
     private static final Log LOG = LogFactory.getLog(MatViewRefreshJob.class);
+    // Elapsed-time budget for a single run(). See processNotifications().
+    private static final long MAX_RUN_DURATION_NANOS = 1_000_000_000L;
+    // Refresh tasks a single run() may consume before it yields to the rest of the worker's jobs.
+    private static final int MAX_TASKS_PER_RUN = 32;
     private final ObjList<TableToken> childViewSink = new ObjList<>();
     private final ObjList<TableToken> childViewSink2 = new ObjList<>();
     // Scratch list for the post-cluster working copy of refresh intervals.
@@ -102,6 +106,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private final MatViewStateStore stateStore;
     private final TimeZoneIntervalIterator timeZoneIterator = new TimeZoneIntervalIterator();
     private final WalTxnRangeLoader txnRangeLoader;
+    @TestOnly
+    private long maxRunDurationNanos = MAX_RUN_DURATION_NANOS;
     @TestOnly
     private volatile Runnable onBaseReaderSnapshotForTesting;
     @TestOnly
@@ -223,6 +229,16 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Test seam: the batch bound in {@link #processNotifications()} measures real elapsed time, which
+     * no test can afford to spend. Lowering the budget makes the time bound reachable; raising it
+     * suppresses it, leaving the task count bound in charge.
+     */
+    @TestOnly
+    public void setMaxRunDurationForTesting(long maxRunDurationNanos) {
+        this.maxRunDurationNanos = maxRunDurationNanos;
+    }
+
+    /**
      * Test seam: runs after a full refresh fixes its base-table reader snapshot but before it resets
      * the view state. A test can apply a newer base transaction here to pin snapshot ownership.
      * Persistent: fires on every pass until reset.
@@ -265,7 +281,8 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test seam: runs once for each task removed from the refresh queue, before the task executes.
+     * Test seam: runs once for each task a pass takes on, before the task executes. A task the batch
+     * bound hands back to the queue does not fire it; the pass that executes the task does.
      * Tests use it to put a deterministic upper bound on self-republishing contender paths.
      * Persistent: fires on every pass until reset.
      */
@@ -1977,7 +1994,44 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         stateStore.reenqueueFailedPendingTasks();
+        // Yield after a bounded batch instead of draining the queue dry. ServerMain.setupMatViewJobs
+        // assigns MatViewTimerJob to the same workers as this job, and Worker runs a worker's jobs in
+        // order, one pass at a time, so the timer job ticks only once this call returns. A base table
+        // that commits faster than its views refresh keeps the refresh queue permanently non-empty, and
+        // an unbounded drain then never returns: every timer and period view stays unregistered for as
+        // long as ingestion outpaces refresh -- no scheduled refresh, no refresh intervals caching, and
+        // no recovery across a restart, since the backlog re-establishes itself as soon as refresh work
+        // resumes. Immediate views stay current throughout, which is what makes the pool look healthy.
+        //
+        // Both bounds are needed. The task count caps a flood of cheap tasks; the elapsed-time budget
+        // caps a handful of slow ones, which the count bound alone would let run for MAX_TASKS_PER_RUN
+        // refreshes -- half an hour, at the ~60s per refresh the report in #7576 measured. Neither
+        // bound preempts a task already running, so the timer job's worst-case wait is this budget plus
+        // one refresh.
+        //
+        // The budget is real elapsed time, not the configured clock: it is a scheduling-latency bound,
+        // and tests that jump the configured clock by hours would otherwise yield after every task.
+        final long deadlineNanos = System.nanoTime() + maxRunDurationNanos;
+        int startedTasks = 0;
+        boolean hasYielded = false;
         while (stateStore.tryDequeueRefreshTask(refreshTask)) {
+            // Test the bounds before a task starts rather than after it finishes. A bound that tripped
+            // on the queue's last task would report leftover work that does not exist, and run()'s
+            // return value would then depend on how long the final refresh happened to take -- a
+            // cancelled refresh that ran past the budget would claim the pass did work. The dequeue
+            // above already proved the queue non-empty, so hand the task back and say so. Always start
+            // one task per pass: a budget already spent on entry must not turn a pass into a
+            // dequeue-and-reenqueue that makes no progress.
+            //
+            // Handing the task back appends it to the queue tail. The queue already tolerates that --
+            // the suspend gate below, every tryLock-failure re-enqueue, and reenqueueFailedPendingTasks
+            // all append -- and a bounded batch still drains it, since each pass takes tasks from the
+            // head and defers at most one.
+            if (startedTasks > 0 && (startedTasks == MAX_TASKS_PER_RUN || System.nanoTime() - deadlineNanos >= 0)) {
+                stateStore.reenqueueRefreshTask(refreshTask);
+                hasYielded = true;
+                break;
+            }
             runRefreshTaskDequeuedSeamForTesting();
             // Re-read the suspend gate AFTER the dequeue. A promote can set the gate, swap in the real
             // store, and enqueue the hydrate kickstart between this pass's top-of-method gate read and
@@ -1990,6 +2044,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                 stateStore.reenqueueRefreshTask(refreshTask);
                 break;
             }
+            // Count the task before the dropped-base shortcut below: a queue full of tasks for a
+            // dropped base table must exhaust the batch bound like any other, otherwise it drains
+            // unbounded again.
+            startedTasks++;
             if (checkIfBaseTableDropped(refreshTask)) {
                 continue;
             }
@@ -2015,7 +2073,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                     throw new RuntimeException("unexpected operation: " + operation);
             }
         }
-        return refreshed;
+        // A yield hands a task back to the queue, so report that this pass has work left even when the
+        // batch refreshed nothing: the return value is what stops the worker napping, and what
+        // drainMatViewQueue() loops on.
+        return refreshed || hasYielded;
     }
 
     private boolean rangeRefresh(MatViewRefreshTask refreshTask) {

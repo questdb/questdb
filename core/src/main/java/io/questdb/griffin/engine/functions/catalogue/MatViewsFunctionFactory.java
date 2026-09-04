@@ -120,6 +120,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS = COLUMN_REFRESH_AVG_COMMIT_NANOS + 1;
         private static final int COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS + 1;
         private static final int COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS + 1;
+        private static final int COLUMN_TIMERS_REGISTERED = COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor;
 
@@ -251,6 +252,12 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // A pending retry deadline (in-memory only) means an incremental refresh was
                         // deferred after a transient "table busy" or out-of-memory error.
                         final boolean retrying = state != null && state.getRefreshRetryAfterMicros() != Numbers.LONG_NULL;
+                        // Timers live only in MatViewTimerJob's in-memory heap, which is where this
+                        // count comes from. Zero is expected for an immediate, non-period view, which
+                        // base table commits drive on their own. Zero on any other refresh type means
+                        // nothing schedules the view: the timer job never registered it, or lost it.
+                        // No other column shows that -- view_status keeps reporting 'valid'.
+                        final int timersRegistered = state != null ? state.getRegisteredTimerCount() : 0;
 
                         record.of(
                                 viewDefinition,
@@ -273,7 +280,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgScanSampleNanos,
                                 avgScanRangeTsUnits,
                                 commitGapThresholdTsUnits,
-                                retrying
+                                retrying,
+                                timersRegistered
                         );
                         viewIndex++;
                         return true;
@@ -320,6 +328,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 private int timerInterval;
                 private char timerIntervalUnit;
                 private long timerStart;
+                private int timersRegistered;
                 private MatViewDefinition viewDefinition;
 
                 @Override
@@ -329,6 +338,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TIMER_INTERVAL -> timerInterval;
                         case COLUMN_PERIOD_LENGTH -> periodLength;
                         case COLUMN_PERIOD_DELAY -> periodDelay;
+                        case COLUMN_TIMERS_REGISTERED -> timersRegistered;
                         default -> 0;
                     };
                 }
@@ -410,7 +420,8 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgScanSampleNanos,
                         long avgScanRangeTsUnits,
                         long commitGapThresholdTsUnits,
-                        boolean retrying
+                        boolean retrying,
+                        int timersRegistered
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -434,6 +445,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
                     this.retrying = retrying;
+                    this.timersRegistered = timersRegistered;
                 }
 
                 private CharSequence getViewStatus() {
@@ -478,6 +490,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("refresh_avg_scan_sample_nanos", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_avg_scan_range_ts_units", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_gap_threshold_ts_units", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("timers_registered", ColumnType.INT));
             METADATA = metadata;
         }
     }
