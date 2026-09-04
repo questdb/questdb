@@ -2530,6 +2530,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             // BEFORE sequencing. This prevents a peer's later fdatasync of the shared sequencer from
             // publishing a record whose data/_event is still volatile. W>0 still batches the shared
             // sequencer barrier, but no longer batches private data/event barriers.
+            //
+            // These barriers are NOT replaceable by one syncfs per window. syncfs is filesystem-wide
+            // (files.c: "ALL dirty data of the WHOLE filesystem"), so on the COMMIT path it would force
+            // out exactly the lazily-applied table state ADAPTIVE defers to the epoch -- at the W cadence
+            // (50ms) rather than the epoch's (60s). Routing per-commit sync through that machinery was
+            // already tried and reverted; see TableWriter.syncColumns and adaptive-commit-internals.md
+            // §4 "Why not one syncfs per window". Batching these barriers across commits instead
+            // requires a coordinated cross-writer flush, not a wider one.
             if (commitMode == CommitMode.ADAPTIVE) {
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     MemoryMA column = columns.getQuick(i);

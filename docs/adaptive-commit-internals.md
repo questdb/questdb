@@ -154,6 +154,49 @@ defensively at segment open/roll.
 
 ---
 
+### Why not one `syncfs` per window
+
+A recurring suggestion is to drop the per-commit per-column `fdatasync` barriers above and take
+one `syncfs` per group-commit window instead. It is the wrong primitive **on the commit path**,
+for reasons that are checkable in the source rather than matters of taste:
+
+1. **`syncfs` is filesystem-wide.** `files.c` (`syncfs0`): *"write back ALL dirty data of the
+   WHOLE filesystem containing `fd`"*. Under ADAPTIVE the apply path deliberately leaves table
+   columns dirty (`appliesColumnSync(ADAPTIVE) == false`; `TableWriter`: *"the table partition
+   columns are a rebuildable cache — no apply-side flush needed"*). A commit-path `syncfs` forces
+   precisely that deferred state out, which is the cost lazy apply exists to avoid.
+2. **The cadence gap is ~1200x.** `cairo.adaptive.epoch.interval` defaults to 60,000 ms;
+   `cairo.adaptive.commit.group.window` to 50 ms. The small, hot files rewritten on every apply
+   (`_txn`, `_cv`, index `.k`/`.v`) would reach the device three orders of magnitude more often.
+   `TableWriter.fsyncMaterializedState` already draws the line: *"this is NOT the per-commit apply
+   path, which stays lazy by design."*
+3. **It was tried and reverted.** `TableWriter.syncColumns`: *"Routing per-commit SYNC apply
+   through it was reverted: see FastCommitCheck for why per-file `msync(MS_SYNC)` is the
+   proven-durable baseline."*
+
+Two related misreadings, both of which have been proposed as line-count savings:
+
+- **`FastCommitCheck` does not disable `syncfs`.** Its gate selects only the batched KICK/DRAIN
+  pipeline; the `else` branch still calls `fsyncMaterializedStateSyncFs()` on Linux (*"Linux with
+  batching disabled still has a true filesystem-wide syncfs primitive"*). It is not vestigial.
+- **The pin/orphan machinery in `SeqTxnTracker` is not redundant with the eager fsync — it depends
+  on it.** `markWriterDurable`: *"combined with the invariant that private WAL dependencies are
+  fdatasync'd BEFORE sequencing, that makes every already-sequenced txn of a dead writer
+  device-durable too."* The two guard different things: the pins prevent a false durable-ack, the
+  eager fsync prevents a durable sequencer record naming volatile data.
+
+**If these barriers ever do need to move off the commit path**, the direction that preserves the
+recovery invariant is a *coordinated two-phase window flush* — every participating writer flushes
+its own column/event files once per window, a barrier, then the single shared-sequencer flush,
+then advance `localDurableSeqTxn`. That is scoped to one table's concurrent writers (`SeqTxnTracker`
+is per-table), not to every dirty inode on the volume. It requires reworking the orphan sweep, which
+currently leans on the eager-fsync invariant.
+
+**Scale first, though.** The cost is fixed per commit and amortises linearly: the §3 benchmark is
+20k *single-row* commits, *"the pathological floor, not typical ingestion"*. At 1.585 ms/commit that
+is ~1.6 us/row at 1,000 rows/commit and ~0.16 us/row at 10,000. It remains material for **wide
+tables** (the cost scales with column-file count) and for latency-driven small commits.
+
 ## 5. The sequencer (transaction log)
 
 **Files** (under `…/<tableDir~n>/txn_seq/`): header `_txnlog`; **V2 (default)** records in
