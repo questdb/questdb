@@ -10,33 +10,17 @@ on:
 
 permissions: {}
 
+# One job, so a pull request shows one "PR title / validate" row beside the
+# "PR title" status this posts. The rules' own tests live in pr_title_rules.yml,
+# which runs only when ci/validate-pr-title changes: keeping them out of this
+# workflow is what stops a failing test from taking the verdict down with it, and
+# keeps two near-identical rows off every unrelated pull request.
 jobs:
-  # Deliberately a separate job rather than a first step of `validate`. Run in one
-  # job, a broken or flaky test would stop check.js from running at all, and the
-  # "PR title" status the master ruleset requires would never be posted: the pull
-  # request would sit behind a required check that is merely missing, which is the
-  # exact failure the fail-closed handling in check.js exists to avoid. The rules
-  # and the reporting are worth failing on, but not at the cost of the verdict.
-  test:
-    runs-on: ubuntu-latest
-    permissions:
-      # The top-level `permissions: {}` above leaves a job that declares nothing
-      # with a token that has no scopes. Cloning works here regardless because the
-      # repository is public, but saying so keeps the job working if that changes.
-      contents: read
-    steps:
-      - uses: actions/checkout@v5
-      # No setup-node step: the runner ships a current Node, and nothing under
-      # ci/validate-pr-title depends on anything outside the standard library.
-      - name: Test the title rules and the reporting
-        working-directory: ./ci/validate-pr-title
-        run: |
-          node validate.test.js
-          node check.test.js
-
   validate:
     # A pull request from a fork gets a read-only token, so this job could post
-    # neither the status nor the comment. Same condition the Danger job carried.
+    # neither the status nor the comment. Same condition the Danger job carried,
+    # and the same consequence: a fork pull request gets no status at all, so
+    # while this context is required, a fork cannot satisfy it without a bypass.
     if: ${{ github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     permissions:
@@ -45,6 +29,8 @@ jobs:
       pull-requests: write # write, update and delete the explanation comment
     steps:
       - uses: actions/checkout@v5
+      # No setup-node step: the runner ships a current Node, and nothing under
+      # ci/validate-pr-title depends on anything outside the standard library.
       - name: Validate the pull request title
         working-directory: ./ci/validate-pr-title
         env:

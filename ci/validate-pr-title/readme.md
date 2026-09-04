@@ -12,6 +12,29 @@ Run by [.github/workflows/pr_title.yml](../../.github/workflows/pr_title.yml) on
 pull requests and on merge groups. It authenticates with the workflow's own
 `GITHUB_TOKEN`, so it needs no bot account and no personal access token.
 
+The tests live in a second workflow,
+[pr_title_rules.yml](../../.github/workflows/pr_title_rules.yml), rather than
+alongside the job that posts the status. Run as a step of that job, a failing or
+flaky test stops check.js from running at all, the required status is never
+posted, and the pull request sits behind a check that is merely missing. A path
+filter runs them only when this folder or either workflow changes, which also
+keeps a second near-identical row off every unrelated pull request.
+
+## Fork pull requests get no status
+
+A pull request from a fork gets a read-only token, so the job that posts the
+status cannot run and is skipped. No status is posted, and while this context is
+required, a fork cannot satisfy it without a bypass. Danger behaved the same way
+and carried the same `if:` guard, so this is inherited rather than new, but it is
+worth knowing before relying on the required check: at the time of writing, 46 of
+100 open pull requests come from forks and none of them carries a status.
+
+Fixing it means posting the verdict from a workflow that has a write token on a
+fork pull request, which is `pull_request_target`. That is safe here only because
+the title comes from the event payload and the checker is checked out from the
+base branch, so no code from the fork ever runs — a property any change to this
+folder has to preserve.
+
 ## The status context and the ruleset
 
 The status context is `PR title`, and the `master` ruleset requires that exact
