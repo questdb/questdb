@@ -187,6 +187,35 @@ every arm finishes inside the test timeout):
 | `adaptive` | 0 | 48.8 s | 118× |
 | `adaptive` | 50 ms | 31.7 s | 76× |
 
+### The same cost as a function of batch size
+
+The table above is **one row per commit** — the pathological floor. Because the cost is per *commit*,
+not per row, it amortises as soon as rows are batched. Same code path, 100 000 rows, one writer, the
+same 6-column table, `W` at its 50 ms default, ext4 on NVMe:
+
+| rows/commit | `nosync` | `adaptive` | `adaptive` ÷ `nosync` | `adaptive` rows/s |
+|---|---|---|---|---|
+| 1 | 0.35 s | 132.3 s | 379× | 756 |
+| 10 | 0.22 s | 11.4 s | 53× | 8 742 |
+| 100 | 0.20 s | 2.4 s | 12× | 41 408 |
+| 1 000 | 0.21 s | 0.57 s | **2.7×** | **174 520** |
+
+The durability multiplier is a property of the batch size, not of `adaptive`: it falls from ~379× to
+~2.7× between one row per commit and a thousand. A thousand rows per commit is below what ILP/QWP
+clients batch by default, so **the ratio a typical ingestion workload actually experiences is the
+bottom row, not the top one.** Quoting the single-row figure as the cost of `adaptive` overstates it by
+roughly two orders of magnitude.
+
+Two caveats, since this is one machine and one table shape. The multiplier scales with **column-file
+count** — the per-commit cost is a barrier per column file, so a wide table needs a proportionally
+larger batch to reach the same ratio. And it is a *throughput* curve: a latency-driven client that
+flushes on a timer gets whatever batch its arrival rate produces, so at low rates it sits near the top
+of this table regardless of intent.
+
+Regenerate with `WalWriterTest#adaptiveBatchSizeSweep` and `WalWriterTest#nosyncBatchSizeSweep`
+(`-Dquestdb.bench.batchSweep=true`). **Run them against a real filesystem** — on tmpfs `fdatasync` is a
+no-op and every arm collapses to the `nosync` column.
+
 Read it this way:
 
 - `W` earns its keep: 48.8 s → 31.7 s, a **1.54×** win, and `adaptive` at `W`=50 ms lands

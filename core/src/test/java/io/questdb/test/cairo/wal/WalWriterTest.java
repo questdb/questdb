@@ -121,6 +121,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -175,6 +176,62 @@ public class WalWriterTest extends AbstractCairoTest {
     @Test
     public void apply1RowCommitsAdaptive() throws Exception {
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 20_000, 1, "adaptive");
+    }
+
+    /**
+     * Regenerates the rows-per-commit curve in docs/adaptive-commit-mode.md §3. Skipped unless
+     * {@code -Dquestdb.bench.batchSweep=true} is set, because it is a storage measurement rather than a
+     * behavioural assertion -- run it by hand on the target hardware, selecting
+     * {@code WalWriterTest#adaptiveBatchSizeSweep}, and read the BATCH SWEEP lines from the log.
+     * <p>
+     * MUST be run against a REAL filesystem root. On tmpfs (e.g. a {@code QDB_TEST_TMPDIR} under
+     * {@code /dev/shm}) fdatasync is a no-op, so every arm measures the non-durability cost only and the
+     * curve is meaningless -- measured: the 1M-commit arm "passes" in 19.86 s on tmpfs and times out at
+     * 1200 s on ext4.
+     * <p>
+     * Fixed total rows, varying batch size, because the durability cost is per COMMIT: this is what shows
+     * an operator where the per-commit barrier stops dominating. §3's headline table is the B=1 point,
+     * which the doc itself calls "the pathological floor, not typical ingestion" -- quoting it without the
+     * rest of the curve overstates the cost of durability by orders of magnitude.
+     */
+    @Test
+    public void adaptiveBatchSizeSweep() throws Exception {
+        // Gated by a property rather than @Ignore: @Ignore skips even when the method is selected
+        // explicitly, so the benchmark could never be run at all. This stays out of CI (the property is
+        // unset there) while remaining runnable on demand with -Dquestdb.bench.batchSweep=true.
+        Assume.assumeTrue(
+                "set -Dquestdb.bench.batchSweep=true to run the batch-size sweep",
+                Boolean.getBoolean("questdb.bench.batchSweep")
+        );
+        batchSizeSweep("adaptive");
+    }
+
+    /**
+     * The {@code nosync} baseline for {@link #adaptiveBatchSizeSweep()}. Separate @Test method, NOT another
+     * loop arm: the commit mode is fixed when the per-test configuration is built, so both modes in one
+     * method silently run as one mode (see the assertion in {@code testApplyRowCommits}). Run with the same
+     * property and pair the two logs to get the durability cost at each batch size.
+     */
+    @Test
+    public void nosyncBatchSizeSweep() throws Exception {
+        Assume.assumeTrue(
+                "set -Dquestdb.bench.batchSweep=true to run the batch-size sweep",
+                Boolean.getBoolean("questdb.bench.batchSweep")
+        );
+        batchSizeSweep("nosync");
+    }
+
+    private void batchSizeSweep(String commitMode) throws Exception {
+        final int totalRows = 100_000;
+        for (int rowsPerCommit : new int[]{1, 10, 100, 1_000}) {
+            final long start = System.nanoTime();
+            testApplyRowCommits(Micros.SECOND_MICROS, totalRows, 1, commitMode, rowsPerCommit);
+            final long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            LOG.info().$("BATCH SWEEP mode=").$(commitMode)
+                    .$(" rowsPerCommit=").$(rowsPerCommit)
+                    .$(" totalRows=").$(totalRows)
+                    .$(" elapsedMs=").$(elapsedMs).$();
+        }
     }
 
     @Test
@@ -6893,9 +6950,34 @@ public class WalWriterTest extends AbstractCairoTest {
      * mode; {@link #apply1RowCommitsAdaptive()} keeps the adaptive path covered at a row count that fits.
      */
     private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount, String commitMode) throws Exception {
+        testApplyRowCommits(tsStep, totalRows, walWriterCount, commitMode, 1);
+    }
+
+    /**
+     * As above, but committing every {@code rowsPerCommit} rows. The durability cost is per COMMIT, so
+     * this parameter is what turns the §3 headline number into a curve -- see {@link #adaptiveBatchSizeSweep()}.
+     */
+    private void testApplyRowCommits(long tsStep, int totalRows, int walWriterCount, String commitMode, int rowsPerCommit) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
+            // Self-check, and it is load-bearing: setProperty is only honoured while the per-test
+            // configuration is still being built, so a method that calls this helper more than once gets
+            // the FIRST arm's mode for EVERY arm, silently. Measured that way, a "nosync vs adaptive"
+            // sweep reported eight arms all at ADAPTIVE (=3) and produced a plausible-looking durability
+            // comparison in which the mode never moved. Assert rather than log, so one mode per test
+            // method is enforced instead of remembered.
+            final int expectedMode = CommitMode.fromString(commitMode);
+            Assert.assertEquals(
+                    "requested commit mode '" + commitMode + "' did not reach the engine (got "
+                            + configuration.getCommitMode() + "). setProperty is honoured only while the"
+                            + " per-test configuration is being built -- use ONE mode per @Test method.",
+                    expectedMode,
+                    configuration.getCommitMode()
+            );
+            // Dropped first so this helper can be invoked more than once within one test method
+            // (adaptiveBatchSizeSweep runs an arm per batch size). No-op for the single-arm callers.
+            execute("drop table if exists sm");
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
 
@@ -6929,7 +7011,9 @@ public class WalWriterTest extends AbstractCairoTest {
                     stringSink.put(i % symbolCount);
                     row.putSym(5, stringSink);
                     row.append();
-                    writer.commit();
+                    if (rowsPerCommit <= 1 || (i + 1) % rowsPerCommit == 0) {
+                        writer.commit();
+                    }
 
                     ts += tsStep;
                 }
