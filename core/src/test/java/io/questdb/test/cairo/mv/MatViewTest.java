@@ -3193,13 +3193,12 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t-1\t2
+                            price_1h\timmediate\tbase_price\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
                             """);
-            assertQuery("price_1h")
-                    .timestamp("ts")
+            assertQuery("price_1h order by sym")
                     .expectSize()
                     .noLeakCheck()
-                    .returns("sym\tprice\tts\n");
+                    .returns(replaceExpectedTimestamp(expected));
         });
     }
 
@@ -3288,7 +3287,7 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("""
                             view_name\trefresh_type\tbase_table_name\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\tview_sql\tview_status\trefresh_base_table_txn\tbase_table_txn
-                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t-1\t2
+                            price_1h\timmediate\tbase_price\t2001-01-01T01:01:01.000000Z\t2001-01-01T01:01:01.000000Z\tselect sym, last(price) as price, ts from base_price sample by 1h\tinvalid\t1\t2
                             """);
         });
     }
@@ -8381,12 +8380,17 @@ public class MatViewTest extends AbstractCairoTest {
                             price_copy\tinvalid\t[-1]: materialized view query does not match view schema [view=price_copy, queryColumnCount=2, viewColumnCount=3]
                             """);
 
-            // The refused refresh left no rows behind, so nothing reads back the timestamp as a price.
+            // Preflight refusal happens before truncate, so the last successfully materialized contents stay
+            // queryable while the view reports invalid.
             assertQuery("price_copy")
                     .timestamp("ts")
                     .expectSize()
                     .noLeakCheck()
-                    .returns("sym\tprice\tts\n");
+                    .returns(replaceExpectedTimestamp("""
+                            sym\tprice\tts
+                            gbpusd\t1.32\t2024-09-10T12:01:00.000000Z
+                            jpyusd\t103.21\t2024-09-11T13:02:00.000000Z
+                            """));
         });
     }
 

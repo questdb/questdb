@@ -183,13 +183,9 @@ public class SqlParser {
     // so the recursion guard matches on that exact spelling. A case-folding set is unnecessary: the table
     // registry is case-insensitive, so case-distinct sibling tables/views cannot exist in the first place.
     private final CharSequenceHashSet expiringTablesBeingExpanded = new CharSequenceHashSet();
-    // Tables the read filter swapped for a sub-query during this parse. CREATE LIVE VIEW checks
-    // this when its FROM clause no longer holds the plain table the user wrote, so that it can
-    // point at the EXPIRE ROWS policy that got in the way.
-    private final CharSequenceHashSet expiryExpandedTables = new CharSequenceHashSet();
     // The execution context of the current parse, consulted for the PER-TABLE read-filter decision
     // (the mat-view refresh context keeps the filter on every table except the base). Null when parse()
-    // was invoked without a context; rowExpiryReadFilterEnabled is the decision then.
+    // was invoked without a context; rowExpiryReadPolicy is the decision then.
     private SqlExecutionContext expiryFilterExecutionContext;
     // CairoTable whose EXPIRE ROWS predicate was last looked up from the metadata cache (null when the
     // lookup fell back to authoritative metadata). Carries the per-instance memo of derived read-filter
@@ -205,10 +201,8 @@ public class SqlParser {
     // old policy is never paired with a reader on the new one. Empty unless a policy change is running at the
     // same time as this compile.
     private final IntLongHashMap pendingExpiryReadVersions = new IntLongHashMap();
-    // Whether to apply the read-time row-expiry filter for the current parse. Set from the execution
-    // context at parse() entry; the cleanup job disables it on its context so its survivor query is not
-    // wrapped by the read filter (it uses its own authoritative keep-filter instead).
-    private boolean rowExpiryReadFilterEnabled = true;
+    // The context-less parser path is always an ordinary/internal parse and therefore retains FILTER.
+    private ExpiryReadPolicy rowExpiryReadPolicy = ExpiryReadPolicy.FILTER;
     private boolean pivotMode = false;
     private boolean subQueryMode = false;
 
@@ -1525,60 +1519,14 @@ public class SqlParser {
     private String lookupExpiryPredicate(TableToken tableToken) {
         expiryPolicyTable = null;
         expiryTimestampColumnName = null;
-        // EXPIRE ROWS is materialized-view-only; require isMatView() (not merely !isView()) so a policy that
-        // ever leaks onto a plain table cannot silently hide its rows. Defense-in-depth: the compiler gate is
-        // the primary enforcement, this is the read-side last line.
-        if (tableToken == null || !tableToken.isMatView()) {
-            return null;
-        }
         final MetadataCache metadataCache = cairoEngine.getMetadataCache();
-        final boolean isUpdatePending = metadataCache.isExpiryPolicyUpdatePending(tableToken);
-        // During SET/DROP the cache deliberately retains the previous policy until the authoritative _meta/_txn
-        // publish the new one. Bypass that stale entry while the transition is pending. A concurrent mark after
-        // this check advances the policy epoch, so the compiler rejects and reparses any decision made here.
-        if (!isUpdatePending) {
-            try (MetadataCacheReader metadataRO = metadataCache.readLock()) {
-                final CairoTable table = metadataRO.getTable(tableToken);
-                if (table != null) {
-                    final String predicate = table.getExpiryPredicate();
-                    if (predicate == null || predicate.isEmpty()) {
-                        return null;
-                    }
-                    // Copy: the CairoTable's name view must not outlive the read lock we are about to release.
-                    expiryTimestampColumnName = Chars.toString(table.getTimestampName());
-                    expiryPolicyTable = table;
-                    return predicate;
-                }
-            }
+        final MetadataCache.ExpiryPolicyInfo policy = metadataCache.lookupExpiryPolicy(tableToken);
+        expiryPolicyTable = policy.getCachedTable();
+        expiryTimestampColumnName = policy.getTimestampName();
+        if (policy.isPending()) {
+            pendingExpiryReadVersions.put(tableToken.getTableId(), policy.getMetadataVersion());
         }
-        // Cache miss, or a policy transition in progress: fall back to authoritative table metadata. This
-        // prevents a pending first/replacement SET or DROP from embedding the cache's previous policy state.
-        try (TableMetadata metadata = cairoEngine.getTableMetadata(tableToken)) {
-            if (isUpdatePending) {
-                // The policy epoch counter ticks once before the metadata swap and once after it, so a compile
-                // that reads the counter both before and after but entirely between those two ticks sees the
-                // same value twice and cannot tell this pre-swap read from the new policy. The table's metadata
-                // version changes exactly at the swap, so record the version this read saw; the optimiser then
-                // rejects the compile if the reader opens a different one.
-                pendingExpiryReadVersions.put(tableToken.getTableId(), metadata.getMetadataVersion());
-            }
-            final String predicate = metadata.getExpiryPredicate();
-            if (predicate == null || predicate.isEmpty()) {
-                return null;
-            }
-            final int tsIndex = metadata.getTimestampIndex();
-            expiryTimestampColumnName = tsIndex >= 0 ? Chars.toString(metadata.getColumnName(tsIndex)) : null;
-            return predicate;
-        } catch (CairoException e) {
-            if (metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
-                // Failing open while the previous policy is intentionally bypassed could permanently bind a
-                // no-policy plan to the new policy. Propagate the transient failure; callers may retry, but they
-                // must not expose rows silently.
-                throw e;
-            }
-            // Table concurrently dropped/renamed, or its metadata is briefly unavailable: treat as no policy.
-            return null;
-        }
+        return policy.getPredicate();
     }
 
     private CharSequence createColumnAlias(
@@ -2353,7 +2301,8 @@ public class SqlParser {
         // keyword names and a public. prefix that the other CREATE paths normalize).
         tok = sansPublicSchema(tok, lexer);
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        builder.setViewName(Chars.toString(assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition())));
+        final String liveViewName = Chars.toString(assertNoDotsAndSlashes(GenericLexer.unquote(tok), lexer.lastTokenPosition()));
+        builder.setViewName(liveViewName);
         builder.setViewNamePosition(lexer.lastTokenPosition());
 
         // FLUSH EVERY <duration> -- required
@@ -2529,7 +2478,15 @@ public class SqlParser {
         } else {
             lexer.unparseLast();
         }
-        IQueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        final IQueryModel queryModel;
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, liveViewName);
+        try {
+            queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+        } finally {
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
+        }
         if (hasParens) {
             expectTok(lexer, ")");
         }
@@ -2570,17 +2527,6 @@ public class SqlParser {
         // extract base table name from query model
         IQueryModel from = queryModel.getNestedModel() != null ? queryModel.getNestedModel() : queryModel;
         if (from.getTableName() == null) {
-            // The user named one table. If that table carries an EXPIRE ROWS policy, the read
-            // filter has already swapped it for a sub-query, and the check below would blame the
-            // user for a FROM clause they never wrote. Say what actually happened instead.
-            // Refusing is right either way: a live view reads its base raw, so it would take in
-            // the very rows the policy expires.
-            final ExpressionNode fromAlias = from.getAlias();
-            if (fromAlias != null && expiryExpandedTables.contains(unquote(fromAlias.token))) {
-                throw SqlException.$(fromAlias.position, "cannot create a live view over '")
-                        .put(unquote(fromAlias.token))
-                        .put("': it carries an EXPIRE ROWS policy (the view would copy expired rows on refresh)");
-            }
             throw SqlException.$(selectStart, "live view requires a single base table in FROM clause");
         }
         builder.setBaseTableName(Chars.toString(from.getTableName()));
@@ -3588,9 +3534,8 @@ public class SqlParser {
         }
         tok = sansPublicSchema(tok, lexer);
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
-        tableOpBuilder.setTableNameExpr(nextLiteral(
-                assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()), lexer.lastTokenPosition()
-        ));
+        final String matViewName = Chars.toString(assertNoDotsAndSlashes(unquote(tok), lexer.lastTokenPosition()));
+        tableOpBuilder.setTableNameExpr(nextLiteral(matViewName, lexer.lastTokenPosition()));
 
         tok = tok(lexer, "'as' or 'with' or 'refresh'");
         CharSequence baseTableName = null;
@@ -3755,13 +3700,21 @@ public class SqlParser {
 
             // Parse SELECT for the sake of basic SQL validation.
             // It'll be compiled and optimized later, at the execution phase.
-            if (isWithKeyword(tok)) {
-                parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
-                // CTEs require SELECT to be specified
-                expectTok(lexer, "select");
+            final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+            final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+            final IQueryModel queryModel;
+            executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, matViewName);
+            try {
+                if (isWithKeyword(tok)) {
+                    parseWithClauses(lexer, topLevelWithModel, sqlParserCallback, null);
+                    // CTEs require SELECT to be specified
+                    expectTok(lexer, "select");
+                }
+                lexer.unparseLast();
+                queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
+            } finally {
+                executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
             }
-            lexer.unparseLast();
-            final IQueryModel queryModel = parseDml(lexer, lexer.getPosition(), sqlParserCallback);
             final int endOfQuery = enclosedInParentheses ? lexer.getPosition() - 1 : lexer.getPosition();
 
             tableNames.clear();
@@ -6732,23 +6685,33 @@ public class SqlParser {
             if (!expiringTablesBeingExpanded.contains(unquotedName)) {
                 final TableToken tt = cairoEngine.getTableTokenIfExists(unquotedName);
                 final String predicate;
-                if (tt != null && !tt.isView()
-                        && isExpiryReadFilterEnabledFor(tt)
-                        && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
-                        && (predicate = lookupExpiryPredicate(tt)) != null) {
-                    final CharSequence designatedTimestampColumn = expiryTimestampColumnName;
-                    final int position = resolvedTableNameExpr.position;
-                    model.setTableNameExpr(null);
-                    // The set stores references, not copies, and unquote() of a quoted token yields a
-                    // view over the (transient) lexer buffer; store a stable String, like
-                    // viewsBeingCompiled does, so the key survives the nested parse.
-                    final String guardKey = Chars.toString(unquotedName);
-                    expiringTablesBeingExpanded.add(guardKey);
-                    expiryExpandedTables.add(guardKey);
-                    try {
-                        expandExpiringTable(model, guardKey, predicate, designatedTimestampColumn, position, sqlParserCallback);
-                    } finally {
-                        expiringTablesBeingExpanded.remove(guardKey);
+                if (tt != null && !tt.isView()) {
+                    final ExpiryReadPolicy expiryReadPolicy = getExpiryReadPolicyFor(tt);
+                    if (expiryReadPolicy != ExpiryReadPolicy.RAW
+                            && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
+                            && (predicate = lookupExpiryPredicate(tt)) != null) {
+                        if (expiryReadPolicy == ExpiryReadPolicy.REJECT) {
+                            final CharSequence dependentName = expiryFilterExecutionContext.getExpiryMaterializingViewName();
+                            assert dependentName != null;
+                            throw SqlException.materializationExpiryConflict(
+                                    resolvedTableNameExpr.position,
+                                    dependentName,
+                                    tt.getTableName()
+                            );
+                        }
+                        final CharSequence designatedTimestampColumn = expiryTimestampColumnName;
+                        final int position = resolvedTableNameExpr.position;
+                        model.setTableNameExpr(null);
+                        // The set stores references, not copies, and unquote() of a quoted token yields a
+                        // view over the (transient) lexer buffer; store a stable String, like
+                        // viewsBeingCompiled does, so the key survives the nested parse.
+                        final String guardKey = Chars.toString(unquotedName);
+                        expiringTablesBeingExpanded.add(guardKey);
+                        try {
+                            expandExpiringTable(model, guardKey, predicate, designatedTimestampColumn, position, sqlParserCallback);
+                        } finally {
+                            expiringTablesBeingExpanded.remove(guardKey);
+                        }
                     }
                 }
             }
@@ -6758,10 +6721,10 @@ public class SqlParser {
     // The read-filter decision for one resolved table: the context's per-table refinement when a
     // context is present (the mat-view refresh context keeps the filter on every table except the
     // base), the parse-global flag otherwise.
-    private boolean isExpiryReadFilterEnabledFor(TableToken tableToken) {
+    private ExpiryReadPolicy getExpiryReadPolicyFor(TableToken tableToken) {
         return expiryFilterExecutionContext == null
-                ? rowExpiryReadFilterEnabled
-                : expiryFilterExecutionContext.isExpiryReadFilterEnabled(tableToken);
+                ? rowExpiryReadPolicy
+                : expiryFilterExecutionContext.getExpiryReadPolicy(tableToken);
     }
 
     private int parseSymbolCapacity(GenericLexer lexer) throws SqlException {
@@ -7969,9 +7932,8 @@ public class SqlParser {
         clearRecordedViews();
         // Hygiene: parse() always re-derives these from the execution context, but reset them here too so a
         // reused parser never carries a stale row-expiry gate/timestamp between compilations.
-        rowExpiryReadFilterEnabled = true;
+        rowExpiryReadPolicy = ExpiryReadPolicy.FILTER;
         expiryFilterExecutionContext = null;
-        expiryExpandedTables.clear();
         expiryPolicyTable = null;
         expiryTimestampColumnName = null;
         pendingExpiryReadVersions.clear();
@@ -8018,7 +7980,7 @@ public class SqlParser {
         // Capture the read-filter toggle for this whole parse (the row-expiry cleanup job disables it).
         // The context is also kept for the per-table refinement: the mat-view refresh context keeps the
         // filter on every table except the base.
-        rowExpiryReadFilterEnabled = executionContext.isExpiryReadFilterEnabled();
+        rowExpiryReadPolicy = executionContext.getExpiryReadPolicy();
         expiryFilterExecutionContext = executionContext;
         // ANCHOR is a live-view-only clause. A live-view re-compile (the refresh
         // worker, the startup graph build, CREATE's own validating compile of the

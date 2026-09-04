@@ -261,13 +261,20 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return true;
     }
 
-    // Whether the read-time row-expiry filter should be applied to policied tables referenced by queries
-    // compiled with this context. True for ordinary query contexts. The row-expiry cleanup job's context
-    // and the CREATE MATERIALIZED VIEW compile disable it: the cleanup computes survivors from its
-    // authoritative keep-filter alone, decoupled from the read filter (so a read-filter change cannot
-    // affect physical deletion), and a mat-view definition derives from the raw base.
-    // This method and its setter are abstract on purpose: a context that inherited a no-op setter would
-    // silently keep the filter on in the two places that require it off.
+    default CharSequence getExpiryMaterializingViewName() {
+        return null;
+    }
+
+    default ExpiryReadPolicy getExpiryReadPolicy() {
+        return isExpiryReadFilterEnabled() ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+    }
+
+    default ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        return isExpiryReadFilterEnabled(tableToken) ? ExpiryReadPolicy.FILTER : ExpiryReadPolicy.RAW;
+    }
+
+    // Compatibility accessors for contexts that only distinguish filtered and raw reads. Materializing
+    // compilation must use getExpiryReadPolicy(TableToken), where REJECT is distinct from RAW.
     boolean isExpiryReadFilterEnabled();
 
     // Per-table refinement of {@link #isExpiryReadFilterEnabled()}: whether the read-time row-expiry
@@ -359,6 +366,13 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
     void setExpiryReadFilterEnabled(boolean enabled);
+
+    default void setExpiryReadPolicy(ExpiryReadPolicy policy, @Nullable CharSequence materializingViewName) {
+        if (policy == ExpiryReadPolicy.REJECT) {
+            throw new UnsupportedOperationException("this SQL execution context cannot enter expiry REJECT mode");
+        }
+        setExpiryReadFilterEnabled(policy == ExpiryReadPolicy.FILTER);
+    }
 
     void setIntervalFunctionType(int intervalType);
 

@@ -66,8 +66,9 @@ import java.util.concurrent.atomic.AtomicReference;
  *         {@code ts > now()}, which un-expires rows as time advances), so it can never physically delete a
  *         row a later read would show. The read filter stays authoritative for visibility. Clock-free and
  *         {@code ts < now()}-style (monotonic) policies still reclaim.</li>
- *     <li><b>No policied-view chains</b> — a materialized view cannot be created over a base that carries an
- *         EXPIRE ROWS policy, and {@code SET EXPIRE} is rejected on a view that already has dependents.</li>
+ *     <li><b>Materialization guard</b> — materialized and live view compilation rejects a source materialized
+ *         view with an active policy, while {@code SET EXPIRE} remains dependency-independent and later
+ *         refreshes invalidate canonically.</li>
  *     <li><b>DROP EXPIRE [ROWS]</b> — both spellings are accepted.</li>
  *     <li><b>Read vs cleanup boundary agreement</b> — for {@code ts < now()} the row exactly at the frozen
  *         {@code now()} boundary is kept by both the read filter and the cleanup classifier.</li>
@@ -1124,8 +1125,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                             + "SELECT ts, v, count(*) OVER (PARTITION BY sym ORDER BY ts "
                             + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM mv_policied",
                     180,
-                    "cannot create a live view over 'mv_policied': it carries an EXPIRE ROWS policy "
-                            + "(the view would copy expired rows on refresh)"
+                    "cannot materialize view 'lv_blocked': source materialized view 'mv_policied' "
+                            + "has an active EXPIRE ROWS policy"
             );
             Assert.assertNull("no live view may survive over a policied base", engine.getTableTokenIfExists("lv_blocked"));
         });
@@ -1145,50 +1146,30 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "create materialized view m2 with base b as (select b.ts, b.sym, first(v.vv) vv from b join v on (sym) sample by 1d)",
-                    25,
-                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+                    91,
+                    "cannot materialize view 'm2': source materialized view 'v' has an active EXPIRE ROWS policy"
             );
             Assert.assertNull(engine.getTableTokenIfExists("m2"));
         });
     }
 
     @Test
-    public void testSetExpireOnViewJoinedByAnotherViewRejected() throws Exception {
-        // CREATE MATERIALIZED VIEW refuses to build a view whose query reads a policied view, a JOIN
-        // included. ALTER has to refuse the mirror image, or the same two views are legal when they are
-        // created in one order and illegal in the other: a view that another view's query reads must not
-        // gain a policy afterwards. It would change what that other view materializes - its refresh reads
-        // the policied view through the read filter - without anything marking the other view as stale.
-        //
-        // The dependent-view graph files m2 under its own base b, so the join edge from m2 to v does not
-        // show up there and the check has to walk m2's defining query to find it.
+    public void testSetExpireOnViewJoinedByAnotherViewInvalidatesOnNextRefresh() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE b (sym SYMBOL, bv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE base2 (sym SYMBOL, vv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             drainWalAndMatViewQueues();
             execute("CREATE MATERIALIZED VIEW v AS (SELECT * FROM base2)");
-            // nobody reads this one, so it is the control for the rejection below
-            execute("CREATE MATERIALIZED VIEW unreferenced AS (SELECT * FROM base2)");
             drainWalAndMatViewQueues();
             execute("""
                     CREATE MATERIALIZED VIEW m2 WITH BASE b AS
                     (SELECT b.ts, b.sym, first(v.vv) vv FROM b JOIN v ON (sym) SAMPLE BY 1d)""");
             drainWalAndMatViewQueues();
 
-            assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW v SET EXPIRE ROWS WHEN vv < 2.0",
-                    24,
-                    "cannot set an EXPIRE ROWS policy on 'v': materialized view 'm2' references it"
-            );
-            Assert.assertNull("policy must not have been set on v", expiryPredicate("v"));
-
-            // the same statement on a view no other view reads is accepted, so the rejection above can only
-            // come from the join edge
-            execute("ALTER MATERIALIZED VIEW unreferenced SET EXPIRE ROWS WHEN vv < 2.0");
+            execute("ALTER MATERIALIZED VIEW v SET EXPIRE ROWS WHEN vv < 2.0");
             drainWalAndMatViewQueues();
-            Assert.assertNotNull("control view must carry the policy", expiryPredicate("unreferenced"));
+            Assert.assertNotNull("policy must be accepted without a catalogue dependency scan", expiryPredicate("v"));
 
-            // v stayed policy-free, so m2 materializes every joined row
             execute("""
                     INSERT INTO base2 VALUES
                     ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
@@ -1200,8 +1181,10 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     ('B', 20.0, '2024-01-01T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
 
-            assertQuery("SELECT sym, vv FROM m2 ORDER BY sym")
-                    .expectSize().noLeakCheck().returns("sym\tvv\nA\t1.0\nB\t5.0\n");
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'm2'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\n"
+                            + "invalid\tcannot materialize view 'm2': source materialized view 'v' has an active EXPIRE ROWS policy\n");
         });
     }
 
@@ -1225,8 +1208,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     """
                             CREATE MATERIALIZED VIEW m1 WITH BASE b AS
                             (SELECT ts, sym, first(bv) bv FROM b WHERE sym IN (SELECT sym FROM v) SAMPLE BY 1d)""",
-                    25,
-                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+                    110,
+                    "cannot materialize view 'm1': source materialized view 'v' has an active EXPIRE ROWS policy"
             );
             Assert.assertNull(engine.getTableTokenIfExists("m1"));
 
@@ -1235,8 +1218,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     """
                             CREATE MATERIALIZED VIEW m2 WITH BASE b AS
                             (SELECT ts, sym, first(bv) bv FROM b WHERE bv > (SELECT max(vv) FROM v) SAMPLE BY 1d)""",
-                    25,
-                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+                    112,
+                    "cannot materialize view 'm2': source materialized view 'v' has an active EXPIRE ROWS policy"
             );
             Assert.assertNull(engine.getTableTokenIfExists("m2"));
 
@@ -1246,8 +1229,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                             CREATE MATERIALIZED VIEW m3 WITH BASE b AS
                             (SELECT ts, sym, first(bv) bv FROM b
                              WHERE sym IN (SELECT sym FROM base2 WHERE sym IN (SELECT sym FROM v)) SAMPLE BY 1d)""",
-                    25,
-                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+                    147,
+                    "cannot materialize view 'm3': source materialized view 'v' has an active EXPIRE ROWS policy"
             );
             Assert.assertNull(engine.getTableTokenIfExists("m3"));
 
@@ -1259,8 +1242,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                             CREATE MATERIALIZED VIEW m5 WITH BASE b AS
                             (SELECT * FROM (SELECT ts, sym, first(bv) bv FROM b SAMPLE BY 1d)
                              WHERE bv > (SELECT max(vv) FROM v))""",
-                    25,
-                    "cannot create a materialized view referencing 'v': it carries an EXPIRE ROWS policy"
+                    142,
+                    "cannot materialize view 'm5': source materialized view 'v' has an active EXPIRE ROWS policy"
             );
             Assert.assertNull(engine.getTableTokenIfExists("m5"));
 
@@ -1275,10 +1258,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSetExpireOnViewReadFromSubqueryOfAnotherViewRejected() throws Exception {
-        // The mirror image of testCreateMatViewReadingPoliciedViewFromSubqueryRejected: the two views
-        // exist first and v gains the policy afterwards. Both guards run the same collector, so a
-        // sub-query reference is refused whichever order the two statements arrive in.
+    public void testSetExpireOnViewReadFromSubqueryInvalidatesOnNextRefresh() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE b (sym SYMBOL, bv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE TABLE base2 (sym SYMBOL, vv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1286,8 +1266,6 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             execute("CREATE MATERIALIZED VIEW v AS (SELECT * FROM base2)");
             execute("CREATE MATERIALIZED VIEW scalar_v AS (SELECT * FROM base2)");
             execute("CREATE MATERIALIZED VIEW outer_v AS (SELECT * FROM base2)");
-            // nobody reads this one, so it is the control for the rejections below
-            execute("CREATE MATERIALIZED VIEW unreferenced AS (SELECT * FROM base2)");
             drainWalAndMatViewQueues();
             execute("""
                     CREATE MATERIALIZED VIEW m1 WITH BASE b AS
@@ -1302,32 +1280,14 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                      WHERE sym IN (SELECT sym FROM outer_v))""");
             drainWalAndMatViewQueues();
 
-            assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW v SET EXPIRE ROWS WHEN vv < 2.0",
-                    24,
-                    "cannot set an EXPIRE ROWS policy on 'v': materialized view 'm1' references it"
-            );
-            Assert.assertNull("policy must not have been set on v", expiryPredicate("v"));
-
-            assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW scalar_v SET EXPIRE ROWS WHEN vv < 2.0",
-                    24,
-                    "cannot set an EXPIRE ROWS policy on 'scalar_v': materialized view 'm2' references it"
-            );
-            Assert.assertNull("policy must not have been set on scalar_v", expiryPredicate("scalar_v"));
-
-            assertExceptionNoLeakCheck(
-                    "ALTER MATERIALIZED VIEW outer_v SET EXPIRE ROWS WHEN vv < 2.0",
-                    24,
-                    "cannot set an EXPIRE ROWS policy on 'outer_v': materialized view 'm3' references it"
-            );
-            Assert.assertNull("policy must not have been set on outer_v", expiryPredicate("outer_v"));
-
-            execute("ALTER MATERIALIZED VIEW unreferenced SET EXPIRE ROWS WHEN vv < 2.0");
+            execute("ALTER MATERIALIZED VIEW v SET EXPIRE ROWS WHEN vv < 2.0");
+            execute("ALTER MATERIALIZED VIEW scalar_v SET EXPIRE ROWS WHEN vv < 2.0");
+            execute("ALTER MATERIALIZED VIEW outer_v SET EXPIRE ROWS WHEN vv < 2.0");
             drainWalAndMatViewQueues();
-            Assert.assertNotNull("control view must carry the policy", expiryPredicate("unreferenced"));
+            Assert.assertNotNull(expiryPredicate("v"));
+            Assert.assertNotNull(expiryPredicate("scalar_v"));
+            Assert.assertNotNull(expiryPredicate("outer_v"));
 
-            // v stayed policy-free, so m1 keeps every symbol the sub-query matches
             execute("""
                     INSERT INTO base2 VALUES
                     ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
@@ -1339,8 +1299,13 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     ('B', 20.0, '2024-01-01T00:00:00.000000Z')""");
             drainWalAndMatViewQueues();
 
-            assertQuery("SELECT sym, bv FROM m1 ORDER BY sym")
-                    .expectSize().noLeakCheck().returns("sym\tbv\nA\t10.0\nB\t20.0\n");
+            assertQuery("select view_name, view_status, invalidation_reason from materialized_views "
+                    + "where view_name in ('m1', 'm2', 'm3') order by view_name")
+                    .noLeakCheck()
+                    .returns("view_name\tview_status\tinvalidation_reason\n"
+                            + "m1\tinvalid\tcannot materialize view 'm1': source materialized view 'v' has an active EXPIRE ROWS policy\n"
+                            + "m2\tinvalid\tcannot materialize view 'm2': source materialized view 'scalar_v' has an active EXPIRE ROWS policy\n"
+                            + "m3\tinvalid\tcannot materialize view 'm3': source materialized view 'outer_v' has an active EXPIRE ROWS policy\n");
         });
     }
 
@@ -1356,8 +1321,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
             assertExceptionNoLeakCheck(
                     "create materialized view b as (select * from a)",
-                    25,
-                    "the base carries an EXPIRE ROWS policy"
+                    45,
+                    "cannot materialize view 'b': source materialized view 'a' has an active EXPIRE ROWS policy"
             );
             Assert.assertNull(engine.getTableTokenIfExists("b"));
         });
@@ -1365,12 +1330,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
 
     @Test
     public void testCreateDependentDuringExpiryMetaSwapRejected() throws Exception {
-        // The CREATE-vs-ALTER interleaving that neither dependents check can see: the ALTER passes its
-        // checks and marks the transition, the CREATE then registers a dependent and re-reads a base whose
-        // _meta still carries no policy, and only then does the ALTER swap _meta. On the on-disk predicate
-        // alone both sides pass, leaving a policied base with a dependent that copies its expired rows on
-        // refresh. The CREATE therefore also consults the pending mark, which the ALTER sets before it tests
-        // for dependents, so whichever side publishes first is visible to the other.
+        // A pending publication cannot pass the stable CREATE guard. Once publication is stable, CREATE
+        // reports the canonical source-policy conflict.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
@@ -1419,9 +1380,9 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 boolean rejected = false;
                 try {
                     execute("create materialized view b as (select * from a)");
-                } catch (CairoException e) {
+                } catch (SqlException e) {
                     rejected = true;
-                    TestUtils.assertContains(e.getFlyweightMessage(), "EXPIRE ROWS policy changed concurrently");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "too many row-expiry policy changes during compilation");
                 }
                 Assert.assertTrue("CREATE must be rejected while a's policy change is in flight", rejected);
                 Assert.assertNull("the half-created dependent must be rolled back", engine.getTableTokenIfExists("b"));
@@ -1441,13 +1402,16 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             Assert.assertNotNull("a must carry the policy once the ALTER lands", expiryPredicate("a"));
             Assert.assertNull("no dependent may exist over the policied view", engine.getTableTokenIfExists("b"));
             Assert.assertFalse("a must not be suspended", engine.getTableSequencerAPI().isSuspended(aToken));
+            assertExceptionNoLeakCheck(
+                    "create materialized view b as (select * from a)",
+                    45,
+                    "cannot materialize view 'b': source materialized view 'a' has an active EXPIRE ROWS policy"
+            );
         });
     }
 
     @Test
-    public void testSetExpireOnViewWithDependentsRejected() throws Exception {
-        // The reverse direction: a view that other materialized views derive from must not GAIN a policy
-        // (those dependents would copy its expired rows on refresh).
+    public void testSetExpireOnViewWithDependentsInvalidatesOnRefresh() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
@@ -1456,24 +1420,32 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             execute("create materialized view b as (select * from a)");
             drainWalAndMatViewQueues();
 
-            assertExceptionNoLeakCheck(
-                    "alter materialized view a set expire rows when v < 2.0",
-                    24,
-                    "view(s), including 'b', which would copy expired rows on refresh"
-            );
-            Assert.assertNull("policy must not have been set on a", expiryPredicate("a"));
+            execute("alter materialized view a set expire rows when v < 2.0");
+            drainWalAndMatViewQueues();
+
+            Assert.assertNotNull("policy must be accepted regardless of dependents", expiryPredicate("a"));
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'b'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\n"
+                            + "invalid\tcannot materialize view 'b': source materialized view 'a' has an active EXPIRE ROWS policy\n");
+
+            execute("alter materialized view a drop expire rows");
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status from materialized_views where view_name = 'b'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_status\ninvalid\n");
+
+            execute("refresh materialized view b full");
+            drainWalAndMatViewQueues();
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'b'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\nvalid\t\n");
         });
     }
 
     @Test
-    public void testSetExpireRaceWithDependentCreateSkipsAlterWithoutSuspending() throws Exception {
-        // The CREATE-vs-ALTER race, reproduced deterministically via committed-but-not-applied sequencing.
-        // ALTER a SET EXPIRE is sequenced while a has no dependents (so its statement-time dependents check
-        // passes), THEN a dependent view b is created over a, THEN the ALTER is applied. At apply time the
-        // stored ALTER SQL is recompiled and its dependents check now finds b. The rejection is
-        // WAL-recoverable, so ApplyWal2TableJob SKIPS the ALTER instead of suspending a (a non-recoverable
-        // rejection would suspend a, and the advanced watermark would make RESUME skip it anyway). The final
-        // topology is consistent: a keeps no policy, b survives, and both stay queryable.
+    public void testSequencedUnappliedExpireIsNotActiveAndApplyInvalidatesDependent() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
@@ -1491,8 +1463,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     aTracker.getWriterTxn() < aTracker.getSeqTxn()
             );
 
-            // Register a dependent over a. Both the create-time pre-check and the post-registration re-check
-            // read a's still-policy-free metadata (the pending SET EXPIRE is not applied), so b is created.
+            // A sequenced but unapplied operation is not active, so CREATE is admitted.
             execute("create materialized view b as (select * from a)");
             Assert.assertNotNull("dependent view b must be created", engine.getTableTokenIfExists("b"));
             Assert.assertTrue(
@@ -1500,30 +1471,16 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                     aTracker.getWriterTxn() < aTracker.getSeqTxn()
             );
 
-            // Apply the pending SET EXPIRE. The recompile's dependents check finds b and rejects; the
-            // WAL-recoverable rejection makes the apply skip rather than suspend a.
+            // Apply accepts the policy without a replica-local dependency decision. The ensuing stable
+            // dependent refresh observes the active policy and invalidates b canonically.
             drainWalAndMatViewQueues();
 
-            Assert.assertFalse(
-                    "base must NOT be suspended by the apply-time dependents rejection",
-                    engine.getTableSequencerAPI().isSuspended(aToken)
-            );
-            Assert.assertNull("the racing SET EXPIRE must be skipped, leaving a policy-free", expiryPredicate("a"));
-            Assert.assertNotNull("dependent view b must survive the race", engine.getTableTokenIfExists("b"));
-
-            // a still refreshes after the skipped ALTER: base -> a propagation works.
-            execute("insert into base values ('A', 1.0, '2024-01-01T00:00:00.000000Z')");
-            drainWalAndMatViewQueues();
-            assertQuery("select sym, v from a order by sym").expectSize().noLeakCheck().returns("sym\tv\nA\t1.0\n");
-
-            // Once the dependent is dropped, a accepts an EXPIRE ROWS policy normally -- confirming the race
-            // left a's ALTER path healthy (not suspended, not stuck) and the topology consistent.
-            execute("drop materialized view b");
-            drainWalAndMatViewQueues();
-            execute("alter materialized view a set expire rows when v < 2.0");
-            drainWalAndMatViewQueues();
             Assert.assertFalse("a must stay unsuspended", engine.getTableSequencerAPI().isSuspended(aToken));
-            Assert.assertNotNull("a must accept a policy once its dependent is gone", expiryPredicate("a"));
+            Assert.assertNotNull("the accepted policy must be published", expiryPredicate("a"));
+            assertQuery("select view_status, invalidation_reason from materialized_views where view_name = 'b'")
+                    .noLeakCheck().noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\n"
+                            + "invalid\tcannot materialize view 'b': source materialized view 'a' has an active EXPIRE ROWS policy\n");
         });
     }
 

@@ -48,6 +48,30 @@ import org.junit.Test;
 public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
 
     @Test
+    public void testExpiryPolicyOnMatViewBaseInvalidatesLiveViewOnNextTurn() throws Exception {
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mvbase AS (SELECT * FROM base)");
+            drainWalAndMatViewQueues(engine);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS "
+                    + "SELECT ts, k, sum(v) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS s FROM mvbase");
+
+            execute("ALTER MATERIALIZED VIEW mvbase SET EXPIRE ROWS WHEN v < 0");
+            drainWalAndMatViewQueues(engine);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+
+            assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv_on_mv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\tinvalidation_reason\n"
+                            + "invalid\tcannot materialize view 'lv_on_mv': source materialized view 'mvbase' has an active EXPIRE ROWS policy\n");
+        });
+    }
+
+    @Test
     public void testMatViewFullRefreshInvalidatesDependentLiveView() throws Exception {
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         assertMemoryLeak(() -> {

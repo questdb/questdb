@@ -219,12 +219,66 @@ public class MetadataCache implements QuietCloseable {
         return expiryPolicyVersion;
     }
 
+    public ExpiryPolicyGuard sampleExpiryPolicyGuard() {
+        synchronized (expiryPolicySnapshotLock) {
+            return new ExpiryPolicyGuard(expiryPolicyVersion, pendingExpiryPolicyIds.size() > 0);
+        }
+    }
+
     /**
      * Returns whether this table has an EXPIRE ROWS metadata transition in progress. The immutable snapshot
      * makes this a lock-free check on the SQL parse path.
      */
     public boolean isExpiryPolicyUpdatePending(TableToken tableToken) {
         return expiryPolicySnapshot.pendingTableIds.contains(tableToken.getTableId());
+    }
+
+    /**
+     * Resolves the currently authoritative EXPIRE ROWS policy for one materialized view. A stable cache
+     * hit avoids I/O; a cache miss or pending publication reads the backing table metadata directly.
+     */
+    public ExpiryPolicyInfo lookupExpiryPolicy(TableToken tableToken) {
+        if (tableToken == null || !tableToken.isMatView()) {
+            return ExpiryPolicyInfo.EMPTY;
+        }
+        final boolean pending = isExpiryPolicyUpdatePending(tableToken);
+        if (!pending) {
+            try (MetadataCacheReader metadataRO = readLock()) {
+                final CairoTable table = metadataRO.getTable(tableToken);
+                if (table != null) {
+                    final String predicate = table.getExpiryPredicate();
+                    if (predicate == null || predicate.isEmpty()) {
+                        return ExpiryPolicyInfo.EMPTY;
+                    }
+                    return new ExpiryPolicyInfo(
+                            predicate,
+                            Chars.toString(table.getTimestampName()),
+                            table,
+                            -1,
+                            false
+                    );
+                }
+            }
+        }
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            final String predicate = metadata.getExpiryPredicate();
+            if (predicate == null || predicate.isEmpty()) {
+                return new ExpiryPolicyInfo(null, null, null, metadata.getMetadataVersion(), pending);
+            }
+            final int timestampIndex = metadata.getTimestampIndex();
+            return new ExpiryPolicyInfo(
+                    Chars.toString(predicate),
+                    timestampIndex > -1 ? Chars.toString(metadata.getColumnName(timestampIndex)) : null,
+                    null,
+                    metadata.getMetadataVersion(),
+                    pending
+            );
+        } catch (CairoException e) {
+            if (isExpiryPolicyUpdatePending(tableToken)) {
+                throw e;
+            }
+            return ExpiryPolicyInfo.EMPTY;
+        }
     }
 
     /**
@@ -1093,6 +1147,71 @@ public class MetadataCache implements QuietCloseable {
             }
         }
         return null;
+    }
+
+    public static final class ExpiryPolicyGuard {
+        private final boolean pending;
+        private final long version;
+
+        private ExpiryPolicyGuard(long version, boolean pending) {
+            this.version = version;
+            this.pending = pending;
+        }
+
+        public long getVersion() {
+            return version;
+        }
+
+        public boolean isPending() {
+            return pending;
+        }
+
+        public boolean isStableWith(ExpiryPolicyGuard other) {
+            return !pending && !other.pending && version == other.version;
+        }
+    }
+
+    public static final class ExpiryPolicyInfo {
+        private static final ExpiryPolicyInfo EMPTY = new ExpiryPolicyInfo(null, null, null, -1, false);
+        private final CairoTable cachedTable;
+        private final long metadataVersion;
+        private final boolean pending;
+        private final String predicate;
+        private final String timestampName;
+
+        private ExpiryPolicyInfo(
+                String predicate,
+                String timestampName,
+                CairoTable cachedTable,
+                long metadataVersion,
+                boolean pending
+        ) {
+            this.predicate = predicate;
+            this.timestampName = timestampName;
+            this.cachedTable = cachedTable;
+            this.metadataVersion = metadataVersion;
+            this.pending = pending;
+        }
+
+        public CairoTable getCachedTable() {
+            return cachedTable;
+        }
+
+        public long getMetadataVersion() {
+            return metadataVersion;
+        }
+
+        public String getPredicate() {
+            return predicate;
+        }
+
+        public String getTimestampName() {
+            return timestampName;
+        }
+
+        public boolean isPending() {
+            return pending;
+        }
     }
 
     private static boolean sameTableIds(LongHashSet a, LongHashSet b) {

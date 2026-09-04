@@ -3694,31 +3694,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 getTableToken().getTableId(),
                 expiryPolicyUpdateVersion
         );
-        if (predicate != null) {
-            // Defense-in-depth backstop for the CREATE-vs-ALTER race: a dependent view -- materialized or
-            // live -- may have been registered against this base after alterTableSetExpire's compile-time
-            // dependents check passed, in the narrow window between OperationExecutor recompiling the stored
-            // ALTER and this apply, or via a forged WAL that skips recompile. A base carrying both a policy
-            // and a dependent leaks expired rows into that dependent on refresh (refresh reads the base
-            // raw). Skip rather than throw, matching the non-mat-view guard above: a throw during WAL apply
-            // would suspend the table. DROP EXPIRE (predicate == null) still proceeds so clearing works.
-            final ObjList<TableToken> dependents = new ObjList<>();
-            engine.getDependentViewGraph().getDependentViews(getTableToken(), dependents);
-            if (dependents.size() > 0) {
-                LOG.error().$("ignoring EXPIRE ROWS policy on a base with dependent views [table=")
-                        .$safe(getTableToken().getTableName())
-                        .$(", dependents=").$(dependents.size())
-                        .$(", firstDependent=").$safe(dependents.getQuick(0).getTableName())
-                        .I$();
-                metadataCache.cancelExpiryPolicyUpdate(
-                        getTableToken().getTableId(),
-                        expiryPolicyUpdateVersion,
-                        previousPendingExpiryVersion
-                );
-                return;
-            }
-        }
-
         try {
             metadata.setExpiry(predicate, cleanupIntervalMicros);
         } catch (Throwable th) {

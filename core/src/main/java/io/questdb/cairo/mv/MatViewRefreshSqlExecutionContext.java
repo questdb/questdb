@@ -35,6 +35,7 @@ import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -43,6 +44,7 @@ import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     private final boolean coveringIndexEnabled;
@@ -84,24 +86,22 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
 
     @Override
     public boolean isExpiryReadFilterEnabled() {
-        // A mat-view refresh reads the RAW base and writes the view; the read filter must NOT be injected
-        // into the base reference here — it would hard-fail a now()-based base policy (now() is rejected as
-        // non-deterministic in a mat view) and fold the base's expiry into the refresh. To keep this sound,
-        // a view cannot be created over a base that carries an EXPIRE ROWS policy (rejected at CREATE, and
-        // ALTER ... SET EXPIRE is rejected on a view that already has dependents), so the base reachable here
-        // never has a policy. The view's OWN policy (if any) is applied when the VIEW is read, not on refresh.
-        // The per-table refinement below limits this disable to the base.
         return false;
     }
 
     @Override
-    public boolean isExpiryReadFilterEnabled(TableToken tableToken) {
-        // Only the base is read raw (at a fixed txn; it can never carry a policy — policied chains are
-        // rejected at CREATE and at ALTER ... SET EXPIRE). Every OTHER referenced table keeps the read
-        // filter, so a view that gained a policy AFTER a referencing view was created is read here
-        // exactly as any query reads it: a deterministic policy filters consistently, and a now()-based
-        // one fails the refresh visibly instead of silently materializing expired rows.
-        return baseTableReader == null || !tableToken.equals(baseTableReader.getTableToken());
+    public ExpiryReadPolicy getExpiryReadPolicy() {
+        return ExpiryReadPolicy.REJECT;
+    }
+
+    @Override
+    public ExpiryReadPolicy getExpiryReadPolicy(TableToken tableToken) {
+        return ExpiryReadPolicy.REJECT;
+    }
+
+    @Override
+    public CharSequence getExpiryMaterializingViewName() {
+        return viewTableToken != null ? viewTableToken.getTableName() : null;
     }
 
     public void clearReader() {
@@ -152,9 +152,14 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
         return tableToken == baseTableReader.getTableToken();
     }
 
-    public void of(TableReader baseTableReader) {
-        this.viewTableToken = baseTableReader.getTableToken();
+    public void of(TableReader baseTableReader, TableToken viewTableToken) {
+        this.viewTableToken = viewTableToken;
         this.baseTableReader = baseTableReader;
+    }
+
+    @TestOnly
+    public void of(TableReader baseTableReader) {
+        of(baseTableReader, baseTableReader.getTableToken());
     }
 
     @Override

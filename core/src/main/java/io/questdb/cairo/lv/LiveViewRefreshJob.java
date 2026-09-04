@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -150,6 +151,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  * </ul>
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
+    private static final String EXPIRY_PREFLIGHT_DEFERRED = new String("expiry-preflight-deferred");
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
     // Anti-spin floor (micros) between re-drains of a view deferred on base apply lag.
     // Bounds the retry rate without perceptibly delaying convergence (LV cadences are
@@ -8905,6 +8907,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (instance.isFreezeArmed()) {
                 return false;
             }
+            final String expiryPreflightResult = preflightExpiryPolicy(instance);
+            if (expiryPreflightResult == EXPIRY_PREFLIGHT_DEFERRED) {
+                return false;
+            }
+            invalidationReason = expiryPreflightResult;
+            if (invalidationReason == null) {
             // Authoritative apply-lag gate, under the refresh latch, and the only place the floor is
             // cleared. The pre-latch check above races: a worker that reads a satisfied floor there can
             // be descheduled, and by the time it clears the field another worker has already run a full
@@ -9181,6 +9189,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             } catch (Throwable t) {
                 invalidationReason = handleRefreshFailure(instance, t);
             }
+            }
         } finally {
             // Release the worker's staging buffer under the refresh latch (before unlockAfterRefresh),
             // so its per-view-tracker-charged pages are freed while THIS view's tracker is still alive
@@ -9225,6 +9234,42 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             engine.invalidateLiveView(instance, invalidationReason);
         }
         return attempted;
+    }
+
+    private String preflightExpiryPolicy(LiveViewInstance instance) {
+        final MetadataCache metadataCache = engine.getMetadataCache();
+        final MetadataCache.ExpiryPolicyGuard initialGuard = metadataCache.sampleExpiryPolicyGuard();
+        if (initialGuard.isPending()) {
+            return EXPIRY_PREFLIGHT_DEFERRED;
+        }
+
+        final LiveViewDefinition definition = instance.getDefinition();
+        final TableToken baseToken = engine.getTableTokenIfExists(definition.getBaseTableName());
+        if (baseToken == null) {
+            throw CairoException.tableDoesNotExist(definition.getBaseTableName());
+        }
+        final MetadataCache.ExpiryPolicyInfo policy;
+        try {
+            policy = metadataCache.lookupExpiryPolicy(baseToken);
+        } catch (CairoException e) {
+            final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
+            if (!initialGuard.isStableWith(finalGuard)) {
+                return EXPIRY_PREFLIGHT_DEFERRED;
+            }
+            throw e;
+        }
+        final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
+        if (!initialGuard.isStableWith(finalGuard)) {
+            return EXPIRY_PREFLIGHT_DEFERRED;
+        }
+        if (policy.getPredicate() != null) {
+            return Chars.toString(SqlException.materializationExpiryConflict(
+                    0,
+                    definition.getViewName(),
+                    baseToken.getTableName()
+            ).getFlyweightMessage());
+        }
+        return null;
     }
 
     /**

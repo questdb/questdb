@@ -38,6 +38,7 @@ import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
@@ -191,7 +192,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         // The cleanup computes survivors from its own authoritative keep-filter; disable the read-time
         // row-expiry filter on this context so the survivor query is not ALSO wrapped by it (which would
         // be redundant, and would couple physical deletion to any read-filter change).
-        this.sqlExecutionContext.setExpiryReadFilterEnabled(false);
+        this.sqlExecutionContext.setExpiryReadPolicy(ExpiryReadPolicy.RAW, null);
     }
 
     /**

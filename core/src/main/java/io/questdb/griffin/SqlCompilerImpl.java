@@ -43,6 +43,7 @@ import io.questdb.cairo.IndexBuilder;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.MetadataCache;
 import io.questdb.cairo.OperationCodes;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RowExpiryUtil;
@@ -4196,12 +4197,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final long beginNanos = configuration.getNanosecondClock().getTicks();
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
-        // The base-table row-expiry read filter must NOT be injected into a mat-view's defining query: the
-        // view derives from the RAW base (refresh reads raw base too), so folding the base's expiry in here
-        // would alter the aggregation and, for a now()-based base policy, hard-fail this validation with
-        // "non-deterministic function ... now". This mirrors MatViewRefreshSqlExecutionContext.
-        final boolean wasExpiryReadFilterEnabled = executionContext.isExpiryReadFilterEnabled();
-        executionContext.setExpiryReadFilterEnabled(false);
+        final ExpiryReadPolicy previousExpiryReadPolicy = executionContext.getExpiryReadPolicy();
+        final CharSequence previousMaterializingViewName = executionContext.getExpiryMaterializingViewName();
+        executionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, createMatViewOp.getTableName());
         try {
             final IQueryModel queryModel;
             try {
@@ -4230,7 +4228,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
         } finally {
-            executionContext.setExpiryReadFilterEnabled(wasExpiryReadFilterEnabled);
+            executionContext.setExpiryReadPolicy(previousExpiryReadPolicy, previousMaterializingViewName);
         }
     }
 
@@ -4736,11 +4734,41 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // that generates a factory from the model retains this snapshot through factory generation.
             long expiryPolicyVersion;
             int remainingExpiryPolicyRetries = maxRecompileAttempts;
+            final boolean rejectExpiryOnEntry = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT;
             for (; ; ) {
-                expiryPolicyVersion = engine.getMetadataCache().getExpiryPolicyVersion();
-                executionModel = compileExecutionModel(executionContext);
-                if (expiryPolicyVersion == engine.getMetadataCache().getExpiryPolicyVersion()) {
+                final MetadataCache.ExpiryPolicyGuard initialGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
+                expiryPolicyVersion = initialGuard.getVersion();
+                try {
+                    executionModel = compileExecutionModel(executionContext);
+                } catch (SqlException e) {
+                    if (!e.isMaterializationExpiryConflict()) {
+                        throw e;
+                    }
+                    final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
+                    if (initialGuard.isStableWith(finalGuard)) {
+                        throw e;
+                    }
+                    if (rejectExpiryOnEntry) {
+                        throw ExpiryPolicyVersionChangedException.INSTANCE;
+                    }
+                    if (--remainingExpiryPolicyRetries < 0) {
+                        throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
+                    }
+                    clearExceptSqlText();
+                    lexer.restart();
+                    continue;
+                }
+                final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
+                final boolean isMaterializing = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT
+                        || executionModel.getModelType() == ExecutionModel.CREATE_MAT_VIEW
+                        || executionModel.getModelType() == ExecutionModel.CREATE_LIVE_VIEW;
+                if (isMaterializing
+                        ? initialGuard.isStableWith(finalGuard)
+                        : expiryPolicyVersion == finalGuard.getVersion()) {
                     break;
+                }
+                if (rejectExpiryOnEntry) {
+                    throw ExpiryPolicyVersionChangedException.INSTANCE;
                 }
                 if (--remainingExpiryPolicyRetries < 0) {
                     throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
@@ -5264,92 +5292,76 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
 
-                final MatViewDefinition matViewDefinition;
-                final TableToken matViewToken;
+                MatViewDefinition matViewDefinition = null;
+                TableToken matViewToken = null;
 
                 final CreateTableOperation createTableOp = createMatViewOp.getCreateTableOperation();
                 if (createTableOp.getSelectText() != null) {
-                    RecordCursorFactory newFactory = null;
-                    RecordCursor newCursor;
                     for (int retryCount = 0; ; retryCount++) {
+                        final MetadataCache.ExpiryPolicyGuard initialGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
+                        RecordCursorFactory newFactory = null;
+                        RecordCursor newCursor = null;
                         try {
+                            if (initialGuard.isPending()) {
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                                }
+                                continue;
+                            }
                             compileMatViewQuery(executionContext, createMatViewOp);
-                            Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             newCursor = newFactory.getCursor(executionContext);
+                            final RecordMetadata metadata = newFactory.getMetadata();
+                            try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
+                                createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
+                            }
+                            // Reject a bad EXPIRE ROWS policy before the view exists.
+                            validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
+
+                            final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
+                            if (!initialGuard.isStableWith(finalGuard)) {
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                                }
+                                continue;
+                            }
+
+                            matViewDefinition = engine.createMatView(
+                                    executionContext.getSecurityContext(),
+                                    mem,
+                                    blockFileWriter,
+                                    path,
+                                    createMatViewOp.ignoreIfExists(),
+                                    createMatViewOp,
+                                    !createMatViewOp.isWalEnabled(),
+                                    volumeAlias != null
+                            );
+                            matViewToken = matViewDefinition.getMatViewToken();
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
-                                Misc.free(newFactory);
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
                             LOG.info().$("retrying plan [q=`").$(createTableOp.getSelectText()).$("`]").$();
+                        } catch (SqlException e) {
+                            if (!e.isMaterializationExpiryConflict()) {
+                                throw e;
+                            }
+                            final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
+                            if (initialGuard.isStableWith(finalGuard)) {
+                                throw e;
+                            }
+                            if (retryCount == maxRecompileAttempts) {
+                                throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                            }
                         } catch (Throwable th) {
-                            Misc.free(newFactory);
                             throw th;
+                        } finally {
+                            Misc.free(newCursor);
+                            Misc.free(newFactory);
                         }
                     }
-
-                    try {
-                        final RecordMetadata metadata = newFactory.getMetadata();
-                        try (TableReader baseReader = engine.getReader(createMatViewOp.getBaseTableName())) {
-                            createMatViewOp.validateAndUpdateMetadataFromSelect(metadata, baseReader.getMetadata(), newFactory.getScanDirection());
-                            // A materialized view must not derive from a base that itself carries an EXPIRE ROWS
-                            // policy. Refresh reads the RAW base (the read filter is disabled during refresh to
-                            // avoid folding the base's expiry / hitting now() non-determinism), so the base's
-                            // expired-but-not-yet-reclaimed rows would be copied into this view. Forbid it
-                            // rather than silently leak expired rows across the view chain.
-                            final CharSequence basePredicate = baseReader.getMetadata().getExpiryPredicate();
-                            if (basePredicate != null && basePredicate.length() > 0) {
-                                throw SqlException.$(createMatViewOp.getTableNamePosition(),
-                                                "cannot create a materialized view over '")
-                                        .put(createMatViewOp.getBaseTableName())
-                                        .put("': the base carries an EXPIRE ROWS policy (a view over a policied view would copy expired rows on refresh)");
-                            }
-                        }
-                        // The same rule closes over every OTHER referenced table: a policied view joined
-                        // into the defining query would need the read filter during refresh, and a
-                        // now()-based policy cannot be evaluated there (non-deterministic functions are
-                        // rejected in mat view queries). Reject the chain up front, like the base case.
-                        final ObjList<String> referencedTableNames = createMatViewOp.getReferencedTableNames();
-                        for (int i = 0, n = referencedTableNames.size(); i < n; i++) {
-                            final String referencedName = referencedTableNames.getQuick(i);
-                            if (Chars.equals(referencedName, createMatViewOp.getBaseTableName())) {
-                                continue; // the base is checked above, with its own message
-                            }
-                            final TableToken referencedToken = engine.getTableTokenIfExists(referencedName);
-                            if (referencedToken == null || !referencedToken.isMatView()) {
-                                continue; // EXPIRE ROWS is materialized-view-only
-                            }
-                            try (TableMetadata referencedMetadata = engine.getTableMetadata(referencedToken)) {
-                                final CharSequence referencedPredicate = referencedMetadata.getExpiryPredicate();
-                                if (referencedPredicate != null && referencedPredicate.length() > 0) {
-                                    throw SqlException.$(createMatViewOp.getTableNamePosition(),
-                                                    "cannot create a materialized view referencing '")
-                                            .put(referencedName)
-                                            .put("': it carries an EXPIRE ROWS policy (refresh would copy its expired rows into this view)");
-                                }
-                            }
-                        }
-                        // Reject a bad EXPIRE ROWS policy before the view exists.
-                        validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
-
-                        matViewDefinition = engine.createMatView(
-                                executionContext.getSecurityContext(),
-                                mem,
-                                blockFileWriter,
-                                path,
-                                createMatViewOp.ignoreIfExists(),
-                                createMatViewOp,
-                                !createMatViewOp.isWalEnabled(),
-                                volumeAlias != null
-                        );
-                        matViewToken = matViewDefinition.getMatViewToken();
-                    } finally {
-                        Misc.free(newCursor);
-                        Misc.free(newFactory);
-                    }
-
+                    assert matViewDefinition != null && matViewToken != null;
                     createMatViewOp.updateOperationFutureTableToken(matViewToken);
                 } else {
                     throw SqlException.$(createTableOp.getTableNamePosition(), "materialized view requires a SELECT statement");
@@ -6635,44 +6647,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             LOG.advisory().$("EXPIRE ROWS set on an aggregating (non-passthrough) materialized view; a later refresh may regenerate expired rows - align base-table retention (TTL) with the expiry horizon [view=")
                     .$safe(tableToken.getTableName()).I$();
         }
-        // A view that other views -- materialized or live -- derive from must not gain an EXPIRE policy:
-        // those dependents read this view's RAW rows on refresh (the read filter is disabled then), so they
-        // would copy rows this policy expires. Reject rather than leak expired rows downstream. (The forward
-        // direction -- CREATE a view over an already-policied base -- is rejected at create time.)
-        // The rejection is WAL-recoverable: this same check re-runs when OperationExecutor recompiles the
-        // stored ALTER SQL at apply time, and a dependent that a concurrent CREATE registered after the
-        // statement-time check passed makes it fire then. A plain SqlException there is non-recoverable, so
-        // ApplyWal2TableJob would suspend the table (and the advanced watermark makes RESUME skip the ALTER).
-        // walRecoverable routes it through the recoverable branch instead: the apply skips the ALTER and
-        // moves on. At statement time the caller still sees the message; only WAL apply reads the error code.
-        final ObjList<TableToken> dependents = new ObjList<>();
-        engine.getDependentViewGraph().getDependentViews(tableToken, dependents);
-        if (dependents.size() > 0) {
-            throw SqlException.walRecoverable(tableNamePosition).put("cannot set an EXPIRE ROWS policy on '")
-                    .put(tableToken.getTableName())
-                    .put("': it is the base of ").put(dependents.size())
-                    .put(" view(s), including '").put(dependents.getQuick(0).getTableName())
-                    .put("', which would copy expired rows on refresh");
-        }
-        // The graph above is keyed by base table name, so it only answers "which views declare this one as
-        // their base". A materialized view that reads this one some other way - a join in its defining query
-        // - is filed under its own base and stays invisible there, yet this policy still changes what it
-        // materializes: its refresh reads this view through the read filter, so a deterministic predicate
-        // silently drops rows from it, and a now()-based predicate makes the refresh fail with
-        //
-        //   non-deterministic function cannot be used in materialized view: now
-        //
-        // naming a function that appears nowhere in that view's own definition. CREATE MATERIALIZED VIEW
-        // already refuses this topology - it walks every table the new view's query references and rejects a
-        // policied one - so leaving it out here means the same two views are refused at CREATE and accepted
-        // at ALTER. This rejection is WAL-recoverable for the same reason the one above is.
-        final TableToken referencingView = findMatViewReferencing(tableToken);
-        if (referencingView != null) {
-            throw SqlException.walRecoverable(tableNamePosition).put("cannot set an EXPIRE ROWS policy on '")
-                    .put(tableToken.getTableName())
-                    .put("': materialized view '").put(referencingView.getTableName())
-                    .put("' references it, and its refresh would then read this view's rows filtered by the policy");
-        }
         final ExpiryValidationResult validationResult;
         if (RowExpiryUtil.isKeepLatest(clause.predicate) || RowExpiryUtil.isKeepBy(clause.predicate) || RowExpiryUtil.isWindow(clause.predicate)) {
             validationResult = validateAlterRelativePolicy(executionContext, tableToken, tableMetadata, clause.predicate, clause.predicatePos);
@@ -6688,69 +6662,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 clause.cleanupIntervalMicros
         );
         compiledQuery.ofAlter(setExpire.build());
-    }
-
-    /**
-     * Returns the first materialized view whose defining query reads {@code referencedToken}, or null when
-     * no view does. The view's own token is skipped, and so is a view whose definition disappeared while the
-     * walk ran.
-     * <p>
-     * {@link io.questdb.cairo.mv.DependentViewGraph} answers the base-table question only, so this re-parses
-     * each view's stored SQL with a pooled compiler and runs {@link SqlUtil#collectAllTableAndViewNames} over
-     * the resulting model. That is literally the collector CREATE MATERIALIZED VIEW builds its own reference
-     * set with, which is what keeps the two guards answering the same question: whichever creation order a
-     * user picks, a materialized view reading a policied one is refused. Optimising the SQL (rather than only
-     * parsing it) inlines any plain view in the way, so a materialized view that reaches
-     * {@code referencedToken} through one is found too.
-     * <p>
-     * The parse runs under {@link #compileViewContext}, whose read-only security context stands in for the
-     * ALTER's caller: the caller is asking about its own view and need not hold SELECT on tables it never
-     * named. A view whose SQL no longer compiles is logged and skipped - it cannot refresh, so this policy
-     * cannot change what it materializes, and failing the ALTER over an unrelated broken view would help
-     * nobody.
-     */
-    private @Nullable TableToken findMatViewReferencing(TableToken referencedToken) {
-        final ObjList<TableToken> views = new ObjList<>();
-        engine.getDependentViewGraph().getViews(views);
-        if (views.size() == 0) {
-            return null;
-        }
-        final ObjList<CharSequence> referencedNames = new ObjList<>();
-        try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            for (int i = 0, n = views.size(); i < n; i++) {
-                final TableToken viewToken = views.getQuick(i);
-                if (viewToken.equals(referencedToken)) {
-                    continue;
-                }
-                final MatViewDefinition definition = engine.getDependentViewGraph().getViewDefinition(viewToken);
-                if (definition == null) {
-                    continue;
-                }
-                ExecutionModel model = null;
-                try {
-                    model = compiler.generateExecutionModel(definition.getMatViewSql(), compileViewContext);
-                    final IQueryModel queryModel = model.getQueryModel();
-                    if (queryModel == null) {
-                        continue;
-                    }
-                    referencedNames.clear();
-                    SqlUtil.collectAllTableAndViewNames(queryModel, referencedNames, false);
-                    for (int j = 0, m = referencedNames.size(); j < m; j++) {
-                        if (Chars.equalsIgnoreCase(referencedNames.getQuick(j), referencedToken.getTableName())) {
-                            return viewToken;
-                        }
-                    }
-                } catch (SqlException | CairoException e) {
-                    LOG.info().$("skipping a materialized view that no longer compiles while looking for EXPIRE ROWS references [view=")
-                            .$safe(viewToken.getTableName())
-                            .$(", error=").$safe(e.getFlyweightMessage())
-                            .I$();
-                } finally {
-                    freeTableNameFunctions(model);
-                }
-            }
-        }
-        return null;
     }
 
     /**

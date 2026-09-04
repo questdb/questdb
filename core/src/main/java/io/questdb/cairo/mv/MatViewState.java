@@ -30,6 +30,7 @@ import io.questdb.cairo.file.AppendableBlock;
 import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.RecordToRowCopier;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -50,8 +51,8 @@ import static io.questdb.TelemetryEvent.*;
  * Mat view refresh state serves the purpose of synchronizing and coordinating
  * {@link MatViewRefreshJob}s.
  * <p>
- * Unlike {@link MatViewStateReader}, it does not carry a persisted invalidation
- * reason string. The {@link #pendingInvalidationMarker} is a transient in-memory marker
+ * The invalidation reason mirrors the last durable state and is retained while a full recovery is in
+ * progress. The {@link #pendingInvalidationMarker} is a transient in-memory marker
  * with two facets: a deferred invalidation (reason plus optional base-table txn
  * provenance) and a pending full-refresh owner. Either facet can be present alone or
  * combined on one marker; publications merge facets keep-strongest. A lock-holder's
@@ -140,8 +141,10 @@ public class MatViewState implements QuietCloseable {
     private volatile boolean closed;
     // Protected by this.latch.
     private RecordCursorFactory cursorFactory;
+    private long cursorFactoryExpiryPolicyVersion = -1;
     private volatile boolean dropped;
     private volatile boolean invalid;
+    private String invalidationReason;
     // Atomic token/txn pair covered by the last successful FULL refresh. This is intentionally
     // independent of lastRefreshBaseTxn: incremental and range refreshes cannot repair arbitrary
     // UPDATE, TRUNCATE, or schema invalidations even when they advance another watermark.
@@ -377,6 +380,28 @@ public class MatViewState implements QuietCloseable {
         RecordCursorFactory factory = cursorFactory;
         cursorFactory = null;
         return factory;
+    }
+
+    public long getRecordFactoryExpiryPolicyVersion() {
+        assert latch.get();
+        return cursorFactoryExpiryPolicyVersion;
+    }
+
+    public void returnRecordFactory(
+            RecordCursorFactory factory,
+            RecordToRowCopier copier,
+            long recordRowCopierMetadataVersion,
+            long expiryPolicyVersion
+    ) {
+        assert latch.get();
+        if (closed) {
+            Misc.free(factory);
+            return;
+        }
+        cursorFactory = factory;
+        cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
+        recordToRowCopier = copier;
+        this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
     }
 
     int claimPendingTaskRetryFlags() {
@@ -686,6 +711,7 @@ public class MatViewState implements QuietCloseable {
 
     public void initFromReader(MatViewStateReader reader) {
         this.invalid = reader.isInvalid();
+        this.invalidationReason = Chars.toString(reader.getInvalidationReason());
         this.lastRefreshBaseTxn = reader.getLastRefreshBaseTxn();
         this.lastRefreshFinishTimestampUs = reader.getLastRefreshTimestampUs();
         this.lastPeriodHi = reader.getLastPeriodHi();
@@ -704,6 +730,11 @@ public class MatViewState implements QuietCloseable {
 
     public boolean isInvalid() {
         return invalid;
+    }
+
+    public String getInvalidationReason() {
+        assert latch.get();
+        return invalidationReason;
     }
 
     public boolean isLocked() {
@@ -755,6 +786,7 @@ public class MatViewState implements QuietCloseable {
             telemetryFacade.store(MAT_VIEW_INVALIDATE, viewDefinition.getMatViewToken(), Numbers.LONG_NULL, invalidationReason, 0);
         }
         this.invalid = true;
+        this.invalidationReason = Chars.toString(invalidationReason);
     }
 
     Object markAsPendingFullRefreshAndGetOwner() {
@@ -863,6 +895,7 @@ public class MatViewState implements QuietCloseable {
 
     public void markAsValid() {
         this.invalid = false;
+        this.invalidationReason = null;
         this.refreshRetryAfterMicros = Numbers.LONG_NULL;
         this.refreshRetryCount = 0;
     }
@@ -914,6 +947,7 @@ public class MatViewState implements QuietCloseable {
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
+            long expiryPolicyVersion,
             long refreshFinishedTimestampUs,
             long refreshTriggeredTimestampUs,
             long periodHi
@@ -927,6 +961,7 @@ public class MatViewState implements QuietCloseable {
             return;
         }
         this.cursorFactory = factory;
+        this.cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
@@ -1015,12 +1050,14 @@ public class MatViewState implements QuietCloseable {
             RecordCursorFactory factory,
             RecordToRowCopier copier,
             long recordRowCopierMetadataVersion,
+            long expiryPolicyVersion,
             long refreshFinishedTimestamp,
             long refreshTriggeredTimestamp,
             long baseTableTxn,
             long periodHi
     ) {
         assert latch.get();
+        markAsValid();
         if (closed) {
             // The owner store was torn down (e.g. a demote) while this worker held the latch. Parking
             // the live native factory into a discarded state would leak it (the state is unreachable),
@@ -1029,6 +1066,7 @@ public class MatViewState implements QuietCloseable {
             return;
         }
         this.cursorFactory = factory;
+        this.cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
         this.recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestamp;
@@ -1053,6 +1091,7 @@ public class MatViewState implements QuietCloseable {
             long periodHi
     ) {
         assert latch.get();
+        markAsValid();
         this.lastRefreshFinishTimestampUs = refreshFinishedTimestampUs;
         this.lastRefreshBaseTxn = baseTableTxn;
         this.lastPeriodHi = periodHi;
