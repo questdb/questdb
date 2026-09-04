@@ -372,7 +372,9 @@ public class CompositeIngestionBenchmark {
         return timings;
     }
 
-    /** Commit-latency summary, all fields in microseconds. */
+    /**
+     * Commit-latency summary, all fields in microseconds.
+     */
     private static final class Stats {
         final double avg;
         final double min;
