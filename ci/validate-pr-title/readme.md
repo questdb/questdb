@@ -1,5 +1,17 @@
-This folder contains configuration files which are used to run validation rules on Github pull requests titles.
+This folder holds the validation rules applied to GitHub pull request titles, and
+the job that reports on them.
 
-It is done by running [Danger JS](https://danger.systems/js/) tool in [github action](../../.github/workflows/danger.yml).
+- `validate.js` — the rules themselves: `type(subType): description`.
+- `check.js` — reads the title from the workflow event, posts the `Danger` commit
+  status, and leaves a comment explaining a rejection. The comment is updated in
+  place while the title stays wrong and deleted once it is fixed.
+- Tests run with node and need no dependencies: `node ./validate.test.js` and
+  `node ./check.test.js`.
 
-In addition, the validation rules are tested. Tests can be executed with node, by running `node ./validate.test.js`
+Run by [.github/workflows/pr_title.yml](../../.github/workflows/pr_title.yml) on
+pull requests and on merge groups. It authenticates with the workflow's own
+`GITHUB_TOKEN`, so it needs no bot account and no personal access token.
+
+The status context is `Danger` for historical reasons and is required by the
+`master` ruleset. Renaming it here without editing that ruleset in the same change
+blocks every pull request, because the required check would never report.
