@@ -3,11 +3,16 @@
 Operator guide to QuestDB's `adaptive` commit mode: crash-safe recovery with
 write performance close to the default, at a tunable recovery-point objective (RPO).
 
-> **Audience:** operators running QuestDB. `adaptive` ships **opt-in**: the default stays
-> `nosync`, so upgrading does not change the durability or throughput profile of a deployment
-> that never set `cairo.commit.mode`. Turn it on globally with `cairo.commit.mode=adaptive`, or
-> per table with `commit_mode='adaptive'`. Expect to trade throughput for the RPO guarantee —
-> see §3 for measured figures before enabling it fleet-wide.
+> **Audience:** operators running QuestDB. `adaptive` is the **default**, because a node with no
+> replica has nothing but local durability standing between it and a power loss. It costs
+> throughput to provide that — see §3 for measured figures — so set `cairo.commit.mode=nosync`
+> if you would rather have the speed and can accept losing recent un-flushed commits.
+>
+> **QuestDB Enterprise defaults to `nosync` when replication is configured**, because a replicated
+> deployment already survives losing a node, and with store-and-forward clients the replay after a
+> failover makes that RPO 0 — local per-commit durability would be paying twice for the same
+> guarantee. An enterprise node with **no** object store has no such redundancy and keeps the
+> `adaptive` default. An explicit `cairo.commit.mode` always wins over both.
 
 ---
 
@@ -70,7 +75,8 @@ supported. Prefer enabling it per table first — smaller blast radius.
 cairo.commit.mode=adaptive
 ```
 
-Accepted values: `nosync` (default), `sync`, `async`, `adaptive`. This affects
+Accepted values: `nosync`, `sync`, `async`, `adaptive` (default; Enterprise uses `nosync` when
+replication is configured). This affects
 every table that has **not** set an explicit per-table override.
 
 ### Per table — at creation
@@ -112,7 +118,8 @@ global) — so a `WITH commit_mode='adaptive'` table reads `adaptive` even when 
 instance default is `nosync`.
 
 Confirmed in source: global key `cairo.commit.mode`
-(`PropertyKey.java:48`), default `nosync`
+(`PropertyKey.java:48`), default `adaptive` (Enterprise: `nosync` when replication is configured,
+see `EntPropServerConfiguration.PropCairoConfiguration#getCommitMode`)
 (`PropServerConfiguration.java:2605`; an unrecognized database-wide value aborts startup
 rather than silently downgrading durability); `CREATE TABLE ... WITH
 commit_mode='...'` (`SqlParser.java:1780`); `ALTER TABLE ... SET PARAM
@@ -185,9 +192,10 @@ Read it this way:
 - `W` earns its keep: 48.8 s → 31.7 s, a **1.54×** win, and `adaptive` at `W`=50 ms lands
   slightly under `sync` while giving a strictly stronger guarantee.
 - What costs ~2 orders of magnitude is **durability itself, not `adaptive`** — `sync` pays it
-  too. This is why `adaptive` is opt-in rather than the default: a small-commit workload that runs
-  at `nosync` speed today would feel this immediately on upgrade. Enable it deliberately, and
-  batch rows first (see below), or scope it per table with `WITH commit_mode='adaptive'`.
+  too. A small-commit workload upgrading from a pre-adaptive release will feel this, because the
+  default now provides a guarantee it previously did not. **Batch your rows first** (see below);
+  if the workload genuinely cannot, set `cairo.commit.mode=nosync` globally or scope the exception
+  per table with `WITH commit_mode='nosync'`.
 - **Batch your rows.** The cost is per commit, so it amortises as rows-per-commit grows. One row
   per commit is the pathological floor, not typical ingestion.
 
@@ -452,7 +460,7 @@ Tuning framing from `docs/superpowers/specs/2026-07-17-adaptive-sp-c-perf-valida
 
 ## 7. Upgrade and downgrade
 
-Adaptive is **opt-in** and turning it on or off is a **runtime commit-mode change**:
+Turning adaptive on or off is a **runtime commit-mode change**:
 there is **no on-disk migration and no file rewrite**. All new adaptive artifacts
 are additive and gated, so upgrade and downgrade are safe and reversible.
 
@@ -530,7 +538,7 @@ Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
 
 | Key | Default | Semantics |
 |---|---|---|
-| `cairo.commit.mode` | `nosync` | Global commit mode. `nosync` \| `sync` \| `async` \| `adaptive`. Adaptive is opt-in; the default is unchanged from the pre-adaptive release. |
+| `cairo.commit.mode` | `adaptive` | Global commit mode. `nosync` \| `sync` \| `async` \| `adaptive`. Enterprise resolves the default to `nosync` when replication is configured; an explicit value always wins. |
 | `cairo.adaptive.commit.group.window` | `50ms` (`50_000` us) | Group-commit / RPO window. `0` = `fdatasync`-before-ack (zero loss). `> 0` = batched flush, RPO ≤ `W`. Clamped to ≥ 0. |
 | `cairo.adaptive.epoch.interval` | `60000` | Min interval between durable epochs per table. `0` = every apply batch. Negative = epochs disabled (also disables the row cap below). |
 | `cairo.adaptive.epoch.max.rows` | `5_000_000` | Forces an epoch once this many rows are applied to a table since its last one, independent of the interval. Bounds WAL retention + recovery replay under active ingest. `<= 0` disables the cap (interval-only). |
