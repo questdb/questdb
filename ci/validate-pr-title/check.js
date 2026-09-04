@@ -17,10 +17,14 @@ const MARKER = "<!-- pr-title-check -->";
 // are found like our own and removed once the title is fixed.
 const LEGACY_MARKER = "DangerID: danger-id-Danger;";
 
-// The commit status context required by the master ruleset. The name is inherited
-// from Danger; renaming it here without editing the ruleset in the same change
-// blocks every pull request, because the required check would never report.
-const CONTEXT = "Danger";
+// The commit status context required by the master ruleset. This string and the
+// ruleset have to say the same thing: a required check that nothing posts is a
+// check that never reports, and every pull request sits behind it. Renaming it
+// therefore takes a matching ruleset edit, and the two cannot land at the same
+// instant, so one of them has to tolerate the other briefly — see readme.md for
+// the order that keeps nothing blocked. It read "Danger" until the ruleset was
+// moved off that name; the Danger tool itself is long gone.
+const CONTEXT = "PR title";
 
 const apiUrl = process.env.GITHUB_API_URL || "https://api.github.com";
 const repo = process.env.GITHUB_REPOSITORY;

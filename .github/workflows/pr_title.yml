@@ -13,7 +13,7 @@ permissions: {}
 jobs:
   # Deliberately a separate job rather than a first step of `validate`. Run in one
   # job, a broken or flaky test would stop check.js from running at all, and the
-  # "Danger" status the master ruleset requires would never be posted: the pull
+  # "PR title" status the master ruleset requires would never be posted: the pull
   # request would sit behind a required check that is merely missing, which is the
   # exact failure the fail-closed handling in check.js exists to avoid. The rules
   # and the reporting are worth failing on, but not at the cost of the verdict.
@@ -41,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      statuses: write      # the "Danger" commit status the master ruleset requires
+      statuses: write      # the "PR title" commit status the master ruleset requires
       pull-requests: write # write, update and delete the explanation comment
     steps:
       - uses: actions/checkout@v5

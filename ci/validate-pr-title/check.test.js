@@ -103,7 +103,10 @@ async function main() {
     const status = statusOf(calls);
     assert.equal(status.route, "/repos/questdb/questdb/statuses/headsha");
     assert.equal(status.body.state, "failure");
-    assert.equal(status.body.context, "Danger");
+    // Spelled out rather than compared against CONTEXT: this is the string the
+    // master ruleset requires, so a rename has to fail here and send whoever made
+    // it to the ruleset, instead of quietly agreeing with itself.
+    assert.equal(status.body.context, "PR title");
 
     const posted = commentCalls(calls);
     assert.equal(posted.length, 1);
