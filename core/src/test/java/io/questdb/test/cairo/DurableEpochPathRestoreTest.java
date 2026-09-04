@@ -27,6 +27,7 @@ package io.questdb.test.cairo;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -91,6 +92,100 @@ public class DurableEpochPathRestoreTest extends AbstractCairoTest {
                 );
             }
         });
+    }
+
+    /**
+     * The manifest's REJECTION contract: three cases, each asserting {@code validate()} returns false.
+     * <p>
+     * The coverage pass on PR #7411 found {@code DurableEpochManifest.validate()} is entered by the
+     * existing suites and ALWAYS SUCCEEDS -- its happy path is covered and every rejection branch had
+     * zero coverage: the {@code _txn.epoch} payload checksum, the {@code _cv.epoch} payload checksum,
+     * and the {@code metadataVersion} agreement. Those are three of the four conditions the PR
+     * describes as proving an epoch self-consistent before recovery adopts it, so the guarantee rested
+     * on the passing case alone.
+     * <p>
+     * The torn-copy crash tests do not reach them. They corrupt {@code _txn.epoch} and recovery
+     * rejects it earlier, inside {@code RecoveryCoordinator}'s own decode, so they exercise that layer
+     * instead. Calling {@code validate()} directly is what separates the two.
+     */
+    @Test
+    public void testValidateRejectsATamperedTxnEpochPayload() throws Exception {
+        assertMemoryLeak(() -> assertTamperedPayloadIsRejected("mftxn", TableUtils.TXN_FILE_NAME));
+    }
+
+    @Test
+    public void testValidateRejectsATamperedCvEpochPayload() throws Exception {
+        assertMemoryLeak(() -> assertTamperedPayloadIsRejected("mfcv", TableUtils.COLUMN_VERSION_FILE_NAME));
+    }
+
+    @Test
+    public void testValidateRejectsADisagreeingMetadataVersion() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = enrolledAdaptiveTable("mfver");
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(token);
+                final int rootLen = p.size();
+                final long[] h = manifestHeader(token);
+                Assert.assertTrue("precondition: the untouched epoch must validate",
+                        DurableEpochManifest.validate(configuration, token, p, rootLen,
+                                (int) h[0], h[1], h[2], h[3], h[4]));
+                p.trimTo(rootLen);
+                // Identical bytes on disk; only the caller's claimed metadataVersion differs. This is
+                // the _txn <-> _meta agreement, and nothing exercised its failure.
+                Assert.assertFalse("a metadataVersion disagreeing with the manifest must be rejected",
+                        DurableEpochManifest.validate(configuration, token, p, rootLen,
+                                (int) h[0], h[1], h[2], h[3], h[4] + 1));
+            }
+        });
+    }
+
+    /**
+     * Builds an enrolled table, proves its manifest validates, flips one byte inside the named
+     * {@code .epoch} payload, and requires the manifest to reject it. The precondition matters: without
+     * it a build where validate() always returned false would pass every case here.
+     */
+    private void assertTamperedPayloadIsRejected(String table, String payloadName) throws Exception {
+        final TableToken token = enrolledAdaptiveTable(table);
+        try (Path p = new Path()) {
+            p.of(configuration.getDbRoot()).concat(token);
+            final int rootLen = p.size();
+            final long[] h = manifestHeader(token);
+            Assert.assertTrue("precondition: the untouched epoch must validate",
+                    DurableEpochManifest.validate(configuration, token, p, rootLen,
+                            (int) h[0], h[1], h[2], h[3], h[4]));
+
+            final java.io.File payload = new java.io.File(
+                    new java.io.File(configuration.getDbRoot().toString(), token.getDirName()),
+                    payloadName + TableUtils.EPOCH_COPY_SUFFIX + "." + (int) h[0]);
+            Assert.assertTrue("precondition: " + payload.getName() + " must exist", payload.exists());
+            try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(payload, "rw")) {
+                raf.seek(raf.length() / 2);
+                final int b = raf.read();
+                raf.seek(raf.length() / 2);
+                raf.write(b ^ 0xFF);
+            }
+
+            p.trimTo(rootLen);
+            Assert.assertFalse("a tampered " + payload.getName() + " must fail the manifest checksum",
+                    DurableEpochManifest.validate(configuration, token, p, rootLen,
+                            (int) h[0], h[1], h[2], h[3], h[4]));
+        }
+    }
+
+    /**
+     * {generation, seqTxn, txn, columnVersion, metadataVersion} read straight out of the manifest, so
+     * the control call is fed exactly what the file claims rather than values guessed by the test.
+     */
+    private long[] manifestHeader(TableToken token) throws Exception {
+        final java.io.File dir = new java.io.File(configuration.getDbRoot().toString(), token.getDirName());
+        final java.io.File manifest = new java.io.File(dir, DurableEpochManifest.FILE_NAME + ".0");
+        Assert.assertTrue("precondition: a generation-0 manifest must exist", manifest.exists());
+        final byte[] buf = new byte[104];
+        try (java.io.RandomAccessFile raf = new java.io.RandomAccessFile(manifest, "r")) {
+            raf.readFully(buf, 0, Math.min(buf.length, (int) raf.length()));
+        }
+        final java.nio.ByteBuffer bb = java.nio.ByteBuffer.wrap(buf).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        return new long[]{bb.getInt(12), bb.getLong(24), bb.getLong(32), bb.getLong(40), bb.getLong(96)};
     }
 
     /**
