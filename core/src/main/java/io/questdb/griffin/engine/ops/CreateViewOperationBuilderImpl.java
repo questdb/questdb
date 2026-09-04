@@ -39,6 +39,7 @@ import org.jetbrains.annotations.NotNull;
 public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilder, Mutable {
     private final CreateTableOperationBuilderImpl createTableOperationBuilder = new CreateTableOperationBuilderImpl();
     private final LowerCaseCharSequenceObjHashMap<LowerCaseCharSequenceHashSet> dependencies = new LowerCaseCharSequenceObjHashMap<>();
+    private boolean audited;
 
     @Override
     public CreateViewOperation build(SqlCompiler compiler, SqlExecutionContext sqlExecutionContext, CharSequence sqlText) throws SqlException {
@@ -46,7 +47,8 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
         return new CreateViewOperationImpl(
                 Chars.toString(sqlText),
                 createTableOperation,
-                dependencies
+                dependencies,
+                audited
         );
     }
 
@@ -54,6 +56,7 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
     public void clear() {
         createTableOperationBuilder.clear();
         dependencies.clear();
+        audited = false;
     }
 
     public CreateTableOperationBuilderImpl getCreateTableOperationBuilder() {
@@ -81,9 +84,22 @@ public class CreateViewOperationBuilderImpl implements CreateViewOperationBuilde
     }
 
     @Override
+    public boolean isAudited() {
+        return audited;
+    }
+
+    @Override
+    public void setAudited(boolean audited) {
+        this.audited = audited;
+    }
+
+    @Override
     public void toSink(@NotNull CharSink<?> sink) {
         sink.putAscii("create view ");
         sink.put(createTableOperationBuilder.getTableName());
+        if (audited) {
+            sink.putAscii(" with audit");
+        }
         sink.putAscii(" as (");
         if (createTableOperationBuilder.getQueryModel() != null) {
             createTableOperationBuilder.getQueryModel().toSink(sink);

@@ -4944,7 +4944,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileViewQuery(executionContext, createViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
-                            newCursor = newFactory.getCursor(executionContext);
+                            // This cursor exists to report column types, not to hand anyone rows.
+                            // Flag it so that an audited view in the SELECT does not record a read.
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(false);
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -5014,6 +5021,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         securityContext.authorizeLiveViewDrop(tableToken);
                     } else if (tableToken.isView()) {
                         securityContext.authorizeViewDrop(tableToken);
+                        if (isAuditedView(tableToken)) {
+                            securityContext.authorizeAuditView();
+                        }
                     } else if (tableToken.isMatView()) {
                         securityContext.authorizeMatViewDrop(tableToken);
                     } else {
@@ -5131,6 +5141,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(op.getEntityNamePosition(), "table name expected, got ").put(tableToken.getType().keyword()).put(" name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        checkTableDroppable(tableToken);
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -5169,6 +5180,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");
         }
         sqlExecutionContext.getSecurityContext().authorizeViewDrop(tableToken);
+        if (isAuditedView(tableToken)) {
+            // Dropping is the only route by which an audited view loses its auditing - CREATE OR
+            // REPLACE and ALTER VIEW both carry the flag forward - so it is gated like setting it.
+            sqlExecutionContext.getSecurityContext().authorizeAuditView();
+        }
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -5908,6 +5924,31 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     protected AlterOperationBuilder createAlterOperationBuilder() {
         return new AlterOperationBuilder();
+    }
+
+    /**
+     * Exposed so that a subclass can compile expressions the base compiler captured but does not
+     * itself consume - the audited-view parameters, which Enterprise turns into functions.
+     */
+    private boolean isAuditedView(TableToken tableToken) {
+        if (!tableToken.isView()) {
+            return false;
+        }
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(tableToken);
+        return viewDefinition != null && viewDefinition.isAudited();
+    }
+
+    /**
+     * Vetoes dropping a specific table outright, independently of permissions. Distinct from
+     * {@code isProtected()}, which denies every kind of access: a table can be readable, writable
+     * and truncatable by anyone holding the permission, yet still be one the database refuses to
+     * let go of. Overridden by Enterprise for the view audit table.
+     */
+    protected void checkTableDroppable(TableToken tableToken) {
+    }
+
+    protected FunctionParser getFunctionParser() {
+        return functionParser;
     }
 
     protected RecordCursorFactory generateSelectOneShot(

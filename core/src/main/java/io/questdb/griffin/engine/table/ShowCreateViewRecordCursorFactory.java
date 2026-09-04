@@ -208,6 +208,9 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
             ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getViewSql());
             sink.putAscii('\n');
             sink.putAscii(')');
+            if (viewDefinition.isAudited()) {
+                sink.putAscii(" WITH AUDIT");
+            }
             putAdditional();
             sink.putAscii(';');
         }

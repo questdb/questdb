@@ -286,6 +286,11 @@ public abstract class AbstractReadOnlySecurityContext extends AbstractPrincipalA
     }
 
     @Override
+    public void authorizeAuditView() {
+        throw CairoException.authorization().put("Write permission denied").setCacheable(true);
+    }
+
+    @Override
     public void authorizeViewCreate() {
         throw CairoException.authorization().put("Write permission denied").setCacheable(true);
     }
