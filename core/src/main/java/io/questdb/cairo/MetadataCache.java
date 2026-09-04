@@ -306,8 +306,10 @@ public class MetadataCache implements QuietCloseable {
                 ids = copyTableIds(current.tableIds, 1);
                 ids.add(tableId);
             }
-            // Publish the pending IDs independently from active IDs: the parser must distinguish an active,
-            // cache-resident policy from a transition whose policy must come from authoritative metadata.
+            // A pending table ID intentionally appears in both sets. tableIds keeps mayHaveExpiryPolicy() and
+            // mayTableHaveExpiryPolicy() open so the parser reaches the pending-aware lookup; pendingTableIds
+            // then makes that lookup use authoritative metadata and classify the source as transitioning.
+            // Removing a pending ID from tableIds would let a first SET compile as a policy-free raw source.
             expiryPolicySnapshot = new ExpiryPolicySnapshot(
                     ids,
                     copyTableIds(pendingExpiryPolicyIds, 0),
@@ -1164,6 +1166,14 @@ public class MetadataCache implements QuietCloseable {
 
         public boolean isPending() {
             return pending;
+        }
+
+        /**
+         * Compares only the global policy generation. Materialization uses this after separately excluding a
+         * pending resolved source, so a steady pending marker on an unrelated table is not a liveness gate.
+         */
+        public boolean hasSameVersion(ExpiryPolicyGuard other) {
+            return version == other.version;
         }
 
         public boolean isStableWith(ExpiryPolicyGuard other) {

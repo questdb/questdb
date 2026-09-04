@@ -1516,11 +1516,25 @@ public class SqlParser {
      * hash-map get, no pool borrow, no file I/O on a cache hit. See class/PR notes for the
      * cache-miss caveat.
      */
-    private String lookupExpiryPredicate(TableToken tableToken) {
+    private String lookupExpiryPredicate(TableToken tableToken, ExpiryReadPolicy expiryReadPolicy) {
         expiryPolicyTable = null;
         expiryTimestampColumnName = null;
         final MetadataCache metadataCache = cairoEngine.getMetadataCache();
-        final MetadataCache.ExpiryPolicyInfo policy = metadataCache.lookupExpiryPolicy(tableToken);
+        if (expiryReadPolicy == ExpiryReadPolicy.REJECT && metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
+            throw ExpiryPolicyVersionChangedException.INSTANCE;
+        }
+        final MetadataCache.ExpiryPolicyInfo policy;
+        try {
+            policy = metadataCache.lookupExpiryPolicy(tableToken);
+        } catch (CairoException e) {
+            if (expiryReadPolicy == ExpiryReadPolicy.REJECT && metadataCache.isExpiryPolicyUpdatePending(tableToken)) {
+                throw ExpiryPolicyVersionChangedException.INSTANCE;
+            }
+            throw e;
+        }
+        if (expiryReadPolicy == ExpiryReadPolicy.REJECT && policy.isPending()) {
+            throw ExpiryPolicyVersionChangedException.INSTANCE;
+        }
         expiryPolicyTable = policy.getCachedTable();
         expiryTimestampColumnName = policy.getTimestampName();
         if (policy.isPending()) {
@@ -6689,7 +6703,7 @@ public class SqlParser {
                     final ExpiryReadPolicy expiryReadPolicy = getExpiryReadPolicyFor(tt);
                     if (expiryReadPolicy != ExpiryReadPolicy.RAW
                             && cairoEngine.getMetadataCache().mayTableHaveExpiryPolicy(tt)
-                            && (predicate = lookupExpiryPredicate(tt)) != null) {
+                            && (predicate = lookupExpiryPredicate(tt, expiryReadPolicy)) != null) {
                         if (expiryReadPolicy == ExpiryReadPolicy.REJECT) {
                             final CharSequence dependentName = expiryFilterExecutionContext.getExpiryMaterializingViewName();
                             assert dependentName != null;

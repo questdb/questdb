@@ -31,13 +31,19 @@ import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
+import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
+import io.questdb.cairo.mv.MatViewStateStoreImpl;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.griffin.ExpiryPolicyVersionChangedException;
+import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.ExpiryValidationResult;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
@@ -206,6 +212,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         // the mark would leave reads on the old policy with nothing to signal the mismatch.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table stranded_mv_base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table stranded_lv_base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             execute("insert into base values ('A', 1.0, '2024-01-01T00:00:00.000000Z')");
             drainWalAndMatViewQueues();
             execute("create materialized view mv as (select * from base) expire rows when v < 2.0");
@@ -233,6 +241,24 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                         "the pending mark must survive a failure after the policy is published",
                         engine.getMetadataCache().isExpiryPolicyUpdatePending(token)
                 );
+
+                execute("create materialized view stranded_unrelated_mv as (select * from stranded_mv_base)");
+                execute("create live view stranded_unrelated_lv flush every 1s start from now as "
+                        + "select ts, v, count(*) over (partition by sym order by ts "
+                        + "rows between 1_000_000 preceding and current row) as rn from stranded_lv_base");
+                Assert.assertNotNull(engine.getTableTokenIfExists("stranded_unrelated_mv"));
+                Assert.assertNotNull(engine.getTableTokenIfExists("stranded_unrelated_lv"));
+
+                boolean affectedCreateDeferred = false;
+                try {
+                    execute("create materialized view stranded_affected_mv as (select * from mv)");
+                } catch (SqlException e) {
+                    affectedCreateDeferred = true;
+                    TestUtils.assertContains(e.getFlyweightMessage(), "too many row-expiry policy changes during compilation");
+                }
+                Assert.assertTrue("CREATE over the stranded source must exhaust bounded drift retries",
+                        affectedCreateDeferred);
+                Assert.assertNull(engine.getTableTokenIfExists("stranded_affected_mv"));
             } finally {
                 TableWriter.setExpiryMetaCommitBarrier(null);
             }
@@ -1075,6 +1101,211 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStrandedUnrelatedMarkerLetsFactoryConvergeOnce() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table policy_base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table target_base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view pending_source as (select * from policy_base)");
+            execute("create materialized view target_mv as (select * from target_base)");
+            drainWalAndMatViewQueues();
+
+            final TableToken pendingSource = engine.verifyTableName("pending_source");
+            final TableToken targetToken = engine.verifyTableName("target_mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(targetToken);
+            Assert.assertNotNull(state);
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(task)) {
+                // discard any CREATE-time work
+            }
+
+            engine.getMetadataCache().markExpiryPolicyPossible(pendingSource.getTableId());
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                final long pendingVersion = engine.getMetadataCache().getExpiryPolicyVersion();
+                store.enqueueIncrementalRefresh(targetToken);
+                job.run();
+                Assert.assertFalse("an unrelated steady marker must not defer refresh",
+                        store.tryDequeueRefreshTask(task));
+
+                final RecordCursorFactory convergedFactory;
+                Assert.assertTrue(state.tryLock());
+                try {
+                    Assert.assertEquals(pendingVersion, state.getRecordFactoryExpiryPolicyVersion());
+                    convergedFactory = state.acquireRecordFactory();
+                    Assert.assertNotNull(convergedFactory);
+                    state.returnRecordFactory(
+                            convergedFactory,
+                            state.getRecordToRowCopier(),
+                            state.getRecordRowCopierMetadataVersion(),
+                            state.getRecordFactoryExpiryPolicyVersion()
+                    );
+                } finally {
+                    state.unlock();
+                }
+
+                store.enqueueIncrementalRefresh(targetToken);
+                job.run();
+                Assert.assertFalse("a second refresh at the same pending version must not defer",
+                        store.tryDequeueRefreshTask(task));
+                Assert.assertTrue(state.tryLock());
+                try {
+                    final RecordCursorFactory reusedFactory = state.acquireRecordFactory();
+                    Assert.assertSame("the steady unrelated marker must not cause repeated recompilation",
+                            convergedFactory, reusedFactory);
+                    state.returnRecordFactory(
+                            reusedFactory,
+                            state.getRecordToRowCopier(),
+                            state.getRecordRowCopierMetadataVersion(),
+                            state.getRecordFactoryExpiryPolicyVersion()
+                    );
+                } finally {
+                    state.unlock();
+                }
+            } finally {
+                engine.getMetadataCache().cancelExpiryPolicyUpdate(pendingSource.getTableId());
+            }
+        });
+    }
+
+    @Test
+    public void testPendingDropIsDriftInsteadOfStablePolicyConflict() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view source_mv as (select * from base) expire rows when v < 0");
+            drainWalAndMatViewQueues();
+
+            final TableToken sourceToken = engine.verifyTableName("source_mv");
+            engine.getMetadataCache().markExpiryPolicyPossible(sourceToken.getTableId());
+            final ExpiryReadPolicy previousPolicy = sqlExecutionContext.getExpiryReadPolicy();
+            final CharSequence previousMaterializingViewName = sqlExecutionContext.getExpiryMaterializingViewName();
+            sqlExecutionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, "dependent_mv");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                Assert.assertThrows(
+                        "a pending DROP must defer instead of invalidating from the old active predicate",
+                        ExpiryPolicyVersionChangedException.class,
+                        () -> compiler.compile("select * from source_mv", sqlExecutionContext)
+                );
+            } finally {
+                sqlExecutionContext.setExpiryReadPolicy(previousPolicy, previousMaterializingViewName);
+                engine.getMetadataCache().cancelExpiryPolicyUpdate(sourceToken.getTableId());
+            }
+        });
+    }
+
+    @Test
+    public void testPendingUnrelatedSourceDoesNotDeferLiveViewRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table policy_base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table lv_base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("insert into lv_base values ('A', 1.0, '2024-01-01T00:00:00.000000Z')");
+            execute("create materialized view pending_source as (select * from policy_base)");
+            drainWalAndMatViewQueues();
+            execute("create live view unrelated_lv flush every 1s start from beginning as "
+                    + "select ts, v, count(*) over (partition by sym order by ts "
+                    + "rows between 1_000_000 preceding and current row) as rn from lv_base");
+
+            final TableToken pendingSource = engine.verifyTableName("pending_source");
+            final TableToken lvBase = engine.verifyTableName("lv_base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("unrelated_lv");
+            Assert.assertNotNull(instance);
+
+            engine.getMetadataCache().markExpiryPolicyPossible(pendingSource.getTableId());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final long baseWriterTxn = engine.getTableSequencerAPI().getTxnTracker(lvBase).getWriterTxn();
+                Assert.assertTrue("an unrelated steady marker must not defer a live-view seed turn",
+                        job.refreshInstanceForTest(instance, baseWriterTxn));
+                Assert.assertEquals(0L, instance.getRefreshFaultCount());
+                Assert.assertFalse(instance.isInvalid());
+            } finally {
+                engine.getMetadataCache().cancelExpiryPolicyUpdate(pendingSource.getTableId());
+            }
+        });
+    }
+
+    @Test
+    public void testPendingRelevantSourceDefersLiveViewWithoutFailureAccounting() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view source_mv as (select * from base)");
+            drainWalAndMatViewQueues();
+            execute("create live view dependent_lv flush every 1s start from now as "
+                    + "select ts, v, count(*) over (partition by sym order by ts "
+                    + "rows between 1_000_000 preceding and current row) as rn from source_mv");
+
+            final TableToken sourceToken = engine.verifyTableName("source_mv");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("dependent_lv");
+            Assert.assertNotNull(instance);
+            final long faultsBefore = instance.getRefreshFaultCount();
+
+            engine.getMetadataCache().markExpiryPolicyPossible(sourceToken.getTableId());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                Assert.assertFalse(job.refreshInstanceForTest(instance, instance.getLastProcessedSeqTxn()));
+                Assert.assertEquals("pending-policy deferral must not consume live-view failure accounting",
+                        faultsBefore, instance.getRefreshFaultCount());
+                Assert.assertFalse("pending-policy deferral must not invalidate the live view", instance.isInvalid());
+            } finally {
+                engine.getMetadataCache().cancelExpiryPolicyUpdate(sourceToken.getTableId());
+            }
+        });
+    }
+
+    @Test
+    public void testPendingRelevantSourceDefersSameRefreshKind() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create materialized view source_mv as (select * from base)");
+            execute("create materialized view dependent_mv refresh manual deferred as (select * from source_mv)");
+            drainWalAndMatViewQueues();
+
+            final TableToken sourceToken = engine.verifyTableName("source_mv");
+            final TableToken dependentToken = engine.verifyTableName("dependent_mv");
+            final MatViewStateStoreImpl store = (MatViewStateStoreImpl) engine.getMatViewStateStore();
+            final MatViewState state = store.getViewState(dependentToken);
+            Assert.assertNotNull(state);
+
+            final MatViewRefreshTask task = new MatViewRefreshTask();
+            while (store.tryDequeueRefreshTask(task)) {
+                // discard CREATE-time work so every assertion below observes only its explicit request
+            }
+
+            engine.getMetadataCache().markExpiryPolicyPossible(sourceToken.getTableId());
+            try (MatViewRefreshJob job = createMatViewRefreshJob()) {
+                store.enqueueIncrementalRefresh(dependentToken);
+                job.run();
+                Assert.assertTrue("incremental deferral must enqueue a replacement task",
+                        store.tryDequeueRefreshTask(task));
+                Assert.assertEquals(MatViewRefreshTask.INCREMENTAL_REFRESH, task.operation);
+                Assert.assertEquals(dependentToken, task.matViewToken);
+
+                final long rangeFrom = 11L;
+                final long rangeTo = Long.MAX_VALUE - 1;
+                store.enqueueRangeRefresh(dependentToken, rangeFrom, rangeTo);
+                job.run();
+                Assert.assertTrue("range deferral must enqueue a replacement task",
+                        store.tryDequeueRefreshTask(task));
+                Assert.assertEquals(MatViewRefreshTask.RANGE_REFRESH, task.operation);
+                Assert.assertEquals(rangeFrom, task.rangeFrom);
+                Assert.assertEquals(rangeTo, task.rangeTo);
+
+                state.markAsPendingFullRefreshForTesting();
+                final Object fullOwner = state.getPendingFullRefreshOwnerForTesting();
+                Assert.assertNotNull(fullOwner);
+                store.enqueueFullRefresh(dependentToken, fullOwner);
+                job.run();
+                Assert.assertTrue("full deferral must enqueue a replacement task",
+                        store.tryDequeueRefreshTask(task));
+                Assert.assertEquals(MatViewRefreshTask.FULL_REFRESH, task.operation);
+                Assert.assertSame(fullOwner, task.fullRefreshOwner);
+
+                Assert.assertFalse("pending-source deferral must not invalidate the dependent", state.isInvalid());
+                Assert.assertFalse("only the exact deferred request may remain queued", store.tryDequeueRefreshTask(task));
+            } finally {
+                engine.getMetadataCache().cancelExpiryPolicyUpdate(sourceToken.getTableId());
+            }
+        });
+    }
+
+    @Test
     public void testRootLevelAggregatePredicateRejected() throws Exception {
         // The sweep's keep-filter embeds the predicate as a CASE argument, where an aggregate is illegal. The
         // function parser rejects an aggregate only when it is an argument of another function, so a
@@ -1334,6 +1565,8 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
         // reports the canonical source-policy conflict.
         assertMemoryLeak(() -> {
             execute("create table base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table unrelated_mv_base (v double, ts timestamp) timestamp(ts) partition by day wal");
+            execute("create table unrelated_lv_base (sym symbol, v double, ts timestamp) timestamp(ts) partition by day wal");
             drainWalAndMatViewQueues();
             execute("create materialized view a as (select * from base)");
             drainWalAndMatViewQueues();
@@ -1343,7 +1576,7 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
             final CountDownLatch resumeSwap = new CountDownLatch(1);
             final AtomicReference<Throwable> applyError = new AtomicReference<>();
 
-            // Sequenced while a has no dependents, so both of the ALTER's own dependents checks pass.
+            // Sequence the policy change, then pause its WAL application inside the publication window.
             execute("alter materialized view a set expire rows when v < 2.0");
 
             // Pause the WAL-apply writer after it marks the transition and before it swaps _meta: exactly the
@@ -1376,6 +1609,28 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                         "writer did not reach the pre-swap barrier",
                         swapBarrierReached.await(30, TimeUnit.SECONDS)
                 );
+
+                final ExpiryReadPolicy previousPolicy = sqlExecutionContext.getExpiryReadPolicy();
+                final CharSequence previousMaterializingViewName = sqlExecutionContext.getExpiryMaterializingViewName();
+                sqlExecutionContext.setExpiryReadPolicy(ExpiryReadPolicy.REJECT, "pending_probe");
+                try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                    Assert.assertThrows(
+                            "REJECT compilation must surface a pending first SET even though _meta has no predicate yet",
+                            ExpiryPolicyVersionChangedException.class,
+                            () -> compiler.compile("select * from a", sqlExecutionContext)
+                    );
+                } finally {
+                    sqlExecutionContext.setExpiryReadPolicy(previousPolicy, previousMaterializingViewName);
+                }
+
+                execute("create materialized view unrelated_mv as (select * from unrelated_mv_base)");
+                execute("create live view unrelated_lv flush every 1s start from now as "
+                        + "select ts, v, count(*) over (partition by sym order by ts "
+                        + "rows between 1_000_000 preceding and current row) as rn from unrelated_lv_base");
+                Assert.assertNotNull("unrelated MV CREATE must ignore a steady pending marker",
+                        engine.getTableTokenIfExists("unrelated_mv"));
+                Assert.assertNotNull("unrelated LV CREATE must ignore a steady pending marker",
+                        engine.getTableTokenIfExists("unrelated_lv"));
 
                 boolean rejected = false;
                 try {

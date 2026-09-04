@@ -27,17 +27,15 @@ package io.questdb.griffin;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 
 /**
- * Thrown when a query's EXPIRE ROWS keep-filter was chosen from a table metadata version that a concurrent
- * SET/DROP EXPIRE has already replaced, so the reader opens a newer version than the parser read the policy
- * at. It extends {@link TableReferenceOutOfDateException}, so the CREATE/ALTER VIEW, materialized-view refresh
- * and CREATE-AS-SELECT compile loops that already retry on a stale table reference retry on this one too.
- * {@link SqlCompilerImpl} catches this exact subclass so it can also retry plain SELECT and INSERT-AS-SELECT,
- * while the plain {@link TableReferenceOutOfDateException} that an UPDATE raises still travels its own path.
+ * Thrown when an EXPIRE ROWS decision cannot be used because the resolved source is in a policy transition,
+ * or because a keep-filter was chosen from a metadata version that a concurrent SET/DROP EXPIRE has already
+ * replaced. It extends {@link TableReferenceOutOfDateException}, so callers can use their existing metadata
+ * drift retry or deferral paths. {@link SqlCompilerImpl} retries the signal internally for ordinary compilation,
+ * while materializing compilation propagates it to the CREATE or refresh operation that owns the stable guard.
  * <p>
- * One shared instance is thrown as a control-flow signal. The compiler always catches and retries it, so its
- * stack trace is never shown.
+ * One shared instance is thrown as a control-flow signal; its stack trace is never shown.
  */
-class ExpiryPolicyVersionChangedException extends TableReferenceOutOfDateException {
+public final class ExpiryPolicyVersionChangedException extends TableReferenceOutOfDateException {
     static final ExpiryPolicyVersionChangedException INSTANCE = new ExpiryPolicyVersionChangedException();
     private static final String MESSAGE =
             "cached query plan cannot be used because the row-expiry policy changed during compilation";

@@ -512,6 +512,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return retryPendingLiveViewApply(instance);
     }
 
+    /**
+     * Test-only: drives one view through the real refresh entry point so policy-preflight tests can assert
+     * deferral and failure accounting without relying on notification or fallback-scan timing.
+     */
+    @TestOnly
+    public boolean refreshInstanceForTest(LiveViewInstance instance, long seqTxn) {
+        return refreshInstance(instance, seqTxn);
+    }
+
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
         // workerId is the fixed per-worker identity captured at assign(int, job)
@@ -9239,9 +9248,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private String preflightExpiryPolicy(LiveViewInstance instance) {
         final MetadataCache metadataCache = engine.getMetadataCache();
         final MetadataCache.ExpiryPolicyGuard initialGuard = metadataCache.sampleExpiryPolicyGuard();
-        if (initialGuard.isPending()) {
-            return EXPIRY_PREFLIGHT_DEFERRED;
-        }
 
         final LiveViewDefinition definition = instance.getDefinition();
         final TableToken baseToken = engine.getTableTokenIfExists(definition.getBaseTableName());
@@ -9249,17 +9255,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             throw CairoException.tableDoesNotExist(definition.getBaseTableName());
         }
         final MetadataCache.ExpiryPolicyInfo policy;
+        if (metadataCache.isExpiryPolicyUpdatePending(baseToken)) {
+            return EXPIRY_PREFLIGHT_DEFERRED;
+        }
         try {
             policy = metadataCache.lookupExpiryPolicy(baseToken);
         } catch (CairoException e) {
+            if (metadataCache.isExpiryPolicyUpdatePending(baseToken)) {
+                return EXPIRY_PREFLIGHT_DEFERRED;
+            }
             final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-            if (!initialGuard.isStableWith(finalGuard)) {
+            if (!initialGuard.hasSameVersion(finalGuard)) {
                 return EXPIRY_PREFLIGHT_DEFERRED;
             }
             throw e;
         }
+        if (policy.isPending()) {
+            return EXPIRY_PREFLIGHT_DEFERRED;
+        }
         final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-        if (!initialGuard.isStableWith(finalGuard)) {
+        if (!initialGuard.hasSameVersion(finalGuard)) {
             return EXPIRY_PREFLIGHT_DEFERRED;
         }
         if (policy.getPredicate() != null) {

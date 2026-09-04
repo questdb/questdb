@@ -3618,14 +3618,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private ExecutionModel compileExecutionModel(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
-        // Re-parse and re-optimise here when a racing EXPIRE ROWS change moves the metadata version past the
-        // one the parser chose the keep-filter from. This is the single place the throw comes from, so handling
-        // it here covers every caller - the first parse and every re-parse in the retry loops below - and none
-        // of them has to turn it into an error. Bounded so a burst of policy changes cannot loop forever.
+        // Re-parse and re-optimise here when a racing EXPIRE ROWS change invalidates the parser's policy
+        // decision. Ordinary compilation owns this retry. Materializing compilation entered in REJECT mode
+        // propagates the signal to its outer CREATE or refresh guard so one event cannot consume two budgets.
+        // Bounded so a burst of policy changes cannot loop forever.
         int remainingExpiryPolicyRetries = maxRecompileAttempts;
+        final boolean rejectExpiryOnEntry = executionContext.getExpiryReadPolicy() == ExpiryReadPolicy.REJECT;
         for (; ; ) {
-            final ExecutionModel model = parser.parse(lexer, executionContext, this);
+            ExecutionModel model = null;
             try {
+                model = parser.parse(lexer, executionContext, this);
                 if (model.getModelType() != ExecutionModel.EXPLAIN) {
                     return compileExecutionModel0(executionContext, model);
                 } else {
@@ -3635,11 +3637,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     return explainModel;
                 }
             } catch (ExpiryPolicyVersionChangedException e) {
+                if (rejectExpiryOnEntry) {
+                    throw e;
+                }
                 if (--remainingExpiryPolicyRetries < 0) {
                     // Out of retries: enqueue view compiles the same way the general failure path below does
                     // (a harmless re-check signal), then report a plain error. The earlier retries loop back
                     // instead of returning, so they leave this out.
-                    if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                    if (model != null && generateCompileViewEvents && !executionContext.isValidationOnly()) {
                         enqueueCompileViews(model);
                     }
                     throw SqlException.position(0).put("too many row-expiry policy changes during compilation");
@@ -3649,7 +3654,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 clearExceptSqlText();
                 lexer.restart();
             } catch (Throwable e) {
-                if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                if (model != null && generateCompileViewEvents && !executionContext.isValidationOnly()) {
                     enqueueCompileViews(model);
                 }
                 throw e;
@@ -4745,7 +4750,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw e;
                     }
                     final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-                    if (initialGuard.isStableWith(finalGuard)) {
+                    if (initialGuard.hasSameVersion(finalGuard)) {
                         throw e;
                     }
                     if (rejectExpiryOnEntry) {
@@ -4763,7 +4768,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         || executionModel.getModelType() == ExecutionModel.CREATE_MAT_VIEW
                         || executionModel.getModelType() == ExecutionModel.CREATE_LIVE_VIEW;
                 if (isMaterializing
-                        ? initialGuard.isStableWith(finalGuard)
+                        ? initialGuard.hasSameVersion(finalGuard)
                         : expiryPolicyVersion == finalGuard.getVersion()) {
                     break;
                 }
@@ -5302,12 +5307,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         RecordCursorFactory newFactory = null;
                         RecordCursor newCursor = null;
                         try {
-                            if (initialGuard.isPending()) {
-                                if (retryCount == maxRecompileAttempts) {
-                                    throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
-                                }
-                                continue;
-                            }
                             compileMatViewQuery(executionContext, createMatViewOp);
                             newFactory = compiledQuery.getRecordCursorFactory();
                             newCursor = newFactory.getCursor(executionContext);
@@ -5319,7 +5318,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             validateCreateMatViewExpiryPolicy(executionContext, createMatViewOp, createTableOp, metadata);
 
                             final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-                            if (!initialGuard.isStableWith(finalGuard)) {
+                            if (!initialGuard.hasSameVersion(finalGuard)) {
                                 if (retryCount == maxRecompileAttempts) {
                                     throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
                                 }
@@ -5339,6 +5338,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             matViewToken = matViewDefinition.getMatViewToken();
                             break;
                         } catch (TableReferenceOutOfDateException e) {
+                            if (e instanceof ExpiryPolicyVersionChangedException) {
+                                if (retryCount == maxRecompileAttempts) {
+                                    throw SqlException.position(0).put("too many row-expiry policy changes during materialized view compilation");
+                                }
+                                LOG.info().$("retrying materialized view after row-expiry policy change [q=`")
+                                        .$(createTableOp.getSelectText()).$("`]").$();
+                                continue;
+                            }
                             if (retryCount == maxRecompileAttempts) {
                                 throw SqlException.$(0, e.getFlyweightMessage());
                             }
@@ -5348,7 +5355,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 throw e;
                             }
                             final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-                            if (initialGuard.isStableWith(finalGuard)) {
+                            if (initialGuard.hasSameVersion(finalGuard)) {
                                 throw e;
                             }
                             if (retryCount == maxRecompileAttempts) {

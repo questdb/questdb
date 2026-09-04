@@ -116,6 +116,8 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.cutlass.text.CopyImportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.ExecutionState;
+import io.questdb.griffin.ExpiryPolicyVersionChangedException;
+import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryCacheBuilder;
@@ -125,7 +127,6 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerFactoryImpl;
 import io.questdb.griffin.SqlException;
-import io.questdb.griffin.ExpiryReadPolicy;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -1453,12 +1454,6 @@ public class CairoEngine implements Closeable, WriterSource {
         final BoolList outputSymbolCacheFlags = new BoolList();
         for (int retryCount = 0; ; retryCount++) {
             final MetadataCache.ExpiryPolicyGuard initialGuard = metadataCache.sampleExpiryPolicyGuard();
-            if (initialGuard.isPending()) {
-                if (retryCount == configuration.getMaxSqlRecompileAttempts()) {
-                    throw SqlException.position(0).put("too many row-expiry policy changes during live view compilation");
-                }
-                continue;
-            }
             dependencyColumnNames.clear();
             dependencyColumnTypes.clear();
             outputSymbolCacheFlags.clear();
@@ -1596,8 +1591,14 @@ public class CairoEngine implements Closeable, WriterSource {
                 }
             }
             } catch (TableReferenceOutOfDateException e) {
+                if (e instanceof ExpiryPolicyVersionChangedException) {
+                    if (retryCount == configuration.getMaxSqlRecompileAttempts()) {
+                        throw SqlException.position(0).put("too many row-expiry policy changes during live view compilation");
+                    }
+                    continue;
+                }
                 final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-                if (initialGuard.isStableWith(finalGuard)) {
+                if (initialGuard.hasSameVersion(finalGuard)) {
                     throw e;
                 }
                 if (retryCount == configuration.getMaxSqlRecompileAttempts()) {
@@ -1606,7 +1607,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 continue;
             } catch (SqlException e) {
                 final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-                if (!e.isMaterializationExpiryConflict() || initialGuard.isStableWith(finalGuard)) {
+                if (!e.isMaterializationExpiryConflict() || initialGuard.hasSameVersion(finalGuard)) {
                     throw e;
                 }
                 if (retryCount == configuration.getMaxSqlRecompileAttempts()) {
@@ -1615,7 +1616,7 @@ public class CairoEngine implements Closeable, WriterSource {
                 continue;
             }
             final MetadataCache.ExpiryPolicyGuard finalGuard = metadataCache.sampleExpiryPolicyGuard();
-            if (initialGuard.isStableWith(finalGuard)) {
+            if (initialGuard.hasSameVersion(finalGuard)) {
                 break;
             }
             if (retryCount == configuration.getMaxSqlRecompileAttempts()) {

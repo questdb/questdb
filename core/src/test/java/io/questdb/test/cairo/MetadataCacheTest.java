@@ -1186,6 +1186,43 @@ public class MetadataCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPendingFirstExpiryPolicyRemainsVisibleToParserGate() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+            execute("CREATE TABLE base (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base)");
+            drainWalQueue();
+
+            final MetadataCache cache = engine.getMetadataCache();
+            cache.onStartupAsyncHydrator();
+            final TableToken mv = engine.verifyTableName("mv");
+            Assert.assertFalse("precondition: a hydrated policy-free view must close the per-table gate",
+                    cache.mayTableHaveExpiryPolicy(mv));
+
+            final MetadataCache.ExpiryPolicyGuard beforeMark = cache.sampleExpiryPolicyGuard();
+            cache.markExpiryPolicyPossible(mv.getTableId());
+            try {
+                final MetadataCache.ExpiryPolicyGuard firstGuard = cache.sampleExpiryPolicyGuard();
+                Assert.assertFalse("a transition starting after an initial sample must change its generation",
+                        beforeMark.hasSameVersion(firstGuard));
+                Assert.assertTrue("a pending first SET must open the parser's per-table gate",
+                        cache.mayTableHaveExpiryPolicy(mv));
+                Assert.assertTrue(cache.isExpiryPolicyUpdatePending(mv));
+                final MetadataCache.ExpiryPolicyInfo policy = cache.lookupExpiryPolicy(mv);
+                Assert.assertTrue(policy.isPending());
+                Assert.assertNull("_meta is still policy-free before the first SET publishes", policy.getPredicate());
+                final MetadataCache.ExpiryPolicyGuard secondGuard = cache.sampleExpiryPolicyGuard();
+                Assert.assertTrue("a steady pending marker has an unchanged generation",
+                        firstGuard.hasSameVersion(secondGuard));
+                Assert.assertFalse("the legacy database-wide stability contract remains unchanged",
+                        firstGuard.isStableWith(secondGuard));
+            } finally {
+                cache.cancelExpiryPolicyUpdate(mv.getTableId());
+            }
+        });
+    }
+
+    @Test
     public void testPendingExpiryPolicyCancellationPreservesActivePolicy() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.DEV_MODE_ENABLED, "true");

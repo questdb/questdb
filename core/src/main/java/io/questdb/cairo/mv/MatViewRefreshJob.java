@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.ExpiryPolicyVersionChangedException;
 import io.questdb.griffin.RecordToRowCopier;
 import io.questdb.griffin.RecordToRowCopierUtils;
 import io.questdb.griffin.SqlCompiler;
@@ -1215,10 +1216,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         final TableToken viewToken = viewDefinition.getMatViewToken();
         final MetadataCache.ExpiryPolicyGuard initialGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-        if (initialGuard.isPending()) {
-            deferRefreshSameKind(viewToken, refreshTask);
-            return PREFLIGHT_DEFERRED;
-        }
 
         RecordCursorFactory factory = null;
         RecordToRowCopier copier = viewState.getRecordToRowCopier();
@@ -1259,7 +1256,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             }
 
             final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-            if (!initialGuard.isStableWith(finalGuard)) {
+            if (!initialGuard.hasSameVersion(finalGuard)) {
                 factory = Misc.free(factory);
                 if (refreshStartStamped) {
                     viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
@@ -1279,8 +1276,15 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             returned = true;
             return PREFLIGHT_READY;
         } catch (TableReferenceOutOfDateException e) {
+            if (e instanceof ExpiryPolicyVersionChangedException) {
+                if (refreshStartStamped) {
+                    viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
+                }
+                deferRefreshSameKind(viewToken, refreshTask);
+                return PREFLIGHT_DEFERRED;
+            }
             final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-            if (!initialGuard.isStableWith(finalGuard)) {
+            if (!initialGuard.hasSameVersion(finalGuard)) {
                 if (refreshStartStamped) {
                     viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
                 }
@@ -1290,7 +1294,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             throw e;
         } catch (SqlException e) {
             final MetadataCache.ExpiryPolicyGuard finalGuard = engine.getMetadataCache().sampleExpiryPolicyGuard();
-            if (e.isMaterializationExpiryConflict() && !initialGuard.isStableWith(finalGuard)) {
+            if (e.isMaterializationExpiryConflict() && !initialGuard.hasSameVersion(finalGuard)) {
                 if (refreshStartStamped) {
                     viewState.setLastRefreshStartTimestampUs(previousRefreshStartTimestamp);
                 }
