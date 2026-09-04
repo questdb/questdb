@@ -221,6 +221,66 @@ public class WriteBarrierCheckTest {
     // Octal-escape decoding in mount points
     // -----------------------------------------------------------------------
 
+    /**
+     * A dbRoot carrying a trailing slash must still match its mount. {@code cairo.root=/data/qdb/} is
+     * an ordinary way to write the config, and the normalisation that strips the slash had no test --
+     * without it the prefix match fails and the mount is never found, so a nobarrier filesystem would
+     * silently classify as UNKNOWN instead of DISABLED.
+     */
+    @Test
+    public void testTrailingSlashOnDbRootStillMatchesItsMount() {
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data ext4 rw,relatime,nobarrier 0 0\n";
+        Assert.assertEquals("a trailing slash on dbRoot must not defeat the mount match",
+                WriteBarrierCheck.BARRIERS_DISABLED, WriteBarrierCheck.classify(mounts, "/data/"));
+        Assert.assertEquals("and must agree with the unslashed form",
+                WriteBarrierCheck.classify(mounts, "/data"), WriteBarrierCheck.classify(mounts, "/data/"));
+    }
+
+    /**
+     * The same normalisation on the other side: a mountpoint written with a trailing slash in
+     * /proc/mounts must still match.
+     */
+    @Test
+    public void testTrailingSlashOnMountpointStillMatches() {
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data/ ext4 rw,relatime,nobarrier 0 0\n";
+        Assert.assertEquals("a trailing slash on the mountpoint must not defeat the match",
+                WriteBarrierCheck.BARRIERS_DISABLED, WriteBarrierCheck.classify(mounts, "/data/qdb"));
+    }
+
+    /**
+     * A truncated or malformed line -- fewer than the four fields /proc/mounts guarantees -- must be
+     * skipped, not allowed to throw or to be read with garbage field indices. PROC_MOUNTS_MAX_BYTES
+     * caps the read, so a truncated final line is a real possibility rather than a hypothetical.
+     */
+    @Test
+    public void testShortLineIsSkippedRatherThanParsed() {
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data\n" +                                  // truncated: 2 fields
+                        "/dev/sdc1 /data ext4 rw,relatime,nobarrier 0 0\n";
+        Assert.assertEquals("a short line must be skipped, leaving the well-formed one to decide",
+                WriteBarrierCheck.BARRIERS_DISABLED, WriteBarrierCheck.classify(mounts, "/data/qdb"));
+    }
+
+    /**
+     * Whitespace must not shift the field indices: options are field 3, and reading field 2 or 4
+     * instead would classify on the fstype or the dump flag. Covers BOTH skips -- the leading-
+     * whitespace one that runs before the comment check, and the inter-field one -- because they are
+     * separate loops and padding between fields does not exercise the leading case.
+     */
+    @Test
+    public void testLeadingAndInterFieldWhitespaceDoNotShiftFields() {
+        String mounts =
+                "   \t/dev/sdb1   /data    ext4    rw,relatime,nobarrier  0 0\n";
+        Assert.assertEquals("a line that is both indented and internally padded must still classify"
+                        + " on the options field",
+                WriteBarrierCheck.BARRIERS_DISABLED, WriteBarrierCheck.classify(mounts, "/data/qdb"));
+    }
+
     @Test
     public void testOctalEscapeInMountpoint() {
         // Mountpoint with a space encoded as \040 — /data\040qdb = "/data qdb"
