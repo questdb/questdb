@@ -1,0 +1,380 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.test.cairo;
+
+import io.questdb.cairo.FastCommitCheck;
+import io.questdb.cairo.ProcFs;
+import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.Os;
+import org.junit.Assert;
+import org.junit.Test;
+
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Tests for {@link FastCommitCheck}.
+ *
+ * <p>The {@link FastCommitCheck#classify(CharSequence, CharSequence, CharSequence)} core is pure: all
+ * cases inject the /proc/mounts text (to find + type the DB-root mount) plus the device's ext4
+ * {@code options} pseudo-file content (to detect the {@code fast_commit} token), so they are fully
+ * deterministic and require no real filesystem. The device-name mapping ({@link FastCommitCheck#resolveExt4DeviceName})
+ * is exercised with a fake {@link FastCommitCheck.DeviceProbe}.
+ */
+public class FastCommitCheckTest {
+
+    // A realistic ext4 options-file body WITHOUT the fast_commit token (shared journal / safe).
+    private static final String OPTIONS_NO_FC =
+            "rw\nbsddf\nnogrpid\nblock_validity\ndelalloc\njournal_checksum\nbarrier\nuser_xattr\nacl\n" +
+                    "noquota\nerrors=remount-ro\ncommit=5\ndata=ordered\ninode_readahead_blks=32\n";
+    // The same body WITH the fast_commit token the kernel emits when the feature is active.
+    private static final String OPTIONS_WITH_FC = OPTIONS_NO_FC + "fast_commit\n";
+
+    // -----------------------------------------------------------------------
+    // classify(): ENABLED / NOT_DETECTED / UNKNOWN on injected signals
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testExt4FastCommitEnabled() {
+        String mounts =
+                "sysfs /sys sysfs rw,nosuid 0 0\n" +
+                        "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_ENABLED,
+                FastCommitCheck.classify(mounts, "/data/qdb", OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testExt4FastCommitNotPresent() {
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_NOT_DETECTED,
+                FastCommitCheck.classify(mounts, "/data/qdb", OPTIONS_NO_FC));
+    }
+
+    @Test
+    public void testExt4ButOptionsUnreadableIsUnknown() {
+        // ext4 mount found, but the device's options pseudo-file could not be read (null) -> UNKNOWN.
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                FastCommitCheck.classify(mounts, "/data/qdb", null));
+    }
+
+    @Test
+    public void testGarbageOptionsContentIsNotDetected() {
+        // Non-empty but garbage options content (no fast_commit token) -> NOT_DETECTED, never a false ENABLE.
+        String mounts = "/dev/sdb1 /data ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_NOT_DETECTED,
+                FastCommitCheck.classify(mounts, "/data/qdb", "\u0000\u0001 random ;;; not-an-option \n\n"));
+    }
+
+    // -----------------------------------------------------------------------
+    // classify(): non-ext4 filesystems are out of scope -> UNKNOWN
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testXfsIsUnknownEvenWithFcLikeOptions() {
+        // xfs uses a shared journal; fast_commit is ext4-specific. Even if the (irrelevant) options blob
+        // contained the token, an xfs mount must classify UNKNOWN (the optimization is safe on xfs).
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/nvme0n1p1 /data xfs rw,relatime,attr2,inode64 0 0\n";
+        Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                FastCommitCheck.classify(mounts, "/data/qdb", OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testTmpfsIsUnknown() {
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "tmpfs /data tmpfs rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                FastCommitCheck.classify(mounts, "/data/qdb", OPTIONS_WITH_FC));
+    }
+
+    // -----------------------------------------------------------------------
+    // Longest-prefix mount selection (mirrors WriteBarrierCheckTest cases)
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testLongestPrefixWins_specificMountEnabled() {
+        // dbRoot=/data/qdb: root mount ext4 (no fc), /data mount ext4 WITH fc. The longer /data wins.
+        // Both ext4 here; the injected options correspond to the WINNING (/data) device.
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_ENABLED,
+                FastCommitCheck.classify(mounts, "/data/qdb", OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testLongestPrefixWins_dbRootExactMatch() {
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data/qdb ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_ENABLED,
+                FastCommitCheck.classify(mounts, "/data/qdb", OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testPathBoundaryNoFalsePrefix() {
+        // dbRoot=/database must NOT match the /data mount; it falls back to the root ext4 mount.
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data ext4 rw,relatime 0 0\n";
+        // The matched mount is "/" (ext4); options here describe "/" and have NO fast_commit -> NOT_DETECTED.
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_NOT_DETECTED,
+                FastCommitCheck.classify(mounts, "/database", OPTIONS_NO_FC));
+    }
+
+    @Test
+    public void testRootMountCoversEverything() {
+        String mounts = "/dev/sda1 / ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_ENABLED,
+                FastCommitCheck.classify(mounts, "/some/deep/path", OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testOctalEscapeInMountpoint() {
+        String mounts =
+                "/dev/sda1 / ext4 rw,relatime 0 0\n" +
+                        "/dev/sdb1 /data\\040qdb ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_ENABLED,
+                FastCommitCheck.classify(mounts, "/data qdb", OPTIONS_WITH_FC));
+    }
+
+    // -----------------------------------------------------------------------
+    // No matching mount / null inputs -> UNKNOWN
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testNoMatchingMount() {
+        String mounts = "/dev/sdb1 /other ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                FastCommitCheck.classify(mounts, "/data/qdb", OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testEmptyMounts() {
+        Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                FastCommitCheck.classify("", "/data/qdb", OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testNullMounts() {
+        Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                FastCommitCheck.classify(null, "/data/qdb", OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testNullDbRoot() {
+        Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                FastCommitCheck.classify("/dev/sda1 / ext4 rw 0 0\n", null, OPTIONS_WITH_FC));
+    }
+
+    @Test
+    public void testCommentAndBlankLinesIgnored() {
+        String mounts =
+                "# a comment\n" +
+                        "\n" +
+                        "/dev/sda1 / ext4 rw,relatime 0 0\n";
+        Assert.assertEquals(FastCommitCheck.FAST_COMMIT_ENABLED,
+                FastCommitCheck.classify(mounts, "/var/qdb", OPTIONS_WITH_FC));
+    }
+
+    // -----------------------------------------------------------------------
+    // hasFastCommitToken: exact-token matching, no false positives
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testHasFastCommitTokenForms() {
+        Assert.assertTrue(FastCommitCheck.hasFastCommitToken("fast_commit"));
+        Assert.assertTrue(FastCommitCheck.hasFastCommitToken("rw\nbarrier\nfast_commit\ndata=ordered"));
+        Assert.assertTrue(FastCommitCheck.hasFastCommitToken("rw,barrier,fast_commit,data=ordered"));
+        // tolerate a "=value" suffix, just in case a kernel renders it that way
+        Assert.assertTrue(FastCommitCheck.hasFastCommitToken("fast_commit=1"));
+
+        Assert.assertFalse(FastCommitCheck.hasFastCommitToken("rw\nbarrier\ndata=ordered"));
+        Assert.assertFalse(FastCommitCheck.hasFastCommitToken(""));
+        // must not partial-match a different token that merely contains the string
+        Assert.assertFalse(FastCommitCheck.hasFastCommitToken("no_fast_commit_debug"));
+        Assert.assertFalse(FastCommitCheck.hasFastCommitToken("fast_commitment"));
+    }
+
+    // -----------------------------------------------------------------------
+    // resolveExt4DeviceName: plain device + device-mapper (LVM) symlink deref
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testResolvePlainDevice() {
+        // /dev/sda1 -> proc entry "sda1" exists directly, no symlink deref needed.
+        FakeDeviceProbe probe = new FakeDeviceProbe();
+        probe.procEntries.add("sda1");
+        Assert.assertEquals("sda1", FastCommitCheck.resolveExt4DeviceName("/dev/sda1", probe));
+    }
+
+    @Test
+    public void testResolveDeviceMapperSymlink() {
+        // /dev/mapper/vg-root has no "vg-root" proc entry; it is a symlink to ../dm-0, whose basename
+        // "dm-0" DOES have a proc entry. This is the LVM/device-mapper case observed on real hosts.
+        FakeDeviceProbe probe = new FakeDeviceProbe();
+        probe.procEntries.add("dm-0");
+        probe.symlinks.put("/dev/mapper/vg-root", "/dev/dm-0");
+        Assert.assertEquals("dm-0", FastCommitCheck.resolveExt4DeviceName("/dev/mapper/vg-root", probe));
+    }
+
+    @Test
+    public void testResolveUnresolvableDeviceIsNull() {
+        // No direct proc entry and no symlink -> null (caller maps this to UNKNOWN).
+        FakeDeviceProbe probe = new FakeDeviceProbe();
+        Assert.assertNull(FastCommitCheck.resolveExt4DeviceName("/dev/nope9", probe));
+    }
+
+    @Test
+    public void testResolveNullOrEmptyDeviceIsNull() {
+        FakeDeviceProbe probe = new FakeDeviceProbe();
+        Assert.assertNull(FastCommitCheck.resolveExt4DeviceName(null, probe));
+        Assert.assertNull(FastCommitCheck.resolveExt4DeviceName("", probe));
+    }
+
+    // -----------------------------------------------------------------------
+    // Live classifyDbRoot smoke: must never throw; result is one of the tri-state values.
+    // -----------------------------------------------------------------------
+
+    @Test
+    public void testClassifyDbRootSmokeNoException() {
+        int result = FastCommitCheck.classifyDbRoot(FilesFacadeImpl.INSTANCE, "/tmp");
+        Assert.assertTrue(
+                "result must be UNKNOWN, NOT_DETECTED, or ENABLED",
+                result == FastCommitCheck.UNKNOWN
+                        || result == FastCommitCheck.FAST_COMMIT_NOT_DETECTED
+                        || result == FastCommitCheck.FAST_COMMIT_ENABLED);
+    }
+
+    @Test
+    public void testClassifyDbRootReturnsUnknownOnNonLinux() {
+        if (!Os.isLinux()) {
+            Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                    FastCommitCheck.classifyDbRoot(FilesFacadeImpl.INSTANCE, "/tmp"));
+        }
+        // On Linux: covered by the smoke test (no exception, valid tri-state).
+    }
+
+    @Test
+    public void testClassifyDbRootNullIsUnknown() {
+        Assert.assertEquals(FastCommitCheck.UNKNOWN,
+                FastCommitCheck.classifyDbRoot(FilesFacadeImpl.INSTANCE, null));
+    }
+
+    private static final class FakeDeviceProbe implements FastCommitCheck.DeviceProbe {
+        final Set<String> procEntries = new HashSet<>();
+        final Map<String, String> symlinks = new HashMap<>();
+
+        @Override
+        public boolean procEntryExists(String devName) {
+            return procEntries.contains(devName);
+        }
+
+        @Override
+        public String resolveSymlink(String devicePath) {
+            return symlinks.get(devicePath);
+        }
+    }
+
+    /**
+     * Pseudo-files under /proc and /sys do not report a usable size, so the reader must size its read from
+     * its own cap rather than from {@code ff.length(fd)}. Measured on Linux 6.8: {@code /proc/mounts} and
+     * {@code /proc/fs/ext4/<dev>/options} both fstat as 0 while holding 2007 and 305 readable bytes
+     * respectively; sysfs files fstat as 4096 while holding a handful.
+     * <p>
+     * Sizing from fstat therefore read ZERO bytes and produced an empty string, which
+     * {@code findLongestPrefixMount} reads as "no mounts" -- so {@code classifyDbRoot} returned UNKNOWN,
+     * the caller treated fast_commit as absent, and batched syncfs stayed ENABLED on exactly the
+     * configuration this class exists to rule out. It survived because every existing test here drives the
+     * pure {@code classify}, and {@code classifyDbRoot} early-returns off Linux, so nothing exercised the
+     * reader on any platform.
+     */
+    @Test
+    public void testReadSmallFileIgnoresPseudoFileStatSize() {
+        final String content = "/dev/vda1 / ext4 rw,relatime 0 0\n";
+        final ProcFsFacade ff = new ProcFsFacade(content);
+        final String read = ProcFs.read(ff, "/proc/mounts", 256 * 1024);
+        Assert.assertEquals("a pseudo-file reporting fstat size 0 must still be read in full", content, read);
+    }
+
+    @Test
+    public void testReadSmallFileHandlesSysfsPageSizedStat() {
+        // sysfs reports a page size regardless of content length; the short read must not be rejected.
+        final ProcFsFacade ff = new ProcFsFacade("Apple Inc.\n");
+        ff.statSize = 4096;
+        Assert.assertEquals("Apple Inc.\n", ProcFs.read(ff, "/sys/class/dmi/id/sys_vendor", 4096));
+    }
+
+    /**
+     * Minimal FilesFacade that reproduces pseudo-file semantics: {@code length()} lies, {@code read()} tells
+     * the truth.
+     */
+    private static final class ProcFsFacade extends FilesFacadeImpl {
+        private final byte[] bytes;
+        long statSize;
+
+        ProcFsFacade(String content) {
+            this.bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            this.statSize = 0; // procfs
+        }
+
+        @Override
+        public long length(long fd) {
+            return statSize;
+        }
+
+        @Override
+        public long openRONoCache(io.questdb.std.str.LPSZ name) {
+            return 4242; // any non-negative sentinel; this facade never touches a real fd
+        }
+
+        @Override
+        public boolean close(long fd) {
+            return true;
+        }
+
+        @Override
+        public long read(long fd, long address, long len, long offset) {
+            if (offset >= bytes.length) {
+                return 0;
+            }
+            final long n = Math.min(len, bytes.length - offset);
+            for (long i = 0; i < n; i++) {
+                io.questdb.std.Unsafe.getUnsafe().putByte(address + i, bytes[(int) (offset + i)]);
+            }
+            return n;
+        }
+    }
+}

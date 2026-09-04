@@ -25,6 +25,8 @@
 package io.questdb.cutlass.qwp.server;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.wal.DurabilityTier;
+import io.questdb.cairo.wal.DurableAckRegistry;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -408,20 +410,46 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
 
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
 
-        // Resolve durable-ack opt-in before sizing the 101 response, since
-        // the X-QWP-Durable-Ack confirmation header affects the response size.
-        // The header is silently dropped when the engine has no durable-ack
-        // registry installed (OSS build or primary replication disabled), so
-        // opted-in clients on such servers receive a 101 without confirmation
-        // and fail at the client side.
+        // Resolve durable-ack tier negotiation before sizing the 101 response,
+        // since the X-QWP-Durable-Ack confirmation header affects the response
+        // size. An opted-in client whose requested tier this server cannot
+        // grant (registry disabled entirely, or an explicit tier the registry
+        // does not offer) receives a 101 with NO confirmation header at all --
+        // fail-loud, so the client can react instead of waiting forever for
+        // STATUS_DURABLE_ACK frames that will never arrive.
         Utf8Sequence durableAckHeader = requestHeader.getHeader(
                 QwpIngressHttpProcessor.HEADER_X_QWP_REQUEST_DURABLE_ACK);
-        boolean durableAckRequested = durableAckHeader != null
-                && Utf8s.equalsIgnoreCaseAscii(durableAckHeader, QwpIngressHttpProcessor.HEADER_VALUE_DURABLE_ACK_ENABLED);
-        boolean durableAckEnabled = durableAckRequested && engine.getDurableAckRegistry().isEnabled();
+        int requestedTier = DurabilityTier.fromHeaderValue(durableAckHeader);
+        DurableAckRegistry ackRegistry = engine.getDurableAckRegistry();
+        int grantedTier;
+        if (requestedTier == DurabilityTier.NONE || !ackRegistry.isEnabled()) {
+            grantedTier = DurabilityTier.NONE;
+        } else if (requestedTier == DurabilityTier.DEFAULT) {
+            // Legacy "true" opt-in: grant the server's strongest available tier
+            // (OSS -> LOCAL, Enterprise with primary replication -> REPLICATED)
+            // instead of a fixed tier, so legacy clients get the best guarantee
+            // this server can offer.
+            grantedTier = ackRegistry.strongestAvailableTier();
+        } else {
+            // Explicit tier request: grant exactly that tier, or NONE if this
+            // server cannot offer it. Never silently substitute a different
+            // (e.g. weaker) tier than what was explicitly requested -- that
+            // would silently downgrade the client's durability guarantee.
+            grantedTier = ackRegistry.isTierAvailable(requestedTier) ? requestedTier : DurabilityTier.NONE;
+        }
+        boolean durableAckEnabled = grantedTier != DurabilityTier.NONE;
+        // Echo the legacy "enabled" token for a DEFAULT (legacy "true") grant so
+        // existing clients see a byte-identical response to before tier
+        // negotiation existed; echo the explicit tier token ("local" /
+        // "replicated") for an explicit grant; omit the header entirely when
+        // disabled.
+        Utf8Sequence durableAckConfirmToken = !durableAckEnabled ? null
+                : (requestedTier == DurabilityTier.DEFAULT
+                   ? QwpIngressHttpProcessor.RESPONSE_DURABLE_ACK_TOKEN_ENABLED
+                   : DurabilityTier.responseToken(grantedTier));
 
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
-                acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes);
         if (requiredHandshakeSize > bufferSize) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
@@ -444,10 +472,11 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
         state.of(context.getFd(), context.getSecurityContext());
         state.setNegotiatedVersion((byte) negotiatedVersion);
         state.setDurableAckEnabled(durableAckEnabled);
+        state.setDurableAckTier(grantedTier);
 
         // Write the 101 Switching Protocols response (reuse the pre-computed accept key)
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
-                bufferAddr, acceptKey, negotiatedVersion, null, durableAckEnabled, roleBytes,
+                bufferAddr, acceptKey, negotiatedVersion, null, durableAckConfirmToken, roleBytes,
                 effectiveMaxBatchSizeBytes);
         if (bytesWritten <= 0) {
             throw responseDoesNotFitSendBuffer(context.getFd(), "101 handshake response", bufferSize, requiredHandshakeSize);
@@ -1733,7 +1762,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             boolean isDurableProgressFlushed = state.isSendReady();
             boolean isDurableWorkFullyUploaded = isDurableProgressFlushed
                     ? state.isDurableProgressSnapshotFullyUploaded()
-                    : state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+                    : state.isDurableWorkFullyCovered(engine.getDurableAckRegistry());
             if (isDurableWorkFullyUploaded || isGraceExpired) {
                 roleChangeCloseWithUploadGrace(
                         context,
@@ -1860,7 +1889,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // so preserve it for onDurableAckSent and use the coverage-only
             // traversal. The continuation performs a fresh fused pass after
             // the genuine blocked-send interval when pending work remains.
-            isDurableWorkFullyUploaded = state.isDurableWorkFullyUploaded(engine.getDurableAckRegistry());
+            isDurableWorkFullyUploaded = state.isDurableWorkFullyCovered(engine.getDurableAckRegistry());
         }
         roleChangeCloseWithUploadGrace(
                 context,
@@ -1912,6 +1941,7 @@ public class QwpIngressUpgradeProcessor implements HttpRequestProcessor {
             // Grace expired with genuinely un-acked durable work according to
             // the fused completion snapshot: the one close the operator must
             // see. Do not repeat the registry traversal just for diagnostics.
+
             LOG.error().$("role-change close upload grace expired; closing with un-acked durable work, client replay may duplicate [fd=")
                     .$(context.getFd()).I$();
         }

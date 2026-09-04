@@ -266,6 +266,74 @@ public class WebSocketHandshakeTest extends AbstractWebSocketTest {
     }
 
     @Test
+    public void testResponseSizeAndWriteResponseWithDurableAckConfirmToken() throws Exception {
+        // The confirm-token overloads must echo ANY caller-supplied token
+        // verbatim -- not just the legacy "enabled" value -- since a later
+        // task drives these with DurabilityTier.responseToken(...) results
+        // ("local" / "replicated").
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            Utf8String confirmToken = new Utf8String("local");
+            int expectedSize = QwpIngressHttpProcessor.responseSize(acceptKey, 1, null, confirmToken, null);
+
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(buf, acceptKey, 1, null, confirmToken, null);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue("expected X-QWP-Durable-Ack: local, got: " + response,
+                        response.contains("\r\nX-QWP-Durable-Ack: local\r\n"));
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
+    public void testWriteResponseOmitsDurableAckWhenConfirmTokenNull() throws Exception {
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            Utf8String confirmToken = null;
+
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(buf, acceptKey, 1, null, confirmToken, null);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertFalse("did not expect X-QWP-Durable-Ack header, got: " + response,
+                        response.contains("X-QWP-Durable-Ack"));
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
+    public void testBooleanDurableAckOverloadReproducesLegacyEnabledBytes() throws Exception {
+        // Backward-compat pin for the confirm-token refactor: the legacy
+        // boolean=true overload must still emit byte-identical
+        // "X-QWP-Durable-Ack: enabled" (NOT the request-side "true" token),
+        // so every caller still on the boolean API sees no wire change.
+        assertMemoryLeak(() -> {
+            byte[] acceptKey = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=".getBytes(StandardCharsets.US_ASCII);
+            int expectedSize = QwpIngressHttpProcessor.responseSize(acceptKey, 1, null, true, null);
+
+            long buf = allocateBuffer(256);
+            try {
+                int written = QwpIngressHttpProcessor.writeResponse(buf, acceptKey, 1, null, true, null);
+                Assert.assertEquals(expectedSize, written);
+
+                String response = new String(readBytes(buf, written), StandardCharsets.US_ASCII);
+                Assert.assertTrue("expected legacy X-QWP-Durable-Ack: enabled, got: " + response,
+                        response.contains("\r\nX-QWP-Durable-Ack: enabled\r\n"));
+            } finally {
+                freeBuffer(buf, 256);
+            }
+        });
+    }
+
+    @Test
     public void testThreadSafety() throws InterruptedException {
         // Test that accept key computation is thread-safe
         String clientKey = "dGhlIHNhbXBsZSBub25jZQ==";

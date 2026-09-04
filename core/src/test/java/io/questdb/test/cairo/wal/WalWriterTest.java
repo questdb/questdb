@@ -34,6 +34,9 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
@@ -118,6 +121,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Assume;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.io.File;
@@ -140,12 +144,94 @@ public class WalWriterTest extends AbstractCairoTest {
 
     @Test
     public void apply1RowCommits1Writer() throws Exception {
+        // 1,000,000 single-row commits. Each commit's durability point is a real device barrier, and on
+        // macOS that is fcntl(F_FULLFSYNC) -- measured at ~5.2ms/op on APFS versus ~0.24ms for the fsync
+        // this used to be, so a million of them cannot fit the 1200s timeout (both 1M variants hit it
+        // exactly). The barrier/full split only removes the per-commit FAN-OUT; the commit point itself must
+        // stay a full flush, so no amount of tuning brings this workload back on this platform. The
+        // behaviour under test -- 1-row commit application -- is platform-independent and stays covered on
+        // Linux CI.
+        Assume.assumeFalse("1M single-row commits cannot complete under F_FULLFSYNC (see comment)", Os.isOSX());
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 1);
     }
 
     @Test
     public void apply1RowCommitsManyWriters() throws Exception {
+        // 1,000,000 single-row commits. Each commit's durability point is a real device barrier, and on
+        // macOS that is fcntl(F_FULLFSYNC) -- measured at ~5.2ms/op on APFS versus ~0.24ms for the fsync
+        // this used to be, so a million of them cannot fit the 1200s timeout (both 1M variants hit it
+        // exactly). The barrier/full split only removes the per-commit FAN-OUT; the commit point itself must
+        // stay a full flush, so no amount of tuning brings this workload back on this platform. The
+        // behaviour under test -- 1-row commit application -- is platform-independent and stays covered on
+        // Linux CI.
+        Assume.assumeFalse("1M single-row commits cannot complete under F_FULLFSYNC (see comment)", Os.isOSX());
         testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 1_000_000, 16);
+    }
+
+    /**
+     * Adaptive coverage for the 1-row-commit apply path, at a row count chosen to fit the 20-minute rule
+     * with margin. 20k is the count docs/adaptive-commit-mode.md §3 benchmarks (~31.7 s there); the 1M
+     * arms stay on nosync because under adaptive they time out on real storage.
+     */
+    @Test
+    public void apply1RowCommitsAdaptive() throws Exception {
+        testApply1RowCommitManyWriters(Micros.SECOND_MICROS, 20_000, 1, "adaptive");
+    }
+
+    /**
+     * Regenerates the rows-per-commit curve in docs/adaptive-commit-mode.md §3. Skipped unless
+     * {@code -Dquestdb.bench.batchSweep=true} is set, because it is a storage measurement rather than a
+     * behavioural assertion -- run it by hand on the target hardware, selecting
+     * {@code WalWriterTest#adaptiveBatchSizeSweep}, and read the BATCH SWEEP lines from the log.
+     * <p>
+     * MUST be run against a REAL filesystem root. On tmpfs (e.g. a {@code QDB_TEST_TMPDIR} under
+     * {@code /dev/shm}) fdatasync is a no-op, so every arm measures the non-durability cost only and the
+     * curve is meaningless -- measured: the 1M-commit arm "passes" in 19.86 s on tmpfs and times out at
+     * 1200 s on ext4.
+     * <p>
+     * Fixed total rows, varying batch size, because the durability cost is per COMMIT: this is what shows
+     * an operator where the per-commit barrier stops dominating. §3's headline table is the B=1 point,
+     * which the doc itself calls "the pathological floor, not typical ingestion" -- quoting it without the
+     * rest of the curve overstates the cost of durability by orders of magnitude.
+     */
+    @Test
+    public void adaptiveBatchSizeSweep() throws Exception {
+        // Gated by a property rather than @Ignore: @Ignore skips even when the method is selected
+        // explicitly, so the benchmark could never be run at all. This stays out of CI (the property is
+        // unset there) while remaining runnable on demand with -Dquestdb.bench.batchSweep=true.
+        Assume.assumeTrue(
+                "set -Dquestdb.bench.batchSweep=true to run the batch-size sweep",
+                Boolean.getBoolean("questdb.bench.batchSweep")
+        );
+        batchSizeSweep("adaptive");
+    }
+
+    /**
+     * The {@code nosync} baseline for {@link #adaptiveBatchSizeSweep()}. Separate @Test method, NOT another
+     * loop arm: the commit mode is fixed when the per-test configuration is built, so both modes in one
+     * method silently run as one mode (see the assertion in {@code testApplyRowCommits}). Run with the same
+     * property and pair the two logs to get the durability cost at each batch size.
+     */
+    @Test
+    public void nosyncBatchSizeSweep() throws Exception {
+        Assume.assumeTrue(
+                "set -Dquestdb.bench.batchSweep=true to run the batch-size sweep",
+                Boolean.getBoolean("questdb.bench.batchSweep")
+        );
+        batchSizeSweep("nosync");
+    }
+
+    private void batchSizeSweep(String commitMode) throws Exception {
+        final int totalRows = 100_000;
+        for (int rowsPerCommit : new int[]{1, 10, 100, 1_000}) {
+            final long start = System.nanoTime();
+            testApplyRowCommits(Micros.SECOND_MICROS, totalRows, 1, commitMode, rowsPerCommit);
+            final long elapsedMs = (System.nanoTime() - start) / 1_000_000;
+            LOG.info().$("BATCH SWEEP mode=").$(commitMode)
+                    .$(" rowsPerCommit=").$(rowsPerCommit)
+                    .$(" totalRows=").$(totalRows)
+                    .$(" elapsedMs=").$(elapsedMs).$();
+        }
     }
 
     @Test
@@ -5555,6 +5641,123 @@ public class WalWriterTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A REBASE clone copies the source's {@code _meta}, enrolment record and all, but publishes an adaptive
+     * anchor only when the clone itself resolves to adaptive. A source can legitimately still be recorded as
+     * enrolled while resolving to something else — that is precisely a table whose adaptive tenure ended
+     * with a crash and whose next writer has not reconciled it yet — so a clone that inherited the record
+     * without an anchor would be a table claiming lazy state with nothing to rewind to. Recovery refuses
+     * that, and the refusal fails the engine component: one rebased table would stop the instance booting.
+     *
+     * <p>Modelled here by creating the table under adaptive (which records the enrolment) and flipping the
+     * instance to nosync without letting a writer reconcile it — the precondition below asserts the source
+     * really is in that state, so this cannot pass vacuously.
+     */
+    @Test
+    public void testRebaseWalCloneDoesNotInheritTheSourceEnrolmentWithoutAnAnchor() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+                execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                final TableToken oldToken = engine.verifyTableName("t");
+                engine.releaseInactive();
+
+                // The operator turns adaptive off. Nothing opens the table in between, so its record still
+                // says enrolled -- the state a crash under adaptive leaves behind.
+                setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, oldToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("precondition: the source must still be recorded as enrolled, or this"
+                                    + " test proves nothing about inheriting that record",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                }
+
+                execute("alter table t suspend wal");
+                execute("alter table t rebase wal");
+                drainWalQueue();
+
+                final TableToken newToken = engine.verifyTableName("t");
+                Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+
+                final FilesFacade ff = configuration.getFilesFacade();
+                try (Path path = new Path()) {
+                    path.of(configuration.getDbRoot()).concat(newToken).concat(TableUtils.SNAPSHOT_FILE_NAME);
+                    Assert.assertFalse("a nosync clone publishes no anchor", ff.exists(path.$()));
+                }
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {
+                    md.loadMetadata();
+                    Assert.assertNotEquals("a clone with no anchor must not claim to be enrolled",
+                            CommitMode.ADAPTIVE, md.getEnrolledCommitMode());
+                }
+
+                // The consequence: a startup validates the clone instead of refusing to serve the instance.
+                new RecoveryCoordinator(engine).recover();
+                assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
+     * REBASE clones {@code _meta} and then resets its metadataVersion in place. That field is checksummed
+     * into the meta-format minor-version word, so rewriting it without re-stamping the checksum switches
+     * off the version gate, and every gated tail field then reads as absent on the clone: TTL becomes 0,
+     * the table format reverts to NATIVE, the per-table commit mode and the adaptive enrolment record
+     * revert to UNSET. Nothing fails -- the rebased table quietly comes back with different properties
+     * from the one that went in.
+     *
+     * <p>The ADD COLUMN is load-bearing, not decoration: it lifts metadataVersion off 0 so that resetting
+     * it to 0 actually changes the value the checksum covers. Without it the reset is a no-op and the gate
+     * survives by luck, which is exactly why this went unnoticed.
+     */
+    @Test
+    public void testRebaseWalPreservesVersionGatedMetadata() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        try {
+            assertMemoryLeak(() -> {
+                execute("create table t (ts timestamp, x int) timestamp(ts) partition by day ttl 3 days wal"
+                        + " with commit_mode='sync'");
+                execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                // Lift metadataVersion off zero, so the clone's reset genuinely changes it.
+                execute("alter table t add column y int");
+                drainWalQueue();
+
+                final TableToken oldToken = engine.verifyTableName("t");
+                engine.releaseInactive();
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, oldToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("precondition: TTL is set before the rebase", 72, md.getTtlHoursOrMonths());
+                    Assert.assertEquals("precondition: the per-table commit mode is set before the rebase",
+                            CommitMode.SYNC, md.getCommitMode());
+                    Assert.assertTrue("precondition: metadataVersion must be off 0, or the reset changes nothing",
+                            md.getMetadataVersion() > 0);
+                }
+
+                execute("alter table t suspend wal");
+                execute("alter table t rebase wal");
+                drainWalQueue();
+
+                final TableToken newToken = engine.verifyTableName("t");
+                Assert.assertNotEquals(oldToken.getDirName(), newToken.getDirName());
+                try (TableReaderMetadata md = new TableReaderMetadata(configuration, newToken)) {
+                    md.loadMetadata();
+                    Assert.assertEquals("REBASE must not silently drop TTL", 72, md.getTtlHoursOrMonths());
+                    Assert.assertEquals("REBASE must not silently drop the per-table commit mode",
+                            CommitMode.SYNC, md.getCommitMode());
+                }
+                assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
     @Test
     public void testRebaseWalComplexTablePreservesDataAndIndexes() throws Exception {
         // REBASE clones the applied table via hard-links. This exercises the clone over a table with
@@ -6725,8 +6928,56 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount) throws Exception {
+        // Volume arm: nosync. See the overload's javadoc for why the commit mode must be explicit here.
+        testApply1RowCommitManyWriters(tsStep, totalRows, walWriterCount, "nosync");
+    }
+
+    /**
+     * Applies {@code totalRows} single-row commits across {@code walWriterCount} writers.
+     * <p>
+     * The commit mode is EXPLICIT rather than inherited, because at these row counts it decides whether
+     * the test finishes at all. The durability cost is per commit and is a real device barrier, so the
+     * 1M-commit arms are storage benchmarks under any fsync-ing mode: measured on ext4,
+     * {@code apply1RowCommits1Writer} under {@code adaptive} hit
+     * {@code TestTimedOutException: test timed out after 1200000 milliseconds} -- the 20-minute
+     * AbstractCairoTest rule -- while {@code nosync} completes in seconds. (docs/adaptive-commit-mode.md
+     * §3 records the same thing: at 1M commits "sync and adaptive both exceed the 20-minute test
+     * timeout... while nosync finishes in 4.7 s".)
+     * <p>
+     * Do NOT let these inherit the suite default. It is {@code adaptive}, and CI passing today is a
+     * function of runner storage being fast enough, not of headroom -- a slower runner turns it into a
+     * timeout. The behaviour under test is 1-row commit APPLICATION, which is orthogonal to the commit
+     * mode; {@link #apply1RowCommitsAdaptive()} keeps the adaptive path covered at a row count that fits.
+     */
+    private void testApply1RowCommitManyWriters(long tsStep, int totalRows, int walWriterCount, String commitMode) throws Exception {
+        testApplyRowCommits(tsStep, totalRows, walWriterCount, commitMode, 1);
+    }
+
+    /**
+     * As above, but committing every {@code rowsPerCommit} rows. The durability cost is per COMMIT, so
+     * this parameter is what turns the §3 headline number into a curve -- see {@link #adaptiveBatchSizeSweep()}.
+     */
+    private void testApplyRowCommits(long tsStep, int totalRows, int walWriterCount, String commitMode, int rowsPerCommit) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         setProperty(PropertyKey.CAIRO_MAX_UNCOMMITTED_ROWS, 500_000);
         assertMemoryLeak(() -> {
+            // Self-check, and it is load-bearing: setProperty is only honoured while the per-test
+            // configuration is still being built, so a method that calls this helper more than once gets
+            // the FIRST arm's mode for EVERY arm, silently. Measured that way, a "nosync vs adaptive"
+            // sweep reported eight arms all at ADAPTIVE (=3) and produced a plausible-looking durability
+            // comparison in which the mode never moved. Assert rather than log, so one mode per test
+            // method is enforced instead of remembered.
+            final int expectedMode = CommitMode.fromString(commitMode);
+            Assert.assertEquals(
+                    "requested commit mode '" + commitMode + "' did not reach the engine (got "
+                            + configuration.getCommitMode() + "). setProperty is honoured only while the"
+                            + " per-test configuration is being built -- use ONE mode per @Test method.",
+                    expectedMode,
+                    configuration.getCommitMode()
+            );
+            // Dropped first so this helper can be invoked more than once within one test method
+            // (adaptiveBatchSizeSweep runs an arm per batch size). No-op for the single-arm callers.
+            execute("drop table if exists sm");
             execute("create table sm (id int, ts timestamp, y long, s string, v varchar, m symbol) timestamp(ts) partition by DAY WAL");
             TableToken tableToken = engine.verifyTableName("sm");
 
@@ -6760,7 +7011,9 @@ public class WalWriterTest extends AbstractCairoTest {
                     stringSink.put(i % symbolCount);
                     row.putSym(5, stringSink);
                     row.append();
-                    writer.commit();
+                    if (rowsPerCommit <= 1 || (i + 1) % rowsPerCommit == 0) {
+                        writer.commit();
+                    }
 
                     ts += tsStep;
                 }

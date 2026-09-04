@@ -99,6 +99,11 @@ public class WorkerPoolUtils {
         // WorkerPool.halt() frees the Closeable clones from workerJobs.
         sharedPoolWrite.assign(new O3PartitionPurgeJob(cairoEngine));
 
+        // Background block-hash verification. Self-disabling when
+        // cairo.partition.checksum.scrub.bytes.per.second is 0 or checksums are off, so registering it
+        // unconditionally costs nothing in those configurations.
+        sharedPoolWrite.assign(new io.questdb.cairo.PartitionChecksumScrubJob(cairoEngine));
+
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.
         if (!cairoEngine.getConfiguration().disableColumnPurgeJob()) {
             final ColumnPurgeJob columnPurgeJob = new ColumnPurgeJob(cairoEngine);

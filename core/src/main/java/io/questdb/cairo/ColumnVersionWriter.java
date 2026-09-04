@@ -27,6 +27,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -35,10 +36,20 @@ import io.questdb.std.str.LPSZ;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
     private final CairoConfiguration configuration;
+    // Partitions whose COLUMN FILES changed without necessarily touching the attached-partition table --
+    // an UPDATE rewriting a column under a new column name txn is the motivating case. The adaptive durable
+    // epoch unions this with TxWriter's set to flush only what changed (see
+    // TableWriter.fsyncAttachedPartitionFiles). May contain the COL_TOP_DEFAULT_PARTITION /
+    // SYMBOL_TABLE_VERSION_PARTITION sentinels; the consumer intersects with the real partition table, so
+    // they are inert.
+    private final LongHashSet dirtyPartitions = new LongHashSet();
     private final MemoryCMARW mem;
     private final boolean partitioned;
     private boolean hasChanges;
     private long size;
+    // The owning table's PER-TABLE EFFECTIVE commit mode, pushed in by TableWriter via setCommitMode().
+    // CommitMode.UNSET (the default) means "defer to the instance-global cairo.commit.mode".
+    private int tableCommitMode = CommitMode.UNSET;
     private long version;
 
     // size should be read from the transaction file
@@ -72,6 +83,40 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         }
         doCommit();
         hasChanges = false;
+    }
+
+    /**
+     * Publishes the owning table's EFFECTIVE commit mode (already resolved against the instance-global mode
+     * via {@link CommitMode#effectiveCommitMode(int, int)}). Pass {@link CommitMode#UNSET} to revert to
+     * deferring to the global mode.
+     */
+    public void setCommitMode(int commitMode) {
+        this.tableCommitMode = commitMode;
+    }
+
+    /**
+     * The commit-mode gate for the per-commit {@code _cv} flush. Mirrors {@code TxWriter.resolveCommitMode()}
+     * exactly, and for the same two reasons: the decision must use the table's own EFFECTIVE mode (so a
+     * {@code WITH commit_mode='sync'} table on a {@code nosync} instance is not silently left non-durable, and
+     * vice versa), and ADAPTIVE must behave like the columns — lazy on the apply path, made crash-safe by the
+     * durable epoch's {@link #fsync()} plus recovery roll-forward from the {@code .epoch} copies — rather than
+     * paying a SYNC-grade msync on every apply.
+     */
+    private int resolveCommitMode() {
+        return CommitMode.effectiveCommitMode(tableCommitMode, configuration.getCommitMode());
+    }
+
+    /**
+     * Make the backing {@code _cv} file hard-durable INDEPENDENT of commit mode: msync(MS_SYNC) the
+     * mapping (flush dirty pages + journal the extent) then fsync the fd (the durability anchor).
+     * Used by the adaptive durable-epoch cut ({@link TableWriter#fsyncMaterializedState()}) so the
+     * committed column-version pointer survives a crash, after the column data is already durable
+     * and before {@code _txn} (data-before-pointer ordering). Under NOSYNC/ADAPTIVE the last
+     * {@link #commit()} did not sync, so both calls are required here.
+     */
+    public void fsync() {
+        mem.sync(false);
+        configuration.getFilesFacade().fsync(mem.getFd());
     }
 
     public void copyColumnVersions(long srcTimestamp, long dstTimestamp) {
@@ -239,6 +284,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * @param columnTop   column top
      */
     public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
+        dirtyPartitions.add(timestamp);
         final int sz = cachedColumnVersionList.size();
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         boolean insert = true;
@@ -280,9 +326,24 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         hasChanges = true;
     }
 
+    /**
+     * Partitions whose column files changed since {@link #clearDirtyPartitions()}.
+     */
+    public LongHashSet getDirtyPartitions() {
+        return dirtyPartitions;
+    }
+
+    /**
+     * Drop the accumulated write set. Called by the adaptive epoch ONLY after its flush succeeded.
+     */
+    public void clearDirtyPartitions() {
+        dirtyPartitions.clear();
+    }
+
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex > -1L) {
+            dirtyPartitions.add(partitionTimestamp);
             cachedColumnVersionList.setQuick(recordIndex + COLUMN_TOP_OFFSET, colTop);
             hasChanges = true;
         } else {
@@ -328,14 +389,37 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     private long calculateWriteOffset(long areaSize) {
+        // CRITICAL (body-checksum placement): each area's REAL on-disk footprint is its data
+        // (areaSize) PLUS the 16-byte trailer (8-byte MAGIC + 8-byte checksum) written immediately
+        // after it by doCommit() at [offset + size, offset + size + 16). The new area we are about to
+        // place must never land on the CURRENT (live) area's data OR on that area's trailer, otherwise
+        // after the version flip the now-"other" area would fail its checksum verify and the A/B
+        // fallback / rollback would see a false corruption on a healthy table. So every placement
+        // computation below treats a footprint as (size + CV_CHECKSUM_TRAILER_SIZE). The
+        // OFFSET_SIZE_{A,B} header field still stores areaSize only (data length, a multiple of
+        // BLOCK_SIZE_BYTES) so old readers parse blocks unchanged; only this placement math uses the
+        // +16 footprint.
+        //
+        // DISJOINTNESS (must hold for +16 exactly as the reviewer confirmed for +8): the current area
+        // occupies [currentOffset, currentOffset + currentSize + 16). The two branches below either
+        // return HEADER_SIZE only when HEADER_SIZE + areaSize + 16 <= currentOffset (so the new area's
+        // whole [writeOffset, writeOffset + areaSize + 16) ends at or before currentOffset), or return
+        // currentOffset + currentSize + 16 (so the new area starts at or after the current area's
+        // trailer end). In both cases [writeOffset, writeOffset + areaSize + 16) is disjoint from
+        // [currentOffset, currentOffset + currentSize + 16).
         boolean currentIsA = isCurrentA();
         long currentOffset = currentIsA ? getOffsetA() : getOffsetB();
         currentOffset = Math.max(currentOffset, HEADER_SIZE);
-        if (HEADER_SIZE + areaSize <= currentOffset) {
+        // Fits-before: reuse the freed space between the header and the current area only if the new
+        // area AND its 16-byte trailer both fit strictly before the current area's data start.
+        if (HEADER_SIZE + areaSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE <= currentOffset) {
             return HEADER_SIZE;
         }
+        // Append-after: place the new area past the current area's full footprint (data + trailer),
+        // so writing the new area (and later its own trailer) cannot clobber the current area's data
+        // or its trailer at [currentOffset + currentSize, currentOffset + currentSize + 16).
         long currentSize = currentIsA ? getSizeA() : getSizeB();
-        return currentOffset + currentSize;
+        return currentOffset + currentSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE;
     }
 
     private int copyColumnVersions(long srcTimestamp, long dstTimestamp, LongList srcColumnVersionList) {
@@ -366,8 +450,17 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         int entryCount = cachedColumnVersionList.size() / BLOCK_SIZE;
         long areaSize = calculateSize(entryCount);
         long writeOffset = calculateWriteOffset(areaSize);
-        bumpFileSize(writeOffset + areaSize);
+        // Reserve the data area PLUS its 16-byte trailer (MAGIC + checksum). calculateWriteOffset
+        // already reserved this footprint for placement, so the area + trailer never overlap the other
+        // area.
+        bumpFileSize(writeOffset + areaSize + TableUtils.CV_CHECKSUM_TRAILER_SIZE);
         store(entryCount, writeOffset);
+        // Body checksum trailer over the whole freshly-written area [writeOffset, writeOffset + areaSize),
+        // stored immediately after it. Written AFTER store() (the bytes it covers) and BEFORE the
+        // storeFence()/version bump, so a torn area can never hide behind an already-published version.
+        storeAreaChecksum(writeOffset, areaSize);
+        // OFFSET_SIZE_{A,B} records the DATA length only (areaSize, a multiple of BLOCK_SIZE_BYTES);
+        // the trailer (MAGIC + checksum) is found by the reader at offset + size.
         if (isCurrentA()) {
             updateB(writeOffset, areaSize);
         } else {
@@ -377,8 +470,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
         Unsafe.storeFence();
         storeNewVersion();
 
-        final int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        final int commitMode = resolveCommitMode();
+        // appliesColumnSync (SYNC/ASYNC only), NOT `!= NOSYNC` — see resolveCommitMode().
+        if (CommitMode.appliesColumnSync(commitMode)) {
             mem.sync(commitMode == CommitMode.ASYNC);
         }
     }
@@ -404,6 +498,19 @@ public class ColumnVersionWriter extends ColumnVersionReader {
             mem.putLong(offset + 24, cachedColumnVersionList.getQuick(x + COLUMN_TOP_OFFSET));
             offset += BLOCK_SIZE * 8;
         }
+    }
+
+    // Writes the 16-byte body-checksum trailer for the area [areaOffset, areaOffset + areaSize):
+    // CV_CHECKSUM_MAGIC at [areaOffset + areaSize] then the checksum at [areaOffset + areaSize + 8].
+    // The MAGIC is what makes the trailer unambiguously distinguishable from a legacy page-rounded
+    // file's non-zero adjacent-area bytes (see TableUtils.CV_CHECKSUM_MAGIC). The caller MUST have
+    // already written the area's data (store()) and bumped the file size to at least
+    // areaOffset + areaSize + CV_CHECKSUM_TRAILER_SIZE, and MUST call this BEFORE the
+    // storeFence()/version bump so a torn area is never reachable under a valid version.
+    private void storeAreaChecksum(long areaOffset, long areaSize) {
+        long checksum = TableUtils.calculateCvAreaChecksum(mem.addressOf(areaOffset), areaSize);
+        mem.putLong(areaOffset + areaSize, TableUtils.CV_CHECKSUM_MAGIC);
+        mem.putLong(areaOffset + areaSize + Long.BYTES, checksum);
     }
 
     private void storeNewVersion() {

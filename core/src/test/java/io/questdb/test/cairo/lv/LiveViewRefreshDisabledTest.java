@@ -192,8 +192,19 @@ public class LiveViewRefreshDisabledTest extends AbstractBootstrapTest {
                 // than the rollover threshold.
                 PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT.getEnvVarName(), "1",
                 PropertyKey.CAIRO_WAL_PURGE_INTERVAL.getEnvVarName(), "10",
+                // ADAPTIVE (the default commit mode) puts a SECOND floor under the purge: WAL is
+                // retained back to the table's last durable epoch, and durableEpochSeqTxn is 0 until
+                // the first one fires. At the 60s default cadence that floor outlives this test's 60s
+                // poll, so every segment survives and the assertion below fails for a reason that has
+                // nothing to do with live views. Drop the cadence so the epoch floor keeps moving and
+                // the view's own floor is the only thing under test.
+                PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL.getEnvVarName(), "100",
+                PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS.getEnvVarName(), "1",
                 PropertyKey.HTTP_MIN_ENABLED.getEnvVarName(), "false",
-                PropertyKey.PG_ENABLED.getEnvVarName(), "false"
+                PropertyKey.PG_ENABLED.getEnvVarName(), "false",
+                // Nothing here ingests over ILP, and an unused listener is one more port to collide
+                // on, exactly as for the pg / http-min disables above.
+                PropertyKey.LINE_TCP_ENABLED.getEnvVarName(), "false"
         );
     }
 }

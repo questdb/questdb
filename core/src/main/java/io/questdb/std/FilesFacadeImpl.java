@@ -67,6 +67,22 @@ public class FilesFacadeImpl implements FilesFacade {
         }
     }
 
+    /**
+     * Linux only, and never on ZFS -- same detection {@link #allowMixedIO(CharSequence)} uses.
+     */
+    @Override
+    public boolean isSyncFileRangeEffective(CharSequence root) {
+        if (root == null || !Os.isLinux()) {
+            return false;
+        }
+        try (Path path = new Path()) {
+            path.of(root);
+            final long fsStatus = Files.getFileSystemStatus(path.$());
+            path.seekZ();
+            return fsStatus < 0 && Math.abs(fsStatus) != ZFS_MAGIC_NUMBER;
+        }
+    }
+
     @Override
     public long append(long fd, long buf, long len) {
         return Files.append(fd, buf, len);
@@ -172,23 +188,90 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public void fdatasync(long fd) {
+        int res = Files.fdatasync(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "fdatasync").put("could not fdatasync [fd=").put(fd).put(']');
+    }
+
+    @Override
+    public void syncfs(long fd) {
+        int res = Files.syncfs(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "syncfs").put("could not syncfs [fd=").put(fd).put(']');
+    }
+
+    @Override
     public void fsync(long fd) {
         int res = Files.fsync(fd);
         if (res == 0) {
             return;
         }
-        throw CairoException.critical(errno()).put("could not fsync [fd=").put(fd).put(']');
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "fsync").put("could not fsync [fd=").put(fd).put(']');
+    }
+
+    @Override
+    public void barrierFsync(long fd) {
+        if (!Os.isOSX()) {
+            // Off Darwin this IS fdatasync (see Files.barrierFsync), so route through the OVERRIDABLE
+            // method rather than the static. Fault-injecting facades -- CrashFaultFilesFacade above all,
+            // which models device-cache and journal state per syscall -- override fdatasync; calling the
+            // static directly would silently remove every WAL commit barrier from the crash harness's view
+            // on exactly the platform CI runs on, and the crash tests would pass vacuously.
+            fdatasync(fd);
+            return;
+        }
+        int res = Files.barrierFsync(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "barrierFsync").put("could not barrierFsync [fd=").put(fd).put(']');
+    }
+
+    @Override
+    public void fsyncDurable(long fd) {
+        if (!Os.isOSX()) {
+            // Off Darwin this IS fsync; delegate to the overridable method for the same reason as
+            // barrierFsync above.
+            fsync(fd);
+            return;
+        }
+        int res = Files.fsyncDurable(fd);
+        if (res == 0) {
+            return;
+        }
+        final int errno = errno();
+        throw CairoException.dataSyncFailure(errno, "fsyncDurable").put("could not fsyncDurable [fd=").put(fd).put(']');
     }
 
     @Override
     public void fsyncAndClose(long fd) {
-        int res = Files.fsync(fd);
+        // EVERY directory barrier in the engine funnels through here, and a directory fsync is what makes a
+        // freshly written file's DENTRY durable -- without it the data survives a power cut but the name
+        // pointing at it does not, inverting data-before-pointer. So this has to be the barrier that really
+        // flushes the device: Files.fsyncDurable is F_FULLFSYNC on Darwin (where plain fsync is not a
+        // barrier) and is literally fsync everywhere else, so this is a no-op off Darwin.
+        //
+        // Upgrading HERE rather than at the ~20 call sites is deliberate. Routing a new primitive to each
+        // site moved them off the method that every fault-injecting FilesFacade overrides, and three tests
+        // (RecoveryCoordinatorTest, TableWriterTest, and the crash facades) silently stopped intercepting --
+        // the failure mode where the harness goes quiet instead of red.
+        int res = Files.fsyncDurable(fd);
         if (res == 0) {
             close(fd);
             return;
         }
+        final int errno = errno();
         close(fd);
-        throw CairoException.critical(errno()).put("could not fsync [fd=").put(fd).put(']');
+        throw CairoException.dataSyncFailure(errno, "fsyncAndClose").put("could not fsync [fd=").put(fd).put(']');
     }
 
     @Override
@@ -355,7 +438,12 @@ public class FilesFacadeImpl implements FilesFacade {
         if (res == 0) {
             return;
         }
-        throw CairoException.critical(errno()).put("could not msync");
+        final int errno = errno();
+        CairoException exception = CairoException.critical(errno);
+        if (!async) {
+            exception = CairoException.dataSyncFailure(errno, "msync");
+        }
+        throw exception.put("could not msync");
     }
 
     @Override

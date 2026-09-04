@@ -243,6 +243,11 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testConcurrentStateRetryAfterFailedPartitionOpen() throws Exception {
+        // This test arms a filesystem failure on the FIRST file op of a partition open. Structural
+        // verification opens the checksum sidecar there too, so it consumes the injection first --
+        // and degrades to unverified by design -- leaving the open to succeed and the expected error
+        // never to surface. The subject here is cursor retry after a failed open, not checksums.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_CHECKSUM_ENABLED, "false");
         FailureFileFacade failureFf = new FailureFileFacade(TestFilesFacadeImpl.INSTANCE);
         assertMemoryLeak(failureFf, () -> {
             execute("CREATE TABLE x AS (SELECT" +
@@ -361,6 +366,9 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
 
     @Test
     public void testCursorRetryAfterFailedPartitionOpen() throws Exception {
+        // See testConcurrentStateRetryAfterFailedPartitionOpen: the checksum sidecar open would
+        // consume the injection first and degrade by design, so the expected error never surfaces.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_CHECKSUM_ENABLED, "false");
         FailureFileFacade failureFf = new FailureFileFacade(TestFilesFacadeImpl.INSTANCE);
         assertMemoryLeak(failureFf, () -> {
             execute("CREATE TABLE x AS (SELECT" +

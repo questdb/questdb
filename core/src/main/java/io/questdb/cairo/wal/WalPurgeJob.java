@@ -27,6 +27,7 @@ package io.questdb.cairo.wal;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
@@ -35,6 +36,7 @@ import io.questdb.cairo.lv.LiveViewRegistry;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableSequencerAPI;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.log.Log;
@@ -322,7 +324,21 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                             try {
                                 final long partNo = Numbers.parseLong(walName);
                                 logic.trackSeqPart(partNo);
-                                hasPendingTasks = true;
+                                // A part file EXISTING is not pending work -- it is just where the V2
+                                // txnlog stores its records. Only a part something still holds is.
+                                //
+                                // Reporting mere existence blocked the dropped-table path outright:
+                                // hasPendingTasks feeds exactly one decision (the "table is dropped,
+                                // but has WALs containing segments with pending tasks" branch), and a
+                                // V2 table always has at least part 0, so no V2 table could ever be
+                                // fully dropped and its txn_seq leaked on every DROP. V1 has no part
+                                // files at all, which is why this only surfaced when V2 became the
+                                // default. The genuine sequencer signal -- the .pending marker -- is
+                                // already folded in by discoverWalSegments via sequencerHasPendingTasks().
+                                hasPendingTasks |= walDirectoryPolicy.isSeqPartInUse(
+                                        seqDirPathTl(tableToken),
+                                        partNo
+                                );
                             } catch (NumericException ne) {
                                 // Non-Part file directory, ignore.
                             }
@@ -553,6 +569,28 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 }
             }
         }
+        // Under ADAPTIVE commit mode, WAL segments must be retained back to the last durable epoch
+        // so that adaptive crash-recovery can re-apply from that seqTxn.  The durableEpochSeqTxn
+        // defaults to 0 (retain everything) for a fresh adaptive table; the epoch job advances it
+        // as epochs are confirmed durable.  For non-adaptive modes this check is skipped entirely
+        // so existing behaviour is completely unchanged.
+        // Deferred 1: gate on the PER-TABLE effective mode, so a WITH commit_mode='adaptive' table keeps
+        // its WAL floor even under a NOSYNC instance default, while a NOSYNC sibling purges freely.
+        // resolveEffectiveCommitMode falls back to reading _meta when the tracker has not been published
+        // yet, so an adaptive table is recognized even before its first writer/commit publishes the mode.
+        // The epoch floor is a LOCAL-durability (primary) concern: it exists only because this node's disk
+        // holds not-yet-uploaded truth that adaptive crash-recovery re-applies from the WAL. On a replica
+        // (LocalDurabilityPolicy.REPLICA_SKIP) the epoch is never advanced — durableEpochSeqTxn stays 0 and
+        // recovery is re-download + re-apply — so the floor must NOT apply, or it pins the purge floor at 0
+        // and WAL accumulates unboundedly. resolveCommitMode downgrades ADAPTIVE->NOSYNC in exactly that
+        // case, mirroring the epoch producer's own policy gate in ApplyWal2TableJob.maybeAdvanceDurableEpoch.
+        final int purgeFloorMode = LocalDurabilityPolicy.resolveCommitMode(
+                engine.getTableSequencerAPI().resolveEffectiveCommitMode(tableToken),
+                engine.getLocalDurabilityPolicy());
+        if (purgeFloorMode == CommitMode.ADAPTIVE) {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+            safeToPurgeTxn = Math.min(safeToPurgeTxn, tracker.getDurableEpochSeqTxn());
+        }
 
         // Live views publish lv_consumed_seqTxn through this purge floor
         // alongside mat-view consumers. Both dropped and invalid views release
@@ -671,6 +709,15 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 .concat(tableName).concat(WalUtils.WAL_NAME_BASE).put(walId).slash().put(segmentId);
     }
 
+    /**
+     * The sequencer directory, on a THREAD-LOCAL path: the discovery loop holds {@link #path} pinned at
+     * the parts directory while it iterates, so probing must not disturb it.
+     */
+    private Path seqDirPathTl(TableToken tableName) {
+        return Path.getThreadLocal(configuration.getDbRoot())
+                .concat(tableName).concat(WalUtils.SEQ_DIR);
+    }
+
     private Path setSeqPartPath(TableToken tableName) {
         return path.of(configuration.getDbRoot())
                 .concat(tableName).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_PARTS_DIR);
@@ -716,7 +763,20 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     protected boolean runSerially() {
+        if (engine.isDurabilityFailed()) {
+            return false;
+        }
         final long t = clock.getTicks();
+        // Deferred 2 (adaptive group commit): sweep the pending-flush registry on EVERY pass (the sweep has
+        // an empty-set fast path, so it is ~free when W=0 / nothing is pending). The age gate lives in
+        // WalWriter.forceDurableIfPending (flush only when the oldest pending commit is >= W old), so this
+        // makes an IDLE writer's last commit durable within ~W of the window elapsing even though commits
+        // stopped — the hard requirement. Independent of the (much slower) WAL-purge broad-sweep cadence.
+        boolean busy = false;
+        final long groupWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
+        if (groupWindowUs > 0) {
+            busy = engine.getWalGroupCommitFlushQueue().sweep(t, groupWindowUs);
+        }
         if (last + checkInterval < t) {
             last = t;
             if (engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS)) {
@@ -729,7 +789,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
                 LOG.info().$("skipping, locked out").$();
             }
         }
-        return false;
+        return busy;
     }
 
     public interface Deleter {

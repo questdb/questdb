@@ -119,7 +119,10 @@ public final class TableUtils {
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 5;
+    public static final short META_FORMAT_MINOR_VERSION_COMMIT_MODE = 3;
+    public static final short META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE = 4;
+    public static final short META_FORMAT_MINOR_VERSION_BODY_CHECKSUM = 5;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -138,6 +141,38 @@ public final class TableUtils {
     public static final long META_OFFSET_META_FORMAT_MINOR_VERSION = META_OFFSET_WAL_ENABLED + 1; // INT
     public static final long META_OFFSET_TTL_HOURS_OR_MONTHS = META_OFFSET_META_FORMAT_MINOR_VERSION + 4; // INT
     public static final long META_OFFSET_TABLE_FORMAT = META_OFFSET_TTL_HOURS_OR_MONTHS + 4; // INT
+    // Per-table commit-mode override (CommitMode int; CommitMode.UNSET when the table defers to the global
+    // cairo.commit.mode). Additive field at the meta tail, gated by META_FORMAT_MINOR_VERSION_COMMIT_MODE;
+    // tables written before this field existed read CommitMode.UNSET via getCommitMode(MemoryR).
+    public static final long META_OFFSET_COMMIT_MODE = META_OFFSET_TABLE_FORMAT + 4; // INT
+    // The commit mode this table's MATERIALIZED STATE is enrolled under -- distinct from the DECLARED
+    // per-table override above, which says how the table will be written NEXT. It answers exactly one
+    // question, and only this question: may the materialized state be lazily AHEAD of the durable epoch?
+    // ADAPTIVE means yes; anything else (including CommitMode.UNSET, which is what a table written before
+    // this field existed reads back as) means no.
+    //
+    // It is rewritten only when a table ENTERS or LEAVES adaptive, always AFTER the durable state that
+    // justifies the new value: entering, the generation-zero baseline is published first; leaving, a final
+    // forced epoch reconciles the table first. A crash in between therefore leaves the OLD value, which is
+    // always the conservative one -- entering, "not yet adaptive" (re-enrol, publishing a fresh baseline);
+    // leaving, "still adaptive" (roll forward again, which is idempotent). Between two non-adaptive modes
+    // it is not rewritten at all, so a stale non-ADAPTIVE value is normal and answers the question above
+    // correctly. Additive field at the meta tail, gated by META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE.
+    public static final long META_OFFSET_ENROLLED_COMMIT_MODE = META_OFFSET_COMMIT_MODE + 4; // INT
+    // Body length and body checksum of the live _meta, gated by META_FORMAT_MINOR_VERSION_BODY_CHECKSUM.
+    //
+    // They live INSIDE the record rather than in a trailer at the end of the file for one measured
+    // reason: _meta's on-disk length is page-rounded and is NOT authoritative. The create path reuses
+    // its MemoryMARW for the symbol-map files instead of closing it, so the file is left extended to a
+    // page boundary and an end-of-file trailer is simply never found. The reader already knows how to
+    // find version-gated fields, so the length rides here with everything else.
+    //
+    // The pair occupies previously unused padding between META_OFFSET_ENROLLED_COMMIT_MODE (ends at 61)
+    // and META_OFFSET_COLUMN_TYPES (128), so no file grows. [64,80) is EXCLUDED from the checksum it
+    // stores -- see calculateMetaBodyChecksum -- for the same reason _txn excludes its own slot.
+    public static final long META_OFFSET_BODY_LEN_64 = 64; // LONG
+    public static final long META_OFFSET_BODY_CHECKSUM_64 = 72; // LONG
+    private static final long META_BODY_CHECKSUM_SKIP_HI = META_OFFSET_BODY_CHECKSUM_64 + 8;
     public static final String META_PREV_FILE_NAME = "_meta.prev";
     public static final String META_SWAP_FILE_NAME = "_meta.swp";
     public static final int MIN_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(2);
@@ -194,6 +229,19 @@ public final class TableUtils {
      */
     public static final String TXN_FILE_NAME = "_txn";
     public static final String TXN_SCOREBOARD_FILE_NAME = "_txn_scoreboard";
+    // Per-table epoch marker file: records the last durably committed epoch (epochSeqTxn, epochTxn, ts).
+    // Resides in the table directory as a sibling of _txn and _cv. NOT to be confused with the legacy
+    // checkpoint snapshot file (CHECKPOINT_LEGACY_META_FILE_NAME = "_snapshot"), which lives inside the
+    // .checkpoint directory and has a completely different format.
+    public static final String SNAPSHOT_FILE_NAME = "_snapshot";
+    // Magic sentinel for the epoch-marker slot checksum trailer (mirrors CV_CHECKSUM_MAGIC approach).
+    // Spells " EPOCHKSM" on disk (LE) — distinctive, vanishingly unlikely to collide with epoch data.
+    public static final long SNAPSHOT_CHECKSUM_MAGIC = 0x4D534B4843504F45L; // " EPOCHKSM" LE
+    // Suffix appended to _txn / _cv to name the DURABLE EPOCH COPIES that the adaptive durable-epoch
+    // cut (TableWriter.fsyncMaterializedState, Plan 3B) writes into the table dir: _txn.epoch / _cv.epoch.
+    // These are immutable, fsync'd, self-consistent copies of the commit pointers AS OF the epoch, used
+    // by recovery (Plan 3C) as the anchor to restore _txn/_cv and re-apply from. Option 2 of the design.
+    public static final String EPOCH_COPY_SUFFIX = ".epoch";
     // transaction file structure
     // @formatter:off
     public static final int TX_BASE_HEADER_SECTION_PADDING = 12; // Add some free space into header for future use
@@ -205,6 +253,16 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
+    // Capability marker for the _txn body checksum. It is a property of the FILE ("from this txn on, every
+    // record carries a checksum"), so it lives in the BASE HEADER and not in the record's per-area reserved
+    // gap [124,128). Placed in the base header's previously unused tail padding: the last occupied slot is
+    // TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 (bytes [40,44)) and TX_BASE_HEADER_SIZE is 64 (the Math.max floor,
+    // above the 56 the layout actually needs), so [44,64) is free, always-zero padding. These are the two
+    // 8-byte-aligned longs it holds. Nothing grows and no format version is bumped: a file written before
+    // this change simply has zeros here, which reads as "no capability", so its absent checksums stay legacy.
+    // See TX_CHECKSUM_CAPABILITY_MAGIC for why the pair is needed at all.
+    public static final long TX_BASE_OFFSET_CAPABILITY_MAGIC_64 = 48;
+    public static final long TX_BASE_OFFSET_CAPABILITY_WATERMARK_64 = 56;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
@@ -222,12 +280,55 @@ public final class TableUtils {
     public static final long TX_OFFSET_LAG_ROW_COUNT_32 = TX_OFFSET_LAG_TXN_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MIN_TIMESTAMP_64 = TX_OFFSET_LAG_ROW_COUNT_32 + 4;
     public static final long TX_OFFSET_LAG_MAX_TIMESTAMP_64 = TX_OFFSET_LAG_MIN_TIMESTAMP_64 + 8;
+    // Body checksum over the commit-immutable fields only (see calculateTxnBodyChecksum: [0,80) plus the
+    // partition table). Occupies 8 of the 12 previously-unused gap bytes between the last lag field
+    // (TX_OFFSET_LAG_MAX_TIMESTAMP_64, ends at 116) and TX_OFFSET_MAP_WRITER_COUNT_32 (128).
+    // Bytes [124,128) are left reserved and zero. A stored value of 0 means "absent". Absent is NOT
+    // unconditionally a pass: it is legacy (skip the check, back-compatible, no format-version bump) only for a
+    // record BELOW the file's capability watermark; at or beyond it a checksum was guaranteed written, so its
+    // absence is tearing. See TX_CHECKSUM_CAPABILITY_MAGIC and TxReader.unsafeVerifyBodyChecksum.
+    public static final long TX_OFFSET_BODY_CHECKSUM_64 = 116;
     // @formatter:on
     public static final int TX_RECORD_HEADER_SIZE = (int) TX_OFFSET_MAP_WRITER_COUNT_32 + Integer.BYTES;
     public static final String UPGRADE_FILE_NAME = "_upgrade.d";
     public static final String WAL_2_TABLE_RESUME_REASON = "Resume WAL Data Application";
     public static final String WAL_2_TABLE_WRITE_REASON = "WAL Data Application";
     static final int COLUMN_VERSION_FILE_HEADER_SIZE = 40;
+    // Magic prefix of the per-area _cv body-checksum trailer. The trailer is 16 bytes laid out at
+    // [offset + size, offset + size + 16): an 8-byte MAGIC followed by the 8-byte checksum. A real
+    // checksum is "present" ONLY when the file is long enough AND this exact MAGIC sits at offset+size.
+    //
+    // WHY a magic (back-compat, the whole point): a legacy pre-checksum _cv is page-rounded (its writer
+    // closes with close(false) => NO truncation) so its real on-disk length runs well past offset+size,
+    // and the old no-gap allocator packs the next area right after the live one - so the 8 bytes at
+    // offset+size are frequently NON-ZERO adjacent-area data, not zero. An EOF guard plus a zero sentinel
+    // therefore both fail to recognise "absent", and the reader would run a checksum verify over an
+    // unchecksummed legacy area and falsely throw on a HEALTHY old table. Gating presence on a 64-bit
+    // MAGIC makes garbage trailing bytes match with probability ~2^-64 (negligible), while a real new
+    // file always writes the MAGIC. Additive: no migration, no _meta version bump; downgrade-safe because
+    // OFFSET_SIZE_{A,B} still records data-only size and old readers never look at the trailer.
+    //
+    // Value spells the ASCII bytes " CVCHKSM" on disk (little-endian putLong: ' ','C','V','C','H','K',
+    // 'S','M'), chosen to be distinctive and vanishingly unlikely to occur as real column-version data
+    // (partition timestamps / column indices / txns / column tops).
+    public static final long CV_CHECKSUM_MAGIC = 0x4D534B4843564320L; // on-disk bytes (LE): ' ','C','V','C','H','K','S','M'
+    // On-disk size of the _cv body-checksum trailer: 8-byte MAGIC + 8-byte checksum.
+    public static final int CV_CHECKSUM_TRAILER_SIZE = 2 * Long.BYTES;
+    // Capability marker for the _txn body checksum, stored in the base header at
+    // TX_BASE_OFFSET_CAPABILITY_MAGIC_64 alongside a watermark at TX_BASE_OFFSET_CAPABILITY_WATERMARK_64.
+    //
+    // WHY: _txn's body checksum is gated on a bare `stored == 0` sentinel, which cannot tell a LEGACY record
+    // (written before the checksum existed) from one whose checksum slot was ZEROED BY A TORN PAGE WRITE - and
+    // a zeroed slot is exactly what a partial write leaves behind. Treating every 0 as legacy therefore serves
+    // a torn _txn as healthy. The pair here settles it: TxWriter stamps the magic once, with the watermark set
+    // to the txn it is committing, the first time it writes a checksum into this file. A record whose txn is at
+    // or beyond that watermark was guaranteed a checksum, so an absent one is tearing; below it, absent is
+    // simply legacy. _txn keeps its own frozen hash (calculateTxnBodyChecksum) and has no per-area magic, so it
+    // uses only ChecksumTrailer's capability half (isCovered / applyCapability), never ChecksumTrailer.classify.
+    //
+    // Value spells the ASCII bytes " TXCHKSM" on disk (little-endian putLong), matching the CV_CHECKSUM_MAGIC
+    // convention and vanishingly unlikely (~2^-64) to be matched by the zeros or stale bytes of a legacy file.
+    public static final long TX_CHECKSUM_CAPABILITY_MAGIC = 0x4D534B4843585420L; // on-disk bytes (LE): ' ','T','X','C','H','K','S','M'
     // Column flag bit layout (on-disk in _meta).
     // Bits 0, 2, 3 match the pre-posting-index layout, so tables written by
     // older versions keep meaning when read by new binaries, and tables
@@ -259,6 +360,10 @@ public final class TableUtils {
     static final byte TODO_RESTORE_META = 2;
     static final byte TODO_TRUNCATE = 1;
     private static final int EMPTY_TABLE_LAG_CHECKSUM = calculateTxnLagChecksum(0, 0, 0, Long.MAX_VALUE, Long.MIN_VALUE, 0);
+    // Polynomial multiplier and avalanche prime for the _txn body checksum. Kept standalone here
+    // (mirroring Hash.hashMem64 / Hash.xxh3Avalanche64) so the on-disk checksum algorithm is stable
+    // and self-contained, independent of any future change to the std Hash helpers.
+    private static final long HASH_MEM_M2 = 0x517cc1b727220a95L;
     private static final Log LOG = LogFactory.getLog(TableUtils.class);
     private static final int MAX_INDEX_VALUE_BLOCK_SIZE = Numbers.ceilPow2(8 * 1024 * 1024);
     private static final int MAX_SYMBOL_CAPACITY = Numbers.ceilPow2(Integer.MAX_VALUE);
@@ -273,6 +378,7 @@ public final class TableUtils {
     private static final int PARQUET_CONFIG_EXPLICIT_FLAG = 1 << 24;
     private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
     private static final int PARQUET_CONFIG_LEVEL_SHIFT = 16;
+    private static final long XXH3_PRIME_MX1 = 0x165667919E3779F9L;
 
     private TableUtils() {
     }
@@ -306,6 +412,165 @@ public final class TableUtils {
         return TX_RECORD_HEADER_SIZE + bytesSymbols + Integer.BYTES + bytesPartitions;
     }
 
+    /**
+     * Computes a 64-bit checksum over ONLY the commit-immutable bytes of a committed {@code _txn}
+     * record body, so the value is race-free against lock-free readers: every byte it covers changes
+     * exclusively during a version-bumped commit, never in place under a stable version. The covered
+     * region is the union of two non-contiguous sub-ranges:
+     * <ul>
+     *   <li>{@code [0, 80)} &mdash; the 10 catastrophic scalars (txn, transient/fixed row counts,
+     *       min/max timestamp, struct/data/partition-table/column/truncate versions). Commit-only.</li>
+     *   <li>{@code [partitionTableStart, recordSize)} &mdash; the partition-table length int followed by
+     *       the partition records. Commit-only (the partition table is rewritten under a version bump,
+     *       never mutated in place under a stable version).</li>
+     * </ul>
+     * Everything in between is DELIBERATELY EXCLUDED because it is mutated in place WITHOUT a version
+     * bump, concurrent with readers:
+     * <ul>
+     *   <li>{@code [80, 116)} &mdash; seqTxn + the lag fields + the offset-88 lag checksum, overwritten
+     *       by {@link TxWriter#resetLagAppliedRows()} / {@link TxWriter#resetLagValuesUnsafe()}.</li>
+     *   <li>{@code [116, 128)} &mdash; the 8 checksum bytes themselves plus a 4-byte reserved gap.</li>
+     *   <li>{@code [128, partitionTableStart)} &mdash; the symbol count int and the per-symbol count
+     *       pairs, whose transient halves are overwritten by {@link TxWriter#writeTransientSymbolCount}
+     *       per new distinct symbol during ingestion.</li>
+     * </ul>
+     * Because the covered bytes are fixed for any stable version, a lock-free reader that re-reads the
+     * version after loading (the existing protocol) can verify on EVERY load with no false positives:
+     * it can never observe a covered-byte change without also observing a version change.
+     * <p>
+     * {@code recordSize} is the full committed record length and {@code partitionTableStart} is
+     * {@code getPartitionTableSizeOffset(symbolColumnCount)} ({@code 132 + symbolColumnCount * 8}); both
+     * the write side ({@code TxWriter}) and the read side ({@code TxReader}) derive them from the same
+     * shared helpers ({@link #calculateTxRecordSize(int, int)} /
+     * {@link #getPartitionTableSizeOffset(int)}), guaranteeing an identical covered range on both sides.
+     * <p>
+     * The hash is a polynomial over little-endian 8-byte words (mirroring {@code Hash.hashMem64})
+     * finalized with an avalanche, which gives strong tear detection (any changed covered byte flips
+     * many output bits).
+     * <p>
+     * SENTINEL: a stored value of {@code 0} means "absent / skip the check" (old or freshly-reset
+     * files). To avoid ever emitting that sentinel for a real record, a genuine result of {@code 0}
+     * is remapped to {@code 1}.
+     *
+     * @param recordBaseAddr      native address of the record body (offset 0 of the active A/B area)
+     * @param recordSize          full committed record length in bytes
+     * @param partitionTableStart offset of the partition-table length int ({@code 132 + symbolCount*8})
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateTxnBodyChecksum(long recordBaseAddr, long recordSize, long partitionTableStart) {
+        // [0, 80): the 10 catastrophic, commit-only scalars.
+        long h = hashTxnBodyRange(recordBaseAddr, 0, TX_OFFSET_SEQ_TXN_64, 0);
+        // [partitionTableStart, recordSize): the commit-only partition table (length int + records).
+        // Guard against a malformed/empty record where the partition table does not extend past its start.
+        if (partitionTableStart < recordSize) {
+            h = hashTxnBodyRange(recordBaseAddr, partitionTableStart, recordSize, h);
+        }
+        h = xxh3Avalanche64(h);
+        // 0 is the "absent" sentinel; never emit it for a real record.
+        return h != 0 ? h : 1L;
+    }
+
+    /**
+     * Checksum over the live {@code _meta} body {@code [0, bodyLen)}, EXCLUDING the 16 bytes at
+     * {@code [META_OFFSET_BODY_LEN_64, META_OFFSET_BODY_CHECKSUM_64 + 8)} that carry the length and the
+     * checksum itself -- a field cannot cover its own value.
+     *
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateMetaBodyChecksum(long metaBaseAddr, long bodyLen) {
+        long h = hashTxnBodyRange(metaBaseAddr, 0, META_OFFSET_BODY_LEN_64, 0);
+        if (META_BODY_CHECKSUM_SKIP_HI < bodyLen) {
+            h = hashTxnBodyRange(metaBaseAddr, META_BODY_CHECKSUM_SKIP_HI, bodyLen, h);
+        }
+        h = xxh3Avalanche64(h);
+        // 0 is reserved as the "absent" sentinel; never emit it for a real record.
+        return h != 0 ? h : 1L;
+    }
+
+    /**
+     * Stamps the body length and body checksum into a freshly written (or freshly mutated) {@code _meta}.
+     * Call AFTER the whole record is in memory and BEFORE it is synced, so the checksum is made durable
+     * with the bytes it describes.
+     * <p>
+     * Any path that mutates {@code _meta} in place must call this again, or it invalidates the checksum
+     * it left behind.
+     */
+    public static void storeMetaBodyChecksum(MemoryMARW mem, long bodyLen) {
+        mem.putLong(META_OFFSET_BODY_LEN_64, bodyLen);
+        mem.putLong(META_OFFSET_BODY_CHECKSUM_64, calculateMetaBodyChecksum(mem.addressOf(0), bodyLen));
+    }
+
+    /**
+     * Verifies the {@code _meta} body checksum when the file carries one. A file written before the
+     * field existed fails the version gate and loads exactly as before.
+     */
+    public static void verifyMetaBodyChecksum(Utf8Sequence metaPath, MemoryR metaMem, long memSize) {
+        if (!isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_BODY_CHECKSUM)) {
+            return;
+        }
+        final long bodyLen = metaMem.getLong(META_OFFSET_BODY_LEN_64);
+        if (bodyLen == 0) {
+            // ABSENT, not an error. writeMetadata() stamps META_FORMAT_MINOR_VERSION_LATEST for every
+            // producer of this layout, so the version gate can open on a file whose writer never
+            // stamped a checksum. Treating that as fatal would brick such a file; treating it as
+            // absent degrades to unverified, which is the back-compatible direction and keeps the
+            // "absent coverage, never wrong coverage" contract for a writer that is added later.
+            return;
+        }
+        if (bodyLen <= META_BODY_CHECKSUM_SKIP_HI || bodyLen > memSize) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("_meta body length is impossible [path=").put(metaPath)
+                    .put(", bodyLen=").put(bodyLen).put(", memSize=").put(memSize).put(']');
+        }
+        final long stored = metaMem.getLong(META_OFFSET_BODY_CHECKSUM_64);
+        final long computed = calculateMetaBodyChecksum(metaMem.addressOf(0), bodyLen);
+        if (stored != computed) {
+            throw CairoException.critical(CairoException.METADATA_VALIDATION)
+                    .put("_meta checksum mismatch [path=").put(metaPath)
+                    .put(", expected=").put(stored).put(", actual=").put(computed).put(']');
+        }
+    }
+
+    /**
+     * Computes a 64-bit checksum over the ENTIRE committed {@code _cv} (column-version) area
+     * {@code [0, size)}, used to detect a torn/partially-written area (e.g. a reordered or partial msync
+     * under NOSYNC) that the existing A/B version protocol alone cannot catch. Unlike {@code _txn}, the
+     * {@code _cv} area is ALWAYS fully rewritten per commit (see {@link ColumnVersionWriter#doCommit()} -
+     * the whole area is written to a fresh {@code writeOffset}, then the header offset/size is updated and
+     * the version bumped); there is NO in-place stable-version mutation of a published area, so the whole
+     * contiguous area is commit-immutable and can be covered with zero exclusions. The checksum long is
+     * stored on disk immediately AFTER the area, at {@code [offset + size, offset + size + 8)}; the
+     * {@code OFFSET_SIZE_{A,B}} header field continues to record {@code size} (the data length only, a
+     * multiple of {@code BLOCK_SIZE_BYTES}) so older readers still parse the blocks unchanged.
+     * <p>
+     * Uses the SAME polynomial-over-little-endian-words + avalanche as
+     * {@link #calculateTxnBodyChecksum(long, long, long)} ({@code hashTxnBodyRange} / {@code xxh3Avalanche64}),
+     * applied to the single contiguous range {@code [0, size)} (any alignment is handled by the helper, so
+     * the write and read sides agree as long as they pass the same {@code size}).
+     * <p>
+     * PRESENCE / BACK-COMPAT: the checksum is part of a 16-byte trailer
+     * {@code [offset + size, offset + size + 16)} = {@code [MAGIC | checksum]}. The reader treats a
+     * checksum as PRESENT only when the file is long enough AND {@link #CV_CHECKSUM_MAGIC} sits at
+     * {@code offset + size}; otherwise it skips the verify. This is what keeps page-rounded legacy
+     * pre-checksum files (whose trailing bytes are non-zero adjacent-area data) from being mis-read as
+     * checksummed. Because presence is magic-gated rather than content/zero-gated, the genuine-{@code 0}
+     * -> {@code 1} remap below is no longer load-bearing; it is kept (harmless) only so the stored value
+     * is never the bare {@code 0} an even older reader might have treated as "absent".
+     *
+     * @param areaBaseAddr native address of the area body (offset 0 of the active A/B area, i.e. the
+     *                     mapped address of the on-disk {@code offset})
+     * @param size         the committed area length in bytes ({@code OFFSET_SIZE_{A,B}}; a multiple of 32)
+     * @return a non-zero 64-bit checksum
+     */
+    public static long calculateCvAreaChecksum(long areaBaseAddr, long size) {
+        // The whole area is commit-immutable (fully rewritten each commit, never mutated in place under a
+        // stable version), so cover [0, size) with no exclusions.
+        long h = hashTxnBodyRange(areaBaseAddr, 0, size, 0);
+        h = xxh3Avalanche64(h);
+        // 0 is the "absent" sentinel; never emit it for a real area.
+        return h != 0 ? h : 1L;
+    }
+
     // the mig methods are deliberately standalone so that between old versions
     // does not regress if the main code changes
     public static int calculateTxnLagChecksum(long txn, long seqTxn, int lagRowCount, long lagMinTimestamp, long lagMaxTimestamp, int lagTxnCount) {
@@ -317,6 +582,39 @@ public final class TableUtils {
         checkSum = checkSum * 31 + lagTxnCount;
         //noinspection UseHashCodeMethodInspection
         return (int) (checkSum ^ (checkSum >>> 32));
+    }
+
+    /**
+     * Folds the contiguous byte range {@code [lo, hi)} at {@code addr} into the running polynomial hash
+     * {@code h} (mirroring {@code Hash.hashMem64}). Handles any alignment: 8-byte words, then a trailing
+     * 4-byte int, then trailing bytes. The byte sequence &mdash; hence the result &mdash; is identical
+     * for the same content regardless of {@code lo}'s alignment, so the write and read sides agree as
+     * long as they pass the same {@code [lo, hi)}.
+     */
+    private static long hashTxnBodyRange(long addr, long lo, long hi, long h) {
+        final long m = HASH_MEM_M2;
+        long i = lo;
+        for (; i + Long.BYTES <= hi; i += Long.BYTES) {
+            h = h * m + Unsafe.getLong(addr + i);
+        }
+        if (i + Integer.BYTES <= hi) {
+            h = h * m + Unsafe.getInt(addr + i);
+            i += Integer.BYTES;
+        }
+        for (; i < hi; i++) {
+            h = h * m + Unsafe.getByte(addr + i);
+        }
+        return h;
+    }
+
+    /**
+     * xxh3 64-bit avalanche finalizer (copy of {@code Hash}'s private variant, kept standalone so the
+     * on-disk {@code _txn} body checksum stays stable regardless of changes to std Hash).
+     */
+    private static long xxh3Avalanche64(long h) {
+        h ^= h >>> 37;
+        h *= XXH3_PRIME_MX1;
+        return h ^ (h >>> 32);
     }
 
     public static int changeColumnTypeInMetadata(
@@ -403,6 +701,122 @@ public final class TableUtils {
         // older than the TTL.
         final long partitionCeiling = txReader.getNextLogicalPartitionTimestamp(partitionTimestamp);
         return isOlderThanTtl(timestampDriver, partitionCeiling, maxTimestamp, ttl);
+    }
+
+    /**
+     * Rewrites {@code _meta}'s metadataVersion IN PLACE and re-stamps the meta-format minor-version field so
+     * its checksum still matches. Use this rather than writing {@link #META_OFFSET_METADATA_VERSION}
+     * directly: the two fields are coupled and the coupling is silent when broken.
+     *
+     * <p>{@link #isMetaFormatAtLeast} trusts the stored minor version only while the low short of
+     * {@link #META_OFFSET_META_FORMAT_MINOR_VERSION} matches a checksum over (metadataVersion, columnCount).
+     * A caller that resets the metadataVersion of a table it is cloning or converting — {@code REBASE WAL},
+     * {@code SET TYPE WAL} — invalidates that checksum, and every version-gated tail field then reads as
+     * absent: TTL becomes 0, the table format reverts to NATIVE, the per-table commit mode and the adaptive
+     * enrolment record revert to UNSET. Nothing fails; the table just quietly loses those properties.
+     *
+     * <p>The stored minor version is PRESERVED, never re-stamped to {@link #META_FORMAT_MINOR_VERSION_LATEST}.
+     * Claiming a newer format than the bytes actually carry would make the reader interpret never-written
+     * tail bytes as real values — a zero there would read as {@link CommitMode#ASYNC}, not "unset".
+     *
+     * <p>If the source's own checksum does not match, the gate was ALREADY off for that file and its tail
+     * fields were already being ignored. The field is then left exactly as it is: recomputing it would
+     * promote whatever those bytes happen to hold into a valid claim.
+     */
+    public static void resetMetadataVersion(MemoryMARW metaMem, long metadataVersion) {
+        final long previousMetadataVersion = metaMem.getLong(META_OFFSET_METADATA_VERSION);
+        final int minorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        final int columnCount = metaMem.getInt(META_OFFSET_COUNT);
+        metaMem.putLong(META_OFFSET_METADATA_VERSION, metadataVersion);
+        if (Numbers.decodeLowShort(minorVersionField)
+                != checksumForMetaFormatMinorVersionField(previousMetadataVersion, columnCount)) {
+            return;
+        }
+        metaMem.putInt(
+                META_OFFSET_META_FORMAT_MINOR_VERSION,
+                Numbers.encodeLowHighShorts(
+                        checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
+                        Numbers.decodeHighShort(minorVersionField)
+                )
+        );
+        // Last: this rewrote bytes inside the checksummed range, so the stored body checksum now
+        // describes the PREVIOUS contents. Recomputing here rather than at the call sites makes it
+        // correct by construction -- REBASE (WalUtils) and table conversion (TableConverter) both
+        // mutate _meta in place through this method, and any future in-place mutator gets it free.
+        refreshMetaBodyChecksum(metaMem);
+    }
+
+    /**
+     * Recomputes the stored body checksum after an in-place mutation of {@code _meta}. No-op on a file
+     * that carries no checksum, and on one whose recorded body length is unusable.
+     */
+    /**
+     * Recomputes the stored body checksum after an in-place mutation made through a raw file
+     * descriptor rather than a mapped memory -- the adaptive enrolment record is written that way on
+     * purpose, so that durability bookkeeping does not present itself as a schema change.
+     * <p>
+     * No-op on a {@code _meta} that carries no checksum. Never throws for a file it cannot interpret:
+     * losing the checksum costs detection, whereas failing here would fail the enrolment itself.
+     */
+    /**
+     * Recomputes and stores the {@code _meta} body checksum after an IN-PLACE edit, through a raw fd.
+     * Every in-place {@code _meta} writer must call this before its fsync, or the stored checksum
+     * describes the previous contents and the next load rejects a healthy file.
+     *
+     * @param tempMem scratch buffer of at least {@link Long#BYTES} bytes -- the new checksum is written
+     *                through it, so a shorter allocation overruns the heap
+     */
+    public static void refreshMetaBodyChecksumOnFd(FilesFacade ff, long fd, long tempMem, Utf8Sequence metaPath) {
+        final long bodyLen = ff.readNonNegativeLong(fd, META_OFFSET_BODY_LEN_64);
+        if (bodyLen <= META_BODY_CHECKSUM_SKIP_HI) {
+            return; // absent or unusable: legacy _meta, nothing to invalidate
+        }
+        // Bound by the real file, not just from below: bodyLen comes off disk and sizes the allocation
+        // below, so a corrupt 8 bytes at META_OFFSET_BODY_LEN_64 must not become an arbitrary malloc.
+        final long fileLen = ff.length(fd);
+        if (fileLen <= 0 || bodyLen > fileLen) {
+            LOG.critical().$("could not refresh _meta checksum, implausible body length [path=").$(metaPath)
+                    .$(", bodyLen=").$(bodyLen).$(", fileLen=").$(fileLen).I$();
+            return;
+        }
+        final long buf = Unsafe.malloc(bodyLen, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            if (ff.read(fd, buf, bodyLen, 0) != bodyLen) {
+                // The caller has ALREADY mutated the file, so a stale checksum now describes the old
+                // bytes. Unlike the re-derivable sidecars, _meta fails HARD on a mismatch, so this is
+                // not a silent loss of detection -- it is a table that will not load. Say so loudly.
+                LOG.critical().$("could not refresh _meta checksum, short read [path=").$(metaPath)
+                        .$(", bodyLen=").$(bodyLen).I$();
+                return;
+            }
+            // Same gate the reader applies, evaluated on the bytes we just read.
+            final int minorField = Unsafe.getUnsafe().getInt(buf + META_OFFSET_META_FORMAT_MINOR_VERSION);
+            final short savedChecksum = Numbers.decodeLowShort(minorField);
+            final short actualChecksum = checksumForMetaFormatMinorVersionField(
+                    Unsafe.getUnsafe().getLong(buf + META_OFFSET_METADATA_VERSION),
+                    Unsafe.getUnsafe().getInt(buf + META_OFFSET_COUNT)
+            );
+            if (savedChecksum != actualChecksum
+                    || Numbers.decodeHighShort(minorField) < META_FORMAT_MINOR_VERSION_BODY_CHECKSUM) {
+                return;
+            }
+            Unsafe.getUnsafe().putLong(tempMem, calculateMetaBodyChecksum(buf, bodyLen));
+            if (ff.write(fd, tempMem, Long.BYTES, META_OFFSET_BODY_CHECKSUM_64) != Long.BYTES) {
+                LOG.critical().$("could not refresh _meta checksum, short write [path=").$(metaPath).I$();
+            }
+        } finally {
+            Unsafe.free(buf, bodyLen, MemoryTag.NATIVE_TABLE_WRITER);
+        }
+    }
+
+    public static void refreshMetaBodyChecksum(MemoryMARW metaMem) {
+        if (!isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_BODY_CHECKSUM)) {
+            return;
+        }
+        final long bodyLen = metaMem.getLong(META_OFFSET_BODY_LEN_64);
+        if (bodyLen > META_BODY_CHECKSUM_SKIP_HI) {
+            metaMem.putLong(META_OFFSET_BODY_CHECKSUM_64, calculateMetaBodyChecksum(metaMem.addressOf(0), bodyLen));
+        }
     }
 
     public static short checksumForMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
@@ -689,6 +1103,7 @@ public final class TableUtils {
             mem.jumpTo(0);
             path.trimTo(rootLen);
             writeMetadata(structure, tableVersion, tableId, mem);
+            storeMetaBodyChecksum(mem, mem.getAppendOffset());
             mem.sync(false);
 
             // create symbol maps
@@ -997,6 +1412,7 @@ public final class TableUtils {
             }
         };
     }
+
 
     public static long getO3MaxLag(TableRecordMetadata metadata, CairoEngine engine) {
         if (!metadata.isWalEnabled()) {
@@ -1726,6 +2142,57 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * fsync a DIRECTORY so the dentries created or removed in it are durable.
+     * <p>
+     * A rename or unlink publishes a NAME, not durability: on POSIX the change to the directory survives a
+     * power loss only after the directory itself is fsynced, and fsyncing the file contents inside it does
+     * not do that. Call this between publishing a new name and anything that makes a pointer to it durable
+     * (or that removes the name it replaced).
+     * <p>
+     * Fail-stop: an unopenable directory or a failed fsync propagates ({@link #openRONoCache} and
+     * {@link FilesFacade#fsyncAndClose} both throw), because a silently skipped barrier is indistinguishable
+     * from one that never existed. Skipped on a restricted (Windows) file system, which cannot open a
+     * directory for fsync.
+     */
+    public static void fsyncDirDurable(FilesFacade ff, LPSZ dirPath) {
+        if (ff.isRestrictedFileSystem()) {
+            return;
+        }
+        ff.fsyncAndClose(openRONoCache(ff, dirPath, LOG));
+    }
+
+    /**
+     * fsync a FILE that a durable pointer is about to name, opening it solely for the barrier.
+     * <p>
+     * The handle is opened READ-WRITE, not read-only, because Windows requires it: {@code fsync} there is
+     * {@code FlushFileBuffers}, which needs {@code GENERIC_WRITE} on the handle and returns
+     * {@code ERROR_ACCESS_DENIED} (errno 5) for the {@code GENERIC_READ}-only handle {@link #openRONoCache}
+     * produces. A POSIX {@code O_RDONLY} fd fsyncs perfectly well, so a read-only barrier passes every Linux
+     * CI leg while being dead on Windows -- which is exactly how the {@code data.parquet} barrier shipped and
+     * took the whole conversion path (and Enterprise cold storage with it) down on that platform. See
+     * {@code ParquetBarrierHandleAccessTest}.
+     * <p>
+     * Unlike {@link #fsyncDirDurable} this is NOT skipped on a restricted file system: a directory barrier is
+     * impossible on Windows, whereas a file barrier is merely being asked for through the wrong handle.
+     * <p>
+     * Fail-stop: a missing file, an unopenable one, or a failed fsync all propagate, because a silently
+     * skipped barrier is indistinguishable from one that never existed.
+     */
+    public static void fsyncFileDurable(FilesFacade ff, LPSZ path, int fileOpenOpts) {
+        // Checked BEFORE the open, not after: openRW creates the file when it is absent (O_CREAT on POSIX,
+        // OPEN_ALWAYS on Windows), so without this a vanished data file would be replaced by an empty one and
+        // the barrier would report success over nothing.
+        if (!ff.exists(path)) {
+            throw CairoException.critical(ff.errno()).put("could not open, file does not exist: ").put(path).put(']');
+        }
+        final long fd = ff.openRWNoCache(path, fileOpenOpts);
+        if (fd < 0) {
+            throw CairoException.critical(ff.errno()).put("could not open read-write for fsync [file=").put(path).put(']');
+        }
+        ff.fsyncAndClose(fd);
+    }
+
     public static long openRONoCache(FilesFacade ff, LPSZ path, Log log) {
         final long fd = ff.openRONoCache(path);
         if (fd > -1) {
@@ -1851,6 +2318,7 @@ public final class TableUtils {
      * @param columnVersionReader Column version reader (or writer, which extends reader)
      * @param symbolTableProvider Symbol table provider
      * @param configuration       Cairo configuration for parquet encoder options
+     * @param commitMode          effective commit mode of the owning table
      * @param bloomFilterColumns  Comma-separated column names for bloom filters, or null
      * @param bloomFilterFpp      Bloom filter false-positive probability, or NaN for default
      * @param bloomFilterIndexes  Reusable DirectIntList for bloom filter column indexes. Must be non-null;
@@ -1872,6 +2340,7 @@ public final class TableUtils {
             ColumnVersionReader columnVersionReader,
             SymbolTableProvider symbolTableProvider,
             CairoConfiguration configuration,
+            int commitMode,
             @Nullable CharSequence bloomFilterColumns,
             double bloomFilterFpp,
             DirectIntList bloomFilterIndexes,
@@ -2098,8 +2567,10 @@ public final class TableUtils {
                 // a parquet_meta_file_size that resolves only if the _pm bytes survive a
                 // crash. fsync the parent dir too because _pm is a brand-new file in a
                 // brand-new partition directory.
-                final int commitMode = configuration.getCommitMode();
                 if (commitMode != CommitMode.NOSYNC) {
+                    // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
+                    setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                    fsyncFileDurable(ff, other.$(), configuration.getWriterFileOpenOpts());
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
                         setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
@@ -2458,6 +2929,79 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Replaces {@code dst}'s CONTENT with {@code src}'s. On POSIX this happens IN PLACE, so the destination
+     * keeps its identity -- anything already holding it open or mapped observes the new bytes, and it never
+     * stops existing. Windows cannot do that safely and takes an unlink-then-copy route instead; see the
+     * branch at the top of the method for why, and for what that costs.
+     * <p>
+     * {@link FilesFacade#copy(LPSZ, LPSZ)} cannot do this portably. It is a whole-file copy that is only
+     * defined when the destination is ABSENT: on POSIX it is {@code creat(O_TRUNC)} and silently replaces
+     * whatever was there, while on Windows it is {@code CopyFileW(.., bFailIfExists=TRUE)} and fails with
+     * {@link Files#WINDOWS_ERROR_FILE_EXISTS} the moment the destination exists. Code that copies over a
+     * LIVE file therefore passes on Linux and fails on every Windows run.
+     * <p>
+     * Deleting the destination first (see {@code TableWriter#copyOverwrite}) restores portability but not
+     * safety on a durability path: it opens a window in which the file is absent altogether, a crash state
+     * no recovery here has to handle. Truncate-then-transfer adds no new state — a crash mid-transfer
+     * leaves the destination SHORT or TORN, which is exactly what the POSIX {@code creat(O_TRUNC)} copy
+     * already leaves, and every caller re-derives it from its immutable source on the next attempt.
+     * <p>
+     * Fail-stop throughout: a failed open, truncate or transfer throws, and both fds are closed on the way
+     * out so a durability failure cannot leak them.
+     */
+    public static void replaceFileContent(FilesFacade ff, LPSZ src, LPSZ dst, int fileOpenOpts) {
+        if (Os.isWindows()) {
+            // Windows takes the long-established unlink-then-copy route instead (the same one
+            // TableWriter#copyOverwrite has used here for years), because the in-place variant below is not
+            // safe on it: a file cannot be shrunk while a mapping of it is live, and touching such a mapping
+            // afterwards is an access violation that takes the process down rather than throwing. That is
+            // not theoretical -- the in-place version crashed the forked JVM during ACL table creation on
+            // all three windows agents (exit code 55), where the previous build had merely failed a test.
+            //
+            // The trade is deliberate and narrow: this loses the destination's identity, so a live mapping
+            // sees the OLD bytes rather than the new ones, and there is a window in which the file is
+            // absent. Neither is a regression on Windows, where ff.copy simply refused the whole operation
+            // before. removeQuiet fails outright on an open or mapped file, so a destination someone is
+            // actually holding fail-stops here rather than being silently replaced.
+            if (!ff.removeQuiet(dst)) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove copy destination [dst=").put(dst).put(']');
+            }
+            if (ff.copy(src, dst) < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not copy file [src=").put(src).put(", dst=").put(dst).put(']');
+            }
+            return;
+        }
+        final long srcFd = openRO(ff, src, LOG);
+        try {
+            final long size = ff.length(srcFd);
+            if (size < 0) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not read size of copy source [src=").put(src).put(']');
+            }
+            final long dstFd = openRW(ff, dst, LOG, fileOpenOpts);
+            try {
+                // Truncate FIRST so a stale tail can never survive a shorter replacement, mirroring O_TRUNC.
+                if (!ff.truncate(dstFd, 0)) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not truncate copy destination [dst=").put(dst).put(']');
+                }
+                final long copied = size > 0 ? ff.copyData(srcFd, dstFd, 0, size) : 0;
+                if (copied != size) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not copy file content [src=").put(src).put(", dst=").put(dst)
+                            .put(", size=").put(size).put(", copied=").put(copied).put(']');
+                }
+            } finally {
+                ff.close(dstFd);
+            }
+        } finally {
+            ff.close(srcFd);
+        }
+    }
+
     public static void resetTodoLog(FilesFacade ff, Path path, int rootLen, MemoryMARW mem) {
         mem.smallFile(ff, path.trimTo(rootLen).concat(TODO_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
         mem.jumpTo(0);
@@ -2515,6 +3059,13 @@ public final class TableUtils {
         txMem.putInt(baseOffset + TX_OFFSET_LAG_ROW_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_LAG_TXN_COUNT_32, 0);
         txMem.putInt(baseOffset + TX_OFFSET_CHECKSUM_32, EMPTY_TABLE_LAG_CHECKSUM);
+
+        // Zero the 8-byte body-checksum slot [116,124). A stored 0 is the "absent / skip" sentinel: a freshly
+        // created or truncated record carries no body checksum until the next versioned commit writes a real
+        // one. This keeps brand-new tables readable (back-compatible, no format bump) and prevents a stale
+        // checksum from a reused A/B area leaking in if this record is ever published without a following
+        // finishABHeader(). (The 4-byte reserved gap [124,128) is excluded from the checksum and never read.)
+        txMem.putLong(baseOffset + TX_OFFSET_BODY_CHECKSUM_64, 0L);
 
         for (int i = 0; i < symbolMapCount; i++) {
             long offset = getSymbolWriterIndexOffset(i);
@@ -2928,6 +3479,14 @@ public final class TableUtils {
         }
     }
 
+    /**
+     * Writes the {@code _meta} record layout. This stamps META_FORMAT_MINOR_VERSION_LATEST, which opens
+     * the body-checksum version gate, so <b>every caller must stamp the checksum too</b> --
+     * {@link #storeMetaBodyChecksum(MemoryMARW, long)} once the record is complete. This method takes a
+     * {@link MemoryA} and cannot do it itself. Callers: {@link #createTableOrViewOrMatViewFiles} and
+     * {@code SequencerMetadata.create}; {@code TableWriter.rewriteMetadata} writes the same layout
+     * inline and stamps it there.
+     */
     public static void writeMetadata(TableStructure tableStruct, int tableVersion, int tableId, MemoryA mem) {
         int count = tableStruct.getColumnCount();
         mem.putInt(count);
@@ -2946,6 +3505,13 @@ public final class TableUtils {
         mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
+        mem.putInt(tableStruct.getCommitMode());
+        // A brand-new table is NOT enrolled, whatever mode it is being created under. The generation-zero
+        // anchor is published after this file exists (CairoEngine.createTableUnsafe), so recording ADAPTIVE
+        // here would name a durable epoch that is not on disk yet: a crash in that window would leave a
+        // table claiming lazy state with no anchor to rewind to. The first TableWriter to open an adaptive
+        // table records the enrolment, and it does so before the table can be applied lazily.
+        mem.putInt(CommitMode.UNSET);
 
         mem.jumpTo(TableUtils.META_OFFSET_COLUMN_TYPES);
         assert count > 0;
@@ -3188,6 +3754,32 @@ public final class TableUtils {
 
     static int getIndexBlockCapacity(MemoryR metaMem, int columnIndex) {
         return metaMem.getInt(META_OFFSET_COLUMN_TYPES + columnIndex * META_COLUMN_DATA_SIZE + 4 + 8);
+    }
+
+    static int getCommitMode(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_COMMIT_MODE)
+                ? metaMem.getInt(TableUtils.META_OFFSET_COMMIT_MODE)
+                : CommitMode.UNSET;
+    }
+
+    /**
+     * The commit mode this table's materialized state is enrolled under; see
+     * {@link #META_OFFSET_ENROLLED_COMMIT_MODE}. Returns {@link CommitMode#UNSET} for a {@code _meta}
+     * written before the field existed, which reads as "never adaptive" and therefore enrols at the live
+     * cut rather than refusing to start.
+     * <p>
+     * That is sound for every RELEASED build: lazy adaptive apply ships together with this field, so no
+     * released binary can have left a table lazily torn while writing a {@code _meta} without it. It is
+     * deliberately fail-OPEN for one case that exists only before this branch merges — a development
+     * database whose tables were written by an intermediate adaptive build (meta minor
+     * {@link #META_FORMAT_MINOR_VERSION_COMMIT_MODE}) and whose anchor has since been lost. Such a table
+     * enrols at its live cut instead of refusing; there is no signal left on disk to tell it from a table
+     * that was never adaptive at all.
+     */
+    static int getEnrolledCommitMode(MemoryR metaMem) {
+        return isMetaFormatAtLeast(metaMem, META_FORMAT_MINOR_VERSION_ENROLLED_COMMIT_MODE)
+                ? metaMem.getInt(TableUtils.META_OFFSET_ENROLLED_COMMIT_MODE)
+                : CommitMode.UNSET;
     }
 
     static int getTableFormat(MemoryR metaMem) {

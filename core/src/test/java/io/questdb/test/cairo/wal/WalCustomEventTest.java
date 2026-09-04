@@ -416,6 +416,7 @@ public class WalCustomEventTest extends AbstractCairoTest {
             // A custom frame must contain [length:int][txn:long][type:byte]. Setting its
             // length to 12 makes the declared end precede the already-consumed type byte.
             corruptFirstRecordLength(tableToken, walId, Integer.BYTES + Long.BYTES);
+            restampFirstRecordChecksum(tableToken, walId);
             try (Path path = new Path();
                  WalEventReader reader = new WalEventReader(configuration)) {
                 segmentPath(path, tableToken, walId);
@@ -444,6 +445,7 @@ public class WalCustomEventTest extends AbstractCairoTest {
             // not silently surfaced as an unknown/custom event.
             for (byte corruptType : new byte[]{7, 32, 63}) {
                 corruptFirstRecordType(tableToken, walId, corruptType);
+                restampFirstRecordChecksum(tableToken, walId);
                 try (Path path = new Path();
                      WalEventReader reader = new WalEventReader(configuration)) {
                     segmentPath(path, tableToken, walId);
@@ -506,6 +508,58 @@ public class WalCustomEventTest extends AbstractCairoTest {
                 try {
                     // First record's type byte sits past the header and the per-record [len:int][txn:long] prefix.
                     Unsafe.getUnsafe().putByte(mem + WalUtils.WALE_HEADER_SIZE + Integer.BYTES + Long.BYTES, newType);
+                } finally {
+                    ff.munmap(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+    }
+
+    /**
+     * Re-stamp the first record's entry in the mandatory {@code _event.c} checksum sidecar so it matches
+     * whatever the record currently holds.
+     * <p>
+     * The tests above tamper with {@code _event} bytes to exercise FRAME-level validation. Every record also
+     * carries a sidecar entry (offset, length, xxh3), and {@code WalEventCursor.verifyRecordChecksum} runs
+     * FIRST — so without this the reader correctly rejects the tampered record as torn and the frame check
+     * under test is never reached. Re-deriving the entry from what is now on disk keeps the corruption
+     * "well-formed but wrong", which is the case those tests are about; detection of a byte that does NOT
+     * match its checksum is covered separately by the WAL-e checksum tests.
+     */
+    private static void restampFirstRecordChecksum(TableToken tableToken, int walId) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final int recordStart = WalUtils.WALE_HEADER_SIZE;
+        final int length;
+        final long checksum;
+        try (Path path = new Path()) {
+            segmentPath(path, tableToken, walId).concat(WalUtils.EVENT_FILE_NAME);
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            try {
+                final long fileSize = ff.length(fd);
+                final long mem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    length = Unsafe.getUnsafe().getInt(mem + recordStart);
+                    checksum = TableUtils.calculateCvAreaChecksum(mem + recordStart, length);
+                } finally {
+                    ff.munmap(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
+                }
+            } finally {
+                ff.close(fd);
+            }
+        }
+        try (Path path = new Path()) {
+            segmentPath(path, tableToken, walId).concat(WalUtils.EVENT_CHECKSUM_FILE_NAME);
+            final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+            try {
+                final long fileSize = ff.length(fd);
+                final long mem = TableUtils.mapRW(ff, fd, fileSize, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    final long entry = mem + WalUtils.WALE_CHECKSUM_HEADER_SIZE;
+                    Unsafe.getUnsafe().putLong(entry + WalUtils.WALE_CHECKSUM_ENTRY_OFFSET_OFFSET, recordStart);
+                    Unsafe.getUnsafe().putInt(entry + WalUtils.WALE_CHECKSUM_ENTRY_LENGTH_OFFSET, length);
+                    Unsafe.getUnsafe().putLong(entry + WalUtils.WALE_CHECKSUM_ENTRY_VALUE_OFFSET, checksum);
                 } finally {
                     ff.munmap(mem, fileSize, MemoryTag.NATIVE_DEFAULT);
                 }

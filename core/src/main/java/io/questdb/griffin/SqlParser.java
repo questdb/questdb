@@ -35,6 +35,7 @@ import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.mv.MatViewDefinition;
@@ -3046,6 +3047,7 @@ public class SqlParser {
 
         int maxUncommittedRows = configuration.getMaxUncommittedRows();
         long o3MaxLag = configuration.getO3MaxLag();
+        int commitMode = CommitMode.UNSET;
 
         if (tok != null && isWithKeyword(tok)) {
             ExpressionNode expr;
@@ -3060,6 +3062,13 @@ public class SqlParser {
                         }
                     } else if (isO3MaxLagKeyword(expr.lhs.token)) {
                         o3MaxLag = SqlUtil.expectMicros(expr.rhs.token, lexer.getPosition());
+                    } else if (isCommitModeKeyword(expr.lhs.token)) {
+                        commitMode = CommitMode.fromString(unquote(expr.rhs.token));
+                        if (commitMode == CommitMode.UNKNOWN) {
+                            throw SqlException.position(lexer.getPosition())
+                                    .put(" unrecognized commit_mode value \"").put(expr.rhs.token)
+                                    .put("\", expected one of: nosync, sync, async, adaptive, unset");
+                        }
                     } else {
                         throw SqlException.position(lexer.getPosition()).put(" unrecognized ")
                                 .put(expr.lhs.token).put(" after WITH");
@@ -3081,6 +3090,7 @@ public class SqlParser {
         }
         builder.setMaxUncommittedRows(maxUncommittedRows);
         builder.setO3MaxLag(o3MaxLag);
+        builder.setCommitMode(commitMode);
 
         if (tok != null && isInKeyword(tok)) {
             parseInVolume(lexer, builder);

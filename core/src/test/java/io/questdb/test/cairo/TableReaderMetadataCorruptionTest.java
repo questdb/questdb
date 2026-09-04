@@ -432,6 +432,11 @@ public class TableReaderMetadataCorruptionTest extends AbstractCairoTest {
         try (MemoryCMARW mem = Vm.getCMARWInstance()) {
             mem.smallFile(TestFilesFacadeImpl.INSTANCE, path.$(), MemoryTag.MMAP_DEFAULT);
             mem.putInt(offset, value);
+            // Re-stamp the _meta body checksum. Without it the edit below is caught as "checksum
+            // mismatch" before the metadata validation this test is actually about ever runs -- the
+            // checksum doing its job, but hiding the assertion. Refreshing keeps each test pointed at
+            // the field-level validation it was written to exercise.
+            TableUtils.refreshMetaBodyChecksum(mem);
         }
     }
 

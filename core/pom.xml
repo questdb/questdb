@@ -33,12 +33,11 @@
         <outputPath>target</outputPath>
         <runtime.assembly>none</runtime.assembly>
         <javac.target>25</javac.target>
-        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow
-            --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED
-            --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED
-            --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
-            --add-exports=java.base/jdk.internal.vm=io.questdb
-        </argLine>
+        <!-- Empty unless the ram-disk-test-root profile fills it in; see that profile. Surefire does not
+             forward a -Djava.io.tmpdir given on the Maven command line into its forked JVM, so the test
+             root can only be relocated through argLine. -->
+        <testTmpDirArg />
+        <argLine>-ea -Dfile.encoding=UTF-8 -XX:+UseParallelGC --sun-misc-unsafe-memory-access=allow --enable-native-access=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.lang.reflect=ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.time.zone=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED --add-exports=java.base/jdk.internal.vm=io.questdb ${testTmpDirArg}</argLine>
         <test.exclude>None</test.exclude>
         <test.include>%regex[.*[^o].class]</test.include><!-- exclude module-info.class-->
         <web.console.version>2.0.3</web.console.version>
@@ -240,6 +239,31 @@
     </build>
 
     <profiles>
+        <profile>
+            <!-- Puts the JUnit TemporaryFolder that every test's dbRoot hangs off (AbstractTest) on a
+                 developer-chosen path, so a local run can write to a RAM disk instead of grinding an SSD:
+
+                     mkdir -p /dev/shm/qdb-test
+                     QDB_TEST_TMPDIR=/dev/shm/qdb-test mvn -pl core test -Dtest=...
+
+                 The directory must already exist; the JVM does not create java.io.tmpdir. Active only when
+                 QDB_TEST_TMPDIR is exported, so CI keeps its real filesystems (ext4/XFS, plus the dedicated
+                 ZFS shard) and the on-disk write paths they cover.
+
+                 NOTE tmpfs is not on QuestDB's supported-filesystem list, which would make
+                 FilesFacadeImpl.allowMixedIO answer false and quietly move the suite onto the non-mixed-IO
+                 O3 write path, the opposite of what CI exercises. TestFilesFacadeImpl.allowMixedIO keeps
+                 the on-disk answer for a tmpfs root so that does not happen; see the note there. -->
+            <id>ram-disk-test-root</id>
+            <activation>
+                <property>
+                    <name>env.QDB_TEST_TMPDIR</name>
+                </property>
+            </activation>
+            <properties>
+                <testTmpDirArg>-Djava.io.tmpdir=${env.QDB_TEST_TMPDIR}</testTmpDirArg>
+            </properties>
+        </profile>
         <profile>
             <!-- CI gives every surefire fork (and any replacement fork that reuses a slot) its own
                  test log path, so a dead fork's lingering Windows file handle cannot make the next

@@ -300,6 +300,15 @@ public class AlterOperationBuilder implements Mutable {
         return this;
     }
 
+    public AlterOperationBuilder ofSetParamCommitMode(int tableNamePosition, TableToken tableToken, int tableId, int commitMode) {
+        this.command = SET_PARAM_COMMIT_MODE;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.extraInfo.add(commitMode);
+        this.tableId = tableId;
+        return this;
+    }
+
     public AlterOperationBuilder ofSetParamUncommittedRows(int tableNamePosition, TableToken tableToken, int tableId, int maxUncommittedRows) {
         this.command = SET_PARAM_MAX_UNCOMMITTED_ROWS;
         this.tableNamePosition = tableNamePosition;

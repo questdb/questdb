@@ -26,6 +26,10 @@ package io.questdb.cairo.wal;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriterMetadata;
@@ -48,6 +52,7 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -62,6 +67,9 @@ public class WalUtils {
     public static final int DROP_TABLE_WAL_ID = -2;
     public static final String EVENT_FILE_NAME = "_event";
     public static final String EVENT_INDEX_FILE_NAME = "_event.i";
+    // Additive checksum sidecar. _event and _event.i retain their legacy byte layout so an older
+    // binary can drain WAL produced by a newer binary without mis-locating optional record footers.
+    public static final String EVENT_CHECKSUM_FILE_NAME = "_event.c";
     public static final CharSequence INITIAL_META_FILE_NAME = "_meta.0";
     public static final int METADATA_WALID = -1;
     public static final int MIN_WAL_ID = DROP_TABLE_WAL_ID;
@@ -95,10 +103,25 @@ public class WalUtils {
     public static final long SEQ_META_OFFSET_COLUMNS = SEQ_META_SUSPENDED + Byte.BYTES;
     public static final String TABLE_REGISTRY_NAME_FILE = "tables.d";
     public static final String TXNLOG_FILE_NAME = "_txnlog";
+    // Additive per-record CRC sidecar for the V1 sequencer txnlog. V1's RECORD_SIZE has no reserved
+    // slot (V2's does), so an in-place CRC would grow the record and stop older binaries reading it.
+    // The ".c" suffix deliberately mirrors _event.c so the two additive sidecars read as one convention.
+    public static final String TXNLOG_CRC_FILE_NAME = "_txnlog.c";
     public static final String TXNLOG_FILE_NAME_META_INX = "_txnlog.meta.i";
     public static final String TXNLOG_FILE_NAME_META_VAR = "_txnlog.meta.d";
     public static final String TXNLOG_PARTS_DIR = "_txn_parts";
     public static final int WALE_HEADER_SIZE = Integer.BYTES + Integer.BYTES;
+    // The high half of the existing format word is ignored by old readers and positively declares
+    // that _event.c is mandatory. The sidecar header is followed by fixed-size entries indexed by
+    // segment txn: [recordOffset:long, recordLength:int, reserved:int, checksum:long].
+    public static final short WALE_CHECKSUM_FEATURE_VERSION = 1;
+    public static final long WALE_CHECKSUM_MAGIC = 0x57414C45434B5331L;
+    public static final int WALE_CHECKSUM_FILE_VERSION = 1;
+    public static final int WALE_CHECKSUM_HEADER_SIZE = 2 * Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_SIZE = 3 * Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_OFFSET_OFFSET = 0;
+    public static final int WALE_CHECKSUM_ENTRY_LENGTH_OFFSET = Long.BYTES;
+    public static final int WALE_CHECKSUM_ENTRY_VALUE_OFFSET = 2 * Long.BYTES;
     public static final long WALE_MAX_TXN_OFFSET_32 = 0L;
     // DEFAULT DEDUP mode means following the table definition. If the table has dedup enabled, then
     // the commit will deduplicate the data, otherwise it will not.
@@ -197,24 +220,66 @@ public class WalUtils {
         // Reset _txn (seqTxn=0, lag, structure version=0) and _meta (new tableId, metadataVersion=0) in
         // the staging dir - exactly as WAL conversion does (TableConverter) - then create the sequencer
         // files so the rename carries a complete table into place.
+        final int effectiveCommitMode;
+        final int timestampType;
+        final int partitionBy;
         try (
                 TxWriter txWriter = new TxWriter(ff, configuration);
                 MemoryMARW metaMem = Vm.getCMARWInstance()
         ) {
             txWriter.ofRW(dstDir.concat(TableUtils.TXN_FILE_NAME).$());
+            // Structural one-shot write, outside any table writer and outside the adaptive epoch's coverage:
+            // take the SYNC grade under ADAPTIVE rather than TxWriter's (correct, but apply-path) lazy gate.
+            txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
             txWriter.resetLagValuesUnsafe();
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
             metaMem.putInt(TableUtils.META_OFFSET_TABLE_ID, newTableId);
-            metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+            // Through resetMetadataVersion, never a raw putLong: the metadataVersion is checksummed into the
+            // meta-format minor-version field, so rewriting it in place otherwise switches off every
+            // version-gated tail field and the clone silently loses its TTL, table format, per-table commit
+            // mode and adaptive enrolment record.
+            TableUtils.resetMetadataVersion(metaMem, 0);
             txWriter.resetStructureVersionUnsafe();
 
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
             try (TableWriterMetadata metadata = new TableWriterMetadata(newToken)) {
                 metadata.reload(dstDir.trimTo(dstLen), metaMem);
                 TableSequencerImpl.createSequencerFiles(configuration, walDirectoryPolicy, dstDir.trimTo(dstLen), metadata, newToken, newTableId);
+                effectiveCommitMode = CommitMode.effectiveCommitMode(metadata.getCommitMode(), configuration.getCommitMode());
+                timestampType = metadata.getTimestampIndex() < 0
+                        ? ColumnType.TIMESTAMP
+                        : metadata.getColumnType(metadata.getTimestampIndex());
+                partitionBy = metadata.getPartitionBy();
             }
         }
         dstDir.trimTo(dstLen);
+
+        // The clone is a NEW table - its _txn/_meta were just reset - so it needs its OWN adaptive epoch
+        // anchor; the source's was excluded from the copy (see isRebaseClonedRootFile) because it binds to
+        // metadata this table no longer has. Publish generation zero HERE, in the staging dir, so the atomic
+        // rename below carries a table that is self-consistent from the first instant it is visible: a boot
+        // that finds the published dir - as the live table after the registry swap, or as a crash-orphan the
+        // root-directory scan adopts - can always validate its epoch instead of refusing to start. Uses the
+        // NEW table's effective mode, not the global one, so a table-level override decides.
+        if (effectiveCommitMode == CommitMode.ADAPTIVE) {
+            DurableEpochManifest.publishInitialAt(
+                    configuration,
+                    newToken,
+                    dstDir.trimTo(dstLen),
+                    timestampType,
+                    partitionBy,
+                    configuration.getMicrosecondClock().getTicks() / 1000L
+            );
+            dstDir.trimTo(dstLen);
+        } else {
+            // No anchor for this clone, so it must not inherit the SOURCE's enrolment record either -- the
+            // copied _meta carries it, and a source left enrolled by a crash (awaiting the reconciliation
+            // its next writer performs) would hand the clone a claim of lazy state with nothing to rewind
+            // to, which recovery refuses. Symmetric to excluding the source's epoch artifacts from the copy:
+            // the clone's _txn/_meta were just reset, so it has no lazy state by construction.
+            DurableEpochManifest.clearEnrollmentRecord(configuration, newToken, dstDir.trimTo(dstLen), dstLen);
+            dstDir.trimTo(dstLen);
+        }
 
         // Mark the new table rebased while it is still invisible in the staging dir, so the permanent
         // _rebase_new marker is in place before the rename makes the table observable to the uploader.
@@ -224,6 +289,119 @@ public class WalUtils {
         // markRebased is false there. No-op effect in OSS, which has no uploader to consume the marker.
         if (markRebased) {
             writeRebaseNewMarker(ff, dstDir);
+        }
+
+        // ADAPTIVE: durably publish the staging table. ff.copy / MemoryMARW.close's munmap / createSequencerFiles
+        // all leave the freshly built _meta/_txn/sequencer file contents in the page cache only, and the caller's
+        // atomic rename makes NEITHER those contents NOR the published dentry durable -- the dentry needs an
+        // fsync of the DESTINATION parent, which the caller issues right after the rename. Recursively MS_SYNC + fdatasync
+        // every file so a power loss cannot publish a table with a size-0 _meta (which recovery would suspend on).
+        // Sync-BEFORE-rename is required: startup adopts the new dir by its presence at the final path, so it must
+        // already be durable when the rename makes it adoptable. Gated on the NEW table's EFFECTIVE mode, the same
+        // one that decided the epoch baseline above: an adaptive table on a nosync instance would otherwise publish
+        // a baseline that a crash can lose, which is the state recovery refuses to start on.
+        if (effectiveCommitMode == CommitMode.ADAPTIVE) {
+            dstDir.trimTo(dstLen);
+            syncStagingTreeDurable(ff, dstDir, configuration.getWriterFileOpenOpts());
+            dstDir.trimTo(dstLen);
+        }
+    }
+
+    // Recursively make every file under {@code dir} device-durable (full-range MS_SYNC msync + fdatasync of the
+    // mmap-written content), then fsync {@code dir} itself, so an ALTER TABLE ... REBASE WAL staging table is
+    // crash-durable before the caller's atomic rename publishes it (see cloneTableDirForRebase). ADAPTIVE-gated
+    // by the caller. Hard-linked partition columns are synced too: durability is tracked per path, so an
+    // unsynced new path would be lost on a crash even though it shares the source table's durable inode. The
+    // DIRECTORY fsync is required in addition to the per-file content fsync: on POSIX, fdatasync of a newly
+    // created file's CONTENT does NOT make its DIRECTORY ENTRY (dentry) durable — only fsync of the parent
+    // directory does. Children are synced before {@code dir}, so a child dir's own dentries are journaled
+    // before its dentry is journaled into this parent. {@code dir} is restored to its entry length.
+    private static void syncStagingTreeDurable(FilesFacade ff, Path dir, int fileOpts) {
+        final int len = dir.size();
+        final long pFind = ff.findFirst(dir.$());
+        if (pFind < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not enumerate rebase staging directory for durability [path=").put(dir).put(']');
+        }
+        if (pFind > 0) {
+            try {
+                do {
+                    final long pName = ff.findName(pFind);
+                    if (!Files.notDots(pName)) {
+                        continue;
+                    }
+                    dir.trimTo(len).concat(pName);
+                    final int type = ff.findType(pFind);
+                    // DT_UNKNOWN counts as a file, matching TableWriter.fsyncAttachedPartitionFiles: some
+                    // filesystems report it for regular files. Recursing on one now that the enumeration is
+                    // fail-stop would findFirst() a FILE -> ENOTDIR -> -1 -> abort the whole REBASE WAL,
+                    // where before the fail-stop it fell through and was still made durable by the
+                    // directory sync below.
+                    if (type == Files.DT_FILE || type == Files.DT_UNKNOWN) {
+                        fsyncMappedFile(ff, dir, fileOpts);
+                    } else {
+                        syncStagingTreeDurable(ff, dir, fileOpts);
+                    }
+                    dir.trimTo(len);
+                } while (ff.findNext(pFind) > 0);
+            } finally {
+                ff.findClose(pFind);
+                dir.trimTo(len);
+            }
+        }
+        // Now that every child (file content + nested dirs) is durable, fsync THIS directory so the newly
+        // created children's dentries are journaled. Without it a crash could publish (via the rename) a
+        // directory whose entries point at not-yet-durable inodes.
+        fsyncDirDurable(ff, dir);
+    }
+
+    // fsync a single staging DIRECTORY so its dentries are journaled. Windows-guarded (directory fsync is a
+    // POSIX-only operation).
+    // Fail-stop, matching TableUtils.fsyncDirDurable: this barrier is what stands between a power loss and a
+    // rename publishing a table whose dentries point at non-durable inodes, so an unopenable directory must
+    // propagate rather than return success. A silently skipped barrier is indistinguishable from one that
+    // never existed -- and openRO here can fail for transient reasons (EMFILE under load), not just for
+    // reasons that would doom the rebase anyway.
+    private static void fsyncDirDurable(FilesFacade ff, Path dir) {
+        if (Os.isWindows()) {
+            return;
+        }
+        final long dirFd = ff.openRO(dir.$());
+        if (dirFd < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not open rebase staging directory for fsync [path=").put(dir).put(']');
+        }
+        ff.fsyncAndClose(dirFd);
+    }
+
+    // Map the file's full extent, MS_SYNC msync it (flushes the mmap-written content and advances its durable
+    // extent) then fdatasync for the on-device size. A no-op for a 0-length file.
+    // Fail-stop for the same reason as fsyncDirDurable: an unopenable or unmappable staging file leaves
+    // content that the publishing rename would expose as durable when it is not.
+    private static void fsyncMappedFile(FilesFacade ff, Path filePath, int fileOpts) {
+        final long fd = ff.openRW(filePath.$(), fileOpts);
+        if (fd < 0) {
+            throw CairoException.critical(ff.errno())
+                    .put("could not open rebase staging file for durability [path=").put(filePath).put(']');
+        }
+        try {
+            final long size = ff.length(fd);
+            if (size > 0) {
+                final long addr = ff.mmap(fd, size, 0, Files.MAP_RW, MemoryTag.MMAP_TABLE_WRITER);
+                if (addr == -1 || addr == 0) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not map rebase staging file for durability [path=").put(filePath)
+                            .put(", size=").put(size).put(']');
+                }
+                try {
+                    ff.msync(addr, size, false);
+                } finally {
+                    ff.munmap(addr, size, MemoryTag.MMAP_TABLE_WRITER);
+                }
+                ff.fdatasync(fd);
+            }
+        } finally {
+            ff.close(fd);
         }
     }
 
@@ -489,13 +667,25 @@ public class WalUtils {
         }
     }
 
-    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers).
+    // Whether a top-level file should be COPIED into a rebase clone (everything except transient markers and
+    // the SOURCE table's adaptive epoch anchors). The anchors are deliberately excluded: the clone resets
+    // _txn/_meta to a brand-new table, so every copied .epoch payload/manifest would be bound to metadata this
+    // table no longer has and could never validate - leaving a published dir that recovery reads as "no
+    // trustworthy adaptive epoch generation" and refuses to start on. The clone publishes its OWN
+    // generation-zero baseline instead (see cloneTableDirForRebase).
     private static boolean isRebaseClonedRootFile(CharSequence name) {
         if (Chars.equals(name, TableUtils.TODO_FILE_NAME)
                 || Chars.equals(name, CONVERT_FILE_NAME)
                 || Chars.equals(name, REBASE_NEW_FILE_NAME)
                 || Chars.equals(name, REBASE_SOURCE_FILE_NAME)
-                || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)) {
+                || Chars.equals(name, TableUtils.TXN_SCOREBOARD_FILE_NAME)
+                || Chars.equals(name, TableUtils.SNAPSHOT_FILE_NAME)
+                || Chars.startsWith(name, DurableEpochManifest.FILE_NAME)
+                // The SOURCE's restore-enrolment marker states something about the SOURCE's files, not the
+                // clone's. Copied in, it would let a clone whose own baseline never landed silently re-enrol
+                // rather than refuse -- the one thing an explicit, per-caller marker exists to prevent.
+                || Chars.equals(name, RecoveryCoordinator.RESTORE_ENROL_FILE_NAME)
+                || Chars.contains(name, TableUtils.EPOCH_COPY_SUFFIX)) {
             return false;
         }
         return !Chars.endsWith(name, WAL_PENDING_FS_MARKER);

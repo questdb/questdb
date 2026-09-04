@@ -202,7 +202,10 @@ public class PropServerConfigurationTest {
 
         Assert.assertTrue(configuration.getCairoConfiguration().getLogSqlQueryProgressExe());
 
-        Assert.assertEquals(CommitMode.NOSYNC, configuration.getCairoConfiguration().getCommitMode());
+        // ADAPTIVE is the OSS default: a single node has no replica to fall back on, so local
+        // durability is the only thing standing between it and a power loss. Enterprise flips this to
+        // nosync only when replication is configured (EntPropServerConfiguration).
+        Assert.assertEquals(CommitMode.ADAPTIVE, configuration.getCairoConfiguration().getCommitMode());
         Assert.assertEquals(2097152, configuration.getCairoConfiguration().getSqlCopyBufferSize());
         Assert.assertEquals(32, configuration.getCairoConfiguration().getCopyPoolCapacity());
         Assert.assertEquals(5, configuration.getCairoConfiguration().getCreateAsSelectRetryCount());
@@ -531,6 +534,20 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testInvalidCairoCommitModeFailsClosed() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath(), "adaptve");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("a commit-mode typo must not silently downgrade the database to nosync");
+        } catch (ServerConfigurationException expected) {
+            TestUtils.assertContains(expected.getMessage(), "invalid configuration value");
+            TestUtils.assertContains(expected.getMessage(), PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath());
+            TestUtils.assertContains(expected.getMessage(), "adaptve");
+        }
+    }
+
+    @Test
     public void testCommitIntervalDefault() throws Exception {
         Properties properties = new Properties();
         properties.setProperty("line.tcp.commit.interval.default", "0");
@@ -544,6 +561,17 @@ public class PropServerConfigurationTest {
         properties.setProperty("line.tcp.commit.interval.default", "1000");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(1000, configuration.getLineTcpReceiverConfiguration().getCommitIntervalDefault());
+    }
+
+    @Test
+    public void testBatchedColumnSyncForceDisable() throws Exception {
+        // cairo.adaptive.epoch.column.sync.batched=false must disable the batched SYNC flush deterministically:
+        // the production getter short-circuits on the raw property BEFORE any fast_commit detection, so this
+        // holds regardless of the host filesystem (this config is built with detection ENABLED, like prod).
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED.getPropertyPath(), "false");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getCairoConfiguration().isAdaptiveEpochColumnSyncBatched());
     }
 
     @Test
@@ -2990,6 +3018,47 @@ public class PropServerConfigurationTest {
             BuildInformation buildInformation
     ) throws Exception {
         return new PropServerConfiguration(root, properties, env, PropServerConfigurationTest.LOG, buildInformation);
+    }
+
+    @Test
+    public void testPartitionChecksumProperties() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.partition.checksum.enabled", "false");
+        properties.setProperty("cairo.partition.checksum.block.size", "262144");
+        properties.setProperty("cairo.partition.checksum.strict", "true");
+        properties.setProperty("cairo.partition.checksum.scrub.bytes.per.second", "1048576");
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        CairoConfiguration cairo = configuration.getCairoConfiguration();
+        Assert.assertFalse(cairo.isPartitionChecksumEnabled());
+        Assert.assertEquals(262144, cairo.getPartitionChecksumBlockSize());
+        Assert.assertTrue(cairo.isPartitionChecksumStrict());
+        Assert.assertEquals(1048576L, cairo.getPartitionChecksumScrubBytesPerSecond());
+    }
+
+    @Test
+    public void testPartitionChecksumPropertyDefaults() throws Exception {
+        PropServerConfiguration configuration = newPropServerConfiguration(new Properties());
+        CairoConfiguration cairo = configuration.getCairoConfiguration();
+        Assert.assertTrue(cairo.isPartitionChecksumEnabled());
+        Assert.assertEquals(1024 * 1024, cairo.getPartitionChecksumBlockSize());
+        // Degrade-by-default is a deliberate exemption from fail-stop, not an oversight.
+        Assert.assertFalse(cairo.isPartitionChecksumStrict());
+        // 0: the scrub is opt-in until it is serialised against the writer -- see the accessor javadoc.
+        Assert.assertEquals("the scrub is opt-in: see the accessor javadoc for the two measured failures", 0L, cairo.getPartitionChecksumScrubBytesPerSecond());
+    }
+
+    @Test
+    public void testPartitionChecksumBlockSizeMustBeAPowerOfTwo() throws Exception {
+        // The block index is derived by division; a non-power-of-two silently changes which bytes a
+        // block covers between two binaries reading the same vector.
+        Properties properties = new Properties();
+        properties.setProperty("cairo.partition.checksum.block.size", "1000");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail("expected rejection");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "cairo.partition.checksum.block.size");
+        }
     }
 
     protected PropServerConfiguration newPropServerConfiguration(Properties properties) throws Exception {

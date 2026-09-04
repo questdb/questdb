@@ -414,6 +414,9 @@ public class TableSnapshotRestore implements QuietCloseable {
                 txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
             }
             txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TableUtils.TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
+            // Structural one-shot restore, outside any table writer and outside the adaptive epoch's
+            // coverage (a restore explicitly clears the epoch anchors): take the SYNC grade under ADAPTIVE.
+            txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
             txWriter.unsafeLoadAll();
 
             if (columnVersionReader == null) {
@@ -542,6 +545,15 @@ public class TableSnapshotRestore implements QuietCloseable {
         if (isView) {
             copyViewMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
         } else {
+            // Clear any stale adaptive durable-epoch anchor at the destination BEFORE laying down the
+            // restored _txn/_cv. A checkpoint/PITR restore-over-existing rewrites _txn/_cv, but a checkpoint
+            // does NOT capture the epoch trio (_snapshot/_txn.epoch/_cv.epoch), so the destination's own
+            // pre-restore anchor would survive. Left in place, RecoveryCoordinator (which runs next in
+            // CairoEngine.completeInit and does NOT lineage-check the epoch) could rewind the freshly-restored
+            // _txn/_cv back to that stale cut. Symmetric to BackupRestoreAgent.removeStaleMetadataFiles (#23).
+            // Only tables and mat-views reach this branch (regular views have no _cv/epoch and no data).
+            RecoveryCoordinator.removeAdaptiveEpochArtifacts(ff, dstPath, dstPathLen);
+
             // Copy metadata files from source to the destination table location
             copyMetadataFiles(srcPath, dstPath, recoveredMetaFiles);
 

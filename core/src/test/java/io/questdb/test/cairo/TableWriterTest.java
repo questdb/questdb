@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
@@ -99,6 +100,7 @@ import org.junit.Test;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.SEQ_DIR;
@@ -513,6 +515,136 @@ public class TableWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddColumnActualDirectoryFsyncFailurePoisonsEngine() throws Exception {
+        try {
+            assertMemoryLeak(() -> {
+                populateTable();
+                final class TableDirSyncFailureFacade extends TestFilesFacadeImpl {
+                    private boolean isArmed;
+                    private boolean isCounting;
+                    private int syncFailureCount;
+                    private long tableDirFd = -1;
+
+                    @Override
+                    public void fsyncAndClose(long fd) {
+                        if (isCounting && fd == tableDirFd) {
+                            syncFailureCount++;
+                            if (isArmed) {
+                                isArmed = false;
+                                super.close(fd);
+                                throw CairoException.dataSyncFailure(5, "fsyncAndClose")
+                                        .put("injected metadata directory fsync failure");
+                            }
+                        }
+                        super.fsyncAndClose(fd);
+                    }
+
+                    @Override
+                    public long openRONoCache(LPSZ name) {
+                        final long fd = super.openRONoCache(name);
+                        if (isCounting && Utf8s.endsWithAscii(name, PRODUCT_FS)) {
+                            tableDirFd = fd;
+                        }
+                        return fd;
+                    }
+                }
+                final TableDirSyncFailureFacade ff = new TableDirSyncFailureFacade();
+                final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                    @Override
+                    public @NotNull FilesFacade getFilesFacade() {
+                        return ff;
+                    }
+                };
+
+                try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                    ff.isCounting = true;
+                    ff.isArmed = true;
+                    try {
+                        writer.addColumn("fatal_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                        Assert.fail("actual directory fsync failure must be fatal");
+                    } catch (CairoError expected) {
+                        Assert.assertTrue(CairoException.isDataSyncFailure(expected));
+                    }
+                    Assert.assertEquals(1, ff.syncFailureCount);
+                    Assert.assertTrue(engine.isDurabilityPoisoned());
+                }
+            });
+        } finally {
+            resetDurabilityPoisonForTest();
+        }
+    }
+
+    private void resetDurabilityPoisonForTest() throws Exception {
+        final java.lang.reflect.Field field = CairoEngine.class.getDeclaredField("durabilityFailure");
+        field.setAccessible(true);
+        ((AtomicReference<?>) field.get(engine)).set(null);
+        engine.setDurabilityFailureHandler(failure -> {
+        });
+    }
+
+    @Test
+    public void testAddColumnPostSwapTableDirFsyncFailureCanBeRetried() throws Exception {
+        testAddColumnTableDirFsyncFailureCanBeRetried(2);
+    }
+
+    @Test
+    public void testAddColumnPreSwapTableDirFsyncFailureCanBeRetried() throws Exception {
+        testAddColumnTableDirFsyncFailureCanBeRetried(1);
+    }
+
+    private void testAddColumnTableDirFsyncFailureCanBeRetried(int failAtDirOpen) throws Exception {
+        assertMemoryLeak(() -> {
+            populateTable();
+            final class TableDirOpenFailureFacade extends TestFilesFacadeImpl {
+                private int tableDirOpensUntilFailure;
+
+                void arm(int failAt) {
+                    tableDirOpensUntilFailure = failAt;
+                }
+
+                @Override
+                public long openRONoCache(LPSZ name) {
+                    if (tableDirOpensUntilFailure > 0
+                            && Utf8s.endsWithAscii(name, PRODUCT_FS)
+                            && --tableDirOpensUntilFailure == 0) {
+                        return -1;
+                    }
+                    return super.openRONoCache(name);
+                }
+            }
+            final TableDirOpenFailureFacade ff = new TableDirOpenFailureFacade();
+            final CairoConfiguration testConfiguration = new DefaultTestCairoConfiguration(root) {
+                @Override
+                public @NotNull FilesFacade getFilesFacade() {
+                    return ff;
+                }
+            };
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals(20, writer.getColumnCount());
+                ff.arm(failAtDirOpen);
+                try {
+                    writer.addColumn("retry_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                    Assert.fail("directory fsync failure expected");
+                } catch (CairoException expected) {
+                    // The failed DDL must restore the live writer before reporting the failure.
+                }
+                Assert.assertEquals(20, writer.getColumnCount());
+            }
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals("failed DDL must stay rolled back after reopen", 20, writer.getColumnCount());
+                writer.addColumn("retry_col", ColumnType.BINARY, AllowAllSecurityContext.INSTANCE);
+                Assert.assertEquals(22, writer.getColumnCount());
+            }
+
+            try (TableWriter writer = newOffPoolWriter(testConfiguration, PRODUCT)) {
+                Assert.assertEquals("retried DDL must survive reopen", 22, writer.getColumnCount());
+            }
+        });
+    }
+
+    @Test
     public void testAddColumnNonPartitioned() {
         int N = 100000;
         create(FF, PartitionBy.NONE, N);
@@ -670,6 +802,16 @@ public class TableWriterTest extends AbstractCairoTest {
             @Override
             public @NotNull FilesFacade getFilesFacade() {
                 return ff;
+            }
+
+            @Override
+            public boolean isPartitionChecksumEnabled() {
+                // This test injects a failure into the Nth openRO of "supplier.d" to make addIndex
+                // fail. The partition checksum seal also opens covered column files read-only, so
+                // with checksums on it consumes that injection first -- and swallows it by design,
+                // leaving addIndex to succeed and the test to fail on Assert.fail(). The subject
+                // here is index failure, not checksums, so take them out of the counting.
+                return false;
             }
         };
 

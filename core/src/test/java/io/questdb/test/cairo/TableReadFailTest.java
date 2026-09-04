@@ -32,7 +32,9 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.std.FilesFacade;
@@ -144,13 +146,17 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.jumpTo(offset);
                 mem.close();
 
-                // this should time out
+                // The corruption leaves a STABLE version pointing at a torn primary area (record txn no longer
+                // matches) and an uninitialised fallback area -- permanent corruption, not a concurrent
+                // mid-commit whose version would keep churning. The branch's _txn A/B body-checksum guard
+                // fail-fasts on that (correct fail-loud) rather than spinning to a spin-lock timeout. (The
+                // retry/timeout path still applies when the version actually changes under the reader.)
                 try {
                     spinLockTimeout = 100;
                     reader.reload();
                     Assert.fail();
                 } catch (CairoException e) {
-                    TestUtils.assertContains(e.getFlyweightMessage(), "timeout");
+                    TestUtils.assertContains(e.getFlyweightMessage(), "checksum mismatch");
                 }
 
                 // restore txn file to its former glory
@@ -158,6 +164,14 @@ public class TableReadFailTest extends AbstractCairoTest {
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
                 mem.jumpTo(recOffset + TableUtils.TX_OFFSET_TXN_64);
                 mem.putLong(txn + 2);
+                // The restored record is hand-written, so it has no valid body checksum. Zero the slot to mark
+                // it absent AND clear the file's capability marker: absent is only "legacy, skip the check"
+                // below the capability watermark. Leaving the marker (stamped by the writer's own commits
+                // above) would make this checksum-free record read as TORN - correctly so, which is the point
+                // of the fail-fast asserted a few lines up - and the restore would never load.
+                mem.putLong(recOffset + TableUtils.TX_OFFSET_BODY_CHECKSUM_64, 0L);
+                mem.putLong(TableUtils.TX_BASE_OFFSET_CAPABILITY_MAGIC_64, 0L);
+                mem.putLong(TableUtils.TX_BASE_OFFSET_CAPABILITY_WATERMARK_64, 0L);
                 mem.jumpTo(offset);
                 mem.close();
                 mem.close();
@@ -191,6 +205,151 @@ public class TableReadFailTest extends AbstractCairoTest {
 
                 Assert.assertEquals(2 * N, count);
             }
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testTornLiveTxnAreaIsNamedRatherThanBlamedOnContention() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 100);
+            spinLockTimeout = 100;
+            String x = "x";
+            TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
+                    .col("a", ColumnType.INT)
+                    .timestamp();
+            AbstractCairoTest.create(model);
+            TableToken tableToken = engine.verifyTableName(x);
+
+            // Two commits, so the OTHER A/B area holds a complete, checksum-valid previous record --
+            // the one the fallback will land on.
+            commitOneRow(x, 0);
+            commitOneRow(x, 1);
+
+            // A reader that has already seen the current txn pins the scoreboard max there. That is what
+            // makes the fallback record unusable below: it carries the PREVIOUS txn, which the scoreboard
+            // then refuses. The scoreboard is malloc'd, so this models corruption discovered while the
+            // engine is live -- after a restart the fallback would simply succeed.
+            try (TableReader pin = newOffPoolReader(configuration, x)) {
+                Assert.assertTrue(pin.getTxn() > 0);
+            }
+
+            tearLiveTxnArea(tableToken);
+
+            TxReader.resetBodyChecksumFallbackCount();
+            try (TableReader ignore = newOffPoolReader(configuration, x)) {
+                Assert.fail("a torn live _txn area must not open a reader");
+            } catch (CairoException e) {
+                // The defect this pins: TxReader correctly detects the torn area and falls back to the
+                // intact previous one, but the scoreboard refuses that older txn, so the reader spun to
+                // its deadline and reported a contention-flavoured "Transaction read timeout". Name the
+                // torn _txn instead -- an operator must not go hunting for reader contention.
+                TestUtils.assertContains(e.getFlyweightMessage(), "_txn live area is torn");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table=" + x);
+            }
+            // Prove the diagnosis ran on the path it claims: the A/B fallback must actually have fired.
+            Assert.assertTrue(
+                    "the body-checksum fallback must have fired, else this test proves nothing",
+                    TxReader.getBodyChecksumFallbackCount() > 0
+            );
+
+            TxReader.resetBodyChecksumFallbackCount();
+            engine.clear();
+        });
+    }
+
+    /**
+     * A torn live area is TERMINAL, so the diagnosis must not depend on time passing.
+     * <p>
+     * The retry loop's only exit was a wall-clock deadline. Freezing the clock is ordinary practice in this
+     * suite -- any test that drives time by hand does it, and {@code AbstractEntColdStorageFsTest} pins
+     * {@code currentMicros} for the whole class -- and {@code CairoTestConfiguration.getMillisecondClock}
+     * derives from that same frozen source. So the deadline could never arrive, and a condition the code
+     * already knew how to name became an unbounded 100%-CPU spin: enterprise CI burned its 20-minute
+     * per-test limit on it across the linux, mac and Replication jobs rather than failing in milliseconds.
+     * <p>
+     * Waiting never repairs a torn area, so there is nothing to wait for. The same error, without the wait.
+     */
+    @Test(timeout = 60_000)
+    public void testTornLiveTxnAreaIsNamedEvenWhenTheClockCannotAdvance() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            // Frozen: every getTicks() from here returns the same value, so no deadline can ever elapse.
+            currentMicros = 1_000_000L;
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 100);
+            spinLockTimeout = 100;
+            String x = "clockfrozen";
+            TableModel model = new TableModel(configuration, x, PartitionBy.NONE)
+                    .col("a", ColumnType.INT)
+                    .timestamp();
+            AbstractCairoTest.create(model);
+            TableToken tableToken = engine.verifyTableName(x);
+
+            commitOneRow(x, 0);
+            commitOneRow(x, 1);
+
+            // Pins the scoreboard max at the current txn, so the intact PREVIOUS record the fallback lands
+            // on is refused and the loop cannot converge -- the live-engine corruption case.
+            try (TableReader pin = newOffPoolReader(configuration, x)) {
+                Assert.assertTrue(pin.getTxn() > 0);
+            }
+
+            tearLiveTxnArea(tableToken);
+
+            TxReader.resetBodyChecksumFallbackCount();
+            try (TableReader ignore = newOffPoolReader(configuration, x)) {
+                Assert.fail("a torn live _txn area must not open a reader");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_txn live area is torn");
+                TestUtils.assertContains(e.getFlyweightMessage(), "table=" + x);
+            }
+            Assert.assertTrue(
+                    "the body-checksum fallback must have fired, else this test proves nothing",
+                    TxReader.getBodyChecksumFallbackCount() > 0
+            );
+
+            TxReader.resetBodyChecksumFallbackCount();
+            currentMicros = -1;
+            engine.clear();
+        });
+    }
+
+    @Test
+    public void testTornLiveTxnAreaIsNamedRatherThanBlamedOnContentionForMetadataReader() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_SPIN_LOCK_TIMEOUT, 100);
+            spinLockTimeout = 100;
+            // WAL, because getTableMetadata() propagates the failure for a WAL table. For a non-WAL one it
+            // retries through tryRepairTable, which would swallow the very diagnosis under test.
+            execute("create table w (ts timestamp, a int) timestamp(ts) partition by day wal");
+            final TableToken tableToken = engine.verifyTableName("w");
+
+            execute("insert into w values ('2024-01-01T00:00:00.000000Z', 0)");
+            drainWalQueue();
+
+            // Seed the metadata pool at THIS txn: the later get() then sees a moved version and goes down
+            // refresh() -> reloadSlow() -> readTxnSlow, the second call site with the same blind spot.
+            // (A tenant seeded at the corrupted txn would keep its still-valid snapshot and never reload.)
+            engine.getTableMetadata(tableToken).close();
+
+            execute("insert into w values ('2024-01-02T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            tearLiveTxnArea(tableToken);
+
+            // This site needs no scoreboard pin to stall: the metadata tenant's own acquireTxn() requires the
+            // loaded version to still match the file's, which the fallback record's never can.
+            TxReader.resetBodyChecksumFallbackCount();
+            try (TableMetadata ignore = engine.getTableMetadata(tableToken)) {
+                Assert.fail("a torn live _txn area must not refresh a metadata reader, got " + ignore.getTableToken());
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "_txn live area is torn");
+                TestUtils.assertContains(e.getFlyweightMessage(), "src=metadata");
+            }
+            Assert.assertTrue(
+                    "the body-checksum fallback must have fired, else this test proves nothing",
+                    TxReader.getBodyChecksumFallbackCount() > 0
+            );
+            TxReader.resetBodyChecksumFallbackCount();
             engine.clear();
         });
     }
@@ -241,5 +400,35 @@ public class TableReadFailTest extends AbstractCairoTest {
             } catch (CairoException ignore) {
             }
         });
+    }
+
+    private void commitOneRow(String table, int seq) {
+        try (TableWriter writer = newOffPoolWriter(configuration, table)) {
+            TableWriter.Row r = writer.newRow(seq * 1_000_000L);
+            r.putInt(0, seq);
+            r.append();
+            writer.commit();
+        }
+    }
+
+    /**
+     * Pokes a checksum-covered scalar in the version-selected (live) area of {@code _txn} and deliberately
+     * does NOT restamp the body checksum, leaving the area torn exactly as a partial writeback would. The
+     * area's internal txn guard still matches, so only the body checksum can catch this -- which sends
+     * TxReader to the intact previous A/B area, and the reader into its retry loop.
+     */
+    private void tearLiveTxnArea(TableToken tableToken) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
+            try (MemoryCMARW mem = Vm.getCMARWInstance()) {
+                mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
+                final long version = mem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                final int recOffset = (version & 1) == 0
+                        ? mem.getInt(TableUtils.TX_BASE_OFFSET_A_32)
+                        : mem.getInt(TableUtils.TX_BASE_OFFSET_B_32);
+                mem.putLong(recOffset + TableUtils.TX_OFFSET_MAX_TIMESTAMP_64, 987_654_321L);
+                mem.close(false);
+            }
+        }
     }
 }

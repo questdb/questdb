@@ -1,0 +1,117 @@
+package io.questdb.test.cairo.crash;
+
+import io.questdb.cairo.CairoError;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlException;
+import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
+
+import java.util.ArrayList;
+import java.util.List;
+
+public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
+
+    protected CrashFaultFilesFacade crashFf;
+
+    /**
+     * Run {@code body} with the crash facade installed as the engine's FilesFacade.
+     */
+    protected void runWithCrashFacade(TestUtils.LeakProneCode body) throws Exception {
+        crashFf = new CrashFaultFilesFacade();
+        // Scope process-death fd reclamation to per-table files; engine-root files (tables.d, the table-id
+        // generator, config) are owned by long-lived singletons that outlive releaseEngineHandles().
+        crashFf.setDbRoot(root);
+        assertMemoryLeak(crashFf, body);
+    }
+
+    /**
+     * Mark everything committed so far as durable (prior, log-journaled state).
+     */
+    protected void markDurableBaseline() {
+        if (crashFf == null) throw new IllegalStateException("call runWithCrashFacade(...) first");
+        crashFf.markDurableBaseline(engine.getConfiguration().getDbRoot());
+    }
+
+    /**
+     * Simulate power loss: release handles (clean close never fsyncs) then roll files back.
+     */
+    protected void crashAndReopen() {
+        if (crashFf == null) throw new IllegalStateException("call runWithCrashFacade(...) first");
+        engine.releaseAllReaders();
+        engine.releaseAllWriters();
+        crashFf.crash(engine.getConfiguration().getDbRoot());
+    }
+
+    /**
+     * Bar 1 (containment): the rows that read back are correct, OR a CairoException/CairoError is thrown.
+     * Returning FEWER rows (tail truncated / commit rolled back) is an acceptable crash outcome —
+     * full durability is Bar 2 (assertSyncDurable). What is never acceptable is a silently WRONG row value.
+     */
+    protected void assertNoSilentCorruption(String tableName, String column, List<String> expected) {
+        try {
+            List<String> actual = readColumn(tableName, column);
+            // fewer rows is OK here (rollback); we only assert the surviving rows are not silently wrong
+            int n = Math.min(actual.size(), expected.size());
+            for (int i = 0; i < n; i++) {
+                Assert.assertEquals("row " + i + " silently wrong", expected.get(i), actual.get(i));
+            }
+        } catch (CairoException | CairoError e) {
+            // acceptable: corruption detected loudly
+        } catch (InternalError e) {
+            // JVM converts SIGBUS (mmap access past truncated file end) to InternalError; acceptable loud detection
+        } catch (RuntimeException e) {
+            // readColumn wraps SqlException in RuntimeException; allow if the cause is a loud Cairo error
+            if (!(e.getCause() instanceof CairoException) && !(e.getCause() instanceof CairoError)) {
+                throw e;
+            }
+        }
+    }
+
+    /**
+     * Bar 2: every committed row present and correct after crash.
+     */
+    protected void assertSyncDurable(String tableName, String column, List<String> expected) {
+        List<String> actual = readColumn(tableName, column);
+        Assert.assertEquals("row count after crash", expected.size(), actual.size());
+        for (int i = 0; i < expected.size(); i++) {
+            Assert.assertEquals("row " + i, expected.get(i), actual.get(i));
+        }
+    }
+
+    protected List<String> readColumn(String tableName, String column) {
+        List<String> out = new ArrayList<>();
+        try (RecordCursorFactory f = select("select " + column + " from " + tableName)) {
+            try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                Record r = c.getRecord();
+                while (c.hasNext()) {
+                    CharSequence v = r.getStrA(0);
+                    out.add(v == null ? null : v.toString());
+                }
+            }
+        } catch (SqlException e) {
+            throw new RuntimeException("readColumn failed for: select " + column + " from " + tableName, e);
+        }
+        return out;
+    }
+
+    protected List<String> readVarcharColumn(String tableName, String column) {
+        List<String> out = new ArrayList<>();
+        try (RecordCursorFactory f = select("select " + column + " from " + tableName)) {
+            try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
+                Record r = c.getRecord();
+                while (c.hasNext()) {
+                    io.questdb.std.str.Utf8Sequence v = r.getVarcharA(0);
+                    out.add(v == null ? null : v.toString());
+                }
+            }
+        } catch (io.questdb.griffin.SqlException e) {
+            throw new RuntimeException("readVarcharColumn failed for: select " + column + " from " + tableName, e);
+        }
+        return out;
+    }
+
+}

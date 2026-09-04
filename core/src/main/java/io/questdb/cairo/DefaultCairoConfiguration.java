@@ -230,7 +230,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getCommitMode() {
-        return CommitMode.NOSYNC;
+        return CommitMode.ADAPTIVE;
     }
 
     @Override
@@ -330,6 +330,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public int getDefaultSeqPartTxnCount() {
+        // Matches PropServerConfiguration: V1. See the note there on why the V2 default was reverted.
         return 0;
     }
 

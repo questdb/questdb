@@ -105,6 +105,31 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getAdaptiveCommitGroupWindowUs() {
+        return getDelegate().getAdaptiveCommitGroupWindowUs();
+    }
+
+    @Override
+    public long getAdaptiveEpochIntervalMs() {
+        return getDelegate().getAdaptiveEpochIntervalMs();
+    }
+
+    @Override
+    public long getAdaptiveEpochMaxRows() {
+        return getDelegate().getAdaptiveEpochMaxRows();
+    }
+
+    @Override
+    public boolean isAdaptiveEpochFlushOnClose() {
+        return getDelegate().isAdaptiveEpochFlushOnClose();
+    }
+
+    @Override
+    public boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return getDelegate().isAdaptiveRecoveryRollForwardEnabled();
+    }
+
+    @Override
     public boolean getAsyncMunmapEnabled() {
         return getDelegate().getAsyncMunmapEnabled();
     }
@@ -717,6 +742,26 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getO3ColumnMemorySize() {
         return getDelegate().getO3ColumnMemorySize();
+    }
+
+    @Override
+    public int getPartitionChecksumBlockSize() {
+        return getDelegate().getPartitionChecksumBlockSize();
+    }
+
+    @Override
+    public long getPartitionChecksumScrubBytesPerSecond() {
+        return getDelegate().getPartitionChecksumScrubBytesPerSecond();
+    }
+
+    @Override
+    public boolean isPartitionChecksumEnabled() {
+        return getDelegate().isPartitionChecksumEnabled();
+    }
+
+    @Override
+    public boolean isPartitionChecksumStrict() {
+        return getDelegate().isPartitionChecksumStrict();
     }
 
     @Override
@@ -1662,6 +1707,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public int getWriterTickRowsCountMod() {
         return getDelegate().getWriterTickRowsCountMod();
+    }
+
+    @Override
+    public boolean isAdaptiveEpochColumnSyncBatched() {
+        return getDelegate().isAdaptiveEpochColumnSyncBatched();
+    }
+
+    @Override
+    public boolean isWalCommitWritebackDrainEnabled() {
+        return getDelegate().isWalCommitWritebackDrainEnabled();
     }
 
     @Override

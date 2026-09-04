@@ -5,6 +5,12 @@ parameters:
   - name: isHetznerAptMirrorEnabled
     type: boolean
     default: true
+  - name: testTimeoutInMinutes
+    type: number
+    default: 55
+  - name: artifactNameSuffix
+    type: string
+    default: ""
 
 steps:
   - ${{ if eq(parameters.isCheckoutEnabled, true) }}:
@@ -259,7 +265,9 @@ steps:
       jdkVersionOption: $(jdk)
     env:
       QDB_TEST_WINDOWS_SYMLINKS: "1"
-    timeoutInMinutes: 55
+    # Defaults to 55, matching master's previous hardcoded value; the adaptive
+    # nightly overrides it (165 / 315) for its long single-JVM passes.
+    timeoutInMinutes: ${{ parameters.testTimeoutInMinutes }}
     # succeeded() explicitly: see "Compile with Maven" above.
     condition: |
       and(
@@ -347,7 +355,7 @@ steps:
     condition: failed()
     inputs:
       pathToPublish: $(ARCHIVED_CRASH_LOG)
-      artifactName: CrashDump
+      artifactName: "CrashDump${{ parameters.artifactNameSuffix }}"
   - powershell: |
       $base = "$(QDB_LOG_W_FILE_LOCATION)"
       $dir = Split-Path -Parent $base
@@ -387,7 +395,7 @@ steps:
     condition: failed()
     inputs:
       pathToPublish: $(ARCHIVED_LOGS)
-      artifactName: MavenFailedTestsLogs
+      artifactName: "MavenFailedTestsLogs${{ parameters.artifactNameSuffix }}"
 
   - bash: |
       set -eux

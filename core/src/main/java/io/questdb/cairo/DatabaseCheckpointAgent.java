@@ -94,6 +94,9 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     private final GrowOnlyTableNameRegistryStore tableNameRegistryStore; // protected with #lock
     private final TxReader txReader;
     private boolean isBackupCheckpoint; // protected with #lock
+    private boolean recoveredCheckpoint;
+    private String recoveredCheckpointDir;
+    private boolean recoveredCheckpointTriggerExists;
     private volatile boolean ownsWalPurgeJobRunLock = false;
 
     DatabaseCheckpointAgent(CairoEngine engine) {
@@ -959,7 +962,44 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         }
     }
 
+    boolean hasRecoveredCheckpoint() {
+        return recoveredCheckpoint;
+    }
+
+    void completeRecovery() {
+        if (!recoveredCheckpoint || recoveredCheckpointDir == null) {
+            return;
+        }
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path path = new Path()) {
+            // Remove and durably commit the trigger FIRST. A crash after this point can leave an inert
+            // checkpoint directory, but can never leave a trigger pointing at an already-deleted checkpoint.
+            path.of(configuration.getInstallRoot()).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
+            if (recoveredCheckpointTriggerExists
+                    && ff.exists(path.$())
+                    && !ff.removeQuiet(path.$())
+                    && ff.exists(path.$())) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove restore trigger file. file permission issues? [file=").put(path).put(']');
+            }
+            syncAfterCheckpointRecovery(ff);
+
+            path.of(recoveredCheckpointDir);
+            if (ff.exists(path.$()) && !ff.rmdir(path)) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not remove checkpoint dir [dir=").put(path)
+                        .put(", errno=").put(ff.errno()).put(']');
+            }
+            syncAfterCheckpointRecovery(ff);
+            recoveredCheckpointDir = null;
+            recoveredCheckpointTriggerExists = false;
+        }
+    }
+
     void recover() {
+        recoveredCheckpoint = false;
+        recoveredCheckpointDir = null;
+        recoveredCheckpointTriggerExists = false;
         if (!configuration.isCheckpointRecoveryEnabled()) {
             return;
         }
@@ -1107,6 +1147,7 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
             }
 
             recoveryAgent.finalizeParallelTasks();
+            recoveredCheckpoint = true;
             LOG.info()
                     .$("checkpoint recovered [metaFilesCount=").$(recoveredMetaFiles.get())
                     .$(", walFilesCount=").$(recoveredWalFiles.get())
@@ -1120,20 +1161,22 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
                 LOG.critical().$("checkpoint listener failed on restore complete [error=").$(ex).I$();
             }
 
-            // Delete the checkpoint directory to avoid recovery on the next restart.
+            // Make the restored cut durable, but retain the checkpoint + trigger until RecoveryCoordinator
+            // has published every missing adaptive baseline. A crash in that interval must re-run restore,
+            // not strand current-format adaptive tables markerless on the next ordinary startup.
             srcPath.trimTo(checkpointRootLen).$();
             memFile.close();
-            if (!ff.rmdir(srcPath)) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not remove checkpoint dir [dir=").put(srcPath)
-                        .put(", errno=").put(ff.errno())
-                        .put(']');
-            }
-            dstPath.of(installRoot).concat(TableUtils.RESTORE_FROM_CHECKPOINT_TRIGGER_FILE_NAME);
-            if (triggerExists && !ff.removeQuiet(dstPath.$())) {
-                throw CairoException.critical(ff.errno())
-                        .put("could not remove restore trigger file. file permission issues? [file=").put(dstPath).put(']');
-            }
+            syncAfterCheckpointRecovery(ff);
+            recoveredCheckpointDir = srcPath.toString();
+            recoveredCheckpointTriggerExists = triggerExists;
+        }
+    }
+
+    private static void syncAfterCheckpointRecovery(FilesFacade ff) {
+        if (ff.sync() != 0) {
+            final int errno = ff.errno();
+            throw CairoException.dataSyncFailure(errno, "sync")
+                    .put("sync() failed during checkpoint recovery [errno=").put(errno).put(']');
         }
     }
 }

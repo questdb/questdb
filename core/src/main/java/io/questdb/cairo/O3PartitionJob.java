@@ -124,6 +124,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         boolean isRewrite = false;
         CairoConfiguration cairoConfiguration = tableWriter.getConfiguration();
         FilesFacade ff = tableWriter.getFilesFacade();
+        final boolean isSync = tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC;
         final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
         ctx.clear();
         final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder(cairoConfiguration);
@@ -615,6 +616,19 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         isRewrite
                 );
 
+                // Data before metadata: fsync the parquet DATA file before the
+                // _pm header is published below, so a power loss cannot leave a
+                // committed _pm pointing at data-file bytes still in the page
+                // cache. Still required after master's two-barrier rework of
+                // commitParquetMeta: both of its barriers target _pm (footer,
+                // then header) and neither touches the data file.
+                if (isSync) {
+                    final long parquetNameTxn = isRewrite ? txn : srcNameTxn;
+                    path.of(pathToTable);
+                    setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                    TableUtils.fsyncFileDurable(ff, path.$(), tableWriter.getConfiguration().getWriterFileOpenOpts());
+                }
+
                 // Publish the new _pm last. In sync modes an incremental update
                 // first fsyncs the appended footer while the old header is still
                 // authoritative, patches the header (the MVCC commit signal),
@@ -624,7 +638,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // is safe whether the old or new header reaches disk: _txn is
                 // unchanged and a pinned reader can walk back to the committed
                 // footer (see commit_parquet_meta).
-                partitionUpdater.commitParquetMeta(cairoConfiguration.getCommitMode() != CommitMode.NOSYNC);
+                //
+                // isSync, NOT the instance-global mode master passed here: _pm is
+                // a STRUCTURAL site, so it stays eager under ADAPTIVE (never the
+                // apply-path lazy gate), but the mode it reads must still be the
+                // TABLE's effective one. Reading the global mode is the inverted
+                // polarity fixed across this branch -- it would skip the barrier
+                // for a `commit_mode='sync'` table on a nosync instance.
+                partitionUpdater.commitParquetMeta(isSync);
             } catch (Throwable e) {
                 if (isRewrite) {
                     // Rewrite mode: original is intact. Remove the new directory.
@@ -688,7 +709,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // fsyncAndClose closes the fd even on failure (no leak), and a
                         // non-durable dead tail is harmless -- the next update rewrites it.
                         long fd = TableUtils.openRW(ff, path.$(), LOG, cairoConfiguration.getWriterFileOpenOpts());
-                        if (cairoConfiguration.getCommitMode() != CommitMode.NOSYNC) {
+                        if (isSync) {
                             ff.fsyncAndClose(fd);
                         } else {
                             ff.close(fd);
@@ -3684,6 +3705,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // entry would be undroppable, surfacing stale rows.
                         // No-op on BitmapIndexWriter.
                         indexWriter.setNextTxnAtSeal(tableWriter.getTxn() + 1L);
+                        // Publish the table's EFFECTIVE commit mode before either commit path below. These
+                        // writers come from TableWriter's o3BasketPool, so they are POOLED and reused, and
+                        // setCommitMode is not reset by of(): without setting it here the flush grade would
+                        // depend on whether this particular instance had previously passed through
+                        // O3CopyJob (which does set it). The pool is per-TableWriter so a stale value is
+                        // always the SAME table's mode and never wrong, but a durability gate must not vary
+                        // with pool reuse order.
+                        indexWriter.setCommitMode(tableWriter.getEffectiveCommitMode());
                         if (IndexType.isPosting(indexType)) {
                             // commitDense may seal (spill-driven reseal), rotating the
                             // .pv and recording a purge for the superseded file. The
@@ -3784,6 +3813,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long partitionRowCount = srcOooHi - srcOooLo + 1;
         final FilesFacade ff = tableWriter.getFilesFacade();
         final CairoConfiguration configuration = tableWriter.getConfiguration();
+        final boolean isSync = tableWriter.getEffectiveCommitMode() != CommitMode.NOSYNC;
         final long partitionNameTxn = txn - 1;
         final long mergeIndexAddr = sortedTimestampsAddr + srcOooLo * TableWriter.TIMESTAMP_MERGE_ENTRY_BYTES;
 
@@ -3886,7 +3916,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
             parquetFileSize = ff.length(parquetPath.$());
 
-            if (configuration.getCommitMode() != CommitMode.NOSYNC) {
+            if (isSync) {
+                // Data before metadata: the freshly encoded parquet data must be durable before _pm.
+                final long parquetDataFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
+                try {
+                    ff.fsync(parquetDataFd);
+                } finally {
+                    ff.close(parquetDataFd);
+                }
                 ff.fsync(parquetMetaFd);
             }
 

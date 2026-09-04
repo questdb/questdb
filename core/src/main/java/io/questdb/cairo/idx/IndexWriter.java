@@ -65,12 +65,32 @@ public interface IndexWriter extends Closeable, Mutable {
     void closeNoTruncate();
 
     /**
-     * Commits the index to disk based on the configuration's commit mode.
+     * Publishes buffered index writes and flushes them according to the EFFECTIVE commit mode
+     * (see {@link #setCommitMode(int)}).
      */
     void commit();
 
     default void commitDense() {
         commit();
+    }
+
+    /**
+     * Publishes the owning table's EFFECTIVE commit mode (already resolved against the instance-global
+     * {@code cairo.commit.mode} via {@link io.questdb.cairo.CommitMode#effectiveCommitMode(int, int)}) so
+     * {@link #commit()} flushes on the table's own terms rather than the instance default.
+     * <p>
+     * {@link io.questdb.cairo.CommitMode#UNSET} (the default) means "defer to the global mode", so an
+     * implementation or call site that is never threaded a mode keeps its historical behavior.
+     * <p>
+     * Under {@link io.questdb.cairo.CommitMode#ADAPTIVE} {@link #commit()} publishes buffered writes but
+     * does NOT flush: index files are re-derivable from the durable WAL exactly like the column data they
+     * index, and are made crash-safe by the durable epoch (which forces
+     * {@code sync(false)} on every indexer, then a filesystem-wide {@code syncfs}) plus recovery
+     * roll-forward. This keeps the index consistent with {@code CommitMode.appliesColumnSync}.
+     *
+     * @param commitMode the resolved effective mode, or {@code CommitMode.UNSET} to defer to the global one
+     */
+    default void setCommitMode(int commitMode) {
     }
 
     default void configureCovering(
