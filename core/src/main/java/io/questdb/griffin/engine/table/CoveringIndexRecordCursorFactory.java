@@ -119,6 +119,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private final PartitionFrameCursorFactory dfcFactory;
     private final int indexColumnIndex;
+    // Whether this factory frees symbolFunction / keyValueFuncs itself. False when the backup
+    // was built from them and so already owns them; see the constructor parameter.
+    private final boolean isKeyFunctionOwner;
     private final int keyQueryPosition;
     private final ObjList<Function> keyValueFuncs;
     // Runtime-owned key list for adaptive symbol-pattern routing. The adaptive factory refreshes this
@@ -149,13 +152,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             boolean latestBy,
             @Nullable Function latestByFilter,
             @Nullable IntList patternKeys,
-            @Nullable RecordCursorFactory backup
+            @Nullable RecordCursorFactory backup,
+            boolean backupOwnsKeyFunctions
     ) {
         // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
         // mutually exclusive ways to drive the multi-key merge; never both.
         assert keyValueFuncs == null || patternKeys == null;
         this.metadata = metadata;
         this.backup = backup;
+        this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
@@ -285,18 +290,22 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     @Override
     public void close() {
         // The backup runs the same scan over the same table with the same key, so the two
-        // share the partition-frame factory and the key functions rather than duplicating
-        // them. The BACKUP owns that shared set -- there is no non-owning wrapper for either
-        // -- so freeing it here frees them, and we must not free them again below. With no
-        // backup this factory is the sole owner and frees them itself.
+        // share the partition-frame factory, the LATEST ON filter and the key functions rather
+        // than duplicating them. The BACKUP owns that shared set -- there is no non-owning
+        // wrapper for any of them -- so freeing it here frees them, and we must not free them
+        // again below. With no backup this factory is the sole owner and frees them itself.
         if (backup != null) {
             Misc.free(backup);
         } else {
             Misc.free(dfcFactory);
+            Misc.free(latestByFilter);
+        }
+        // The key functions are the one part the backup does not always adopt: the LATEST ON
+        // single-key backup takes a resolved key as an int and never sees the function.
+        if (isKeyFunctionOwner) {
             Misc.free(symbolFunction);
             Misc.freeObjList(keyValueFuncs);
         }
-        Misc.free(latestByFilter);
         Misc.free(singleKeyCursor);
         Misc.free(multiKeyCursor);
         Misc.free(singleKeyPageFrameCursor);

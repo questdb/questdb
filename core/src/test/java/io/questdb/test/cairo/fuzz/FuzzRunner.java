@@ -916,10 +916,12 @@ public class FuzzRunner {
         final StringSink plan = new StringSink();
         TestUtils.printSql(compiler, sqlExecutionContext, "explain " + covered, plan);
 
-        final String expectedPlan = "CoveringIndex on: " + symbolColumnName + " with:";
+        // The node name and the key attribute are checked separately: a covering factory that
+        // carries a backup plan prints "backup: true" between them.
+        final String expectedKey = "on: " + symbolColumnName + " with:";
         Assert.assertTrue(
                 "covering plan not chosen for " + covered + ", plan was:\n" + plan,
-                Chars.contains(plan, expectedPlan)
+                Chars.contains(plan, "CoveringIndex") && Chars.contains(plan, expectedKey)
         );
         LOG.info().$("checking covered values: ").$safe(covered).I$();
         TestUtils.assertSqlCursors(compiler, sqlExecutionContext, uncovered, covered, LOG);

@@ -1862,7 +1862,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // not null -- tag has no column top of its own.
             assertQuery("SELECT sym2, tag FROM t_key_top_arr WHERE sym2 = null ORDER BY ts")
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
@@ -1914,7 +1915,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // 'WORLD'), not null -- tag has no column top of its own.
             assertQuery("SELECT sym2, tag FROM t_key_top WHERE sym2 = null ORDER BY ts")
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
@@ -2021,7 +2023,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // rows 1..2 must show generation two's values, never generation one's.
             assertQuery("SELECT sym2, keep, tag FROM t_np_readd WHERE sym2 = null ORDER BY ts")
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
@@ -2108,7 +2111,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     FROM t_np_fixed WHERE sym2 = null ORDER BY ts
                     """)
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
@@ -2242,7 +2246,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // predates nothing -- it postdates both -- so it must read NULL.
             assertQuery("SELECT sym2, early, late, early_num FROM t_np_mixed WHERE sym2 = null ORDER BY ts")
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
@@ -2307,7 +2312,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // getCoveredBin -- two separate overrides over the same decoder.
             assertQuery("SELECT sym2, v_str, length(v_bin) bin_len, v_bin FROM t_np_strbin WHERE sym2 = null ORDER BY ts")
                     .noRandomAccess()
-                    .expectSize()
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
@@ -13216,6 +13220,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // getter that fell through to the sidecar would surface an empty tag.
             assertQuery("SELECT sym2, tag FROM t_key_top_latest WHERE sym2 = null LATEST ON ts PARTITION BY sym2")
                     .noRandomAccess()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
@@ -14484,9 +14490,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             assertQuery("SELECT sym2, val FROM t_np_explicit WHERE sym2 = null")
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex on: sym2 with: val")
+                    .withPlanContaining("CoveringIndex backup: true on: sym2 with: val")
                     .returns("""
                             sym2\tval
                             \t10
@@ -14502,10 +14509,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             assertQuery("SELECT ts, sym2, val FROM t_np_explicit WHERE sym2 = null")
                     .noRandomAccess()
-                    .expectSize()
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
                     .timestamp("ts")
-                    .withPlanContaining("CoveringIndex on: sym2 with: ts, val")
+                    .withPlanContaining("CoveringIndex backup: true on: sym2 with: ts, val")
                     .returns("""
                             ts\tsym2\tval
                             2024-01-01T00:00:00.000000Z\t\t10
@@ -14561,8 +14568,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             assertQuery("SELECT sym2, val FROM t_np_explicit_bwd WHERE sym2 = null LATEST ON ts PARTITION BY sym2")
                     .noRandomAccess()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex op: latest on: sym2 with: val")
+                    .withPlanContaining("CoveringIndex backup: true op: latest on: sym2 with: val")
                     .returns("""
                             sym2\tval
                             \t200
@@ -14581,8 +14590,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             createPartitionPredatingIndexedColumnTable();
             assertQuery("SELECT price, grp FROM t_np_historic WHERE sym = null AND ts IN '2024-01-01' LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex op: latest on: sym")
+                    .withPlanContaining("CoveringIndex backup: true op: latest on: sym")
                     .returns("""
                             price\tgrp
                             2.0\tg2
@@ -14591,8 +14602,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // files: the file-less partition is passed over, not mis-served.
             assertQuery("SELECT price, grp FROM t_np_historic WHERE sym = null LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex op: latest on: sym")
+                    .withPlanContaining("CoveringIndex backup: true op: latest on: sym")
                     .returns("""
                             price\tgrp
                             12.0\tg2
@@ -14601,7 +14613,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // so every partition is asked for its index reader more than once.
             assertQuery("SELECT price, grp FROM t_np_historic WHERE sym = null ORDER BY ts DESC")
                     .noLeakCheck()
-                    .expectSize()
                     .returns("""
                             price\tgrp
                             12.0\tg2
@@ -14613,11 +14624,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNullKeyOnPartitionEntirelyPredatingIndexedColumnParallelGroupBy() throws Exception {
-        // The parallel covered-decode pipeline fetches the frame's index reader once per
-        // page frame while the TableReader stays checked out, so it reaches the second
-        // lookup on the very first run -- no second statement and no second cursor pass
-        // needed. Small page frames make the file-less partition span several frames.
+    public void testNullKeyOnPartitionEntirelyPredatingIndexedColumnKeyedGroupBy() throws Exception {
+        // A keyed GROUP BY over a partition that predates the indexed column, with small page
+        // frames so that partition spans several of them. This used to run the parallel
+        // covered-decode pipeline and pinned its per-frame index-reader lookup; a NULL key
+        // now gives the factory a backup, so it reports no page-frame cursor and the
+        // group-by is serial. The parallel pipeline itself stays covered by the non-NULL
+        // keys in CoveringIndexParallelDecodeTest. What this still pins is the totals:
+        // dropping either null partition halves every group.
         node1.setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
         assertMemoryLeak(() -> {
             execute("""
@@ -14655,15 +14669,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             engine.releaseAllReaders();
 
-            // The constant aggregate keeps the group-by on the Async (parallel) keyed
-            // path rather than the vectorised one. Each group draws 125 rows from each
-            // of the two null partitions, so a dropped partition halves every total.
-            // Two keys make the covered scan re-open the file-less partition's index
-            // reader inside one held TableReader, on the first run.
+            // Each group draws 125 rows from each of the two null partitions, so a dropped
+            // partition halves every total. The NULL element of the IN-list gives the
+            // covering factory a backup, and a factory carrying one reports no page-frame
+            // cursor, so the group-by runs on the serial keyed path -- the parallel one the
+            // constant aggregate would otherwise select needs page frames.
             assertQuery("SELECT grp, sum(price) AS total, avg(-1) AS marker FROM t_np_historic_pgb WHERE sym IN (null, 'A') ORDER BY grp")
                     .noLeakCheck()
                     .expectSize()
-                    .withPlanContaining("Async Group By")
+                    .withPlanContaining("GroupBy")
                     .returns("""
                             grp\ttotal\tmarker
                             g0\t1249.0\t-1.0
@@ -14711,8 +14725,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT sym, price FROM t_np_historic WHERE sym = null ORDER BY ts")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("CoveringIndex on: sym with: price")
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
+                    .withPlanContaining("CoveringIndex backup: true on: sym with: price")
                     .returns("""
                             sym\tprice
                             \t1.0
@@ -14736,7 +14751,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     11.0
                     12.0
                     """;
-            assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+            assertQuery(query).noLeakCheck().noRandomAccess().skipRandomAccessProbe().returns(expected);
 
             // A new partition bumps the partition table version, so the next reload of
             // the pooled TableReader walks every open partition and closes its cached
@@ -14745,7 +14760,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // never had.
             execute("INSERT INTO t_np_historic VALUES ('2024-01-04T00:00:00', 'g1', 1000.0, 'B')");
 
-            assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+            assertQuery(query).noLeakCheck().noRandomAccess().skipRandomAccessProbe().returns(expected);
 
             // Dropping a partition bumps the partition table version, so the next reload
             // walks EVERY open partition and closes its cached index readers in place,
@@ -14754,14 +14769,14 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // (2024-01-03 holds the only non-null sym row, so the expected rows stand.)
             execute("ALTER TABLE t_np_historic DROP PARTITION LIST '2024-01-03'");
 
-            assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+            assertQuery(query).noLeakCheck().noRandomAccess().skipRandomAccessProbe().returns(expected);
 
             // The opposite direction of the same reuse: an O3 insert gives 2024-01-01
             // real sym rows and a real index and rewrites the partition, so the cached
             // absent-partition reader has to fall back to the ordinary open path.
             execute("INSERT INTO t_np_historic VALUES ('2024-01-01T00:30:00', 'g3', 3.0, 'C')");
 
-            assertQuery(query).noLeakCheck().noRandomAccess().expectSize().returns(expected);
+            assertQuery(query).noLeakCheck().noRandomAccess().skipRandomAccessProbe().returns(expected);
             assertQuery("SELECT price FROM t_np_historic WHERE sym = 'C'")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -14810,7 +14825,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT price FROM t_np_historic WHERE sym = null LIMIT 3")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .returns("""
                             price
                             1.0
@@ -14878,9 +14894,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             assertQuery("SELECT sym2, val FROM t_np_partition WHERE sym2 = null")
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex on: sym2 with: val")
+                    .withPlanContaining("CoveringIndex backup: true on: sym2 with: val")
                     .returns("""
                             sym2\tval
                             \t10
@@ -14895,8 +14912,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
             assertQuery("SELECT sym2, val FROM t_np_partition WHERE sym2 = null LATEST ON ts PARTITION BY sym2")
                     .noRandomAccess()
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex op: latest on: sym2 with: val")
+                    .withPlanContaining("CoveringIndex backup: true op: latest on: sym2 with: val")
                     .returns("""
                             sym2\tval
                             \t30
@@ -15036,8 +15054,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery("SELECT sym, val FROM t_cov_split WHERE sym = null ORDER BY ts")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .expectSize()
-                    .withPlanContaining("CoveringIndex on: sym with: val")
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
+                    .withPlanContaining("CoveringIndex backup: true on: sym with: val")
                     .returns("""
                             sym\tval
                             \t10
@@ -15089,8 +15108,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // row cursor that carries no values, drop the partition, and come back empty.
             assertQuery("SELECT sym, val FROM t_cov_split_bwd WHERE sym = null LATEST ON ts PARTITION BY sym")
                     .noRandomAccess()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex op: latest on: sym with: val")
+                    .withPlanContaining("CoveringIndex backup: true op: latest on: sym with: val")
                     .returns("""
                             sym\tval
                             \t20
@@ -15114,7 +15135,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noRandomAccess()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex op: latest on: sym")
+                    .withPlanContaining("CoveringIndex backup: true op: latest on: sym")
                     .returns("""
                             sym\tkeep\tv_vc\tv_str\tbin_len\tv_arr\tv_long
                             \t3\tVARCHAR-ROW-TWO-LONGER-THAN-INLINE\tSTR-ROW-TWO\t8\t[3.0,4.0]\t200
@@ -15140,7 +15161,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     """;
             assertQuery(sql)
                     .noRandomAccess()
-                    .expectSize()
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
@@ -15160,7 +15180,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testNullPrefixQueryOpensNoColumnMappingsBwd() throws Exception {
         assertNullPrefixQueryOpensNoColumnMappings(
                 "SELECT price FROM t_np_filter WHERE sym2 = null LATEST ON ts PARTITION BY sym2",
-                false,
                 """
                         price
                         20.0
@@ -15172,7 +15191,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
     public void testNullPrefixQueryOpensNoColumnMappingsFwd() throws Exception {
         assertNullPrefixQueryOpensNoColumnMappings(
                 "SELECT price FROM t_np_filter WHERE sym2 = null ORDER BY ts",
-                true,
                 """
                         price
                         10.0
@@ -15198,8 +15216,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 final String sql = "SELECT " + columns + where;
                 assertQuery(sql)
                         .noRandomAccess()
+                        // The backup's cursor implements getRecordB() though its factory declares none.
+                        .skipRandomAccessProbe()
                         .noLeakCheck()
-                        .withPlanContaining("CoveringIndex op: latest on: sym")
+                        .withPlanContaining("CoveringIndex backup: true op: latest on: sym")
                         .returns(header + "\t\t\t\t\t\t\t\t\t\n");
                 assertSqlCursors(sql, "SELECT /*+ no_covering */ " + columns + where);
             }
@@ -15209,8 +15229,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             final String sql = "SELECT " + columns + " FROM t_np_typed WHERE sym = null LATEST ON ts PARTITION BY sym";
             assertQuery(sql)
                     .noRandomAccess()
+                    .skipRandomAccessProbe()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex op: latest on: sym")
+                    .withPlanContaining("CoveringIndex backup: true op: latest on: sym")
                     .returns(header + "\ty\tyz\tyzbc\tyzbc1234\t10.0.0.1\t1.5\t12.34\t1234567890123456789012345678.1234567890\t12345678901234567890123456789012345.67890\n");
             assertSqlCursors(sql, "SELECT /*+ no_covering */ " + columns + " FROM t_np_typed WHERE sym = null LATEST ON ts PARTITION BY sym");
         });
@@ -15231,7 +15252,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tv_gi\tv_gl\tv_ip\tv_d32\tv_d64\tv_int\tv_long\tv_date\tv_tsv\tv_float\tv_double\tv_sym2
@@ -15253,6 +15275,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                       AND v_d32 IS NULL AND v_d64 IS NULL
                     """)
                     .noLeakCheck()
+                    // The serial filter above a covering factory that carries a backup declares no
+                    // random access, where the parallel one it replaces did.
+                    .noRandomAccess()
+                    .skipRandomAccessProbe()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tv_int
@@ -15277,7 +15303,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tv_gb\tv_gs\tv_d8\tv_d16\tv_byte\tv_short\tv_char\tv_bool
@@ -15296,6 +15323,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     WHERE sym = null AND v_gb IS NULL AND v_gs IS NULL AND v_d8 IS NULL AND v_d16 IS NULL
                     """)
                     .noLeakCheck()
+                    // The serial filter above a covering factory that carries a backup declares no
+                    // random access, where the parallel one it replaces did.
+                    .noRandomAccess()
+                    .skipRandomAccessProbe()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tv_byte
@@ -15321,7 +15352,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tv_d128\tv_d256\tv_uuid\tv_l256
@@ -15341,6 +15373,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                       AND v_uuid IS NULL AND v_l256 IS NULL
                     """)
                     .noLeakCheck()
+                    // The serial filter above a covering factory that carries a backup declares no
+                    // random access, where the parallel one it replaces did.
+                    .noRandomAccess()
+                    .skipRandomAccessProbe()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tv_uuid
@@ -15404,7 +15440,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup's cursor implements getRecordB() though its factory declares none.
+                    .skipRandomAccessProbe()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tv_gb\tv_gs\tv_gi\tv_gl\tv_ip\tv_d8\tv_d16\tv_d128\tv_d256
@@ -15425,6 +15462,10 @@ public class CoveringIndexTest extends AbstractCairoTest {
                       AND v_d128 IS NULL AND v_d256 IS NULL
                     """)
                     .noLeakCheck()
+                    // The serial filter above a covering factory that carries a backup declares no
+                    // random access, where the parallel one it replaces did.
+                    .noRandomAccess()
+                    .skipRandomAccessProbe()
                     .withPlanContaining("CoveringIndex")
                     .returns("""
                             sym\tv_d8
@@ -16362,9 +16403,11 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // The CTE introduces a SelectedRecord layer above the WHERE-driven
             // CoveringIndex factory; the constant aggregate (avg(-1)) keeps the
             // group-by on the Async (parallel) keyed path rather than the
-            // vectorised one.
+            // vectorised one. The key has to be non-NULL: a NULL-capable key gives
+            // the factory a backup plan, and a factory carrying one withdraws the
+            // page-frame cursor the Async path -- and so this regression -- needs.
             String q = "WITH cte0 AS (SELECT * FROM t_bug9) "
-                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
+                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym = 'a' "
                     + "ORDER BY e0";
             assertQuery(q)
                     .noLeakCheck()
@@ -16378,9 +16421,36 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                     SelectedRecord
                                         SelectedRecord
                                             CoveringIndex on: sym with: k
-                                              filter: sym=null
+                                              filter: sym='a'
                             """);
             assertQuery(q)
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            e0\ta0
+                            k1\t-1.0
+                            """);
+
+            // The same query on the NULL key, to pin what the backup costs: the
+            // covering factory reports no page-frame cursor, so the group-by falls to
+            // the serial keyed path. The rows are the same either way.
+            String qNull = "WITH cte0 AS (SELECT * FROM t_bug9) "
+                    + "SELECT t0.k AS e0, avg(-1) AS a0 FROM cte0 t0 WHERE sym IS NULL "
+                    + "ORDER BY e0";
+            assertQuery(qNull)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Encode sort light
+                              keys: [e0]
+                                GroupBy vectorized: false
+                                  keys: [e0]
+                                  values: [avg(-1)]
+                                    SelectedRecord
+                                        SelectedRecord
+                                            CoveringIndex backup: true on: sym with: k
+                                              filter: sym=null
+                            """);
+            assertQuery(qNull)
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
@@ -19709,18 +19779,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
      * serve the partition, so the fall-back costs no extra mmap. Counts mmap calls
      * rather than wall-clock time, so the assertion is deterministic.
      */
-    private void assertNullPrefixQueryOpensNoColumnMappings(String query, boolean isSizeKnown, String expected) throws Exception {
+    private void assertNullPrefixQueryOpensNoColumnMappings(String query, String expected) throws Exception {
         final CoveredColumnMapCounter counter = new CoveredColumnMapCounter("tag.d", "tag.i", "price.d", "qty.d");
         ff = counter;
         assertMemoryLeak(counter, () -> {
             createNullPrefixCoveringTable();
             counter.isArmed.set(true);
             try {
-                final QueryAssertion assertion = assertQuery(query).noLeakCheck().noRandomAccess();
-                if (isSizeKnown) {
-                    assertion.expectSize();
-                }
-                assertion.returns(expected);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        // The backup is an index-scan factory: it declares no random access
+                        // but its cursor implements getRecordB() anyway.
+                        .skipRandomAccessProbe()
+                        .returns(expected);
             } finally {
                 counter.isArmed.set(false);
             }

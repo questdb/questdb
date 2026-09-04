@@ -391,15 +391,13 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
     public void testParquetPartitionPredatingIndexedColumnServesNoFabricatedValues() throws Exception {
         // A Parquet partition that predates the indexed column keeps its full column
         // top (TableWriter converts it with zeroAllColumns=false), so the reader sees
-        // the column as absent there. The covering reader cannot serve such a
-        // partition: the INCLUDE values it would read for the null prefix live in
-        // data.parquet, not in native .d files, so every covered column -- the
-        // designated timestamp among them -- would come back as its NULL sentinel.
-        // TableReader.createIndexReaderAt therefore keeps the null reader for the
-        // Parquet partition and the covered scan leaves it out, as it did before the
-        // covering reader learned to serve absent partitions at all. Leaving the rows
-        // out is a pre-existing gap that the oracle below makes visible; fabricating
-        // rows with a NULL designated timestamp is the regression this pins.
+        // the column as absent there. The posting chain holds no posting for a row
+        // below a top, so the sidecar has nothing to decode for the NULL key -- the one
+        // combination the covering scan cannot answer. The factory hands that open to
+        // its backup plan, which is the ordinary reader path and already decodes
+        // Parquet, so the partition's rows come back carrying their real timestamps and
+        // prices. The regression this pins is the alternative: rows fabricated from
+        // NULL sentinels, designated timestamp included.
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE t_pq_absent (
@@ -437,33 +435,34 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             engine.releaseAllReaders();
 
-            // The covered scan serves 2024-01-02's null prefix from price.d and skips
-            // the Parquet partition. Every row it returns carries its real timestamp
-            // and price: count(ts) and count(price) both equal count().
+            // Both partitions that predate sym are served: 30 Parquet rows plus 10
+            // native ones. Every row carries its real timestamp and price, so
+            // count(ts) and count(price) both equal count().
             assertQuery("SELECT count() c, count(ts) nn_ts, count(price) nn_price, min(ts) min_ts, sum(price) s FROM t_pq_absent WHERE sym = null")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex on: sym with: ts, price")
+                    .withPlanContaining("CoveringIndex backup: true on: sym with: ts, price")
                     .returns("""
                             c\tnn_ts\tnn_price\tmin_ts\ts
-                            10\t10\t10\t2024-01-02T00:01:00.000000Z\t1055.0
+                            40\t40\t40\t2024-01-01T00:01:00.000000Z\t1520.0
                             """);
             assertQuery("SELECT ts, price FROM t_pq_absent WHERE sym = null ORDER BY ts LIMIT 3")
                     .timestamp("ts")
                     .noRandomAccess()
-                    .expectSize()
+                    // The backup is a PageFrameRecordCursorFactory: it declares no random
+                    // access but its cursor implements getRecordB() anyway.
+                    .skipRandomAccessProbe()
+                    .sizeMayVary()
                     .noLeakCheck()
-                    .withPlanContaining("CoveringIndex on: sym with: ts, price")
                     .returns("""
                             ts\tprice
-                            2024-01-02T00:01:00.000000Z\t101.0
-                            2024-01-02T00:02:00.000000Z\t102.0
-                            2024-01-02T00:03:00.000000Z\t103.0
+                            2024-01-01T00:01:00.000000Z\t1.0
+                            2024-01-01T00:02:00.000000Z\t2.0
+                            2024-01-01T00:03:00.000000Z\t3.0
                             """);
 
-            // The gap, stated by the oracle: the Parquet partition's 30 rows are on
-            // disk and a full scan returns them. The covered scan does not serve them.
+            // The oracle the covered scan must match: the same query with covering off.
             assertQuery("SELECT /*+ no_covering */ count() c, count(ts) nn_ts, sum(price) s FROM t_pq_absent WHERE sym = null")
                     .noRandomAccess()
                     .expectSize()

@@ -33,9 +33,8 @@ import org.junit.Test;
  * chain carries postings for; reporting the key as {@code VALUE_NOT_FOUND} instead makes the
  * cursor treat it as an unknown symbol and drop every matching row.
  * <p>
- * Each case is cross-checked against a spelling that reaches the same rows by another route --
- * {@code /*+ no_covering *}{@code /}, or the literal {@code sym = null}. LATEST ON uses the
- * literal one deliberately: see the comment there.
+ * Each case is cross-checked against the spellings that reach the same rows by another route --
+ * {@code /*+ no_covering *}{@code /}, and the literal {@code sym = null}.
  */
 public class CoveringIndexBindVariableKeyTest extends AbstractCairoTest {
 
@@ -53,13 +52,54 @@ public class CoveringIndexBindVariableKeyTest extends AbstractCairoTest {
                             sym\tval
                             \t50.0
                             """);
-            // Cross-checked against the LITERAL null spelling, not the bound one: the
-            // NON-covering LATEST ON path drops a bound NULL key and returns nothing. That
-            // is a separate defect on a path this change does not touch -- the literal
-            // spelling reaches the same rows through the same factory.
+            assertSqlCursors(sql, sql.replace("SELECT ", "SELECT /*+ no_covering */ "));
+            // ... and against the literal spelling, which must reach the same row.
             assertSqlCursors(
                     sql,
                     "SELECT /*+ no_covering */ sym, val FROM t_bv_latest WHERE sym = null LATEST ON ts PARTITION BY sym"
+            );
+        });
+    }
+
+    @Test
+    public void testBoundNullKeyLatestOnOverColumnTop() throws Exception {
+        // The bound NULL key over a partition that carries a column top: the covering scan
+        // has no posting to decode there, so the factory runs its backup, which is the
+        // plain LATEST ON index scan. That scan resolved a bound NULL key with
+        // "symbolKey + 1" instead of TableUtils.toIndexKey(), which sends VALUE_IS_NULL
+        // (Integer.MIN_VALUE) to an index key nothing matches -- so the query returned
+        // nothing while the literal "sym = null" returned the row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_bv_top (ts TIMESTAMP, val DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO t_bv_top VALUES
+                    ('2024-01-01T00:00:00', 10.0),
+                    ('2024-01-01T01:00:00', 20.0)
+                    """);
+            execute("ALTER TABLE t_bv_top ADD COLUMN sym SYMBOL");
+            execute("INSERT INTO t_bv_top VALUES ('2024-01-01T02:00:00', 30.0, 'A')");
+            execute("ALTER TABLE t_bv_top ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (val)");
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            bindVariableService.setStr(0, null);
+            final String sql = "SELECT sym, val FROM t_bv_top WHERE sym = $1 LATEST ON ts PARTITION BY sym";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    // The backup is an index-scan factory: it declares no random access but
+                    // its cursor implements getRecordB() anyway.
+                    .skipRandomAccessProbe()
+                    .sizeMayVary()
+                    .withPlanContaining("CoveringIndex backup: true op: latest on: sym with: val")
+                    .returns("""
+                            sym\tval
+                            \t20.0
+                            """);
+            assertSqlCursors(sql, sql.replace("SELECT ", "SELECT /*+ no_covering */ "));
+            assertSqlCursors(
+                    sql,
+                    "SELECT /*+ no_covering */ sym, val FROM t_bv_top WHERE sym = null LATEST ON ts PARTITION BY sym"
             );
         });
     }
