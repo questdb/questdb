@@ -11187,7 +11187,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             }
                             funcs.add(windowFunction);
                             windowFunctionOwned = false;
-                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), null);
+                            // Pass the pass1 traversal directions (flipped above for BACKWARD-pass1
+                            // functions), so order-direction-sensitive functions (the SUBSAMPLE
+                            // downsampling family) can validate how their pass1 will traverse.
+                            windowFunction.initRecordComparator(this, chainMetadata, chainTypes, order, ac.getOrderBy(), ac.getOrderByDirection());
                         } else {
                             if (naturalOrderFunctions == null) {
                                 naturalOrderFunctions = new ObjList<>();

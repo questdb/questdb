@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -98,6 +99,14 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
 
         if (!windowContext.isOrdered()) {
             throw SqlException.$(position, "m4() requires ORDER BY");
+        }
+
+        // The bucketing algorithm consumes pass1 input in ascending timestamp order. A window
+        // ORDER BY dismissed against a backward base scan traverses descending, so refuse it
+        // here; the sorted path is validated in initRecordComparator, and pass1's monotonicity
+        // guard backstops order keys that only decay at runtime (mismatched or expression keys).
+        if (windowContext.getOrderByScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
+            throw SqlException.$(position, NAME).put("() requires ascending ORDER BY");
         }
 
         if (!windowContext.isDefaultFrame()) {
@@ -185,6 +194,10 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         // it forever (NaN comparisons are always false, so minVal/maxVal, once NaN, never update again).
         // They still count toward the SUBSAMPLE row cap, which pass1 checks against rowCount.
         private boolean lastKeep;    // last keep-flag computed in pass2; see getBool() below
+        // Previous buffered (non-null) timestamp seen by pass1; enforces the algorithms'
+        // ascending-input precondition. Reads are gated on count > 0, so the field needs no
+        // reset plumbing of its own - count's resets (reopen/toTop/reset) cover it.
+        private long lastTs;
         @Nullable
         private MemoryTracker memoryTracker;
         private ObjList<ExpressionNode> orderBy;
@@ -368,6 +381,10 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 ObjList<ExpressionNode> orderBy,
                 IntList orderByDirection
         ) throws SqlException {
+            // Compile-time half of the ascending-order contract: reject a window ORDER BY that
+            // is descending as written. pass1's monotonicity guard below covers what this
+            // cannot see - an ascending order key that is not the timestamp argument.
+            validateAscendingOrder(orderByDirection, functionPosition, name);
             this.orderBy = orderBy;
         }
 
@@ -396,6 +413,16 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 appendNullFlag(true);
                 return;
             }
+            // The algorithms bucket a buffer they assume is ascending (see SubsampleAlgorithm):
+            // descending ORDER BY is rejected at compile time, but an ascending order key that is
+            // not the timestamp argument (including expression arguments) can still deliver
+            // backward steps; refuse them rather than silently mis-bucket. Equal timestamps stay
+            // legal - the algorithms handle them via their single-bucket degenerate path.
+            if (count > 0 && ts < lastTs) {
+                throw CairoException.nonCritical().position(functionPosition)
+                        .put(name).put("() requires the timestamp argument in ascending ORDER BY order");
+            }
+            lastTs = ts;
             if (count >= Integer.MAX_VALUE) {
                 throw CairoException.nonCritical()
                         .put(name).put(" input exceeds maximum of ").put(Integer.MAX_VALUE).put(" rows");

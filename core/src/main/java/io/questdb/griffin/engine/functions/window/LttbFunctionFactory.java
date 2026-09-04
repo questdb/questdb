@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
@@ -100,6 +101,14 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
 
         if (!windowContext.isOrdered()) {
             throw SqlException.$(position, "lttb() requires ORDER BY");
+        }
+
+        // See M4FunctionFactory: ascending pass1 input is the algorithm's precondition (gap
+        // segmentation in particular can never fire on descending input); reject the
+        // order-dismissed backward-scan shape here, the sorted path in initRecordComparator,
+        // and runtime backward steps in pass1.
+        if (windowContext.getOrderByScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
+            throw SqlException.$(position, NAME).put("() requires ascending ORDER BY");
         }
 
         if (!windowContext.isDefaultFrame()) {

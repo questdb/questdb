@@ -35,6 +35,7 @@ import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.VirtualRecord;
@@ -135,6 +136,16 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         if (!windowContext.isOrdered()) {
             throw SqlException.$(position, "sdt() requires ORDER BY");
         }
+
+        // sdt tolerates a backward step in its timestamp ARGUMENT (documented series-boundary
+        // semantics - see the nanos-wrap and json_extract tests), so unlike m4/minmax/lttb it
+        // gets no runtime monotonicity guard. A descending window ORDER BY is different: it is
+        // a user-intent error that turns compression into a keep-everything no-op, and it is
+        // fully knowable at compile time - reject it here (order dismissed against a backward
+        // scan) and in initRecordComparator (sorted path).
+        if (windowContext.getOrderByScanDirection() == RecordCursorFactory.SCAN_DIRECTION_BACKWARD) {
+            throw SqlException.$(position, NAME).put("() requires ascending ORDER BY");
+        }
         if (!windowContext.isDefaultFrame()) {
             throw SqlException.$(position, "sdt() does not support framing; remove ROWS/RANGE clause");
         }
@@ -167,16 +178,17 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
                     map,
                     windowContext.getPartitionByRecord(),
                     windowContext.getPartitionBySink(),
-                    tsArg, valueArg, compdevArg, compdev, ignoreNulls, mem
+                    tsArg, valueArg, compdevArg, compdev, ignoreNulls, mem, position
             );
         }
-        return new SdtOverWholeResultSetFunction(tsArg, valueArg, compdevArg, compdev, ignoreNulls, mem);
+        return new SdtOverWholeResultSetFunction(tsArg, valueArg, compdevArg, compdev, ignoreNulls, mem, position);
     }
 
     // ---- non-partitioned, two-pass ----
     static class SdtOverWholeResultSetFunction extends BaseWindowFunction implements SwingingDoor.Sink, Reopenable {
         private final double compdev;
         private final Function compdevArg;
+        private final int functionPosition;
         private final boolean ignoreNulls;
         private final MemoryARW mem;
         private final Function tsArg;
@@ -186,13 +198,14 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
         private long readOffset;   // pass2 read cursor (bytes)
 
         SdtOverWholeResultSetFunction(Function tsArg, Function valueArg, Function compdevArg, double compdev,
-                                      boolean ignoreNulls, MemoryARW mem) {
+                                      boolean ignoreNulls, MemoryARW mem, int functionPosition) {
             super(valueArg); // BaseWindowFunction stores the "value" arg as `arg`
             this.tsArg = tsArg;
             this.compdevArg = compdevArg;
             this.compdev = compdev;
             this.ignoreNulls = ignoreNulls;
             this.mem = mem;
+            this.functionPosition = functionPosition;
             sd.configure(compdev);
         }
 
@@ -276,7 +289,10 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
                 IntList orderIndices,
                 ObjList<ExpressionNode> orderBy,
                 IntList orderByDirection
-        ) {
+        ) throws SqlException {
+            // Reject a descending window ORDER BY on the sorted path; see newInstance for why
+            // sdt validates only the ORDER BY direction, never runtime timestamp-argument order.
+            validateAscendingOrder(orderByDirection, functionPosition, NAME);
             this.orderBy = orderBy;
         }
 
@@ -374,6 +390,7 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
     static class SdtOverPartitionFunction extends BasePartitionedWindowFunction implements SwingingDoor.Sink {
         private final double compdev;
         private final Function compdevArg;
+        private final int functionPosition;
         private final boolean ignoreNulls;
         private final MemoryARW mem;
         private final SwingingDoor scratch = new SwingingDoor();
@@ -384,13 +401,14 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
         SdtOverPartitionFunction(Map map, VirtualRecord partitionByRecord, RecordSink partitionBySink,
                                  Function tsArg, Function valueArg, Function compdevArg, double compdev,
-                                 boolean ignoreNulls, MemoryARW mem) {
+                                 boolean ignoreNulls, MemoryARW mem, int functionPosition) {
             super(map, partitionByRecord, partitionBySink, valueArg);
             this.tsArg = tsArg;
             this.compdevArg = compdevArg;
             this.compdev = compdev;
             this.ignoreNulls = ignoreNulls;
             this.mem = mem;
+            this.functionPosition = functionPosition;
             scratch.configure(compdev);
         }
 
@@ -454,7 +472,10 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
                 IntList orderIndices,
                 ObjList<ExpressionNode> orderBy,
                 IntList orderByDirection
-        ) {
+        ) throws SqlException {
+            // Reject a descending window ORDER BY on the sorted path; see newInstance for why
+            // sdt validates only the ORDER BY direction, never runtime timestamp-argument order.
+            validateAscendingOrder(orderByDirection, functionPosition, NAME);
             this.orderBy = orderBy;
         }
 

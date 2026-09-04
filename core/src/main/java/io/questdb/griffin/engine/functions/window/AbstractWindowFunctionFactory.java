@@ -38,14 +38,17 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimals;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
 
@@ -154,6 +157,24 @@ public abstract class AbstractWindowFunctionFactory implements FunctionFactory {
             throw SqlException.$(position, "target points exceeds maximum of ").put(Integer.MAX_VALUE);
         }
         return target;
+    }
+
+    // The downsampling window functions (m4/minmax/lttb/sdt) bucket or corridor-walk their input
+    // in pass1 traversal order and require that order to be ascending. Called from
+    // initRecordComparator with the pass1 traversal directions: SqlCodeGenerator flips the
+    // as-written directions first for Pass1ScanDirection.BACKWARD functions, and the downsampling
+    // functions all scan forward, so these are the directions exactly as written in the OVER
+    // clause. A null list (no ORDER BY reached this path) validates nothing here; the factories
+    // separately require ORDER BY, and getOrderByScanDirection() covers the order-dismissed path.
+    static void validateAscendingOrder(@Nullable IntList orderByDirections, int position, String name) throws SqlException {
+        if (orderByDirections == null) {
+            return;
+        }
+        for (int i = 0, n = orderByDirections.size(); i < n; i++) {
+            if (orderByDirections.getQuick(i) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                throw SqlException.$(position, name).put("() requires ascending ORDER BY");
+            }
+        }
     }
 
     static void expandRingBuffer(MemoryARW memory, RingBufferDesc desc, int recordSize) {
