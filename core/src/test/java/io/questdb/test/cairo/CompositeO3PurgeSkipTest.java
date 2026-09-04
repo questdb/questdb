@@ -51,9 +51,13 @@ import java.util.stream.Stream;
  * called {@code ff.mkdirs}, creating a directory nothing ever reads. A composite table's partitions
  * are the CELLS of the day, and the fast-append path opens those itself.
  * <p>
- * Sub-project 1A fixed the producer. {@code O3PartitionPurgeJob}'s composite skip is untouched and
- * still correct: a cell-aware purge would have to know that the LIVE container is the UNVERSIONED day
- * directory, so a naive "keep the newest {@code <day>.<txn>}" walk would delete every live cell.
+ * Sub-project 1A fixed the producer. The skip itself has since been replaced by a composite arm,
+ * {@code O3PartitionPurgeJob#purgeCompositeSupersededCellVersions}, which honours the constraint this
+ * class recorded: the LIVE container is the UNVERSIONED day directory, so a naive "keep the newest
+ * {@code <day>.<txn>}" walk would delete every live cell. That arm therefore refuses any root
+ * directory whose name carries a dot, and only ever removes a version that a strictly newer, LIVE
+ * version of the SAME cell supersedes. This test is unaffected either way -- it counts day-level
+ * directories, which that arm never creates and never removes.
  * <p>
  * See {@link CompositeO3LayoutTest} for the on-disk layout this rests on.
  */
