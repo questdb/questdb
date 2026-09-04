@@ -71,6 +71,15 @@ public abstract class WorkerPoolManager implements Target {
         return sharedPoolNetwork;
     }
 
+    /**
+     * The pool that actually serves queries. A dedicated query pool is optional; when it is absent
+     * queries run on the network pool, so a caller assigning a job to the raw field would get null
+     * and the job would silently never run.
+     */
+    public WorkerPool getSharedPoolQuery() {
+        return sharedPoolQuery != null ? sharedPoolQuery : sharedPoolNetwork;
+    }
+
     public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
         return getWorkerPool(config, requesterName, sharedPoolWrite);
     }
