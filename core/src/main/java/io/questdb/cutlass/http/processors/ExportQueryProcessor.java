@@ -196,7 +196,7 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 state.setQueryCacheable(true);
                 sqlExecutionContext.setCacheHit(true);
                 sqlExecutionContext.storeTelemetry(state.getExportModel().isParquetFormat() ?
-                            QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
+                        QUERY_RESULT_EXPORT_PARQUET : QUERY_RESULT_EXPORT_CSV, TelemetryOrigin.HTTP);
                 state.beginSqlExecutionOwner(state.sqlText, sqlExecutionContext, CompiledQuery.SELECT);
             }
             state.publishSqlExecutionOwner(sqlExecutionContext.containsSecret());
@@ -322,33 +322,6 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
         return requiredAuthType;
     }
 
-    private static CompiledQuery compileWithResourceGroupBypass(
-            SqlCompiler compiler,
-            CharSequence query,
-            SqlExecutionContextImpl executionContext
-    ) throws SqlException {
-        final boolean previousBypass = executionContext.isResourceGroupBypassed();
-        executionContext.setResourceGroupBypassed(true);
-        try {
-            return compiler.compile(query, executionContext);
-        } finally {
-            executionContext.setResourceGroupBypassed(previousBypass);
-        }
-    }
-
-    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cc, Throwable ownerStartFailure) {
-        Throwable cleanupFailure = null;
-        try {
-            cc.closeAllButSelect();
-        } catch (Throwable th) {
-            cleanupFailure = th;
-        }
-        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cc.getOperation());
-        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
-            ownerStartFailure.addSuppressed(cleanupFailure);
-        }
-    }
-
     @Override
     public void onRequestComplete(
             HttpConnectionContext context
@@ -391,6 +364,33 @@ public class ExportQueryProcessor implements HttpRequestProcessor, HttpRequestHa
                 logInternalError(e, state);
             }
             throw ServerDisconnectException.INSTANCE;
+        }
+    }
+
+    private static CompiledQuery compileWithResourceGroupBypass(
+            SqlCompiler compiler,
+            CharSequence query,
+            SqlExecutionContextImpl executionContext
+    ) throws SqlException {
+        final boolean previousBypass = executionContext.isResourceGroupBypassed();
+        executionContext.setResourceGroupBypassed(true);
+        try {
+            return compiler.compile(query, executionContext);
+        } finally {
+            executionContext.setResourceGroupBypassed(previousBypass);
+        }
+    }
+
+    private static void freeCompiledQueryAfterOwnerStartFailure(CompiledQuery cc, Throwable ownerStartFailure) {
+        Throwable cleanupFailure = null;
+        try {
+            cc.closeAllButSelect();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, cc.getOperation());
+        if (cleanupFailure != null && cleanupFailure != ownerStartFailure) {
+            ownerStartFailure.addSuppressed(cleanupFailure);
         }
     }
 
