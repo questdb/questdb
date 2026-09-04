@@ -57,7 +57,7 @@ public class HttpCookieHandlerImpl implements HttpCookieHandler {
     }
 
     @Override
-    public void setSessionCookie(HttpResponseHeader header, CharSequence sessionId) {
+    public CharSequence getSessionCookieValue(CharSequence sessionId) {
         final StringSink cookieValueSink = tlSink1.get();
         cookieValueSink.clear();
 
@@ -68,7 +68,12 @@ public class HttpCookieHandlerImpl implements HttpCookieHandler {
             cookieValueSink.put(DELETED_COOKIE);
         }
 
-        header.setCookie(SESSION_COOKIE_NAME, cookieValueSink);
+        return cookieValueSink;
+    }
+
+    @Override
+    public void setSessionCookie(HttpResponseHeader header, CharSequence sessionId) {
+        header.setCookie(SESSION_COOKIE_NAME, getSessionCookieValue(sessionId));
     }
 
     private void parseCookie(@NotNull CharSequence cookie, CharSequenceObjHashMap<CharSequence> parsedCookies) {

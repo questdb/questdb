@@ -71,6 +71,20 @@ public class QwpMessageHeader {
     }
 
     /**
+     * Returns true only for the exact v1 durable-ack poll control frame.
+     * Keeping the marker structural prevents a table-less poll from entering
+     * the normal commit path and closing a user's deferred-commit group.
+     */
+    public static boolean isDurableAckPoll(long address, int length) {
+        return length == HEADER_SIZE
+                && Unsafe.getInt(address + HEADER_OFFSET_MAGIC) == MAGIC_MESSAGE
+                && Unsafe.getByte(address + HEADER_OFFSET_VERSION) == VERSION
+                && Unsafe.getByte(address + HEADER_OFFSET_FLAGS) == FLAG_DURABLE_ACK_POLL
+                && Unsafe.getShort(address + HEADER_OFFSET_TABLE_COUNT) == 0
+                && Unsafe.getInt(address + HEADER_OFFSET_PAYLOAD_LENGTH) == 0;
+    }
+
+    /**
      * Reads the magic integer from direct memory.
      *
      * @param address memory address

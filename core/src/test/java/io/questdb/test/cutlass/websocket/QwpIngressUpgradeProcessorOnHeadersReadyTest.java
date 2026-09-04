@@ -61,6 +61,53 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     private static final int TINY_BUFFER_SIZE = 64;
 
     @Test
+    public void testBrowserHandshakeAppendsIngressServerInfo() throws Exception {
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+            long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            try (
+                    MockHttpRequestHeader header = new MockHttpRequestHeader();
+                    TestableContext context = new TestableContext(
+                            httpConfig,
+                            header,
+                            new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE)
+                    )
+            ) {
+                header.setHeader("Upgrade", "websocket");
+                header.setHeader("Connection", "Upgrade");
+                header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+                header.setHeader("Sec-WebSocket-Version", "13");
+                header.setUrlParam("qwp_browser_handshake", "v1");
+
+                processor.onHeadersReady(context);
+                processor.onRequestComplete(context);
+
+                int sentSize = context.getMockRawSocket().sentSize;
+                int frameOffset = findHttpHeaderEnd(bufferAddr, sentSize);
+                Assert.assertTrue("HTTP header terminator missing", frameOffset >= 0);
+                Assert.assertEquals(
+                        "SERVER_INFO must be the only post-upgrade frame",
+                        7,
+                        sentSize - frameOffset
+                );
+                Assert.assertEquals((byte) 0x82, Unsafe.getByte(bufferAddr + frameOffset));
+                Assert.assertEquals(5, Unsafe.getByte(bufferAddr + frameOffset + 1));
+                Assert.assertEquals(
+                        QwpConstants.STATUS_SERVER_INFO,
+                        Unsafe.getByte(bufferAddr + frameOffset + 2)
+                );
+                Assert.assertTrue(
+                        "server batch cap must be positive",
+                        Unsafe.getInt(bufferAddr + frameOffset + 3) > 0
+                );
+            } finally {
+                Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testOnHeadersReadyAcceptsPrimaryRole() throws Exception {
         assertMemoryLeak(() -> assertHandshakeAcceptedForRole(QwpEgressMsgKind.ROLE_PRIMARY, "PRIMARY"));
     }
@@ -234,6 +281,22 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
     @Test
     public void testOnHeadersReadyEnablesDurableAckWhenHeaderTrueAndRegistryEnabled() throws Exception {
         assertMemoryLeak(() -> assertDurableAckStateAfterHandshake("true", new FakeEnabledDurableAckRegistry(), true));
+    }
+
+    @Test
+    public void testOnHeadersReadyEnablesDurableAckThroughBrowserSubprotocol() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckSubprotocolAfterHandshake(
+                "application.v1, questdb.qwp.durable-ack.v1",
+                new FakeEnabledDurableAckRegistry(),
+                true));
+    }
+
+    @Test
+    public void testOnHeadersReadyDoesNotSelectBrowserSubprotocolWhenRegistryDisabled() throws Exception {
+        assertMemoryLeak(() -> assertDurableAckSubprotocolAfterHandshake(
+                "questdb.qwp.durable-ack.v1",
+                DefaultDurableAckRegistry.INSTANCE,
+                false));
     }
 
     @Test
@@ -463,6 +526,48 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
     }
 
+    private static void assertDurableAckSubprotocolAfterHandshake(
+            String protocols,
+            DurableAckRegistry registry,
+            boolean expectedEnabled
+    ) throws Exception {
+        DurableAckRegistry previous = engine.getDurableAckRegistry();
+        engine.setDurableAckRegistry(registry);
+        HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+        QwpIngressUpgradeProcessor processor = new QwpIngressUpgradeProcessor(engine, httpConfig);
+        LocalValue<QwpIngressProcessorState> lv = getLV();
+
+        long bufferAddr = Unsafe.malloc(HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        try (
+                MockHttpRequestHeader header = new MockHttpRequestHeader();
+                TestableContext context = new TestableContext(httpConfig, header, new MockRawSocket(bufferAddr, HANDSHAKE_BUFFER_SIZE))
+        ) {
+            header.setHeader("Upgrade", "websocket");
+            header.setHeader("Connection", "Upgrade");
+            header.setHeader("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==");
+            header.setHeader("Sec-WebSocket-Version", "13");
+            header.setHeader("Sec-WebSocket-Protocol", protocols);
+
+            processor.onHeadersReady(context);
+            processor.onRequestComplete(context);
+
+            Assert.assertTrue("handshake must have switched protocol", context.isSwitchProtocolCalled());
+            QwpIngressProcessorState state = lv.get(context);
+            Assert.assertNotNull("state must be populated after successful handshake", state);
+            Assert.assertEquals(expectedEnabled, state.isDurableAckEnabled());
+
+            String response = readResponse(bufferAddr, context.getMockRawSocket().sentSize);
+            String confirmation = "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1\r\n";
+            Assert.assertEquals(
+                    "subprotocol confirmation must mirror actual durable-ack enablement: " + response,
+                    expectedEnabled,
+                    response.contains(confirmation));
+        } finally {
+            Unsafe.free(bufferAddr, HANDSHAKE_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+            engine.setDurableAckRegistry(previous);
+        }
+    }
+
     private static void assertHandshakeAcceptedForRole(byte role, String expectedRoleName) throws Exception {
         node1.getConfigurationOverrides().setQwpServerInfoProvider(new FakeRoleProvider(role));
         HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
@@ -554,6 +659,18 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         return new String(bytes, StandardCharsets.US_ASCII);
     }
 
+    private static int findHttpHeaderEnd(long bufferAddr, int size) {
+        for (int i = 0; i <= size - 4; i++) {
+            if (Unsafe.getByte(bufferAddr + i) == '\r'
+                    && Unsafe.getByte(bufferAddr + i + 1) == '\n'
+                    && Unsafe.getByte(bufferAddr + i + 2) == '\r'
+                    && Unsafe.getByte(bufferAddr + i + 3) == '\n') {
+                return i + 4;
+            }
+        }
+        return -1;
+    }
+
     private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {
         @Override
         public long getDurablyUploadedSeqTxn(CharSequence tableDirName) {
@@ -593,6 +710,8 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         private final ObjList<Long> allocatedMemory = new ObjList<>();
         private final ObjList<Utf8String> headerNames = new ObjList<>();
         private final ObjList<DirectUtf8String> headerValues = new ObjList<>();
+        private final ObjList<Utf8String> urlParamNames = new ObjList<>();
+        private final ObjList<DirectUtf8String> urlParamValues = new ObjList<>();
 
         @Override
         public void close() {
@@ -604,6 +723,8 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             allocatedMemory.clear();
             headerNames.clear();
             headerValues.clear();
+            urlParamNames.clear();
+            urlParamValues.clear();
         }
 
         @Override
@@ -683,6 +804,11 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
         @Override
         public DirectUtf8Sequence getUrlParam(Utf8Sequence name) {
+            for (int i = 0; i < urlParamNames.size(); i++) {
+                if (name.toString().equals(urlParamNames.get(i).toString())) {
+                    return urlParamValues.get(i);
+                }
+            }
             return null;
         }
 
@@ -702,15 +828,7 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         }
 
         void setHeader(String name, String value) {
-            byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
-            long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
-            for (int i = 0; i < bytes.length; i++) {
-                Unsafe.putByte(ptr + i, bytes[i]);
-            }
-            allocatedMemory.add(ptr);
-            allocatedMemory.add((long) bytes.length);
-
-            DirectUtf8String directValue = new DirectUtf8String().of(ptr, ptr + bytes.length);
+            DirectUtf8String directValue = allocate(value);
             for (int i = 0; i < headerNames.size(); i++) {
                 if (name.equalsIgnoreCase(headerNames.get(i).toString())) {
                     headerValues.set(i, directValue);
@@ -719,6 +837,29 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
             }
             headerNames.add(new Utf8String(name));
             headerValues.add(directValue);
+        }
+
+        void setUrlParam(String name, String value) {
+            DirectUtf8String directValue = allocate(value);
+            for (int i = 0; i < urlParamNames.size(); i++) {
+                if (name.equals(urlParamNames.get(i).toString())) {
+                    urlParamValues.set(i, directValue);
+                    return;
+                }
+            }
+            urlParamNames.add(new Utf8String(name));
+            urlParamValues.add(directValue);
+        }
+
+        private DirectUtf8String allocate(String value) {
+            byte[] bytes = value.getBytes(StandardCharsets.UTF_8);
+            long ptr = Unsafe.malloc(bytes.length, MemoryTag.NATIVE_DEFAULT);
+            for (int i = 0; i < bytes.length; i++) {
+                Unsafe.putByte(ptr + i, bytes[i]);
+            }
+            allocatedMemory.add(ptr);
+            allocatedMemory.add((long) bytes.length);
+            return new DirectUtf8String().of(ptr, ptr + bytes.length);
         }
     }
 
