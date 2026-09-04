@@ -1923,11 +1923,61 @@ public class SubsampleTest extends AbstractCairoTest {
                     (20.0, '2024-01-01T00:00:00.000000Z'),
                     (30.0, '2024-01-01T00:00:00.000000Z')
                     """);
-            // All same timestamp - M4 falls back to selectAll
+            // The input fits the target, so SUBSAMPLE preserves every row.
             assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tts\n" +
                     "10.0\t2024-01-01T00:00:00.000000Z\n" +
                     "20.0\t2024-01-01T00:00:00.000000Z\n" +
                     "30.0\t2024-01-01T00:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testM4AllSameTimestampRetainsLandmarks() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (50.0, '2024-01-01T00:00:00.000000Z'),
+                    (40.0, '2024-01-01T00:00:00.000000Z'),
+                    (30.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:00.000000Z'),
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (100.0, '2024-01-01T00:00:00.000000Z'),
+                    (60.0, '2024-01-01T00:00:00.000000Z')
+                    """);
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 4)")
+                    .timestamp("ts")
+                    .returns("""
+                            price\tts
+                            50.0\t2024-01-01T00:00:00.000000Z
+                            10.0\t2024-01-01T00:00:00.000000Z
+                            100.0\t2024-01-01T00:00:00.000000Z
+                            60.0\t2024-01-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testMinMaxAllSameTimestampRetainsLandmarks() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (50.0, '2024-01-01T00:00:00.000000Z'),
+                    (40.0, '2024-01-01T00:00:00.000000Z'),
+                    (30.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:00:00.000000Z'),
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (100.0, '2024-01-01T00:00:00.000000Z'),
+                    (60.0, '2024-01-01T00:00:00.000000Z')
+                    """);
+            assertQuery("SELECT price, ts FROM t SUBSAMPLE minmax(price, 2)")
+                    .timestamp("ts")
+                    .returns("""
+                            price\tts
+                            10.0\t2024-01-01T00:00:00.000000Z
+                            100.0\t2024-01-01T00:00:00.000000Z
+                            """);
         });
     }
 
@@ -2986,10 +3036,10 @@ public class SubsampleTest extends AbstractCairoTest {
                     (40.0, '2024-01-01T00:00:00.000000Z'),
                     (50.0, '2024-01-01T00:00:00.000000Z')
                     """);
-            // All same timestamp, 5 rows, target 2 - should cap at 2
+            // One zero-span bucket selects the first/minimum and last/maximum rows.
             assertQuery("SELECT price, ts FROM t SUBSAMPLE m4(price, 2)").timestamp("ts").returns("price\tts\n" +
                     "10.0\t2024-01-01T00:00:00.000000Z\n" +
-                    "20.0\t2024-01-01T00:00:00.000000Z\n");
+                    "50.0\t2024-01-01T00:00:00.000000Z\n");
         });
     }
 

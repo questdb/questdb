@@ -226,6 +226,43 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEqualTimestampDifferentialAgainstReference() throws Exception {
+        assertMemoryLeak(() -> {
+            final Series s = new Series(7);
+            final double[] values = {50, 40, 30, 20, 10, 100, 60};
+            for (int i = 0; i < s.n; i++) {
+                s.tss[i] = EPOCH_US;
+                s.vals[i] = values[i];
+            }
+
+            final int[] expectedM4 = referenceM4(s, 4);
+            final int[] expectedMinMax = referenceMinMax(s, 2);
+            Assert.assertArrayEquals("M4 zero-span reference", new int[]{0, 4, 5, 6}, expectedM4);
+            Assert.assertArrayEquals("MinMax zero-span reference", new int[]{4, 5}, expectedMinMax);
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                int tableId = 0;
+                for (String tsType : new String[]{TS_US, TS_NS}) {
+                    final String table = "t_equal_ts_" + tableId++;
+                    createAndInsert(table, s, tsType, false);
+                    assertSelectionEquals(
+                            "M4 zero-span ts=" + tsType,
+                            s,
+                            expectedM4,
+                            run(compiler, "SELECT price, ts FROM " + table + " SUBSAMPLE m4(price, 4)", s.n, tsType)
+                    );
+                    assertSelectionEquals(
+                            "MinMax zero-span ts=" + tsType,
+                            s,
+                            expectedMinMax,
+                            run(compiler, "SELECT price, ts FROM " + table + " SUBSAMPLE minmax(price, 2)", s.n, tsType)
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
     public void testM4DifferentialAgainstReference() throws Exception {
         assertMemoryLeak(() -> {
             final long root = newRootSeed();
@@ -630,11 +667,8 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
         int numBuckets = Math.max(1, target / 4);
         final long minTs = s.tss[0];
         final long maxTs = s.tss[s.n - 1];
-        if (minTs == maxTs) {
-            return identity(Math.min(s.n, target));
-        }
         final long span = maxTs - minTs;
-        if (span < 0) {
+        if (span <= 0) {
             numBuckets = 1;
         }
         int dataIdx = 0;
@@ -707,11 +741,8 @@ public class SubsampleFuzzTest extends AbstractCairoTest {
         int numBuckets = Math.max(1, target / 2);
         final long minTs = s.tss[0];
         final long maxTs = s.tss[s.n - 1];
-        if (minTs == maxTs) {
-            return identity(Math.min(s.n, target));
-        }
         final long span = maxTs - minTs;
-        if (span < 0) {
+        if (span <= 0) {
             numBuckets = 1;
         }
         int dataIdx = 0;

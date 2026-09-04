@@ -60,20 +60,9 @@ public class MinMaxAlgorithm implements SubsampleAlgorithm {
 
         long minTs = SubsampleAlgorithm.getTimestamp(buffer, 0);
         long maxTs = SubsampleAlgorithm.getTimestamp(buffer, bufferSize - 1);
-        if (minTs == maxTs) {
-            // All same timestamp - cap at targetPoints
-            int count = Math.min(bufferSize, targetPoints);
-            for (int i = 0; i < count; i++) {
-                selectedIndices.add(i);
-            }
-            return;
-        }
-
         final long span = maxTs - minTs;
-        if (span < 0) {
-            // maxTs - minTs overflowed long: the table spans more than half the
-            // timestamp range (~292 years at nanosecond resolution). Degrade to
-            // a single bucket instead of computing garbage boundaries.
+        if (span <= 0) {
+            // A single bucket handles matching timestamps and maxTs - minTs overflow.
             numBuckets = 1;
         }
 
