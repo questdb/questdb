@@ -654,6 +654,11 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
         }
 
         @Override
+        public long getIndexRowLoForCurrentFrame() {
+            return baseCursor.getIndexRowLoForCurrentFrame();
+        }
+
+        @Override
         public Record getRecord() {
             return recordA;
         }

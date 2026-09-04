@@ -82,6 +82,19 @@ public interface TimeFrameCursor extends SymbolTableSource, QuietCloseable {
     }
 
     /**
+     * The low bound, inclusive, to give the reader from {@link #getIndexReaderForCurrentFrame} for the
+     * current frame: the INDEX row the frame's first row sits at. An index lists the FILE rows a key
+     * appears at, and on a composite partition those differ from the frame's own rows - the ones
+     * {@link Record#getUpdateRowId()} counts - by the piece's shift, so the row-id offset is no substitute.
+     * See {@link PageFrame#getIndexRowLo()}.
+     * <p>
+     * Not available on concurrent implementation.
+     */
+    default long getIndexRowLoForCurrentFrame() {
+        throw new UnsupportedOperationException();
+    }
+
+    /**
      * @return record to be used for random access on open time frames
      */
     Record getRecord();

@@ -31,30 +31,27 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * TableWriter.changeColumnType's "open new column files" block positions the CONVERTED column's append
- * memory at {@code txWriter.getTransientRowCount()} - the partition's LIVE row count - instead of lifting
- * it to {@code E} (the physical extent) via {@code getLastPartitionFileRowCount(...)}, the way every other
- * analogous site does, and the way the sibling method
- * {@code changeSymbolCapacity} does it by skipping the reopen entirely behind
- * {@code !isLastPartitionAppendBlocked()}.
+ * A column type conversion on a composite partition must position the converted column's append memory at
+ * {@code E}, the partition's physical extent, not at its live row count.
  * <p>
- * The conversion itself (ConvertOperatorImpl, ahead of this block) already wrote the destination file out
- * to the partition's full physical extent - see section 17, "A column conversion walked the LIVE row
- * count, not E - FIXED". So the mapped {@code MemoryMA} this block opens is left positioned BELOW where
- * the file's real data ends. Nothing corrupts the file yet - {@code jumpTo} only moves an append cursor -
- * but the next thing that closes this mapping with {@code truncate=true} (a real writer close, or
- * {@code freeColumnMemory} on a later rename/convert/remove of this same column) truncates the file right
- * back down to that stale, too-low position, discarding whatever of the composite partition's tail sat
- * above it.
+ * The conversion itself ({@code ConvertOperatorImpl}) writes the destination file out to the partition's
+ * full physical extent. {@code TableWriter.changeColumnType}'s "open new column files" block then reopens
+ * that file for appending, and the position it picks is what this test pins down: lifted to {@code E} via
+ * {@code getLastPartitionFileRowCount(...)}, as every analogous site does (and as the sibling
+ * {@code changeSymbolCapacity} sidesteps by skipping the reopen behind {@code !isLastPartitionAppendBlocked()}).
+ * Positioned at the live count instead, nothing corrupts the file yet - {@code jumpTo} only moves an append
+ * cursor - but the next close of that mapping with {@code truncate=true} (a real writer close, or
+ * {@code freeColumnMemory} on a later rename, convert or remove of the same column) truncates the file back
+ * down to that too-low position, discarding whatever of the partition's tail sat above it.
  * <p>
- * This test forces that close with {@code engine.releaseAllWriters()} right after the first conversion,
- * then converts the SAME column a second time. The second conversion's own source read goes through
- * {@code ColumnTypeConverter.convertFixedToFixed}, which throws "composite conversion source file too
- * short" ahead of the native call when the file undershoots what the partition's geometry says it should
- * hold - exactly the diagnostic that caught this defect's signature (a) in the wild. That exception
- * surfaces as the table going SUSPENDED once WAL apply processes the second ALTER.
+ * The test forces that close with {@code engine.releaseAllWriters()} right after the first conversion, then
+ * converts the SAME column a second time. The second conversion's source read goes through
+ * {@code ColumnTypeConverter.convertFixedToFixed}, which throws "composite conversion source file too short"
+ * ahead of the native call when the file undershoots what the partition's geometry says it should hold -
+ * the diagnostic that caught this defect in the wild. That exception surfaces as the table going SUSPENDED
+ * once WAL apply processes the second ALTER.
  */
-public class ScratchConvertColumnTypeUsesLiveRowCountTest extends AbstractCairoTest {
+public class CompositeConvertColumnTypeTest extends AbstractCairoTest {
 
     @Test
     public void testColumnConvertedOnCompositePartitionSurvivesWriterClose() throws Exception {

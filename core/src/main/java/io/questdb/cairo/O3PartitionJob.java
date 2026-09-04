@@ -1586,16 +1586,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         pieces.setPos(w);
     }
 
-
     /**
      * Decides update-vs-rewrite for a Parquet partition touched by an O3 commit, applies it via
      * {@link #processParquetPartition0}, then finishes the O3-commit-specific bookkeeping (error
      * count, done latch, partition-update counter) that coordinates this partition task with the
      * rest of the parallel O3 commit.
      * <p>
-     * {@link #processParquetPartition0} is shared with {@link TableWriter#compactParquetPartition},
-     * an idle-triggered standalone rewrite that runs outside any O3 commit and must not touch that
-     * bookkeeping — this method is the O3-commit-only wrapper around the shared kernel.
+     * This method is the O3-commit-only wrapper around {@link #processParquetPartition0}; the
+     * idle-triggered compaction of a parquet partition is {@link #compactParquetPartition}, which runs
+     * off a reader snapshot and touches none of that bookkeeping.
      */
     public static void processParquetPartition(
             Path pathToTable,
@@ -1636,8 +1635,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     o3TimestampMin,
                     o3Basket,
                     newPartitionSize,
-                    oldPartitionSize,
-                    false
+                    oldPartitionSize
             );
         } catch (Throwable th) {
             tableWriter.o3BumpErrorCount(CairoException.isCairoOomError(th));
@@ -1653,12 +1651,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * empty), and either updates the existing {@code .parquet} file in place or rewrites it into a
      * fresh txn-named directory.
      * <p>
-     * {@code forceRewrite} lets a caller with no O3 data of its own (an empty range, {@code
-     * srcOooLo > srcOooHi}) force the rewrite branch regardless of the dead-space heuristics below —
-     * used by {@link TableWriter#compactParquetPartition} to reclaim dead row groups from an idle
-     * partition. With a non-empty range (the normal O3-commit caller, {@link
-     * #processParquetPartition}), {@code forceRewrite} is always {@code false} and every computed
-     * value here is identical to before this method was split out of it.
+     * The idle-triggered compaction of a parquet partition does not come through here: it is
+     * {@link #compactParquetPartition}, which copies the live row groups off a reader snapshot and needs
+     * neither a writer nor a merge plan.
      * <p>
      * This method does not touch the O3-commit-only bookkeeping ({@code o3ErrorCount}, the done
      * latch, the partition-update counter) — callers own that. On error it rethrows after
@@ -1683,8 +1678,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long o3TimestampMin,
             O3Basket o3Basket,
             long newPartitionSize,
-            long oldPartitionSize,
-            boolean forceRewrite
+            long oldPartitionSize
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final TableRecordMetadata tableWriterMetadata = tableWriter.getMetadata();
@@ -1831,8 +1825,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // mode, untouched row groups would retain the old column layout while
                 // the footer schema uses the new target schema, producing a malformed
                 // Parquet file.
-                isRewrite = forceRewrite
-                        || hasSchemaChange
+                isRewrite = hasSchemaChange
                         || forceFullReencode
                         || rowGroupCount == 1
                         || hasCoalescableTie
@@ -1995,8 +1988,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         // MERGE is never emitted in update mode (which cannot drop the
                         // absorbed row groups). Also gated on a non-empty O3 range: a coalesced
                         // tie is only meaningful when there is O3 data that might land on the
-                        // shared boundary timestamp (see forceRewrite callers, e.g.
-                        // TableWriter#compactParquetPartition, which pass an empty range).
+                        // shared boundary timestamp.
                         isCommitDedup && srcOooLo <= srcOooHi
                 );
 
@@ -2280,8 +2272,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
             // Rewrite mode: original is intact, new dir already removed by the inner catch.
             // This kernel does not own the O3-commit-only error bookkeeping (o3ErrorCount) --
-            // rethrow so every caller (the O3-commit wrapper above, or TableWriter#compactParquetPartition)
-            // decides for itself how to react.
+            // rethrow so the O3-commit wrapper above decides for itself how to react.
             throw th;
         } finally {
             // Release the reader's native handle (which borrows from the mmap) before munmap.
@@ -2308,6 +2299,227 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             Unsafe.putLong(partitionUpdateSinkAddr + 4 * Long.BYTES, Numbers.encodeLowHighInts(isRewrite ? 0 : 1, 0));
             Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0); // o3SplitPartitionSize
             Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, fileSize); // update parquet partition file size
+        }
+    }
+
+    /**
+     * Copies every live row group of a Parquet partition into a fresh {@code data.parquet} and {@code _pm}
+     * in {@code dstPartitionDir}, dropping the dead bytes that in-place O3 updates left behind. This is the
+     * reader-snapshot half of {@code PartitionCompactionScanJob}'s parquet compaction, the counterpart of
+     * its composite REWRITE, and it never touches a {@link TableWriter}: the Rust updater needs only the
+     * source file's descriptors and the target's, and with no O3 rows to merge every action is a
+     * whole-row-group copy. Each live row therefore keeps the row id it already has, which is what lets the
+     * caller carry the partition's index files over unchanged instead of rebuilding them, and what lets
+     * {@link TableWriter#swapCompactedParquetPartition} swap the result in as a metadata-only step.
+     * <p>
+     * Row groups are copied verbatim unless the table's schema no longer matches the file's (ADD, DROP or
+     * ALTER TYPE since the conversion) or the file carries legacy Required no-null-sentinel columns. Those
+     * cases re-encode each row group under the current schema, exactly as the rewrite branch of
+     * {@link #processParquetPartition0} does, after which every column is materialized from row 0 and the
+     * swap zeroes the partition's column tops; {@code command} records which of the two happened.
+     * <p>
+     * On failure the half-built {@code dstPartitionDir} is removed and the error rethrown. The source
+     * partition is only ever read.
+     *
+     * @param srcPartitionDir the live partition directory, {@code <partition>.<nameTxn>}; trimmed back on
+     *                        return
+     * @param dstPartitionDir the staging directory to build into, created here; trimmed back on return
+     * @param seqTxn          stamped into the new {@code _pm}: the reader snapshot's own
+     * @param command         carries the source generation in ({@link ParquetPartitionSwapCommand#getExpectedParquetFileSize})
+     *                        and the build's result out ({@link ParquetPartitionSwapCommand#setResult})
+     */
+    static void compactParquetPartition(
+            CairoConfiguration configuration,
+            FilesFacade ff,
+            TableToken tableToken,
+            TableRecordMetadata metadata,
+            TableUtils.SymbolTableProvider symbolTableProvider,
+            Path srcPartitionDir,
+            Path dstPartitionDir,
+            long seqTxn,
+            ParquetPartitionSwapCommand command
+    ) {
+        final long parquetFileSize = command.getExpectedParquetFileSize();
+        final long partitionTimestamp = command.getPartitionTimestamp();
+        final O3ParquetMergeContext ctx = PARQUET_MERGE_CONTEXT.get();
+        ctx.clear();
+        final ParquetPartitionDecoder partitionDecoder = ctx.getPartitionDecoder(configuration);
+        final ParquetMetaFileReader parquetMetaReader = ctx.getParquetMetaReader();
+        final PartitionUpdater partitionUpdater = ctx.getPartitionUpdater();
+        final int srcDirLen = srcPartitionDir.size();
+        final int dstDirLen = dstPartitionDir.size();
+        long parquetAddr = 0;
+        long parquetSize = 0;
+        boolean isBuilt = false;
+        try {
+            srcPartitionDir.concat(PARQUET_METADATA_FILE_NAME).$();
+            ParquetMetaFileReader.openAndMapRO(ff, srcPartitionDir.$(), parquetMetaReader);
+            if (parquetMetaReader.getAddr() == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
+                throw CairoException.critical(0)
+                        .put("_pm tail does not match current parquet file size [path=").put(srcPartitionDir)
+                        .put(", parquetFileSize=").put(parquetFileSize).put(']');
+            }
+            parquetSize = parquetMetaReader.getParquetFileSize();
+            srcPartitionDir.trimTo(srcDirLen).concat(PARQUET_PARTITION_NAME).$();
+            parquetAddr = TableUtils.mapRO(ff, srcPartitionDir.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            partitionDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
+            final ParquetMetaFileReader parquetMeta = partitionDecoder.metadata();
+            final int parquetColumnCount = parquetMeta.getColumnCount();
+            final int rowGroupCount = parquetMeta.getRowGroupCount();
+            assert rowGroupCount > 0;
+
+            // The same column-id mapping as processParquetPartition0: columns match by writer index (the
+            // parquet field_id), not by position, so an ADD, DROP or ALTER TYPE since the conversion shows
+            // up as a schema change here.
+            final int columnCount = metadata.getColumnCount();
+            final IntIntHashMap parquetColIdToIdx = ctx.getParquetColIdToIdx();
+            for (int i = 0; i < parquetColumnCount; i++) {
+                parquetColIdToIdx.put(parquetMeta.getColumnId(i), i);
+            }
+            final IntList tableToParquetIdx = ctx.getTableToParquetIdx(columnCount);
+            boolean hasMissingColumns = false;
+            boolean hasTypeConvertedColumns = false;
+            int mappedParquetColumns = 0;
+            for (int i = 0; i < columnCount; i++) {
+                if (metadata.getColumnType(i) < 0) {
+                    continue;
+                }
+                final int origWriterIndex = metadata.getColumnMetadata(i).getOriginalWriterIndex();
+                final int parquetIdx = parquetColIdToIdx.get(origWriterIndex);
+                if (parquetIdx >= 0 && origWriterIndex != metadata.getColumnMetadata(i).getWriterIndex()) {
+                    hasTypeConvertedColumns = true;
+                }
+                tableToParquetIdx.setQuick(i, parquetIdx);
+                if (parquetIdx < 0) {
+                    hasMissingColumns = true;
+                } else {
+                    mappedParquetColumns++;
+                }
+            }
+            final boolean hasSchemaChange = hasMissingColumns || mappedParquetColumns < parquetColumnCount || hasTypeConvertedColumns;
+            final boolean forceFullReencode = hasLegacyRequiredNoSentinelColumn(parquetMeta, parquetColumnCount);
+            final boolean isFullyMaterialized = hasSchemaChange || forceFullReencode;
+
+            final int timestampIndex = metadata.getTimestampIndex();
+            final int compressionCodec = configuration.getPartitionEncoderParquetCompressionCodec();
+            final int compressionLevel = configuration.getPartitionEncoderParquetCompressionLevel();
+            final int rowGroupSize = configuration.getPartitionEncoderParquetRowGroupSize();
+            final int dataPageSize = configuration.getPartitionEncoderParquetDataPageSize();
+            final boolean statisticsEnabled = configuration.isPartitionEncoderParquetStatisticsEnabled();
+            final boolean rawArrayEncoding = configuration.isPartitionEncoderParquetRawArrayEncoding();
+            final double bloomFilterFpp = configuration.getPartitionEncoderParquetBloomFilterFpp();
+            final double minCompressionRatio = configuration.getPartitionEncoderParquetMinCompressionRatio();
+            final int opts = configuration.getWriterFileOpenOpts();
+
+            // All three descriptors are handed to Rust, which closes them when the updater is destroyed.
+            int readerFdOs = -1, writerFdOs = -1, parquetMetaFdOs = -1;
+            long readerFd = -1, writerFd = -1, parquetMetaFd = -1;
+            try {
+                readerFd = TableUtils.openRONoCache(ff, srcPartitionDir.$(), LOG);
+                readerFdOs = Files.detach(readerFd);
+                readerFd = -1;
+                if (ff.mkdirs(dstPartitionDir.slash(), configuration.getMkDirMode()) != 0) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not create parquet compaction staging directory [path=").put(dstPartitionDir).put(']');
+                }
+                dstPartitionDir.trimTo(dstDirLen).concat(PARQUET_PARTITION_NAME).$();
+                writerFd = TableUtils.openRW(ff, dstPartitionDir.$(), LOG, opts);
+                writerFdOs = Files.detach(writerFd);
+                writerFd = -1;
+                dstPartitionDir.trimTo(dstDirLen).concat(PARQUET_METADATA_FILE_NAME).$();
+                parquetMetaFd = TableUtils.openRW(ff, dstPartitionDir.$(), LOG, opts);
+                parquetMetaFdOs = Files.detach(parquetMetaFd);
+                parquetMetaFd = -1;
+            } catch (Throwable e) {
+                O3Utils.close(ff, readerFd);
+                if (readerFdOs != -1) {
+                    Files.closeDetached(readerFdOs);
+                }
+                O3Utils.close(ff, writerFd);
+                if (writerFdOs != -1) {
+                    Files.closeDetached(writerFdOs);
+                }
+                O3Utils.close(ff, parquetMetaFd);
+                if (parquetMetaFdOs != -1) {
+                    Files.closeDetached(parquetMetaFdOs);
+                }
+                throw e;
+            }
+
+            // Same arguments as processParquetPartition0's rewrite branch: a fresh data file (write size 0)
+            // and a fresh _pm (parse anchor 0), appended from the source _pm's header.
+            partitionUpdater.of(
+                    srcPartitionDir.$(),
+                    readerFdOs,
+                    parquetSize,
+                    writerFdOs,
+                    0L,
+                    timestampIndex,
+                    ParquetCompression.packCompressionCodecLevel(compressionCodec, compressionLevel),
+                    statisticsEnabled,
+                    rawArrayEncoding,
+                    rowGroupSize,
+                    dataPageSize,
+                    bloomFilterFpp,
+                    minCompressionRatio,
+                    parquetMetaFdOs,
+                    0L,
+                    parquetMetaReader.getFileSize(),
+                    parquetFileSize,
+                    seqTxn
+            );
+            if (isFullyMaterialized) {
+                ParquetRowGroupMaterializer.setTargetSchema(ctx, partitionUpdater, metadata, symbolTableProvider);
+            }
+            for (int rg = 0; rg < rowGroupCount; rg++) {
+                if (hasTypeConvertedColumns || forceFullReencode) {
+                    ParquetRowGroupMaterializer.materialize(
+                            ctx,
+                            partitionDecoder,
+                            partitionUpdater,
+                            rg,
+                            rg,
+                            metadata,
+                            tableToParquetIdx,
+                            symbolTableProvider
+                    );
+                } else if (hasSchemaChange) {
+                    copyRowGroupWithNullColumns(partitionUpdater, rg, metadata, tableToParquetIdx);
+                } else {
+                    partitionUpdater.copyRowGroup(rg);
+                }
+            }
+            final long newParquetSize = partitionUpdater.updateFileMetadata();
+            final long resultUnusedBytes = partitionUpdater.getResultUnusedBytes();
+            partitionUpdater.commitParquetMeta(configuration.getCommitMode() != CommitMode.NOSYNC);
+            LOG.info().$("parquet partition compacted off reader snapshot [table=").$(tableToken)
+                    .$(", partition=").$ts(partitionTimestamp)
+                    .$(", rowGroups=").$(rowGroupCount)
+                    .$(", fileSize=").$size(parquetSize)
+                    .$(", newFileSize=").$size(newParquetSize)
+                    .$(", unusedBytes=").$size(resultUnusedBytes)
+                    .$(", fullyMaterialized=").$(isFullyMaterialized)
+                    .I$();
+            command.setResult(newParquetSize, isFullyMaterialized);
+            isBuilt = true;
+        } finally {
+            if (parquetAddr != 0) {
+                ff.munmap(parquetAddr, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
+            }
+            // Release the reader's native handle (which borrows from the mmap) before munmap.
+            // See ParquetMetaFileReader lifecycle contract.
+            ctx.releaseResources();
+            final long parquetMetaAddr = parquetMetaReader.getAddr();
+            final long parquetMetaSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (parquetMetaAddr != 0) {
+                ff.munmap(parquetMetaAddr, parquetMetaSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+            srcPartitionDir.trimTo(srcDirLen);
+            dstPartitionDir.trimTo(dstDirLen);
+            if (!isBuilt && ff.exists(dstPartitionDir.$()) && !ff.rmdir(dstPartitionDir, false)) {
+                LOG.error().$("could not remove staging directory after failed parquet compaction [path=").$(dstPartitionDir).I$();
+            }
         }
     }
 

@@ -167,6 +167,30 @@ public class O3CompositeMergeStrategyTest {
     }
 
     @Test
+    public void testSinglePointTailPieceThatLostTheTailMergesItsOwnTie() {
+        // The counterpart of the test above, at the one physicalRows that changes the answer. A
+        // single-point tail piece is exempted from the tsLo == tsHi rule because APPEND is supposed to
+        // absorb its ties - but APPEND requires the piece to still OWN the files' tail, and once an
+        // earlier piece has been merged out past it, it does not. The tie then has nowhere to go: the
+        // piece is KEPT and the batch founds a NEW_PIECE at the very tsLo the kept piece already has,
+        // which PartitionGeometry.addPiece rejects and the O3 worker turns into a suspended table.
+        // A piece that cannot append must claim its own ties and merge them in place instead.
+        final LongList bounds = new LongList();
+        O3CompositeMergeStrategy.addPieceBounds(bounds, 199, 199, 0, 5);
+        withTimestamps(new long[]{199, 199}, addr -> {
+            // physicalRows 6, not 5: rowOffset + rowCount no longer reaches the files' tail.
+            final O3CompositeMergeStrategy.Plan plan = computeActions(bounds, addr, 0, 1, 0, 6, false);
+            Assert.assertEquals(-1, plan.appendActionIndex);
+            Assert.assertEquals(
+                    "a spared tie founded a second piece at the kept piece's own tsLo",
+                    1,
+                    plan.actions.size()
+            );
+            Assert.assertEquals("MERGE(p=0, o3=[0,1])", plan.actions.getQuick(0).toString());
+        });
+    }
+
+    @Test
     public void testTieOnAnEarlierPieceFoundsItsOwnPieceInsteadOfMerging() {
         // The batch ties an EARLIER, non-degenerate piece's tsHi rather than the tail's. That piece owns
         // none of the files' tail, so there is nowhere to append to - but outside dedup the tie still

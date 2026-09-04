@@ -63,7 +63,7 @@ import io.questdb.std.ObjList;
  */
 public class O3CompositeMergeStrategy {
     /**
-     * Stride of the piece bounds list: {@code tsLo}, {@code tsHi}, {@code rowCount}.
+     * Stride of the piece bounds list: {@code tsLo}, {@code tsHi}, {@code rowOffset}, {@code rowCount}.
      */
     public static final int LONGS_PER_BOUND = 4;
     private static final int BOUND_ROW_COUNT = 3;
@@ -157,9 +157,11 @@ public class O3CompositeMergeStrategy {
      *                             exact same instant, so it stays claimed and merges, growing that one piece
      *                             in place instead. A spared tie on the LAST piece is left for
      *                             {@link ActionType#APPEND}, which extends it in place with no piece founded
-     *                             at all - the {@code tsLo == tsHi} exception does not apply there, since
-     *                             growing the one piece a table ever has at its tail can never produce a
-     *                             second one to collide with. A spared tie on an EARLIER piece has nowhere to
+     *                             at all - the {@code tsLo == tsHi} exception does not apply there, so long
+     *                             as that piece still owns the shared files' tail, which is exactly what
+     *                             APPEND needs to grow it. A last piece that has lost the tail to an earlier
+     *                             piece's merge cannot append, so it obeys the exception like any other. A
+     *                             spared tie on an EARLIER piece has nowhere to
      *                             append to; it is left unclaimed for the next piece's own gap and claim
      *                             checks to resolve, exactly like ordinary gap data - which is what naturally
      *                             merges a repeat tie into the single-point piece a first one already founded,
@@ -207,20 +209,23 @@ public class O3CompositeMergeStrategy {
             // under commitMayDedup=false, UNLESS the piece is a single point in time (tsLo == tsHi): sparing
             // it there would found a second piece at that same exact instant, which nothing distinguishes
             // from the first - so a single-point piece keeps claiming its own ties and merges them in place
-            // instead. The last piece is exempt from that exception: growing the one piece a table ever has
-            // at its tail can never produce a second one to collide with, so its ties are always spared and
-            // left for the APPEND check below, single point or not.
+            // instead. The last piece is exempt from that exception only while it still OWNS the shared
+            // files' tail: that is what lets APPEND below absorb the tie by growing the piece in place,
+            // founding no second piece at all. Once an earlier piece has been merged out past it the piece
+            // no longer owns the tail, APPEND declines, and a spared tie has nowhere to go but the trailing
+            // NEW_PIECE - at the very tsLo the kept piece already starts at. So the exemption tests the
+            // same tail ownership APPEND does; without it, the tsLo == tsHi rule governs and the tie merges.
             final boolean isLastPiece = p == pieceCount - 1;
-            final boolean spareTie = !commitMayDedup && tsHi != Numbers.LONG_NULL && (isLastPiece || tsLo < tsHi);
+            final boolean ownsTail = getRowOffset(bounds, p) + getRowCount(bounds, p) == physicalRows;
+            final boolean spareTie = !commitMayDedup && tsHi != Numbers.LONG_NULL
+                    && ((isLastPiece && ownsTail) || tsLo < tsHi);
             final long claimHi = tsHi == Numbers.LONG_NULL
                     ? (p + 1 < pieceCount ? findLastBelow(sortedTimestampsAddr, o3, srcOooHi, getTsLo(bounds, p + 1)) : srcOooHi)
                     : lastAtOrBelow(sortedTimestampsAddr, o3, srcOooHi, spareTie ? tsHi - 1 : tsHi);
             if (claimHi >= o3) {
                 actionAt(plan.actions, actionCount++).setMerge(p, o3, claimHi);
                 o3 = claimHi + 1;
-            } else if (isLastPiece
-                    && o3 <= srcOooHi
-                    && getRowOffset(bounds, p) + getRowCount(bounds, p) == physicalRows) {
+            } else if (isLastPiece && ownsTail && o3 <= srcOooHi) {
                 // This piece claims none of the batch itself: under commitMayDedup, tsHi's use of
                 // lastAtOrBelow already guarantees every remaining O3 row sits strictly above it, which is
                 // what keeps this safe under DEDUP - duplicates need equal timestamps, and there are none.

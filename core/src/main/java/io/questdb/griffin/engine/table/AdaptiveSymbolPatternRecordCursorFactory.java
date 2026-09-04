@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -220,6 +221,8 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     private final RecordCursorFactory coveringDelegate;
     private final PartitionFrameCursorFactory dfcFactory;
     private final IntList effectiveKeys;
+    // Scratch for estimate(): the (fileLo, fileHi) index row ranges of the frame being costed.
+    private final LongList estimateRanges = new LongList();
     private final RecordCursorFactory indexDelegate;
     private final int indexReaderColumnIndex;
     // Non-null only in self-filtering mode. Owns nothing: the filter belongs to the scan delegate and
@@ -659,10 +662,23 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             );
             final long rowLo = frame.getRowLo();
             final long rowHiExclusive = frame.getRowHi();
-            final long callerHiInclusive = rowHiExclusive - 1;
             if (!isTotalRowsKnown) {
                 selectedRows += rowHiExclusive - rowLo;
                 maxIndexRows = Math.max(1, selectedRows / maxRowShareDivisor);
+            }
+            // The row ranges to ask the INDEX about. An index lists the FILE rows a key appears at, and
+            // on a composite partition those differ from the frame's partition rows by each piece's
+            // shift (see PageFrame#getIndexRowLo): asked for the frame's own rows, it would count dead
+            // rows and miss live ones. So a composite frame splits into one file-row range per piece,
+            // the way CompositeAwarePartitionFrameCursor splits it for the covering delegate, while a
+            // plain partition's frame is one range, its own rows. The split does not add frames: the
+            // frame cap above stays a count of partition frames, and the ranges of one frame share
+            // its key-probe budget.
+            estimateRanges.clear();
+            if (tableReader.getTxFile().isPartitionComposite(frame.getPartitionIndex())) {
+                tableReader.getGeometry().collectPieceFileRanges(frame.getPartitionIndex(), rowLo, rowHiExclusive, estimateRanges);
+            } else {
+                estimateRanges.add(rowLo, rowHiExclusive);
             }
             // Reset per frame, deliberately - unlike remainingBlockHops above. This counter bounds
             // cheap constant-cost key probes; sharing it across frames would let partition count
@@ -674,65 +690,71 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                     return false;
                 }
                 final int indexKey = TableUtils.toIndexKey(effectiveKeys.getQuick(i));
-                long count = Numbers.LONG_NULL;
-                if (reader instanceof AbstractPostingIndexReader posting) {
-                    // SymbolPatternIndexRecordCursorFactory is a bitmap-row-cursor delegate. POSTING
-                    // readers are executable only through the covering delegate; admitting one in
-                    // self-filtering mode would hand absolute posting row ids to bitmap frame logic.
-                    if (coveringDelegate == null) {
+                long keyCount = 0;
+                for (int r = 0, rn = estimateRanges.size(); r < rn; r += 2) {
+                    final long rangeLo = estimateRanges.getQuick(r);
+                    final long rangeHiInclusive = estimateRanges.getQuick(r + 1) - 1;
+                    long count = Numbers.LONG_NULL;
+                    if (reader instanceof AbstractPostingIndexReader posting) {
+                        // SymbolPatternIndexRecordCursorFactory is a bitmap-row-cursor delegate. POSTING
+                        // readers are executable only through the covering delegate; admitting one in
+                        // self-filtering mode would hand absolute posting row ids to bitmap frame logic.
+                        if (coveringDelegate == null) {
+                            return false;
+                        }
+                        final long entryMax = posting.getEntryMaxValue();
+                        final long clampedMax = entryMax >= 0
+                                ? Math.min(rangeHiInclusive, entryMax)
+                                : rangeHiInclusive;
+                        count = posting.estimateMatchesClamped(indexKey, rangeLo, rangeHiInclusive, clampedMax);
+                    } else if (reader instanceof BitmapIndexFwdReader bitmap) {
+                        // SYMBOL INDEX without an explicit type builds a bitmap index, so this is the
+                        // default shape. countMatchesInRange() answers the same question from the key
+                        // entry and two block seeks; without it every open of a broad pattern walked
+                        // index entries up to the whole maxIndexRows budget before rejecting the route.
+                        // Those seeks hop a linked chain, so a frame narrowed to the middle of a hot
+                        // key's posting list makes them cross the whole chain -- cost that grows with the
+                        // partition while the frame stays put. The shared budget caps the hops across
+                        // the whole estimate, and a key that runs it out rejects the route below rather
+                        // than paying the crossing.
+                        count = bitmap.countMatchesInRange(indexKey, rangeLo, rangeHiInclusive, remainingBlockHops);
+                        remainingBlockHops -= bitmap.getLastRangeCountBlockHops();
+                    } else if (reader instanceof IndexFwdNullReader nullReader) {
+                        count = nullReader.estimateMatches(indexKey, rangeLo, rangeHiInclusive);
+                    }
+                    if (count == AbstractPostingIndexReader.ESTIMATE_REJECT) {
+                        // Two readers ask for the same treatment. A genuinely clipped legacy EF blob has
+                        // no bounded rank metadata, and a bitmap range that sits deeper into the posting
+                        // chain than the probe budget reaches has no bounded exact count either. Reject
+                        // both without disguising them as a generic unknown that would spend the fallback
+                        // cursor budget -- and, for the bitmap, position a cursor over the same chain.
                         return false;
                     }
-                    final long entryMax = posting.getEntryMaxValue();
-                    final long clampedMax = entryMax >= 0
-                            ? Math.min(callerHiInclusive, entryMax)
-                            : callerHiInclusive;
-                    count = posting.estimateMatchesClamped(indexKey, rowLo, callerHiInclusive, clampedMax);
-                } else if (reader instanceof BitmapIndexFwdReader bitmap) {
-                    // SYMBOL INDEX without an explicit type builds a bitmap index, so this is the
-                    // default shape. countMatchesInRange() answers the same question from the key
-                    // entry and two block seeks; without it every open of a broad pattern walked
-                    // index entries up to the whole maxIndexRows budget before rejecting the route.
-                    // Those seeks hop a linked chain, so a frame narrowed to the middle of a hot
-                    // key's posting list makes them cross the whole chain -- cost that grows with the
-                    // partition while the frame stays put. The shared budget caps the hops across
-                    // the whole estimate, and a key that runs it out rejects the route below rather
-                    // than paying the crossing.
-                    count = bitmap.countMatchesInRange(indexKey, rowLo, callerHiInclusive, remainingBlockHops);
-                    remainingBlockHops -= bitmap.getLastRangeCountBlockHops();
-                } else if (reader instanceof IndexFwdNullReader nullReader) {
-                    count = nullReader.estimateMatches(indexKey, rowLo, callerHiInclusive);
-                }
-                if (count == AbstractPostingIndexReader.ESTIMATE_REJECT) {
-                    // Two readers ask for the same treatment. A genuinely clipped legacy EF blob has
-                    // no bounded rank metadata, and a bitmap range that sits deeper into the posting
-                    // chain than the probe budget reaches has no bounded exact count either. Reject
-                    // both without disguising them as a generic unknown that would spend the fallback
-                    // cursor budget -- and, for the bitmap, position a cursor over the same chain.
-                    return false;
-                }
-                if (count == Numbers.LONG_NULL) {
-                    // A mixed/unsealed generation cannot supply an exact metadata count. One traversal
-                    // budget spans the whole estimate, so neither row share nor table size can make the
-                    // fallback read more than maxEstimateProbes index entries before selecting the scan.
-                    count = 0;
-                    try (RowCursor rowCursor = reader.getCursor(indexKey, rowLo, callerHiInclusive)) {
-                        while (rowCursor.hasNext()) {
-                            if (traversedIndexEntries >= maxEstimateProbes) {
-                                return false;
-                            }
-                            rowCursor.next();
-                            count++;
-                            traversedIndexEntries++;
-                            if (isEstimatorCounterEnabled) {
-                                testEstimatorIndexEntryReads.incrementAndGet();
-                            }
-                            if (matchedRows + count > maxIndexRows) {
-                                return false;
+                    if (count == Numbers.LONG_NULL) {
+                        // A mixed/unsealed generation cannot supply an exact metadata count. One traversal
+                        // budget spans the whole estimate, so neither row share nor table size can make the
+                        // fallback read more than maxEstimateProbes index entries before selecting the scan.
+                        count = 0;
+                        try (RowCursor rowCursor = reader.getCursor(indexKey, rangeLo, rangeHiInclusive)) {
+                            while (rowCursor.hasNext()) {
+                                if (traversedIndexEntries >= maxEstimateProbes) {
+                                    return false;
+                                }
+                                rowCursor.next();
+                                count++;
+                                traversedIndexEntries++;
+                                if (isEstimatorCounterEnabled) {
+                                    testEstimatorIndexEntryReads.incrementAndGet();
+                                }
+                                if (matchedRows + keyCount + count > maxIndexRows) {
+                                    return false;
+                                }
                             }
                         }
                     }
+                    keyCount += count;
                 }
-                matchedRows += count;
+                matchedRows += keyCount;
                 if (matchedRows > maxIndexRows) {
                     return false;
                 }

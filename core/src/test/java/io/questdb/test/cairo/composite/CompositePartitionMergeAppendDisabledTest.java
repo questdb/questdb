@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Chars;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -122,22 +123,26 @@ public class CompositePartitionMergeAppendDisabledTest extends AbstractCairoTest
         return fingerprintOf("SELECT i, s FROM x WHERE ts IN '" + day + "'");
     }
 
-    /** Content fingerprint over (i, s), so a reordered or dead-row read cannot match. */
+    /**
+     * Content fingerprint over (i, s) in cursor order. The hash folds each row's position in, so a read
+     * that returns the same rows in a different order - the failure mode of a flat {@code [0, liveRows)}
+     * read over a composite directory - cannot match, and neither can a dead-row read; count and sum on
+     * their own would be commutative and blind to the reordering.
+     */
     private static String fingerprintOf(String sql) throws Exception {
         long count = 0;
-        long sum = 0;
-        long strLen = 0;
+        long hash = 17;
         try (RecordCursorFactory f = select(sql)) {
             try (RecordCursor c = f.getCursor(sqlExecutionContext)) {
                 while (c.hasNext()) {
                     count++;
-                    sum += c.getRecord().getInt(0);
+                    hash = hash * 31 + c.getRecord().getInt(0);
                     final CharSequence s = c.getRecord().getStrA(1);
-                    strLen += s == null ? 0 : s.length();
+                    hash = hash * 31 + (s == null ? -1 : Chars.hashCode(s));
                 }
             }
         }
-        return count + "/" + sum + "/" + strLen;
+        return count + "/" + hash;
     }
 
     private static boolean isComposite(String day) {

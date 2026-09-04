@@ -163,7 +163,6 @@ public interface PageFrame {
         return getPartitionLo();
     }
 
-
     /**
      * Return the address of the start of the page frame or if this page represents
      * a column top (a column that was added to the table when other columns already

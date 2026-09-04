@@ -30,7 +30,17 @@ import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class ScratchAddColumnThenMergeTest extends AbstractCairoTest {
+/**
+ * A column added to a partition that is ALREADY composite - and then extended by further merge-appends and
+ * converted to another type - must keep every row it was given across a real writer close.
+ * <p>
+ * Two things have to hold for that. ADD COLUMN records the new column's top at {@code E}, the partition's
+ * physical extent, not at its live row count. And when the writer closes, the position it truncates the
+ * column's files to has to be the extent the composite frame executor wrote out to, not the stale offset
+ * of a {@code columns[]} mapping that never advanced past row 0 for a column only ever written through the
+ * executor's own file descriptors.
+ */
+public class CompositeAddColumnThenMergeTest extends AbstractCairoTest {
 
     @Test
     public void testAddColumnOnCompositeActivePartitionThenMergeAndNewPiece() throws Exception {

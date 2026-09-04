@@ -117,7 +117,10 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
         // see no room. Draining here makes each test independent of the prior one.
         drainPostingSealPurgeQueue();
 
-        mergeAppendEnabled = new Rnd(System.nanoTime(), System.currentTimeMillis()).nextInt(100) > 70;
+        // generateRandom logs its seeds, so a run that flipped merge-append on - the ~30% of runs that
+        // exercise composite partitions here, and skip the tests that assume plain ones - can be replayed.
+        mergeAppendEnabled = TestUtils.generateRandom(LOG).nextInt(100) > 70;
+        LOG.info().$("merge-append coin [mergeAppendEnabled=").$(mergeAppendEnabled).I$();
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, String.valueOf(mergeAppendEnabled));
     }
 

@@ -35,6 +35,9 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.datetime.Clock;
+import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
@@ -796,7 +799,13 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
             setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
 
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+            // The parquet branch's idle gate reads the .parquet file's modification time, which is real
+            // wall-clock time no matter what the simulated clock says. The three O3 updates above wrote
+            // the file moments ago, so a sweep on the real clock leaves it alone - see
+            // ParquetPartitionCompactionTest#testIdleSweepSkipsAPartitionWrittenToWithinTheIdleTimeout -
+            // and the job's own clock has to sit past the idle timeout for the partition to count as idle.
+            final Clock pastTheIdleTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, configuration.getFilesFacade(), pastTheIdleTimeout)) {
                 job.run();
             }
 

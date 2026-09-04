@@ -226,9 +226,8 @@ public class O3ParquetMergeStrategyTest extends AbstractCairoTest {
             O3ParquetMergeStrategy.addRowGroupBounds(rowGroupBounds, 301, 400, 7);
 
             ObjList<MergeAction> actionsBuf = new ObjList<>();
-            // This is exactly what TableWriter#compactParquetPartition passes: an idle-triggered
-            // standalone Parquet rewrite (never mid-O3-commit) has no incoming O3 data, only
-            // existing row groups to copy into a fresh file, dropping dead space.
+            // An empty O3 range - no incoming rows, only existing row groups to copy into a fresh
+            // file - must degenerate to one COPY_ROW_GROUP_SLICE per row group.
             long addr = allocateSortedTimestamps(200);
             try {
                 for (boolean coalesceBoundaryTies : new boolean[]{false, true}) {

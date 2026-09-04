@@ -159,6 +159,13 @@ public final class TimeFrameCursorImpl implements TimeFrameCursor {
     }
 
     @Override
+    public long getIndexRowLoForCurrentFrame() {
+        // Valid once open() has run for this frame: ensurePartitionOpened patches an uninitialized
+        // frame's entry with the piece shift the real page frame carries.
+        return frameAddressCache.getIndexRowLo(timeFrame.getFrameIndex());
+    }
+
+    @Override
     public Record getRecord() {
         return recordA;
     }

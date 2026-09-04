@@ -84,6 +84,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     private final LongList coveredRowLos = new LongList();
     private final ByteList frameFormats = new ByteList();
     private final LongList frameSizes = new LongList();
+    // The INDEX row each frame's first row sits at - a file row, which on a composite partition differs
+    // from the partition row in rowIdOffsets by the piece's shift. See PageFrame#getIndexRowLo().
+    private final LongList indexRowLos = new LongList();
     private final DirectLongList pageAddresses;
     private final DirectLongList pageSizes;
     private final ObjList<ParquetDecoder> parquetDecoders = new ObjList<>();
@@ -170,6 +173,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         parquetRowGroupLos.add(frame.getParquetRowGroupLo());
         parquetRowGroupHis.add(frame.getParquetRowGroupHi());
         rowIdOffsets.add(Rows.toRowID(frame.getPartitionIndex(), frame.getPartitionLo()));
+        indexRowLos.add(frame.getIndexRowLo());
 
         // Covered-frame stash populated in the native pass above. Single-key covered frames are
         // metadata-only at production (CoveringPageFrameCursor#finalizeFrame emits PLACEHOLDER
@@ -250,6 +254,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageSizes.clear();
         auxPageSizes.clear();
         rowIdOffsets.clear();
+        indexRowLos.clear();
         external = false;
         hasCoveredFrames = false;
         hasParquetFrames = false;
@@ -389,6 +394,15 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return parquetRowGroupLos.getQuick(frameIndex);
     }
 
+    /**
+     * The INDEX row the frame's first row sits at, i.e. the low bound to hand the partition's index reader
+     * for this frame. Not the frame's row-id offset: on a composite partition the index stores FILE rows,
+     * and the piece the frame belongs to may have been moved - see {@link PageFrame#getIndexRowLo()}.
+     */
+    public long getIndexRowLo(int frameIndex) {
+        return indexRowLos.getQuick(frameIndex);
+    }
+
     public long getRowIdOffset(int frameIndex) {
         return rowIdOffsets.getQuick(frameIndex);
     }
@@ -521,6 +535,9 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * rowIdOffset, parquet row group indices).
      */
     public void updateAddresses(int frameIndex, @Transient PageFrame frame) {
+        // An uninitialized frame (see TimeFrameCursorImpl) is added before its partition is opened, when
+        // the piece shift is not known yet; the real frame carries it.
+        indexRowLos.setQuick(frameIndex, frame.getIndexRowLo());
         final int offset = frameIndex * columnCount;
         if (frame.getFormat() == PartitionFormat.NATIVE) {
             for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {

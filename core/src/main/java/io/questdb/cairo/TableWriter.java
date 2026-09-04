@@ -1778,99 +1778,111 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Idle-triggered rewrite of a Parquet-format partition: reclaims dead row groups left behind
-     * by in-place O3 updates (see {@link O3PartitionJob#processParquetPartition}) without waiting
-     * for the next O3 commit to trip the update-vs-rewrite ratio.
+     * Swaps in a Parquet partition compacted off a {@link TableReader} snapshot - see
+     * {@code PartitionCompactionScanJob}, {@link O3PartitionJob#compactParquetPartition} and
+     * {@link ParquetPartitionSwapCommand} - never holding this writer for the copy itself, only for this
+     * metadata-only swap. The parquet twin of {@link #swapCompactedCompositePartition}.
      * <p>
-     * Reuses {@link O3PartitionJob#processParquetPartition0} with an empty O3 range and {@code
-     * forceRewrite=true}, which degenerates {@link O3ParquetMergeStrategy#computeMergeActions} to a
-     * plain {@code COPY_ROW_GROUP_SLICE} per existing row group: every live row group is copied into
-     * a fresh {@code .parquet} file in a new txn-named directory, dropping the dead space. Row count
-     * is unchanged (no O3 rows are merged in), so this only ever shrinks the file.
+     * {@code expectedSrcNameTxn}, {@code expectedParquetFileSize} and {@code expectedMetadataVersion} are
+     * the source's generation as the build saw it. Every write to a parquet partition either grows its
+     * {@code data.parquet} (an in-place O3 update appends) or moves it to a new {@code nameTxn} (a rewrite),
+     * and a schema change since the build would leave the staged file - and the column tops this swap sets
+     * for it - describing a different set of columns. A mismatch on any of the three means the staged
+     * directory no longer reflects this partition: it is deleted, and the caller's next sweep retries from
+     * a fresh snapshot.
      * <p>
-     * Runs synchronously on the writer's own thread with exclusive access (called directly when
-     * the writer is idle, or applied from the async command queue via {@link #tick()} when it was
-     * busy) — unlike a background-merge design, there is no snapshot-then-swap window, so no
-     * staleness/generation check is needed.
+     * The compaction keeps every live row at its row id, so the index files carried over into the staged
+     * directory are the committed ones; nothing is rebuilt or resealed here.
+     *
+     * @param isFullyMaterialized whether the build re-encoded every row group under the current schema,
+     *                            materializing every column from row 0 - see
+     *                            {@link ParquetPartitionSwapCommand#isFullyMaterialized()}
+     * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation
+     *                                                                moved since the build snapshot was
+     *                                                                taken. The staged directory is
+     *                                                                deleted before this throws.
      */
-    public void compactParquetPartition(long partitionTimestamp) {
+    public void swapCompactedParquetPartition(
+            long partitionTimestamp,
+            long expectedSrcNameTxn,
+            long expectedParquetFileSize,
+            long expectedMetadataVersion,
+            long newParquetFileSize,
+            boolean isFullyMaterialized
+    ) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
         if (inTransaction()) {
-            assert !tableToken.isWal();
-            LOG.info()
-                    .$("committing open transaction before compacting parquet partition [table=")
-                    .$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, partitionTimestamp)
-                    .I$();
             commit();
         }
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0) {
-            formatPartitionForTimestamp(partitionTimestamp, -1);
-            throw CairoException.nonCritical().put("cannot compact partition, partition does not exist [table=").put(tableToken.getTableName())
-                    .put(", partition=").put(utf8Sink).put(']');
+        final boolean isParquet = partitionIndex > -1 && txWriter.isPartitionParquet(partitionIndex);
+        final long liveParquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
+        final long liveMetadataVersion = getMetadataVersion();
+        final boolean stale = !isParquet
+                || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
+                || liveParquetFileSize != expectedParquetFileSize
+                || liveMetadataVersion != expectedMetadataVersion;
+
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, expectedSrcNameTxn);
+        other.put(TableUtils.COMPACTING_DIR_MARKER).put(expectedParquetFileSize);
+
+        if (stale) {
+            LOG.info().$("discarding stale parquet partition compaction [table=").$(tableToken)
+                    .$(", dir=").$substr(pathRootSize, other)
+                    .$(", expectedParquetFileSize=").$(expectedParquetFileSize)
+                    .$(", liveParquetFileSize=").$(liveParquetFileSize)
+                    .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
+                    .$(", liveMetadataVersion=").$(liveMetadataVersion)
+                    .I$();
+            if (ff.exists(other.$())) {
+                ff.rmdir(other, false);
+            }
+            other.trimTo(pathSize);
+            throw TableReferenceOutOfDateException.ofOutdatedView(tableToken, expectedParquetFileSize, liveParquetFileSize);
         }
 
-        if (!txWriter.isPartitionParquet(partitionIndex)) {
-            // Nothing to compact: dead row groups only accumulate in Parquet-format partitions.
-            return;
-        }
-
-        final long srcNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long partitionRowCount = txWriter.getPartitionSize(partitionIndex);
-        final long txn = getTxn();
-
-        final O3Basket o3Basket = o3BasketPool.next();
-        o3Basket.checkCapacity(configuration, columnCount, indexCount);
-
-        final long sinkAddr = Unsafe.malloc((long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
-        final long newParquetFileSize;
-        try {
-            O3PartitionJob.processParquetPartition0(
-                    path.trimTo(pathSize),
-                    timestampType,
-                    partitionBy,
-                    null, // no O3 columns: empty range below, nothing is ever read from this
-                    0L, // srcOooLo
-                    -1L, // srcOooHi: an empty range forces every action to COPY_ROW_GROUP_SLICE
-                    partitionTimestamp,
-                    0L, // sortedTimestampsAddr: unused for an empty O3 range
-                    this,
-                    srcNameTxn,
-                    txn,
-                    txWriter.getSeqTxn(), // seqTxn: stamped into the rewritten partition's _pm
-                    sinkAddr,
-                    0L, // dedupColSinkAddr: no dedup, nothing to merge
-                    0L, // o3TimestampMin: unused by this call, only relayed into the discarded sink
-                    o3Basket,
-                    partitionRowCount, // newPartitionSize: unchanged, no O3 rows are merged in
-                    partitionRowCount, // oldPartitionSize
-                    true // forceRewrite
-            );
-            newParquetFileSize = Unsafe.getLong(sinkAddr + 7 * Long.BYTES);
-        } finally {
-            Unsafe.free(sinkAddr, (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, MemoryTag.NATIVE_TABLE_WRITER);
+        final long newNameTxn = txWriter.getTxn();
+        path.trimTo(pathSize);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, newNameTxn);
+        if (ff.rename(other.$(), path.$()) != Files.FILES_RENAME_OK) {
+            other.trimTo(pathSize);
             path.trimTo(pathSize);
+            throw CairoException.critical(ff.errno())
+                    .put("could not rename staged parquet partition compaction [table=").put(tableToken)
+                    .put(", from=").put(other)
+                    .put(", to=").put(path)
+                    .put(']');
         }
+        path.trimTo(pathSize);
+        other.trimTo(pathSize);
 
-        columnVersionWriter.commit();
+        LOG.info().$("swapping in compacted parquet partition [table=").$(tableToken)
+                .$(", dir=").$(formatPartitionForTimestamp(partitionTimestamp, newNameTxn))
+                .$(", parquetFileSize=").$size(newParquetFileSize)
+                .I$();
+
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
         txWriter.setPartitionParquet(partitionTimestamp, newParquetFileSize);
+        if (isFullyMaterialized) {
+            // The build re-encoded every row group under the current schema, copying every column from
+            // row 0 into the new file, so no column has a top.
+            zeroColumnTopsAfterFullMaterialization(partitionTimestamp, partitionRowCount, true);
+        }
+        columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
-        // The rewrite copies every column from row 0 into the new file (see
-        // O3PartitionJob#processParquetPartition0's rewrite branch), so no column has a top.
-        zeroColumnTopsAfterFullMaterialization(partitionTimestamp, partitionRowCount, true);
         txWriter.bumpPartitionTableVersion();
         commitTxWriter();
 
-        // Post-commit: the rewrite is logically complete. Deleting the old directory is
-        // best-effort cleanup and must not roll back the committed transaction.
+        // Post-commit: the swap is logically complete. Deleting the old directory is best-effort
+        // cleanup and must not roll back the committed transaction.
         try {
-            safeDeletePartitionDir(partitionTimestamp, srcNameTxn);
+            safeDeletePartitionDir(partitionTimestamp, expectedSrcNameTxn);
         } catch (Throwable e) {
             handleHousekeepingException(e);
         }
@@ -15001,20 +15013,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Reclaims a composite partition REWRITE's staging directory once no swap can accept it any more.
-     * PartitionCompactionScanJob builds one off a reader snapshot and
-     * {@link #swapCompactedCompositePartition} either renames it in or deletes it, so a directory whose
-     * partition still matches is work in flight and must stay. A crash or OOM between the
-     * {@code createDirsOrFail} and the rename leaves behind a full copy of the partition that nothing
-     * else ever looks at - its name carries a writer txn rather than a partition name txn, so no later
-     * sweep reuses it either. This applies swapCompactedCompositePartition's own staleness test: when the
-     * swap would reject the directory, nothing will ever adopt it, so delete it.
+     * Reclaims a partition compaction's staging directory once no swap can accept it any more.
+     * PartitionCompactionScanJob builds one off a reader snapshot - a composite REWRITE or a parquet
+     * compaction - and {@link #swapCompactedCompositePartition} / {@link #swapCompactedParquetPartition}
+     * either renames it in or deletes it, so a directory whose partition still matches is work in flight
+     * and must stay. A crash or OOM between the build and the rename leaves behind a full copy of the
+     * partition that nothing else ever looks at - its name carries the source's generation after the
+     * marker rather than a partition name txn, so no later sweep reuses it either. This applies the
+     * swap's own staleness test: when the swap would reject the directory, nothing will ever adopt it, so
+     * delete it. The generation after the marker is the geometry's writer txn for a composite partition
+     * and the parquet file size for a parquet one.
      */
     private void removeCompactingPartitionDirIfStale(long pUtf8NameZ) {
         final int markerLo = Utf8s.indexOfAscii(utf8Sink, 0, utf8Sink.size(), COMPACTING_DIR_MARKER);
         final boolean stale;
         try {
-            final long writerTxn = Numbers.parseLong(utf8Sink, markerLo + COMPACTING_DIR_MARKER.length(), utf8Sink.size());
+            final long generation = Numbers.parseLong(utf8Sink, markerLo + COMPACTING_DIR_MARKER.length(), utf8Sink.size());
             final long srcNameTxn;
             int txnSep = Utf8s.indexOfAscii(utf8Sink, 0, markerLo, '.');
             if (txnSep < 0) {
@@ -15025,10 +15039,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             final long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
             final int partitionIndex = txWriter.getPartitionIndex(dirTimestamp);
-            stale = partitionIndex < 0
-                    || !txWriter.isPartitionComposite(partitionIndex)
-                    || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn
-                    || getGeometry().getWriterTxn(partitionIndex) != writerTxn;
+            if (partitionIndex < 0 || txWriter.getPartitionNameTxn(partitionIndex) != srcNameTxn) {
+                stale = true;
+            } else if (txWriter.isPartitionParquet(partitionIndex)) {
+                stale = txWriter.getPartitionParquetFileSize(partitionIndex) != generation;
+            } else {
+                stale = !txWriter.isPartitionComposite(partitionIndex)
+                        || getGeometry().getWriterTxn(partitionIndex) != generation;
+            }
         } catch (NumericException ignore) {
             // Not a name this writer's compaction produced; leave the directory rather than guess.
             path.trimTo(pathSize);
@@ -15040,9 +15058,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (stale) {
             path.trimTo(pathSize);
             path.concat(pUtf8NameZ);
-            LOG.info().$("removing abandoned composite partition rewrite [path=").$substr(pathRootSize, path.$()).I$();
+            LOG.info().$("removing abandoned partition compaction staging directory [path=").$substr(pathRootSize, path.$()).I$();
             if (!ff.rmdir(path, false)) {
-                LOG.error().$("could not remove abandoned composite partition rewrite [path=").$substr(pathRootSize, path.$())
+                LOG.error().$("could not remove abandoned partition compaction staging directory [path=").$substr(pathRootSize, path.$())
                         .$(", errno=").$(ff.errno()).I$();
             }
             path.trimTo(pathSize);
@@ -15057,9 +15075,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         if (Utf8s.containsAscii(utf8Sink, COMPACTING_DIR_MARKER)) {
-            // A composite partition REWRITE's staging directory. Its name carries a writer txn after the
-            // marker rather than a partition name txn, so the parse below would reject it; it needs its
-            // own liveness test instead.
+            // A partition compaction's staging directory. Its name carries the source's generation after
+            // the marker rather than a partition name txn, so the parse below would reject it; it needs
+            // its own liveness test instead.
             removeCompactingPartitionDirIfStale(pUtf8NameZ);
             return;
         }

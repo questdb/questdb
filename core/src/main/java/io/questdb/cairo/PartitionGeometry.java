@@ -289,6 +289,29 @@ public class PartitionGeometry implements Closeable, Mutable {
         return getPieceRowOffset(partitionIndex, ordinal) - getPieceCumulativeLo(partitionIndex, ordinal);
     }
 
+    /**
+     * Splits the directory-cumulative row range {@code [rowLo, rowHi)} of {@code partitionIndex} into the
+     * FILE row ranges of the pieces it overlaps, appending them to {@code out} as {@code (fileLo, fileHi)}
+     * pairs, {@code fileHi} exclusive, in ascending cumulative-row order. This is the same split
+     * {@link CompositeAwarePartitionFrameCursor} performs one frame at a time; a caller that needs every
+     * range of a frame at once - to ask the partition's INDEX about it, which stores file rows - takes them
+     * from here. A plain (single-piece) partition yields its one range unshifted.
+     */
+    public void collectPieceFileRanges(int partitionIndex, long rowLo, long rowHi, LongList out) {
+        final int pieceCount = getPieceCount(partitionIndex);
+        for (int ordinal = findPieceByRow(partitionIndex, rowLo); ordinal < pieceCount && rowLo < rowHi; ordinal++) {
+            final long pieceCumLo = getPieceCumulativeLo(partitionIndex, ordinal);
+            final long pieceCumHi = pieceCumLo + getPieceRowCount(partitionIndex, ordinal);
+            final long subLo = Math.max(rowLo, pieceCumLo);
+            final long subHi = Math.min(rowHi, pieceCumHi);
+            if (subLo < subHi) {
+                final long shift = getPieceShift(partitionIndex, ordinal);
+                out.add(subLo + shift, subHi + shift);
+                rowLo = subHi;
+            }
+        }
+    }
+
     public long getPieceTimestampHi(int partitionIndex, int ordinal) {
         final int res = resolveInternal(partitionIndex);
         if (res < 0) {
@@ -321,21 +344,6 @@ public class PartitionGeometry implements Closeable, Mutable {
     public long getWriterTxn(int partitionIndex) {
         final int res = resolveInternal(partitionIndex);
         return res < 0 ? -1 : resolved.getQuick(res + RES_WRITER_TXN);
-    }
-
-    /**
-     * Whether ANY record in the table has ever been composite. Resident, zero I/O, and the thing that
-     * keeps an unsplit table off {@code _geometry} entirely. Deliberately an over-approximation: a
-     * directory stays composite after folding back to one piece, so this can be true for a table with no
-     * composite directory left.
-     */
-    public boolean hasCompositePartitions() {
-        for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
-            if (txReader.isPartitionComposite(i)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public boolean hasDirty() {

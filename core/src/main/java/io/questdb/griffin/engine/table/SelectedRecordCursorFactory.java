@@ -750,6 +750,11 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
         }
 
         @Override
+        public long getIndexRowLoForCurrentFrame() {
+            return baseCursor.getIndexRowLoForCurrentFrame();
+        }
+
+        @Override
         public Record getRecord() {
             return recordA;
         }

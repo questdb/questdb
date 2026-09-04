@@ -29,39 +29,41 @@ import io.questdb.cairo.wal.MetadataService;
 import io.questdb.tasks.TableWriterTask;
 
 /**
- * Swaps in a composite partition REWRITE built off a {@link TableReader} snapshot - see
- * {@code PartitionCompactionScanJob} - without ever holding the writer for the copy itself.
+ * Swaps in a Parquet partition compacted off a {@link TableReader} snapshot - see
+ * {@code PartitionCompactionScanJob} and {@link O3PartitionJob#compactParquetPartition} - without ever
+ * holding the writer for the copy itself. The parquet twin of {@link CompositePartitionSwapCommand}.
  * <p>
  * Published via {@link CairoEngine#getWriterOrPublishCommand}: an idle writer applies it directly, a busy
  * writer serializes it onto its own {@link TableWriterTask} command queue and applies it later on the
- * writer's own thread via {@link TableWriter#tick()}. This command does not override
- * {@link #newInstance()}: the producer's own instance - already carrying the recorded column tops - is
- * what the writer applies, so {@link #deserialize} has nothing to reconstruct from the task buffer.
+ * writer's own thread via {@link TableWriter#tick()} - cheap either way, since the swap is metadata-only.
+ * Like the composite command, this one does not override {@link #newInstance()}: the producer's own
+ * instance is what the writer applies, so {@link #deserialize} has nothing to reconstruct.
  * <p>
  * {@link #apply} throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} when the source
- * partition's generation no longer matches what the build snapshot saw - the writer discards the staged
- * directory and the caller's next sweep starts over from a fresh snapshot. Non-structural (it never
- * changes table structure, only a partition's own storage layout), so it is safe to queue for a WAL table
- * too.
+ * partition's generation - its {@code nameTxn}, its parquet file size or the table's metadata version - no
+ * longer matches what the build saw: the writer discards the staged directory and the caller's next sweep
+ * starts over from a fresh snapshot. Non-structural, so it is safe to queue for a WAL table too.
  */
-public class CompositePartitionSwapCommand implements AsyncWriterCommand {
-    private final ColumnTopRecorder columnTops = new ColumnTopRecorder();
+public class ParquetPartitionSwapCommand implements AsyncWriterCommand {
     private long correlationId = -1L;
+    private long expectedMetadataVersion;
+    private long expectedParquetFileSize;
     private long expectedSrcNameTxn;
-    private long expectedWriterTxn;
-    private long liveRows;
+    private boolean isFullyMaterialized;
+    private long newParquetFileSize;
     private long partitionTimestamp;
     private int tableId;
     private TableToken tableToken;
 
     @Override
     public long apply(MetadataService svc, boolean contextAllowsAnyStructureChanges) {
-        ((TableWriter) svc).swapCompactedCompositePartition(
+        ((TableWriter) svc).swapCompactedParquetPartition(
                 partitionTimestamp,
                 expectedSrcNameTxn,
-                expectedWriterTxn,
-                liveRows,
-                columnTops
+                expectedParquetFileSize,
+                expectedMetadataVersion,
+                newParquetFileSize,
+                isFullyMaterialized
         );
         return 0;
     }
@@ -72,24 +74,17 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
 
     @Override
     public AsyncWriterCommand deserialize(TableWriterTask task) {
-        // newInstance() is not overridden (see class doc): this is always the producer's own instance,
-        // already carrying every field including the recorded tops, so there is nothing to reconstruct
-        // from the task buffer.
         return this;
     }
 
     @Override
     public int getCmdType() {
-        return TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP;
+        return TableWriterTask.CMD_PARQUET_PARTITION_SWAP;
     }
 
     @Override
     public String getCommandName() {
-        return TableWriterTask.getCommandName(TableWriterTask.CMD_COMPOSITE_PARTITION_SWAP);
-    }
-
-    public ColumnTopRecorder getColumnTops() {
-        return columnTops;
+        return TableWriterTask.getCommandName(TableWriterTask.CMD_PARQUET_PARTITION_SWAP);
     }
 
     @Override
@@ -97,16 +92,20 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         return correlationId;
     }
 
+    public long getExpectedMetadataVersion() {
+        return expectedMetadataVersion;
+    }
+
+    public long getExpectedParquetFileSize() {
+        return expectedParquetFileSize;
+    }
+
     public long getExpectedSrcNameTxn() {
         return expectedSrcNameTxn;
     }
 
-    public long getExpectedWriterTxn() {
-        return expectedWriterTxn;
-    }
-
-    public long getLiveRows() {
-        return liveRows;
+    public long getNewParquetFileSize() {
+        return newParquetFileSize;
     }
 
     public long getPartitionTimestamp() {
@@ -133,6 +132,15 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
         return 0;
     }
 
+    /**
+     * Whether the build re-encoded every row group under the current table schema, materializing every
+     * column from row 0 - in which case the swap zeroes the partition's column tops - as opposed to copying
+     * the row groups verbatim, which leaves the tops as they are.
+     */
+    public boolean isFullyMaterialized() {
+        return isFullyMaterialized;
+    }
+
     @Override
     public boolean isStructural() {
         return false;
@@ -143,16 +151,17 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
             int tableId,
             long partitionTimestamp,
             long expectedSrcNameTxn,
-            long expectedWriterTxn,
-            long liveRows
+            long expectedParquetFileSize,
+            long expectedMetadataVersion
     ) {
         this.tableToken = tableToken;
         this.tableId = tableId;
         this.partitionTimestamp = partitionTimestamp;
         this.expectedSrcNameTxn = expectedSrcNameTxn;
-        this.expectedWriterTxn = expectedWriterTxn;
-        this.liveRows = liveRows;
-        this.columnTops.clear();
+        this.expectedParquetFileSize = expectedParquetFileSize;
+        this.expectedMetadataVersion = expectedMetadataVersion;
+        this.newParquetFileSize = -1L;
+        this.isFullyMaterialized = false;
     }
 
     @Override
@@ -166,6 +175,15 @@ public class CompositePartitionSwapCommand implements AsyncWriterCommand {
     @Override
     public void setCommandCorrelationId(long correlationId) {
         this.correlationId = correlationId;
+    }
+
+    /**
+     * Records the build's outcome: the size of the staged {@code data.parquet} and whether it was fully
+     * re-encoded under the current schema. Set by {@link O3PartitionJob#compactParquetPartition}.
+     */
+    public void setResult(long newParquetFileSize, boolean isFullyMaterialized) {
+        this.newParquetFileSize = newParquetFileSize;
+        this.isFullyMaterialized = isFullyMaterialized;
     }
 
     @Override

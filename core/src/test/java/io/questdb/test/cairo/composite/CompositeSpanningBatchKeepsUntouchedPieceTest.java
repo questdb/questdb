@@ -31,25 +31,25 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * {@code O3PartitionJob}'s private {@code processCompositePartition} downgrades a KEEP piece to DROP (or a
- * MERGE piece to NEW_PIECE, discarding its own rows) whenever the piece's bounds sit fully inside
- * {@code [o3TimestampLo, o3TimestampHi]} - the loop right after the {@code processCompositePartition} call
- * that builds the plan, guarded only by the piece's own bounds, never by
- * {@code tableWriter.isCommitReplaceMode()}. That downgrade is correct for a REPLACE commit, whose declared
- * range means "delete everything in here" - but outside replace mode {@code o3TimestampLo}/{@code Hi} are
- * just the incoming O3 batch's own min/max timestamp (see the {@code else} branch that sets them in
- * {@code TableWriter}, next to the {@code isCommitReplaceMode()} branch that computes the declared range
- * instead). So an ORDINARY out-of-order batch that never touches an existing piece, but whose own span
- * happens to fully contain it, silently deletes that piece's rows.
+ * An ORDINARY out-of-order batch whose own timestamp span happens to contain an existing piece it never
+ * touches must leave that piece alone.
  * <p>
- * No REPLACE, no TRUNCATE, no fuzzing: one pre-existing composite partition, one plain multi-row INSERT
- * whose two rows straddle - without touching - a small piece landed by an earlier commit. That piece's row
- * vanishes.
+ * {@code O3PartitionJob}'s private {@code processCompositePartition} downgrades a KEEP piece to DROP (or a
+ * MERGE piece to NEW_PIECE, discarding its own rows) when the piece's bounds sit fully inside
+ * {@code [o3TimestampLo, o3TimestampHi]}. That is right for a REPLACE commit, whose declared range means
+ * "delete everything in here", and only there: outside replace mode those bounds are just the incoming
+ * batch's own min and max timestamp (see the {@code else} branch that sets them in {@code TableWriter},
+ * next to the {@code isCommitReplaceMode()} branch that computes the declared range instead). The
+ * downgrade is therefore guarded by {@code tableWriter.isCommitReplaceMode()}, and this is the test that
+ * fails when that guard goes: without it, a plain multi-row INSERT whose two rows straddle - without
+ * touching - a small piece landed by an earlier commit silently deletes that piece's row.
+ * <p>
+ * No REPLACE, no TRUNCATE, no fuzzing: one pre-existing composite partition and one INSERT.
  */
-public class ScratchUnrelatedBatchDropsKeptPieceTest extends AbstractCairoTest {
+public class CompositeSpanningBatchKeepsUntouchedPieceTest extends AbstractCairoTest {
 
     @Test
-    public void testOrdinaryBatchSpanningAnUntouchedPieceDropsIt() throws Exception {
+    public void testOrdinaryBatchSpanningAnUntouchedPieceKeepsIt() throws Exception {
         assertMemoryLeak(() -> {
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
             node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "16");

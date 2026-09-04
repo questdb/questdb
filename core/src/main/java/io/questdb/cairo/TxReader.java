@@ -31,7 +31,6 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -39,9 +38,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
-import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
-import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -182,8 +179,6 @@ public class TxReader implements Closeable, Mutable {
         roTxMemBase = Misc.free(roTxMemBase);
         clear();
     }
-
-
 
     public void dumpRawTxPartitionInfo(LongList container) {
         container.add(attachedPartitions);
@@ -1084,8 +1079,6 @@ public class TxReader implements Closeable, Mutable {
         txn = -1;
         seqTxn = -1;
     }
-
-
 
     protected int findAttachedPartitionRawIndex(long timestamp) {
         int indexRaw = findAttachedPartitionRawIndexByLoTimestamp(timestamp);

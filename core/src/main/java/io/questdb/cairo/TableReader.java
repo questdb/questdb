@@ -87,7 +87,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     private final int partitionBy;
     private final PartitionOverwriteControl partitionOverwriteControl;
     private final Path path;
-    private PartitionGeometry partitionGeometry;
     private final int rootLen;
     private final ObjList<SymbolMapReader> symbolMapReaders = new ObjList<>();
     private final int timestampType;
@@ -106,6 +105,7 @@ public class TableReader implements Closeable, SymbolTableSource {
     private ObjList<MemoryCMR> parquetMetadataPartitions;
     private ObjList<MemoryCMR> parquetPartitions;
     private int partitionCount;
+    private PartitionGeometry partitionGeometry;
     private long rowCount;
     // Per-checkout scan profile -- controls kernel page-cache hints and
     // post-checkout partition retention. Reset to DEFAULT by goPassive() on
@@ -1993,12 +1993,6 @@ public class TableReader implements Closeable, SymbolTableSource {
     }
 
     /**
-     * Updates boundaries of all columns in partition.
-     *
-     * @param partitionIndex index of partition
-     * @param rowCount       number of rows in partition
-     */
-    /**
      * How many file rows a mapping of {@code partitionIndex} must cover. A COMPOSITE partition's pieces sit
      * anywhere in {@code [0, E)} - one can start above file row 0, and dead space can sit above the live
      * rows - so its mapping is sized by {@code E} and never by a row count, exactly as openPartition0 sizes
@@ -2012,6 +2006,12 @@ public class TableReader implements Closeable, SymbolTableSource {
         return getGeometry().getE(partitionIndex);
     }
 
+    /**
+     * Updates boundaries of all columns in partition.
+     *
+     * @param partitionIndex index of partition
+     * @param rowCount       number of rows in partition
+     */
     private boolean reloadColumnFiles(int partitionIndex, long rowCount) {
         int columnBase = getColumnBase(partitionIndex);
         for (int i = 0; i < columnCount; i++) {
