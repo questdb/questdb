@@ -11,6 +11,29 @@ on:
 permissions: {}
 
 jobs:
+  # Deliberately a separate job rather than a first step of `validate`. Run in one
+  # job, a broken or flaky test would stop check.js from running at all, and the
+  # "Danger" status the master ruleset requires would never be posted: the pull
+  # request would sit behind a required check that is merely missing, which is the
+  # exact failure the fail-closed handling in check.js exists to avoid. The rules
+  # and the reporting are worth failing on, but not at the cost of the verdict.
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      # The top-level `permissions: {}` above leaves a job that declares nothing
+      # with a token that has no scopes. Cloning works here regardless because the
+      # repository is public, but saying so keeps the job working if that changes.
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      # No setup-node step: the runner ships a current Node, and nothing under
+      # ci/validate-pr-title depends on anything outside the standard library.
+      - name: Test the title rules and the reporting
+        working-directory: ./ci/validate-pr-title
+        run: |
+          node validate.test.js
+          node check.test.js
+
   validate:
     # A pull request from a fork gets a read-only token, so this job could post
     # neither the status nor the comment. Same condition the Danger job carried.
@@ -22,13 +45,6 @@ jobs:
       pull-requests: write # write, update and delete the explanation comment
     steps:
       - uses: actions/checkout@v5
-      # No setup-node step: the runner ships a current Node, and nothing under
-      # ci/validate-pr-title depends on anything outside the standard library.
-      - name: Test the title rules and the reporting
-        working-directory: ./ci/validate-pr-title
-        run: |
-          node validate.test.js
-          node check.test.js
       - name: Validate the pull request title
         working-directory: ./ci/validate-pr-title
         env:

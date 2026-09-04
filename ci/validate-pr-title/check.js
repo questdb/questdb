@@ -111,25 +111,31 @@ async function resolveTarget() {
   };
 }
 
-async function findComment(number) {
+// Every match, not just the first. A pull request can carry more than one of these
+// — one of ours beside a leftover Danger comment, or two of ours after a race
+// between runs — and returning a single match sheds one per run and keeps the
+// rest, which reads to the author as a complaint that no longer clears when the
+// title is fixed.
+async function findComments(number) {
+  const found = [];
   for (let page = 1; page <= 10; page++) {
     const comments = await request(
       "GET",
       `/repos/${repo}/issues/${number}/comments?per_page=100&page=${page}`
     );
-    const found = comments.find(
-      (comment) =>
+    for (const comment of comments) {
+      if (
         typeof comment.body === "string" &&
         (comment.body.includes(MARKER) || comment.body.includes(LEGACY_MARKER))
-    );
-    if (found) {
-      return found;
+      ) {
+        found.push(comment);
+      }
     }
     if (comments.length < 100) {
-      return null;
+      break;
     }
   }
-  return null;
+  return found;
 }
 
 function commentBody(title, reason) {
@@ -152,21 +158,38 @@ function commentBody(title, reason) {
 // cannot be written is reported and stepped over, so an unrelated API problem
 // cannot fail a pull request whose title is perfectly valid.
 async function syncComment(number, title, reason) {
-  const existing = await findComment(number);
-  if (reason) {
-    const body = commentBody(title, reason);
-    // A leftover Danger comment belongs to another author, so it can be removed but
-    // not edited into shape. Clear it and write our own in its place.
-    if (existing && !existing.body.includes(MARKER)) {
-      await request("DELETE", `/repos/${repo}/issues/comments/${existing.id}`);
-      await request("POST", `/repos/${repo}/issues/${number}/comments`, { body });
-    } else if (!existing) {
-      await request("POST", `/repos/${repo}/issues/${number}/comments`, { body });
-    } else if (existing.body !== body) {
-      await request("PATCH", `/repos/${repo}/issues/comments/${existing.id}`, { body });
+  const existing = await findComments(number);
+  const remove = (comment) =>
+    request("DELETE", `/repos/${repo}/issues/comments/${comment.id}`);
+
+  if (!reason) {
+    for (const comment of existing) {
+      await remove(comment);
     }
-  } else if (existing) {
-    await request("DELETE", `/repos/${repo}/issues/comments/${existing.id}`);
+    return;
+  }
+
+  // A leftover Danger comment belongs to another author, so it can be removed but
+  // not edited into shape: it is cleared and one of ours is written in its place.
+  const ours = existing.filter((comment) => comment.body.includes(MARKER));
+  const legacy = existing.filter((comment) => !comment.body.includes(MARKER));
+  const body = commentBody(title, reason);
+
+  if (ours.length === 0) {
+    for (const comment of legacy) {
+      await remove(comment);
+    }
+    await request("POST", `/repos/${repo}/issues/${number}/comments`, { body });
+    return;
+  }
+
+  // Keep one and reword it only when the reason actually changed, so a rerun on an
+  // unchanged bad title does not bump the comment and re-notify everyone watching.
+  if (ours[0].body !== body) {
+    await request("PATCH", `/repos/${repo}/issues/comments/${ours[0].id}`, { body });
+  }
+  for (const duplicate of ours.slice(1).concat(legacy)) {
+    await remove(duplicate);
   }
 }
 

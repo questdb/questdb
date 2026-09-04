@@ -137,11 +137,98 @@ async function main() {
     assert.equal(process.exitCode, 0);
   });
 
+  // Returning a single match sheds one comment per run and keeps the rest, so a
+  // corrected title still reads as rejected. Both duplicate shapes are covered:
+  // two of ours, and one of ours beside a leftover Danger comment.
+  await test("fixing the title clears every duplicate comment, not just the first", async () => {
+    pullRequestEvent(VALID);
+    const calls = stubApi({
+      comments: [
+        { id: 11, body: `${MARKER}\nold complaint` },
+        { id: 12, body: `${MARKER}\na second copy` },
+      ],
+    });
+    await run();
+
+    const removed = commentCalls(calls);
+    assert.deepEqual(
+      removed.map((call) => `${call.method} ${call.route.split("/").pop()}`),
+      ["DELETE 11", "DELETE 12"]
+    );
+    assert.equal(statusOf(calls).body.state, "success");
+  });
+
+  await test("fixing the title clears ours and the Danger comment beside it", async () => {
+    pullRequestEvent(VALID);
+    const calls = stubApi({
+      comments: [
+        { id: 11, body: `${MARKER}\nold complaint` },
+        { id: 77, body: `<!--\n  ${LEGACY_MARKER}\n-->\n<table>...</table>` },
+      ],
+    });
+    await run();
+
+    assert.deepEqual(
+      commentCalls(calls).map((call) => `${call.method} ${call.route.split("/").pop()}`),
+      ["DELETE 11", "DELETE 77"]
+    );
+    assert.equal(statusOf(calls).body.state, "success");
+  });
+
+  await test("a duplicate is cleared while the surviving comment is reworded", async () => {
+    pullRequestEvent(INVALID);
+    const calls = stubApi({
+      comments: [
+        { id: 11, body: `${MARKER}\nstale wording` },
+        { id: 12, body: `${MARKER}\nanother copy` },
+        { id: 77, body: `<!--\n  ${LEGACY_MARKER}\n-->\n<table>...</table>` },
+      ],
+    });
+    await run();
+
+    const touched = commentCalls(calls);
+    assert.deepEqual(
+      touched.map((call) => `${call.method} ${call.route.split("/").pop()}`),
+      ["PATCH 11", "DELETE 12", "DELETE 77"],
+      "one comment carries the explanation, every other copy goes away"
+    );
+    assert.ok(touched[0].body.body.includes(INVALID));
+    assert.equal(statusOf(calls).body.state, "failure");
+  });
+
   await test("a clean title with nothing to clean up touches no comment", async () => {
     pullRequestEvent(VALID);
     const calls = stubApi({});
     await run();
     assert.equal(commentCalls(calls).length, 0);
+    assert.equal(statusOf(calls).body.state, "success");
+  });
+
+  // Every other legacy case builds its fixture from LEGACY_MARKER imported out of
+  // check.js, so both sides move together and none of them would notice if the
+  // constant stopped matching what Danger actually wrote. This one hardcodes the
+  // real thing, copied from the comment questdb-butler left on #7558.
+  await test("the legacy marker matches a comment Danger really wrote", async () => {
+    pullRequestEvent(VALID);
+    const realDangerComment = [
+      "",
+      "<!--",
+      "  1 failure:  Please update the...",
+      "  0 warning: ",
+      "  ",
+      "  ",
+      "  DangerID: danger-id-Danger;",
+      "-->",
+      "",
+      "<table>",
+      "  <thead>",
+    ].join("\n");
+    const calls = stubApi({ comments: [{ id: 5408116926, body: realDangerComment }] });
+    await run();
+
+    const removed = commentCalls(calls);
+    assert.equal(removed.length, 1, "a real Danger comment has to be recognised");
+    assert.equal(removed[0].method, "DELETE");
     assert.equal(statusOf(calls).body.state, "success");
   });
 
