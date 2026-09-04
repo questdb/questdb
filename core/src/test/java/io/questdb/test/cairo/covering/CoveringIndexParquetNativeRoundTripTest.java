@@ -388,6 +388,94 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetPartitionPredatingIndexedColumnServesNoFabricatedValues() throws Exception {
+        // A Parquet partition that predates the indexed column keeps its full column
+        // top (TableWriter converts it with zeroAllColumns=false), so the reader sees
+        // the column as absent there. The covering reader cannot serve such a
+        // partition: the INCLUDE values it would read for the null prefix live in
+        // data.parquet, not in native .d files, so every covered column -- the
+        // designated timestamp among them -- would come back as its NULL sentinel.
+        // TableReader.createIndexReaderAt therefore keeps the null reader for the
+        // Parquet partition and the covered scan leaves it out, as it did before the
+        // covering reader learned to serve absent partitions at all. Leaving the rows
+        // out is a pre-existing gap that the oracle below makes visible; fabricating
+        // rows with a NULL designated timestamp is the regression this pins.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pq_absent (
+                        ts TIMESTAMP,
+                        price DOUBLE
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL
+                    """);
+            // 2024-01-01 and 2024-01-02 both predate sym. 2024-01-02 is the active
+            // partition when ADD COLUMN runs, so it gets a sym column top and index
+            // files; 2024-01-01 is already historic and gets no sym files at all.
+            execute("""
+                    INSERT INTO t_pq_absent
+                    SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), x::DOUBLE
+                    FROM long_sequence(30)
+                    """);
+            execute("""
+                    INSERT INTO t_pq_absent
+                    SELECT dateadd('m', x::INT, '2024-01-02T00:00:00Z'::TIMESTAMP), (100 + x)::DOUBLE
+                    FROM long_sequence(10)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_absent ADD COLUMN sym SYMBOL");
+            drainWalQueue();
+            execute("""
+                    INSERT INTO t_pq_absent
+                    SELECT dateadd('m', x::INT, '2024-01-03T00:00:00Z'::TIMESTAMP), x::DOUBLE, 'A' || (x % 4)
+                    FROM long_sequence(8)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_absent ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price)");
+            drainWalQueue();
+            execute("ALTER TABLE t_pq_absent CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertPartitionFormat("t_pq_absent", true);
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+
+            // The covered scan serves 2024-01-02's null prefix from price.d and skips
+            // the Parquet partition. Every row it returns carries its real timestamp
+            // and price: count(ts) and count(price) both equal count().
+            assertQuery("SELECT count() c, count(ts) nn_ts, count(price) nn_price, min(ts) min_ts, sum(price) s FROM t_pq_absent WHERE sym = null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex on: sym with: ts, price")
+                    .returns("""
+                            c\tnn_ts\tnn_price\tmin_ts\ts
+                            10\t10\t10\t2024-01-02T00:01:00.000000Z\t1055.0
+                            """);
+            assertQuery("SELECT ts, price FROM t_pq_absent WHERE sym = null ORDER BY ts LIMIT 3")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex on: sym with: ts, price")
+                    .returns("""
+                            ts\tprice
+                            2024-01-02T00:01:00.000000Z\t101.0
+                            2024-01-02T00:02:00.000000Z\t102.0
+                            2024-01-02T00:03:00.000000Z\t103.0
+                            """);
+
+            // The gap, stated by the oracle: the Parquet partition's 30 rows are on
+            // disk and a full scan returns them. The covered scan does not serve them.
+            assertQuery("SELECT /*+ no_covering */ count() c, count(ts) nn_ts, sum(price) s FROM t_pq_absent WHERE sym = null")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns("""
+                            c\tnn_ts\ts
+                            40\t40\t1520.0
+                            """);
+        });
+    }
+
+    @Test
     public void testPostingCoveringSurvivesRoundTrip() throws Exception {
         assertMemoryLeak(() -> {
             createAndSeed();

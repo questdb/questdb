@@ -25,10 +25,11 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.O3PartitionJob;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
-import io.questdb.cairo.O3PartitionJob;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Misc;
@@ -36,7 +37,6 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
-import io.questdb.cairo.security.AllowAllSecurityContext;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
@@ -79,6 +79,56 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
         // cross-query mis-charge by the captured CoveringBuffers.bufferTracker.
         setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 512 * 1024 * 1024L);
         super.setUp();
+    }
+
+    @Test
+    public void testCoveredAsyncGroupByTrackerBalancedAcrossManyQueries() throws Exception {
+        // Regression for the covered-buffer / per-query-tracker lifetime: run the covered async
+        // keyed GROUP BY many times under a real per-query MemoryTracker so the tracker is
+        // acquired, used, released, and recycled repeatedly. Covered decode buffers are
+        // query-lifetime and are freed only at the NEXT query's clear()/of() — AFTER the owning
+        // query's tracker has been recycled. They therefore must NOT be charged to that tracker
+        // (they use global NATIVE_INDEX_READER accounting); if they were, the deferred free would
+        // decrement a recycled block and PerQueryMemoryTracker.acquire()'s `assert getUsed() == 0`
+        // would trip on a later query. A clean run confirms covered buffers stay off the per-query
+        // tracker and the limit path is leak-free.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new WorkerPool(() -> 4);
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        engine.execute(
+                                "CREATE TABLE t (" +
+                                        "  ts TIMESTAMP," +
+                                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (grp, payload)," +
+                                        "  grp VARCHAR," +
+                                        "  payload LONG" +
+                                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                                sqlExecutionContext
+                        );
+                        engine.execute(
+                                "INSERT INTO t SELECT (x * 200000000L)::timestamp, 'A', 'g' || (x % 4), x" +
+                                        " FROM long_sequence(8000)",
+                                sqlExecutionContext
+                        );
+                        engine.releaseAllWriters();
+
+                        final String coveredSql = "SELECT grp, sum(payload) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp";
+                        final StringSink expected = new StringSink();
+                        TestUtils.printSql(engine, sqlExecutionContext, coveredSql, expected);
+                        final String expectedStr = expected.toString();
+
+                        final StringSink actual = new StringSink();
+                        for (int i = 0; i < 50; i++) {
+                            TestUtils.printSql(engine, sqlExecutionContext, coveredSql, actual);
+                            Assert.assertEquals("covered result must be stable across queries at iteration " + i,
+                                    expectedStr, actual.toString());
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
     }
 
     @Test
@@ -161,7 +211,7 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
-                    (engine, compiler, sqlExecutionContext) -> {
+                    (engine, _, sqlExecutionContext) -> {
                         engine.execute(
                                 "CREATE TABLE t (" +
                                         "  ts TIMESTAMP," +
@@ -239,48 +289,50 @@ public class CoveringIndexParallelGroupByReachabilityTest extends AbstractCairoT
     }
 
     @Test
-    public void testCoveredAsyncGroupByTrackerBalancedAcrossManyQueries() throws Exception {
-        // Regression for the covered-buffer / per-query-tracker lifetime: run the covered async
-        // keyed GROUP BY many times under a real per-query MemoryTracker so the tracker is
-        // acquired, used, released, and recycled repeatedly. Covered decode buffers are
-        // query-lifetime and are freed only at the NEXT query's clear()/of() — AFTER the owning
-        // query's tracker has been recycled. They therefore must NOT be charged to that tracker
-        // (they use global NATIVE_INDEX_READER accounting); if they were, the deferred free would
-        // decrement a recycled block and PerQueryMemoryTracker.acquire()'s `assert getUsed() == 0`
-        // would trip on a later query. A clean run confirms covered buffers stay off the per-query
-        // tracker and the limit path is leak-free.
+    public void testParallelGroupByKeepsPartitionEntirelyPredatingIndexedColumn() throws Exception {
+        // A-2 shape on the PARALLEL page-frame path: partition 1 is written entirely
+        // before the indexed SYMBOL exists, so TableReader substitutes a null column
+        // and a null index reader for it. Every row there matches sym = null and must
+        // still be returned, with its covered values.
         assertMemoryLeak(() -> {
             final WorkerPool pool = new WorkerPool(() -> 4);
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
                         engine.execute(
-                                "CREATE TABLE t (" +
-                                        "  ts TIMESTAMP," +
-                                        "  sym SYMBOL INDEX TYPE POSTING INCLUDE (grp, payload)," +
-                                        "  grp VARCHAR," +
-                                        "  payload LONG" +
-                                        ") TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
+                                "CREATE TABLE t2 (ts TIMESTAMP, grp VARCHAR, payload LONG)" +
+                                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
                                 sqlExecutionContext
                         );
                         engine.execute(
-                                "INSERT INTO t SELECT (x * 200000000L)::timestamp, 'A', 'g' || (x % 4), x" +
-                                        " FROM long_sequence(8000)",
+                                "CREATE TABLE ref2 (ts TIMESTAMP, grp VARCHAR, payload LONG, sym SYMBOL)" +
+                                        " TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL",
                                 sqlExecutionContext
                         );
+                        // Day 1: written before sym exists.
+                        final String day1 = "SELECT ('2024-01-01T00:00:00'::timestamp + x * 1000000L)::timestamp," +
+                                " 'g' || (x % 5), x FROM long_sequence(3000)";
+                        engine.execute("INSERT INTO t2 " + day1, sqlExecutionContext);
+                        engine.execute("INSERT INTO ref2 (ts, grp, payload) " + day1, sqlExecutionContext);
+
+                        engine.execute("ALTER TABLE t2 ADD COLUMN sym SYMBOL", sqlExecutionContext);
+
+                        // Day 2: sym populated, so this partition has a real index.
+                        final String day2 = "SELECT ('2024-01-02T00:00:00'::timestamp + x * 1000000L)::timestamp," +
+                                " 'g' || (x % 5), x + 100000, 'A' FROM long_sequence(3000)";
+                        engine.execute("INSERT INTO t2 (ts, grp, payload, sym) " + day2, sqlExecutionContext);
+                        engine.execute("INSERT INTO ref2 (ts, grp, payload, sym) " + day2, sqlExecutionContext);
+
+                        engine.execute("ALTER TABLE t2 ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (grp, payload)", sqlExecutionContext);
                         engine.releaseAllWriters();
 
-                        final String coveredSql = "SELECT grp, sum(payload) FROM t WHERE sym = 'A' GROUP BY grp ORDER BY grp";
-                        final StringSink expected = new StringSink();
-                        TestUtils.printSql(engine, sqlExecutionContext, coveredSql, expected);
-                        final String expectedStr = expected.toString();
+                        final String coveredSql = "SELECT grp, sum(payload) FROM t2 WHERE sym = null GROUP BY grp ORDER BY grp";
+                        final String refSql = "SELECT grp, sum(payload) FROM ref2 WHERE sym = null GROUP BY grp ORDER BY grp";
 
-                        final StringSink actual = new StringSink();
-                        for (int i = 0; i < 50; i++) {
-                            TestUtils.printSql(engine, sqlExecutionContext, coveredSql, actual);
-                            Assert.assertEquals("covered result must be stable across queries at iteration " + i,
-                                    expectedStr, actual.toString());
+                        try (RecordCursorFactory factory = compiler.compile(coveredSql, sqlExecutionContext).getRecordCursorFactory()) {
+                            assertInTree(factory, CoveringIndexRecordCursorFactory.class);
                         }
+                        TestUtils.assertSqlCursors(engine, sqlExecutionContext, refSql, coveredSql, LOG);
                     },
                     configuration,
                     LOG

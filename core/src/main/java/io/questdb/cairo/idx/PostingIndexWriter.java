@@ -7816,16 +7816,26 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    try {
+                        mapCoveredColumn(p, c);
+                        writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
+                    } finally {
+                        unmapCoveredColumn(c);
+                    }
                 }
-                try {
-                    mapCoveredColumn(p, c);
-                    writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
-                } finally {
-                    unmapCoveredColumn(c);
-                }
+            } finally {
+                // unmapCoveredColumn only zeroes one slot; the read-map arrays stay
+                // allocated. ensureCoveredColumnReadMaps treats a non-null array as
+                // "already mapped", so leaving them behind makes a LATER incremental
+                // seal on this same writer read address 0 for every cover column and
+                // write a NULL sentinel for every covered value. Drop the arrays so
+                // the lazy mapper re-arms.
+                unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
             // O3 addr-based path: all addresses provided by caller, no per-column mapping needed
@@ -7859,16 +7869,22 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    try {
+                        mapCoveredColumn(p, c);
+                        writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
+                    } finally {
+                        unmapCoveredColumn(c);
+                    }
                 }
-                try {
-                    mapCoveredColumn(p, c);
-                    writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
-                } finally {
-                    unmapCoveredColumn(c);
-                }
+            } finally {
+                // See writeSidecarsPerColumn: drop the read-map arrays so a later
+                // incremental seal re-maps the cover columns instead of reading 0.
+                unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
             ensureCoveredColumnReadMaps();

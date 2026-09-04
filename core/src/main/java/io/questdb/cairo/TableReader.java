@@ -379,6 +379,17 @@ public class TableReader implements Closeable, SymbolTableSource {
         final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex));
         final long partitionTxn = txFile.getPartitionNameTxn(partitionIndex);
         IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader != null && isStandInNullReader(indexReader) != (columns.getQuick(index) instanceof NullMemoryCMR)) {
+            // The partition gained the column since this reader was cached (an O3 insert
+            // or an ATTACH rewrites a partition that predated it), or lost it again. The
+            // two reader kinds are not interchangeable and of() cannot turn one into the
+            // other: a stand-in null reader would keep answering the NULL key with EVERY
+            // row of a partition that now holds real values, and a real reader would open
+            // an index file the writer never created. Drop it and build the right one.
+            final int indexSlot = direction == IndexReader.DIR_BACKWARD ? index : index + 1;
+            Misc.free(indexes.getAndSetQuick(indexSlot, null));
+            indexReader = null;
+        }
         if (indexReader != null) {
             // Single choke point for refreshing the scoreboard pin on cached
             // readers. TableReader.txn advances through several paths
@@ -1047,6 +1058,16 @@ public class TableReader implements Closeable, SymbolTableSource {
             metadata.close();
             throw th;
         }
+    }
+
+    /**
+     * Whether {@code reader} is one of the stand-in readers {@link #createIndexReaderAt}
+     * installs for a partition that does not contain the indexed column at all. They
+     * answer the NULL key with every row of the partition and hold no files, so they are
+     * valid only while the column really is absent there.
+     */
+    private static boolean isStandInNullReader(IndexReader reader) {
+        return reader instanceof IndexFwdNullReader || reader instanceof IndexBwdNullReader;
     }
 
     private IndexReader createIndexReaderAt(int globalIndex, int columnBase, int columnIndex, long columnNameTxn, int direction, long partitionTxn) {
