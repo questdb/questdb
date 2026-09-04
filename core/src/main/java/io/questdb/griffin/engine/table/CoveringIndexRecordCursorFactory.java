@@ -306,8 +306,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
                         int key = resolvedKeys.getQuick(i);
                         if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                            CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
-                            key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                            // keyOf() maps a null value to VALUE_IS_NULL, the NULL key, which
+                            // the chain does carry postings for. Short-circuiting to
+                            // VALUE_NOT_FOUND instead would drop every NULL row of the scan.
+                            key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
                         }
                         // Bind-variable / runtime-constant list elements may resolve
                         // to the same symbol key; dedup so the multi-key merge does
@@ -340,8 +342,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             } else {
                 symbolFunction.init(frameCursor, executionContext);
                 SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-                CharSequence symValue = symbolFunction.getStrA(null);
-                resolvedKey = symValue != null ? symbolMapReader.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                // See the multi-key branch above: keyOf() answers VALUE_IS_NULL for a null
+                // value, so let it, rather than reporting the key as unknown.
+                resolvedKey = symbolMapReader.keyOf(symbolFunction.getStrA(null));
             }
             singleKeyCursor.resolveKey(resolvedKey);
             singleKeyCursor.of(frameCursor);
@@ -401,8 +404,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
                     int key = resolvedKeys.getQuick(i);
                     if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                        CharSequence symValue = keyValueFuncs.getQuick(i).getStrA(null);
-                        key = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                        // See getCursor(): keyOf() resolves a null value to the NULL key.
+                        key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
                     }
                     // See getCursor(): dedup duplicate resolved keys so the
                     // parallel GROUP BY page-frame path does not over-count.
@@ -422,8 +425,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             } else {
                 symbolFunction.init(frameCursor, executionContext);
                 SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                CharSequence symValue = symbolFunction.getStrA(null);
-                resolvedKey = symValue != null ? smr.keyOf(symValue) : SymbolTable.VALUE_NOT_FOUND;
+                // See getCursor(): keyOf() resolves a null value to the NULL key.
+                resolvedKey = smr.keyOf(symbolFunction.getStrA(null));
             }
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
             singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending, executionContext.getMemoryTracker());
