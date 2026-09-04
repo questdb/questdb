@@ -4007,9 +4007,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * {@link #compactPartitionNoCommit}.
      *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the source partition's generation
-     *                                                                moved since the build snapshot was
-     *                                                                taken. The staged directory is
-     *                                                                deleted before this throws.
+     *                                                               moved since the build snapshot was
+     *                                                               taken. The staged directory is
+     *                                                               deleted before this throws.
      */
     public void swapCompactedCompositePartition(
             long partitionTimestamp,
@@ -15917,11 +15917,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * @param coveringState     what the O3 write left the partition's COVERING posting indexes in - one
-     *                          of {@link #COVERING_INDEX_REBUILD}, {@link #COVERING_INDEX_PUBLISHED},
-     *                          {@link #COVERING_INDEX_DEFERRED}
-     * @param oldPartitionSize  with {@code COVERING_INDEX_DEFERRED}: the first row the write appended
-     * @param newPartitionSize  with {@code COVERING_INDEX_DEFERRED}: the row after the last one it appended
+     * @param coveringState    what the O3 write left the partition's COVERING posting indexes in - one
+     *                         of {@link #COVERING_INDEX_REBUILD}, {@link #COVERING_INDEX_PUBLISHED},
+     *                         {@link #COVERING_INDEX_DEFERRED}
+     * @param oldPartitionSize with {@code COVERING_INDEX_DEFERRED}: the first row the write appended
+     * @param newPartitionSize with {@code COVERING_INDEX_DEFERRED}: the row after the last one it appended
      */
     private boolean sealPostingIndexForPartition(
             long partitionTimestamp,

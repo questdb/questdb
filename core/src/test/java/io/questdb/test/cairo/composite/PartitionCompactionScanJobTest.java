@@ -993,7 +993,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         }
     }
 
-    /** The directory name PartitionCompactionScanJob stages a REWRITE into. */
+    /**
+     * The directory name PartitionCompactionScanJob stages a REWRITE into.
+     */
     private static String stagingDir(
             TableToken token,
             int timestampType,
@@ -1010,7 +1012,9 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         }
     }
 
-    /** A staging directory holds a full copy of the partition, so give it a file to make the purge recurse. */
+    /**
+     * A staging directory holds a full copy of the partition, so give it a file to make the purge recurse.
+     */
     private static void stageWithContent(FilesFacade ff, String dir) {
         try (Path path = new Path()) {
             TableUtils.createDirsOrFail(ff, path.of(dir).slash(), configuration.getMkDirMode());

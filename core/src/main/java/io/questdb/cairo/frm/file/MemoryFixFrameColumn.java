@@ -137,6 +137,7 @@ public final class MemoryFixFrameColumn implements FrameColumn {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }
+
     @Override
     public void merge(
             long appendOffsetRowCount,

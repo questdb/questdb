@@ -259,7 +259,9 @@ public final class FuzzTableFactory {
         return dml.toString();
     }
 
-    /** Same shape as {@link #buildInsertDml}, but landing exactly on one day's own existing rows. */
+    /**
+     * Same shape as {@link #buildInsertDml}, but landing exactly on one day's own existing rows.
+     */
     private String buildOverlapInsertDml(String tableName, ObjList<FuzzColumn> columns, String day, int rowCount) {
         StringSink dml = new StringSink();
         dml.put("INSERT INTO ").put(tableName).put(" SELECT ");

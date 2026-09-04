@@ -91,6 +91,7 @@ public class DeletedFrameColumn implements FrameColumn {
     public long getContiguousDataAddr(long rowHi) {
         throw new UnsupportedOperationException();
     }
+
     @Override
     public void merge(
             long appendOffsetRowCount,

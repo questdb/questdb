@@ -371,7 +371,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         final long belowTopRows = readsBelowTop ? Math.min(source1Hi, src1Top) - source1Lo : 0;
         final long dataSize = (readsBelowTop
                 ? sourceDataSize(src1AuxAddr, Math.max(source1Lo, src1Top) - src1Top, source1Hi - src1Top)
-                + belowTopRows * columnTypeDriver.getDataVectorMinEntrySize()
+                  + belowTopRows * columnTypeDriver.getDataVectorMinEntrySize()
                 : sourceDataSize(src1AuxAddr, source1Lo, source1Hi))
                 + sourceDataSize(src2AuxAddr, source2Lo, source2Hi);
         final long targetDataOffset = getDataAppendOffsetBytes(appendOffsetRowCount);

@@ -197,10 +197,10 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         final boolean readsBelowTop = source1Lo < source1Hi && source1Lo < src1Top;
         final long src1Address = isTimestamp ? 0
                 : readsBelowTop
-                // UNBIASED: the file's first stored row IS logical row src1Top, and the kernel does the
-                // subtraction itself.
-                ? sourceColumn1.getContiguousDataAddr(source1Hi)
-                : rowZeroAddr(sourceColumn1, source1Lo, source1Hi);
+                  // UNBIASED: the file's first stored row IS logical row src1Top, and the kernel does the
+                  // subtraction itself.
+                  ? sourceColumn1.getContiguousDataAddr(source1Hi)
+                  : rowZeroAddr(sourceColumn1, source1Lo, source1Hi);
         final long src2Address = isTimestamp ? 0 : rowZeroAddr(sourceColumn2, source2Lo, source2Hi);
         long dstAddress = 0;
         long nullValueAddress = 0;
@@ -274,7 +274,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             case 3 -> Vect.mergeShuffle64Bit(src1, src2, dst, mergeIndexAddr, rows);
             case 4 -> Vect.mergeShuffle128Bit(src1, src2, dst, mergeIndexAddr, rows);
             case 5 -> Vect.mergeShuffle256Bit(src1, src2, dst, mergeIndexAddr, rows);
-            default -> throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
+            default ->
+                    throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
         }
     }
 
@@ -300,7 +301,8 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             case 3 -> Vect.mergeShuffle64BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
             case 4 -> Vect.mergeShuffle128BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
             case 5 -> Vect.mergeShuffle256BitWithTop(src1, src2, dst, mergeIndexAddr, rows, srcDataTop, pNullValue);
-            default -> throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
+            default ->
+                    throw CairoException.critical(0).put("unsupported column width for merge [shl=").put(shl).put(']');
         }
     }
 

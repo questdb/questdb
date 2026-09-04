@@ -127,6 +127,7 @@ public class MemoryVarFrameColumn implements FrameColumn {
         assert this.recycleBin == null;
         this.recycleBin = recycleBin;
     }
+
     @Override
     public void merge(
             long appendOffsetRowCount,

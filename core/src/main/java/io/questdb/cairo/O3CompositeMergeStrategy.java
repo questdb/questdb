@@ -99,9 +99,9 @@ public class O3CompositeMergeStrategy {
      * Cutting a piece moves no bytes: both halves address the same column files at the same offsets, so
      * this is the whole of what a pre-split does to the geometry.
      *
-     * @param below      rows of the piece below the cut
-     * @param lowerTsHi  timestamp of the lower half's LAST row
-     * @param upperTsLo  timestamp of the upper half's FIRST row
+     * @param below     rows of the piece below the cut
+     * @param lowerTsHi timestamp of the lower half's LAST row
+     * @param upperTsLo timestamp of the upper half's FIRST row
      * @return true when the cut was applied
      */
     public static boolean applyCut(LongList bounds, int piece, long below, long lowerTsHi, long upperTsLo) {

@@ -180,7 +180,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
      * swap time - and this build holds no writer to know its eventual commit txn by.
      *
      * @return a command ready to publish, or {@code null} if the partition holds no live rows to keep -
-     *         an all-dead composite partition needs no swap.
+     * an all-dead composite partition needs no swap.
      */
     private CompositePartitionSwapCommand buildCompactedComposite(
             TableToken tableToken,

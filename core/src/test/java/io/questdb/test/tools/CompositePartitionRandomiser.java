@@ -102,7 +102,9 @@ public final class CompositePartitionRandomiser {
     private CompositePartitionRandomiser() {
     }
 
-    /** Forgets which tables the round-trip has run on. Call between tests. */
+    /**
+     * Forgets which tables the round-trip has run on. Call between tests.
+     */
     public static void clear() {
         attempted.clear();
         injectedTxn.clear();

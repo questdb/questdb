@@ -237,7 +237,9 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
         }
     }
 
-    /** Content fingerprint of one day, so unrelated partitions cannot move it. */
+    /**
+     * Content fingerprint of one day, so unrelated partitions cannot move it.
+     */
     private static String fingerprintOfDay(String day) throws Exception {
         long count = 0;
         long sum = 0;
@@ -255,7 +257,9 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
         return count + "/" + sum + "/" + strLen;
     }
 
-    /** Whether the day's OWN (front) partition is flagged composite. */
+    /**
+     * Whether the day's OWN (front) partition is flagged composite.
+     */
     private static boolean isComposite(String day) throws Exception {
         final TableToken tt = engine.verifyTableName("x");
         try (TableReader reader = engine.getReader(tt)) {
@@ -265,7 +269,9 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
         }
     }
 
-    /** Attached partitions of one logical day; a detached directory still shows up here, so exclude it. */
+    /**
+     * Attached partitions of one logical day; a detached directory still shows up here, so exclude it.
+     */
     private static long partitionCountOfDay(String day) throws Exception {
         return scalar("SELECT count() FROM table_partitions('x') WHERE name LIKE '" + day + "%'" +
                 " AND NOT name LIKE '%.detached'");

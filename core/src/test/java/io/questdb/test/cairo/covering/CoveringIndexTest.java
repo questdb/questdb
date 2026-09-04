@@ -4958,9 +4958,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // The interval covers three of the five live rows, and neither of the two it excludes is the
             // dead-space row's timestamp: this isolates the cumulative-range check from the liveness one.
             assertQuery("""
-                            SELECT price FROM t_o3_interval
-                            WHERE sym = 'A' AND ts BETWEEN '2024-01-01T08:00:00' AND '2024-01-01T09:30:00'
-                            """)
+                    SELECT price FROM t_o3_interval
+                    WHERE sym = 'A' AND ts BETWEEN '2024-01-01T08:00:00' AND '2024-01-01T09:30:00'
+                    """)
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
@@ -10697,9 +10697,9 @@ public class CoveringIndexTest extends AbstractCairoTest {
             // C (10:00, above it) -- neither excluded row is the dead-space row's own timestamp, so this
             // isolates the cumulative-vs-physical bound translation from a liveness/dead-space check.
             assertQuery("""
-                            SELECT DISTINCT sym FROM t_distinct_merge_append
-                            WHERE ts BETWEEN '2024-01-01T08:00:00' AND '2024-01-01T09:30:00'
-                            """)
+                    SELECT DISTINCT sym FROM t_distinct_merge_append
+                    WHERE ts BETWEEN '2024-01-01T08:00:00' AND '2024-01-01T09:30:00'
+                    """)
                     .noRandomAccess()
                     .noLeakCheck()
                     .returns("""

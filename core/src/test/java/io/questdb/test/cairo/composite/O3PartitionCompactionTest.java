@@ -79,7 +79,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         passDay = 0;
     }
 
-    /** Days the housekeeping commits consume, never reused within a test. */
+    /**
+     * Days the housekeeping commits consume, never reused within a test.
+     */
     private static int passDay;
 
     @Test
@@ -744,7 +746,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 " where name like '" + day + "%'");
     }
 
-    /** Disk of one day only - the housekeeping commits land in other partitions. */
+    /**
+     * Disk of one day only - the housekeeping commits land in other partitions.
+     */
     private static long diskSizeOfDay(String table, String day) throws Exception {
         return scalar("select coalesce(sum(diskSize), 0) d from table_partitions('" + table + "')" +
                 " where name like '" + day + "%'");
@@ -798,7 +802,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         return count + "/" + sum;
     }
 
-    /** Same as {@link #fingerprintOfDay}, but also covers a var-size {@code s} column. */
+    /**
+     * Same as {@link #fingerprintOfDay}, but also covers a var-size {@code s} column.
+     */
     private static String fingerprintOfDayVarSize(String table, String day) throws Exception {
         final String sql = "select i, s from " + table + " where ts in '" + day + "'";
         long count = 0;
@@ -817,7 +823,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         return count + "/" + intSum + "/" + strLenSum;
     }
 
-    /** The {@code nameTxn} of the day's OWN (first, front) partition - unchanged by MOVE-TAIL. */
+    /**
+     * The {@code nameTxn} of the day's OWN (first, front) partition - unchanged by MOVE-TAIL.
+     */
     private static long frontNameTxnOfDay(String table, String day) throws Exception {
         final TableToken tt = engine.verifyTableName(table);
         try (TableReader reader = engine.getReader(tt)) {
@@ -845,7 +853,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         return scalar("select coalesce(sum(numRows), 0) live from table_partitions('" + table + "')");
     }
 
-    /** A fresh day, well clear of every fixture's own partitions. */
+    /**
+     * A fresh day, well clear of every fixture's own partitions.
+     */
     private static String nextPassDay() {
         return "2024-03-" + String.format("%02d", 1 + (passDay++ % 28));
     }
@@ -854,7 +864,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         return MicrosTimestampDriver.floor(ts);
     }
 
-    /** How many {@code table_partitions()} rows the day has - more than one after a classic split. */
+    /**
+     * How many {@code table_partitions()} rows the day has - more than one after a classic split.
+     */
     private static long partitionCountOfDay(String table, String day) throws Exception {
         return scalar("select count() from table_partitions('" + table + "') where name like '" + day + "%'");
     }
@@ -863,7 +875,9 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         return node1.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
     }
 
-    /** Pieces of one day's own partition, or 0 if the day has no partition at all. */
+    /**
+     * Pieces of one day's own partition, or 0 if the day has no partition at all.
+     */
     private static long pieceCountOfDay(String table, String day) throws Exception {
         final TableToken tt = engine.verifyTableName(table);
         try (TableReader reader = engine.getReader(tt)) {

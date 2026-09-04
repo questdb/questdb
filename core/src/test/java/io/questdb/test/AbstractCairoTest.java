@@ -857,7 +857,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
     }
 
-    /** Flips a 50% coin over {@link #enableCompositePartitionRandomisation()}. */
+    /**
+     * Flips a 50% coin over {@link #enableCompositePartitionRandomisation()}.
+     */
     protected static void enableCompositePartitionRandomisation(Rnd rnd) {
         if (rnd.nextBoolean()) {
             enableCompositePartitionRandomisation();
@@ -998,7 +1000,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
         }
     }
 
-    /** Sweeps {@code engine}, whichever engine that is - {@link QueryAssertion} may carry its own. */
+    /**
+     * Sweeps {@code engine}, whichever engine that is - {@link QueryAssertion} may carry its own.
+     */
     protected static void randomiseCompositePartitions(CairoEngine engine, SqlExecutionContext executionContext) {
         if (isCompositePartitionRandomisationEnabled) {
             CompositePartitionRandomiser.sweep(engine, executionContext);

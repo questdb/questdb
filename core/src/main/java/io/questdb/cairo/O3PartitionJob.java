@@ -667,15 +667,15 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * sweep's rebuild migrates the head to the current format and fills the values in - a one-off cost
      * per partition that predates the format.
      *
-     * @param partitionDir      the partition directory; trimmed back to its own length on return
-     * @param versions          the column versions the write left behind: tops and name txns of the
-     *                          indexed and the covered columns
-     * @param coverNames        scratch for the covered-column description, owned by the calling thread
-     * @param coverNameTxns     scratch, see {@code coverNames}
-     * @param coverTops         scratch, see {@code coverNames}
-     * @param coverShifts       scratch, see {@code coverNames}
-     * @param coverIndices      scratch, see {@code coverNames}
-     * @param coverTypes        scratch, see {@code coverNames}
+     * @param partitionDir  the partition directory; trimmed back to its own length on return
+     * @param versions      the column versions the write left behind: tops and name txns of the
+     *                      indexed and the covered columns
+     * @param coverNames    scratch for the covered-column description, owned by the calling thread
+     * @param coverNameTxns scratch, see {@code coverNames}
+     * @param coverTops     scratch, see {@code coverNames}
+     * @param coverShifts   scratch, see {@code coverNames}
+     * @param coverIndices  scratch, see {@code coverNames}
+     * @param coverTypes    scratch, see {@code coverNames}
      * @return true when every covering index of the partition is now complete, so the seal sweep can
      * leave them alone; false when at least one still needs the sweep's rebuild
      */

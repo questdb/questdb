@@ -416,7 +416,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         final long cumulativeLo = pending.size() == 0
                 ? 0
                 : pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_CUMULATIVE_LO)
-                + pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_ROW_COUNT);
+                  + pending.getQuick(pending.size() - LONGS_PER_PIECE + PIECE_ROW_COUNT);
         pending.add(tsLo, tsHi, rowOffset, rowCount);
         pending.add(cumulativeLo);
     }

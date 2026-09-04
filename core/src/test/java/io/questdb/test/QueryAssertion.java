@@ -2060,7 +2060,7 @@ public class QueryAssertion {
                 final MutationStep step = steps.getQuick(i);
                 engine.execute(step.getMutation(), context);
                 drainWalQueue(engine);
-                    assertCursor(step.getExpected(), factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
+                assertCursor(step.getExpected(), factory, supportsRandomAccess, expectSize, sizeCanBeVariable, context);
             }
         }
     }

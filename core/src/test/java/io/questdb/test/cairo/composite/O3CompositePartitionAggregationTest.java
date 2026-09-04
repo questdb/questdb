@@ -174,7 +174,9 @@ public class O3CompositePartitionAggregationTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
     }
 
-    /** Per-{@code key = i % keyModulo} sum of {@code i}, read off the ordinary row cursor. */
+    /**
+     * Per-{@code key = i % keyModulo} sum of {@code i}, read off the ordinary row cursor.
+     */
     private static long[] oracleKeyedSum(String sql, int keyModulo) throws Exception {
         final long[] sums = new long[keyModulo];
         try (RecordCursorFactory f = select(sql)) {
@@ -188,7 +190,9 @@ public class O3CompositePartitionAggregationTest extends AbstractCairoTest {
         return sums;
     }
 
-    /** Sum of the single projected INT column, read off the ordinary row cursor. */
+    /**
+     * Sum of the single projected INT column, read off the ordinary row cursor.
+     */
     private static long oracleSum(String sql) throws Exception {
         long sum = 0;
         try (RecordCursorFactory f = select(sql)) {
