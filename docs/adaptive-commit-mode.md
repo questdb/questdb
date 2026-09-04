@@ -483,7 +483,7 @@ together (`ApplyWal2TableJob.maybeAdvanceDurableEpoch`,
 `ApplyWal2TableJob.java:703-709`); `cairo.adaptive.recovery.roll.forward.enabled`
 (`PropertyKey.java:60`), default `true` (`PropServerConfiguration.java:1575`),
 consumed at `RecoveryCoordinator.java:89`.
-Tuning framing from `docs/superpowers/specs/2026-07-17-adaptive-sp-c-perf-validation-design.md` §7.
+Tuning framing follows the SP-C perf-validation methodology (internal spec, not shipped).
 
 ---
 
@@ -557,9 +557,11 @@ inert to the old binary (they would be inert regardless).
 > A real-old-binary open matrix and rolling-upgrade cluster test are an external
 > verification step (they cannot run inside the JUnit suite). See the SP-E runbook.
 
-Full detail and the per-artifact inertness evidence:
-`docs/superpowers/specs/2026-07-17-adaptive-sp-e-upgrade-downgrade-runbook.md`.
-Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
+Per-artifact inertness is gated in-suite by `AdaptiveUpgradeCompatTest`, and the claim above was
+additionally verified against **real released binaries**: cores **9.4.3, 9.4.0, 9.3.5 and 9.2.3** each
+opened and read an adaptive-written database cleanly — both a plain adaptive/WAL table and one with a
+per-table `commit_mode='adaptive'` override — leaving all six adaptive artifacts byte-identical (only
+`_upgrade.d` re-stamped). Downgrade-skips-roll-forward gate confirmed at `RecoveryCoordinator.java:89`.
 
 ---
 
@@ -602,10 +604,6 @@ or `ALTER TABLE … SET PARAM commit_mode='…'`. Tokens: `nosync`, `sync`, `asy
 
 ---
 
-*This is a user/operator guide. The internal design and validation specs live under
-`docs/superpowers/specs/` (`2026-06-25-adaptive-commit-mode-design.md`,
-`2026-07-17-adaptive-sp-c-perf-validation-design.md`,
-`2026-07-15-adaptive-sp-f-metrics-slice-design.md`,
-`2026-07-17-adaptive-sp-e-upgrade-downgrade-runbook.md`). All configuration keys,
-defaults, metric names, SQL syntax, and `wal_tables()` columns above were verified
-against the source tree on branch `nw_adaptive_commit`.*
+*This is a user/operator guide. The internal design and validation specs (SP-A…SP-F) are not
+shipped with the distribution; they were removed from the branch in `e5d7e108b8`. The invariants
+they define are enforced in code and named in `docs/adaptive-commit-internals.md`.*

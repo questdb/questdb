@@ -500,5 +500,5 @@ epoch forces all of them (`TxWriter.fsync`, `ColumnVersionWriter.fsync`, and an 
 ---
 
 *See also:* [`adaptive-commit-mode.md`](adaptive-commit-mode.md) (operator/tuning guide) and
-`docs/superpowers/specs/2026-06-25-adaptive-commit-mode-design.md` (the design + invariants,
-INV‑1…INV‑5).
+the adaptive-commit design spec (internal, not shipped — removed from the branch in `e5d7e108b8`),
+whose INV‑1…INV‑5 invariants are the ones enforced in the code paths described above.
