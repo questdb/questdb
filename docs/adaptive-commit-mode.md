@@ -524,9 +524,16 @@ What happens:
   they stay on disk but become **inert**. The live read/apply path never opens them.
 - The WAL purge floor drops from the durable epoch back to the applied seqTxn (the
   epoch floor applies only under adaptive), so normal `nosync` retention resumes.
-- **On the next restart**, recovery sees the leftover `_snapshot` marker but **skips
-  roll-forward** because the table's effective mode is no longer adaptive — no
-  rollback, no data loss, no suspend.
+- The next writer to open the table **reconciles** the state inherited from the adaptive
+  tenure — making it whole and durable — and only *then* records the new mode in `_meta`.
+- **On a later restart**, recovery sees the leftover `_snapshot` marker and **skips
+  roll-forward**, because it consults that durable *enrolment* record — how the materialized
+  state was LEFT — and not the table's current effective mode. If the process crashes
+  *between* the mode change and that reconciliation, the record still says adaptive and
+  recovery correctly **does** roll forward: a table applied lazily under adaptive is torn
+  ahead of its durable epoch regardless of what the config says on the way back up, so
+  turning adaptive off must not turn the repair off with it. Either way: no rollback of
+  committed data, no suspend.
 
 After downgrade the table has the crash semantics of its new mode (`nosync` = the
 pre-adaptive default). The adaptive epoch is a recovery mechanism that only applies
