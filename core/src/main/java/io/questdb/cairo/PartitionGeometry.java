@@ -82,6 +82,11 @@ public class PartitionGeometry implements Closeable, Mutable {
      */
     private static final int LONGS_PER_PIECE = 5;
     /**
+     * Floors below which reclaiming is not worth the walk. A cache this small costs nothing to carry.
+     */
+    private static final int MIN_PIECE_HOLES = 1024;
+    private static final int MIN_RESOLVED_BEFORE_EVICT = 256;
+    /**
      * Stride of {@link #resolved}, kept sorted by {@link #RES_PARTITION_TS} so the cache is keyed on values
      * that never change for a directory - unlike a partition index, which shifts whenever a partition is
      * inserted or removed.
@@ -122,6 +127,12 @@ public class PartitionGeometry implements Closeable, Mutable {
      * reclaimed by {@link #compactPieces()} at a safe point.
      */
     private int pieceHoles;
+    /**
+     * Slot count {@link #resolved} has to reach before {@link #evictRetiredDirectories} walks it again.
+     * Doubled off whatever survives an eviction, so the walk costs O(1) per resolution amortised rather
+     * than one full scan per resolution once the cache is large.
+     */
+    private int resolvedEvictWatermark = MIN_RESOLVED_BEFORE_EVICT;
     private String tableRoot;
     private int timestampType;
     private TxReader txReader;
@@ -147,6 +158,7 @@ public class PartitionGeometry implements Closeable, Mutable {
         resolved.clear();
         pieceHoles = 0;
         dirtyCount = 0;
+        resolvedEvictWatermark = MIN_RESOLVED_BEFORE_EVICT;
     }
 
     /**
@@ -524,18 +536,16 @@ public class PartitionGeometry implements Closeable, Mutable {
             resolved.setQuick(slot + RES_FLAGS, resolved.getQuick(slot + RES_FLAGS) & ~FLAG_DIRTY);
             dirtyCount--;
         }
-        compactPieces();
+        compactPiecesIfNeeded();
         return ref;
     }
 
     /**
      * Reclaims the holes left by in-place directory updates. Safe only when nothing holds a piece span
-     * index across the call, which is why it runs at publish time and nowhere else.
+     * index across the call - see {@link #compactPiecesIfNeeded}, the only caller, for the two points
+     * where that holds.
      */
     private void compactPieces() {
-        if (pieceHoles == 0) {
-            return;
-        }
         scratch.clear();
         for (int i = 0, n = resolved.size(); i < n; i += LONGS_PER_RESOLVED) {
             final int lo = (int) resolved.getQuick(i + RES_PIECE_LO);
@@ -549,6 +559,49 @@ public class PartitionGeometry implements Closeable, Mutable {
         pieces.clear();
         pieces.add(scratch);
         pieceHoles = 0;
+    }
+
+    /**
+     * Amortised reclaim of {@link #pieces}. Runs only once the holes outweigh the live longs, which makes
+     * the copy O(1) per hole created rather than O(total pieces) on every publish - the shape it had when
+     * {@link #publish} compacted unconditionally, where one partition's publish paid for every piece of
+     * every directory the writer had ever touched.
+     * <p>
+     * The two call sites are the only points where no caller holds a piece span index: the tail of
+     * {@link #publish}, and the head of {@link #resolveInternal}, before it takes one.
+     */
+    private void compactPiecesIfNeeded() {
+        if (pieceHoles > MIN_PIECE_HOLES && pieceHoles > pieces.size() - pieceHoles) {
+            compactPieces();
+        }
+    }
+
+    /**
+     * Drops resolutions for directories {@code _txn} no longer names - a partition that was dropped, or
+     * one a rewrite retired under a fresh {@code nameTxn}. Without this a long-lived pooled reader keeps
+     * one slot, and one piece array, for every directory it has ever observed.
+     * <p>
+     * Only ever runs with no update open and nothing dirty, so a writer mid-commit is never the caller
+     * and no slot the commit is about to publish can be evicted.
+     */
+    private void evictRetiredDirectories() {
+        int keep = 0;
+        for (int i = 0, n = resolved.size(); i < n; i += LONGS_PER_RESOLVED) {
+            final long partitionTimestamp = resolved.getQuick(i + RES_PARTITION_TS);
+            final int indexRaw = txReader.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+            if (indexRaw > -1 && txReader.getPartitionNameTxnByRawIndex(indexRaw) == resolved.getQuick(i + RES_NAME_TXN)) {
+                if (keep != i) {
+                    for (int f = 0; f < LONGS_PER_RESOLVED; f++) {
+                        resolved.setQuick(keep + f, resolved.getQuick(i + f));
+                    }
+                }
+                keep += LONGS_PER_RESOLVED;
+            } else {
+                pieceHoles += (int) resolved.getQuick(i + RES_PIECE_COUNT) * LONGS_PER_PIECE;
+            }
+        }
+        resolved.setPos(keep);
+        resolvedEvictWatermark = Math.max(MIN_RESOLVED_BEFORE_EVICT, 2 * (keep / LONGS_PER_RESOLVED));
     }
 
     /**
@@ -654,6 +707,11 @@ public class PartitionGeometry implements Closeable, Mutable {
         if (!txReader.isPartitionComposite(partitionIndex)) {
             return -1;
         }
+        // Reclaim BEFORE any slot or piece index is taken below - both caches renumber themselves.
+        if (pendingRec == NO_PARTITION && dirtyCount == 0 && resolved.size() / LONGS_PER_RESOLVED > resolvedEvictWatermark) {
+            evictRetiredDirectories();
+        }
+        compactPiecesIfNeeded();
         final long partitionTimestamp = txReader.getPartitionTimestampByIndex(partitionIndex);
         final long nameTxn = txReader.getPartitionNameTxn(partitionIndex);
         final long ref = txReader.getGeometryRef(partitionIndex);

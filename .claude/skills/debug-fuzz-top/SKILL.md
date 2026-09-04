@@ -9,10 +9,10 @@ Debug the failure described by `$ARGUMENTS`.
 
 ## Read these first
 
-- `core/src/main/java/io/questdb/cairo/cmposite_partition_like_parquet_partition.md` — what is built, in
+- `core/src/main/java/io/questdb/cairo/COMPOSITE_PARTITIONS.md` — what is built, in
   four short tables, plus what is not.
-- `core/src/main/java/io/questdb/cairo/COMPOSITE_PARTITION_STATE.md` — the running record: every defect
-  found so far and how it was fixed. Most failures rhyme with one already in there.
+- `git log --oneline lazy-geometry2` — the running record: every defect found so far and how it was
+  fixed. Most failures rhyme with one already in there.
 
 This branch is `lazy-geometry2`, based on clean `master`. A DIFFERENT tree
 (`questdb-enterprise3`, `feat-partition-top-split`) implements the same feature as a SPLIT design where
@@ -98,8 +98,8 @@ If it never fails, or fails rarely with different symptoms each time, report bac
 Random-seed replay is not reliable on its own: WAL application runs on a real thread pool, and
 record order under concurrent writing is not guaranteed for a given seed even with the
 data-generation `Rnd` stream pinned. Don't burn more than one attempt on `new Rnd(s0, s1)` before
-moving to the loop below — this branch's own defects (`COMPOSITE_PARTITION_STATE.md` #28) already
-confirm a fixed-seed replay can pass cleanly against the exact code and log that caught it.
+moving to the loop below — this branch's own history already confirms a fixed-seed replay can pass
+cleanly against the exact code and log that caught it.
 
 1. **Record the shape.** Add a temporary `LOG.info()` at the point that plans or executes the
    composite write (`assembleFreshPartitionVersion`, `executeCompositePlan`, or wherever step 2
@@ -123,8 +123,7 @@ confirm a fixed-seed replay can pass cleanly against the exact code and log that
    fuzz run's exact row counts and timestamps don't matter, only the qualitative structure the
    theory depends on. Replay just the last few transactions/apply iterations identified in step 2,
    in order, against that constructed shape. If the shape genuinely can't be built deterministically
-   (a cross-thread timing race, not a sequence-dependent one — see `COMPOSITE_PARTITION_STATE.md`
-   #28), say so explicitly and fall back to confirming the fix via repeated fuzz runs instead.
+   (a cross-thread timing race, not a sequence-dependent one), say so explicitly and fall back to confirming the fix via repeated fuzz runs instead.
 
 Remove the temporary logging from step 1 before the fix ships.
 

@@ -188,12 +188,6 @@ public class ColumnTypeConverter {
         long dstByteOffset = dstRowOffset * dstColumnTypeSize;
         long dstMapBytes = rowCount * dstColumnTypeSize;
 
-        // Mapping past the source file's real length reads unbacked pages, which on macOS SIGBUSes the
-        // JVM instead of throwing - losing every Java-level detail about which column and commit
-        // undersized the file. A composite partition's dead space makes this reachable in ways an
-        // ordinary partition's never is (see COMPOSITE_PARTITION_STATE.md).
-        DebugUtils.assertConversionSourceFileLength(ff, srcFixFd, skipBytes, mapBytes, rowCount, srcColumnTypeSize);
-
         try {
             srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
             columnSizesSink.setSrcOffsets(skipBytes, -1);
@@ -885,12 +879,8 @@ public class ColumnTypeConverter {
             ColumnConversionOffsetSink columnSizesSink
     ) {
         columnSizesSink.setSrcOffsets(skipRows * Integer.BYTES, -1);
-        // Same guard as convertFixedToFixed: mapping past the source file's real length reads unbacked
-        // pages, which SIGBUSes or throws an opaque InternalError instead of a catchable, informative
-        // exception.
         final long skipBytes = skipRows * Integer.BYTES;
         final long mapBytes = rowCount * Integer.BYTES;
-        DebugUtils.assertSymbolConversionSourceFileLength(ff, srcFixFd, skipBytes, mapBytes, rowCount);
         long symbolMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
 
         try {

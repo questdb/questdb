@@ -48,12 +48,29 @@ Behind `cairo.o3.partition.merge.append.enabled`. OFF in production, ON by defau
 | `table_partitions()` | A composite directory reports its summed rows and disk size |
 | Logging | One INFO line per merge-append: pieces before/after, keep/merge/newPiece, live and physical rows, dead % |
 
+## Compaction of dead space
+
+All four moves are built and on by default - see `PARTITION_COMPACTION.md` for the rules and
+`PARTITION_COMPACTION_JOB_DESIGN.md` for the background job that drives them off the writer thread.
+
+| Move | What it does |
+|---|---|
+| JOIN | Folds file-adjacent pieces. Copies nothing |
+| MOVE-TAIL | Copies only the messy tail pieces to a fresh sibling partition |
+| MAKE-PLAIN | Drops the dead space above a single front piece, once no reader can still resolve the old record |
+| REWRITE | Copies every live row into a fresh directory. The fallback for everything else |
+
 ## Not done
 
-- Squash and purge over a composite partition
-- Compaction of dead space: JOIN (fold file-adjacent pieces), MOVE-TAIL (copy only the tail to a fresh
-  sibling) and REWRITE (copy live rows to a fresh directory) are built and always on - see
-  PARTITION_COMPACTION_state.md. MAKE-PLAIN and TRIM-FILES (an instalment plan that reclaims space without
-  copying a whole partition) are still not built; REWRITE stands in for both.
 - A floor on very small pieces (attempted, crashes)
-- Parquet conversion (out of scope)
+- Piece-wise parquet conversion. A composite partition is folded to plain first
+  (`TableWriter.compactPartitionToPlain`), as DETACH and SQUASH also do
+
+## Downgrade caveat
+
+Bit 61 of the `_txn` slot-3 word carries the composite flag, with no `META_FORMAT_MINOR_VERSION`
+bump - the same way the parquet flag was introduced. An older binary therefore opens a table with
+composite partitions without complaint and reads each one as flat `[0, liveRows)`, and its
+checkpoint scrub zeroes the geometry pointer permanently. Turning the flag back OFF on a current
+binary is safe: the writer folds a composite partition back to plain before any legacy path reads
+it (`TableWriter.processO3Block`).

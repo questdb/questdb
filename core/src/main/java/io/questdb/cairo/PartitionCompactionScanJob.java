@@ -33,6 +33,8 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Hash;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
@@ -78,7 +80,18 @@ import java.io.Closeable;
  * PUBLIC entry point a caller might invoke expecting an authoritative answer.
  */
 public class PartitionCompactionScanJob extends SynchronizedJob implements Closeable {
+    // Caps how many partitions one sweep hands out. The first sweep after an upgrade can find every
+    // qualifying partition of every table at once; without a cap it queues the lot back to back and the
+    // writers spend the next stretch doing nothing else. What the cap does not dispatch this pass, the
+    // next interval picks up.
+    private static final int MAX_DISPATCH_PER_SWEEP = 32;
+    // Bounds the clean-parquet memo. Reached only by a database with tens of thousands of parquet
+    // partitions; dropping the whole set just costs one more footer read per partition on the next sweep.
+    private static final int MAX_MEMO_SIZE = 100_000;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
+    // Fingerprints of parquet partitions already found to hold no dead space. Any write to a partition
+    // changes its nameTxn or its file size, so a changed partition cannot match its own stale entry.
+    private final LongHashSet cleanParquetPartitions = new LongHashSet();
     private final long checkInterval;
     private final Clock clock;
     private final CairoConfiguration configuration;
@@ -91,6 +104,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final Path path = new Path();
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final TxReader txReader;
+    private int dispatchBudget;
     private long last = 0;
 
     public PartitionCompactionScanJob(CairoEngine engine, FilesFacade ff, Clock clock) {
@@ -112,6 +126,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     @Override
     public void close() {
+        cleanParquetPartitions.clear();
         geometry.close();
         other.close();
         parquetMetaReader.clear();
@@ -121,6 +136,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     @Override
     protected boolean runSerially() {
+        if (checkInterval < 0) {
+            // The operator's off switch: a negative cairo.partition.compaction.check.interval disables
+            // the background sweep entirely. Writer-side compaction (housekeep -> runCompaction) is
+            // unaffected. Zero keeps its meaning of "sweep on every call".
+            return false;
+        }
         final long t = clock.getTicks();
         if (last + checkInterval < t) {
             last = t;
@@ -275,8 +296,21 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * Reads the {@code _pm} footer standalone (no live {@link TableWriter}, no O3 commit in flight) and
-     * applies the same update-vs-rewrite dead-space thresholds {@link O3PartitionJob} already uses when it
-     * decides whether to rewrite a Parquet partition mid-commit - reused as-is, not duplicated.
+     * reports whether the partition holds ANY dead space.
+     * <p>
+     * Deliberately NOT {@link O3PartitionJob}'s {@code parquet.o3.rewrite.unused.*} thresholds. Those two
+     * decide whether an IN-FLIGHT O3 commit should pay for a rewrite it did not plan on - a latency
+     * tradeoff inside a user-visible write. This sweep has no such constraint: it runs on its own thread,
+     * on its own schedule, on a partition nothing is writing to, so a partition sitting at 40% dead space
+     * (below the 0.5 ratio) or wasting less than a gigabyte (below the absolute rule) is worth reclaiming
+     * too. It converges rather than churns: once rewritten, a partition nobody writes to has zero dead
+     * bytes, fails this test on every later sweep and is never dispatched again - one rewrite per
+     * partition ever, not repeated work.
+     * <p>
+     * The negative answer is memoised on {@code (tableId, partitionTimestamp, nameTxn, parquetFileSize)},
+     * because with the threshold at "any dead space" re-reading the footer of every already-clean
+     * partition on every pass would otherwise BE this job's steady-state cost. Any write to a partition
+     * changes its {@code nameTxn} or its file size, so a changed partition never matches its stale entry.
      */
     private boolean isParquetPartitionIdle(
             TableToken tableToken,
@@ -286,6 +320,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             long nameTxn,
             long parquetFileSize
     ) {
+        final long memoKey = Hash.hashLong256_64(tableToken.getTableId(), partitionTimestamp, nameTxn, parquetFileSize);
+        if (cleanParquetPartitions.contains(memoKey)) {
+            return false;
+        }
         path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
         TableUtils.setPathForParquetPartitionMetadata(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
         final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
@@ -295,10 +333,14 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
             final long unusedBytes = parquetMetaReader.getUnusedBytes();
             final long actualParquetFileSize = parquetMetaReader.getParquetFileSize();
-            return actualParquetFileSize > 0 && (
-                    (double) unusedBytes / actualParquetFileSize > configuration.getPartitionEncoderParquetO3RewriteUnusedRatio()
-                            || unusedBytes > configuration.getPartitionEncoderParquetO3RewriteUnusedMaxBytes()
-            );
+            if (actualParquetFileSize > 0 && unusedBytes > 0) {
+                return true;
+            }
+            if (cleanParquetPartitions.size() >= MAX_MEMO_SIZE) {
+                cleanParquetPartitions.clear();
+            }
+            cleanParquetPartitions.add(memoKey);
+            return false;
         } finally {
             // Capture before clear() zeros the fields so the mapping can be released.
             final long mappedSize = parquetMetaReader.getFileSize();
@@ -336,7 +378,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
             String tableRoot = null;
             final int partitionCount = txReader.getPartitionCount();
-            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+            for (int partitionIndex = 0; partitionIndex < partitionCount && dispatchBudget > 0; partitionIndex++) {
                 final boolean isComposite = txReader.isPartitionComposite(partitionIndex);
                 // The offset-3 word is a parquet file size only for a parquet partition; on a native one
                 // it is a seqTxn stamp or a geometry pointer, and reading it as a size asserts. Ask the
@@ -367,12 +409,14 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     if (geometry.getLastWriteMicros(partitionIndex) > nowMicros - idleTimeoutMicros) {
                         continue;
                     }
+                    dispatchBudget--;
                     dispatchComposite(tableToken, partitionTimestamp);
                 } else {
                     final long nameTxn = txReader.getPartitionNameTxn(partitionIndex);
                     if (!isParquetPartitionIdle(tableToken, timestampType, partitionBy, partitionTimestamp, nameTxn, parquetFileSize)) {
                         continue;
                     }
+                    dispatchBudget--;
                     dispatchParquet(tableToken, partitionTimestamp);
                 }
             }
@@ -380,9 +424,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     private void sweep(long nowMicros) {
+        dispatchBudget = MAX_DISPATCH_PER_SWEEP;
         tableTokenBucket.clear();
         engine.getTableTokens(tableTokenBucket, false);
-        for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
+        for (int i = 0, n = tableTokenBucket.size(); i < n && dispatchBudget > 0; i++) {
             final TableToken tableToken = tableTokenBucket.get(i);
             try {
                 scanTable(tableToken, nowMicros);

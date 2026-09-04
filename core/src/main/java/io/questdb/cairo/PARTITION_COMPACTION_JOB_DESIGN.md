@@ -1,7 +1,8 @@
 # Partition compaction job — design
 
-Design only, nothing here is built. Builds on `COMPOSITE_PARTITION_STATE.md` in this same
-directory (the "lazy geometry" composite-partition feature).
+The design this job was built from. `PartitionCompactionScanJob` implements it; where the two
+disagree, the code wins. Builds on `COMPOSITE_PARTITIONS.md` in this same directory (the "lazy
+geometry" composite-partition feature).
 
 ## Goal
 
@@ -10,7 +11,7 @@ directory (the "lazy geometry" composite-partition feature).
   column files),
 - a Parquet-format partition accumulates dead row groups from in-place O3 updates.
 
-When a partition is not "hot" (no writes for a configured idle timeout, default 15 min), a
+When a partition is not "hot" (no writes for a configured idle timeout, default 60 min), a
 background job should compact it and swap the result into the live `TableWriter`, the way
 Enterprise's storage-policy job swaps in a recompacted partition.
 
@@ -20,7 +21,7 @@ Enterprise's storage-policy job swaps in a recompacted partition.
   `WalPurgeJob.java:65,89,587-593`). New config `cairo.partition.compaction.check.interval`,
   default 2 min, mirroring `cairo.wal.purge.interval` (`PropertyKey.java:563`). The poll cadence
   is separate from the per-partition idle-eligibility threshold
-  (`cairo.partition.compaction.idle.timeout`, default 15 min).
+  (`cairo.partition.compaction.idle.timeout`, default 60 min).
 
 Per tick:
 
@@ -106,10 +107,11 @@ Mostly **already exists** — asymmetric with §3.
   unrelated — `SqlCompilerImpl.java:4003-4048`).
 - Design: same idle scan as §1, then call the existing rewrite decision+path proactively instead
   of waiting for the next O3 commit to trip the ratio — reuse `O3PartitionJob`'s rewrite branch
-  and the Rust copy-row-group ops as-is, then swap in via the same protocol as §5. Undecided:
-  reuse the existing `rewrite.unused.ratio` config or add a separate idle-triggered threshold
-  (template: `cairo.table.registry.compaction.threshold`'s int + `-1`-disables shape,
-  `PropertyKey.java:604`, `CairoConfiguration.java:885`, `TableNameRegistryStore.java:580-583`).
+  and the Rust copy-row-group ops as-is, then swap in via the same protocol as §5. Settled:
+  the background path does NOT reuse `rewrite.unused.ratio`/`max.bytes`. Those two are a latency
+  tradeoff inside a user-visible write; this job runs on its own thread against partitions nothing
+  is writing to, so it rewrites any idle Parquet partition holding any dead space, and memoises the
+  "already clean" answer so a compacted partition is not re-read on every pass.
 
 ## 5. Swap into TableWriter
 

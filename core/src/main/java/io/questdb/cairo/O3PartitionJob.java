@@ -180,13 +180,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long tsFd = openTimestampColumnRO(pathToTable, partitionTimestamp, srcNameTxn, tableWriter);
         long tsAddr = 0;
         try {
-            // e is the geometry's LOGICAL physical extent, not the timestamp column's own on-disk length.
-            // If an earlier merge-append cycle undergrew this file relative to the e it itself published -
-            // the same defect class ColumnTypeConverter.convertFixedToFixed guards against for a
-            // conversion source - mapping [0, e*8) here reads unbacked pages, and on macOS that SIGBUSes
-            // the JVM (Vect.binarySearch64Bit, called from applyCutResolved) instead of throwing, losing
-            // every Java-level detail about which partition and commit undersized the file.
-            DebugUtils.assertCompositeTimestampColumnLength(ff, tsFd, tsMapSize, tableWriter.getTableToken(), partitionIndex, e);
             tsAddr = TableUtils.mapRO(ff, tsFd, tsMapSize, MemoryTag.MMAP_O3);
 
             // 1. The partition's pieces. One _geometry read, for THIS partition, and none for any other.
@@ -1105,65 +1098,6 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 ),
                                 at,
                                 mergeRows
-                        );
-                    }
-                }
-            }
-            // Every column's file must reach e - columnTop worth of rows once this plan has executed, or a
-            // later whole-column reader (a conversion, an index build, TableReader.reloadColumnAt) maps
-            // past its real length and SIGBUSes instead of throwing. Var-size columns need the same guard
-            // as fixed ones - their aux file is what a reader sizes its mapping from, and an undergrown
-            // aux file SIGBUSes on the very first read of its last entry, same as an undergrown fixed file
-            // does on its last row.
-            final FilesFacade ff = tableWriter.getFilesFacade();
-            final CharSequence tableName = tableWriter.getTableToken().getTableName();
-            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
-                final int columnType = metadata.getColumnType(i);
-                if (columnType <= 0) {
-                    continue;
-                }
-                if (metadata.isColumnIndexed(i) && IndexType.isPosting(metadata.getColumnIndexType(i))) {
-                    long columnTop = transientVersions.getColumnTop(partitionTimestamp, i);
-                    // Row-less when this commit began (top already at-or-past the pre-commit extent): the
-                    // plan's own action loop above already opened this column under that same condition and
-                    // wrote whatever it needed to, so its key file, if this partition ever gets one, is this
-                    // commit's own fresh creation - not a pre-existing file this pass can rely on finding.
-                    // Confirm it is there before re-opening; a re-open a few lines down would otherwise
-                    // throw "index does not exist" out of a diagnostic-only length check and take the whole
-                    // WAL table down with it, for a column this loop has nothing left to verify on anyway.
-                    if (columnTop >= partitionE) {
-                        long columnNameTxn = transientVersions.getColumnNameTxn(partitionTimestamp, i);
-                        LPSZ keyFile = IndexFactory.keyFileName(
-                                metadata.getColumnIndexType(i), partitionPath.trimTo(partitionPathLen), metadata.getColumnName(i), columnNameTxn
-                        );
-                        boolean keyFileExists = ff.exists(keyFile);
-                        partitionPath.trimTo(partitionPathLen);
-                        if (!keyFileExists) {
-                            continue;
-                        }
-                    }
-                }
-                try (FrameColumn col = target.createColumn(i)) {
-                    final long top = col.getColumnTop();
-                    final long expectedRows = e - top;
-                    if (expectedRows <= 0) {
-                        continue;
-                    }
-                    final CharSequence columnName = metadata.getColumnName(i);
-                    if (ColumnType.isVarSize(columnType)) {
-                        final ColumnTypeDriver driver = ColumnType.getDriver(columnType);
-                        final long expectedAuxBytes = driver.getAuxVectorSize(expectedRows);
-                        DebugUtils.assertCompositePlanVarColumnAuxLength(
-                                ff, col.getSecondaryFd(), expectedAuxBytes, tableName, partitionTimestamp, columnName, i, top, e
-                        );
-                        final long expectedDataBytes = driver.getDataVectorSizeAtFromFd(ff, col.getSecondaryFd(), expectedRows - 1);
-                        DebugUtils.assertCompositePlanVarColumnDataLength(
-                                ff, col.getPrimaryFd(), expectedDataBytes, tableName, partitionTimestamp, columnName, i, top, e
-                        );
-                    } else {
-                        final long expectedBytes = expectedRows << ColumnType.pow2SizeOf(columnType);
-                        DebugUtils.assertCompositePlanColumnLength(
-                                ff, col.getPrimaryFd(), expectedBytes, tableName, partitionTimestamp, columnName, i, top, e
                         );
                     }
                 }

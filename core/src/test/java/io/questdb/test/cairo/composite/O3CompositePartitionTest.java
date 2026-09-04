@@ -197,7 +197,7 @@ public class O3CompositePartitionTest extends AbstractCairoTest {
      * back with no gap between them, so together they TILE {@code [0, physicalRows)}. A tiled partition
      * needs no {@code _geometry} record at all: its boundaries carry nothing a plain row count doesn't
      * already say (see {@code O3PartitionJob.processCompositePartition}'s {@code isComposite} check and
-     * "Non-composite is not a special case" in {@code COMPOSITE_PARTITION_STATE.md}), so the commit
+     * "Non-composite is not a special case" in {@code COMPOSITE_PARTITIONS.md}), so the commit
      * abandons the update it built and the partition reads back as an ordinary, non-composite one - one
      * piece, not composite - even though internally it took two actions to get there.
      */

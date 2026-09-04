@@ -38,8 +38,7 @@ import io.questdb.std.datetime.microtime.Micros;
  * {@code (partitionTimestamp, nameTxn)}, one {@code _geometry} chain. There is no separate "folder" unit
  * distinct from "partition" - the reference repo needed one because a hardlink split let several
  * directories share one logical partition; this branch has no hardlink splits, so every accessor below
- * takes a plain partition index. See PARTITION_COMPACTION_state.md for the full list of corrections this
- * port required.
+ * takes a plain partition index. See PARTITION_COMPACTION.md for the rules it applies.
  * <p>
  * It is owned by one writer, allocates nothing per commit, and keeps no durable state: handing the
  * writer to another thread costs at most one wasted attempt, and making the decline backoff timer durable

@@ -28,9 +28,12 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.std.Files;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Before;
@@ -71,6 +74,38 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
                     rowsOfDay,
                     scalar("SELECT coalesce(sum(numRows), 0) FROM table_partitions('x')" +
                             " WHERE name = '2024-01-01.detached'")
+            );
+        });
+    }
+
+    /**
+     * The shape {@code squashPartitionForce} alone cannot reach: a logical day with NO split siblings
+     * never enters {@code squashSplitPartitions}, so nothing there folds it. Detach hard-links the
+     * directory as it stands, and attach reads every column file as one flat {@code [0, liveRows)} range
+     * from byte 0 while {@code setPartitionFormat} drops the composite flag - so an unfolded composite
+     * directory comes back serving dead rows in no particular timestamp order, with no error raised.
+     */
+    @Test
+    public void testDetachAndAttachAnUnsplitCompositeDay() throws Exception {
+        assertMemoryLeak(() -> {
+            createUnsplitCompositeDay();
+            final long rowsOfDay = rowsOfDay("2024-01-01");
+            final String before = fingerprintOfDay("2024-01-01");
+
+            execute("ALTER TABLE x DETACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+            Assert.assertEquals("detach left the day attached", 0, partitionCountOfDay("2024-01-01"));
+
+            renameDetachedToAttachable("2024-01-01");
+            execute("ALTER TABLE x ATTACH PARTITION LIST '2024-01-01'");
+            drainWalQueue();
+
+            Assert.assertEquals("the round trip lost rows", rowsOfDay, rowsOfDay("2024-01-01"));
+            Assert.assertEquals("the round trip changed the day's data", before, fingerprintOfDay("2024-01-01"));
+            Assert.assertEquals(
+                    "the round trip left the day's timestamps unordered",
+                    rowsOfDay,
+                    scalar("SELECT count() FROM (SELECT ts FROM x WHERE ts IN '2024-01-01' ORDER BY ts)")
             );
         });
     }
@@ -165,6 +200,41 @@ public class CompositePartitionForceSquashTest extends AbstractCairoTest {
                 " timestamp_sequence('2024-01-03', 1_000_000L) ts FROM long_sequence(1_000)");
         drainWalQueue();
         Assert.assertTrue("fixture lost the split before the forced squash", partitionCountOfDay("2024-01-01") > 1);
+    }
+
+    /**
+     * Builds a logical day that is COMPOSITE but NOT split - the shape a forced squash walks straight
+     * past. Only the last partition ever splits, so the day is pushed off the end before the backdated
+     * strides that make it composite.
+     */
+    private static void createUnsplitCompositeDay() throws Exception {
+        execute("CREATE TABLE x AS (" +
+                "SELECT cast(x AS int) i, rnd_str(5, 16, 2) s," +
+                " timestamp_sequence('2024-01-01', 1_000_000L) ts" +
+                " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        drainWalQueue();
+
+        // A later day, so 2024-01-01 is no longer the last one and cannot split.
+        execute("INSERT INTO x SELECT cast(x AS int) + 100_000 i, rnd_str(5, 16, 2) s," +
+                " timestamp_sequence('2024-01-03', 1_000_000L) ts FROM long_sequence(1_000)");
+        drainWalQueue();
+
+        for (int i = 0; i < 2; i++) {
+            execute("INSERT INTO x SELECT cast(x AS int) + 300_000 i, rnd_str(5, 16, 2) s," +
+                    " timestamp_sequence('2024-01-01T01:00:00', 1_000_000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+        }
+        Assert.assertEquals("fixture split the day", 1, partitionCountOfDay("2024-01-01"));
+        Assert.assertTrue("fixture produced no composite partition", isComposite("2024-01-01"));
+    }
+
+    private static void renameDetachedToAttachable(String day) {
+        final TableToken tt = engine.verifyTableName("x");
+        try (Path from = new Path(); Path to = new Path()) {
+            from.of(configuration.getDbRoot()).concat(tt).concat(day).put(TableUtils.DETACHED_DIR_MARKER).$();
+            to.of(configuration.getDbRoot()).concat(tt).concat(day).put(configuration.getAttachPartitionSuffix()).$();
+            Assert.assertTrue(Files.rename(from.$(), to.$()) > -1);
+        }
     }
 
     /** Content fingerprint of one day, so unrelated partitions cannot move it. */

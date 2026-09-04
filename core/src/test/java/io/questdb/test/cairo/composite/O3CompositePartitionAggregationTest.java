@@ -39,7 +39,7 @@ import org.junit.Test;
  * Regression tests for vectorized (SIMD-batch) aggregation over composite partitions - several
  * pieces over one set of column files, with dead space where a merge-append superseded a piece.
  * <p>
- * Historically tracked as "D6" in the now-deleted {@code PARTITION_COMPACTION_state.md}: a
+ * Historically tracked as "D6" on an earlier revision of this branch: a
  * vectorized aggregate (e.g. {@code sum(i)}) over a composite partition with dead space could
  * return wrong results or SIGSEGV the JVM, on the theory that the scan sized itself off the
  * physical extent (dead space included) rather than off the live piece boundaries

@@ -162,6 +162,10 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
     }
 
     private void runConcurrentReadFuzz(Rnd rnd, boolean legacyInitial, boolean singleTxn, boolean o3Mode) throws Exception {
+        // The WAL-lag fast append this test exists to exercise is unreachable with merge-append ON:
+        // TableWriter forces noLag for the whole table and tryFastAppendInOrderBlock returns before its
+        // body. Pin the shipping default so the assertions below measure the path they name.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
         setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 10_000_000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT, 2000);
         setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 600_000);

@@ -394,20 +394,31 @@ public class ConvertOperatorImpl implements Closeable {
                                     // each piece from its own file position, and pad the gaps between them -
                                     // never reading them - so every piece keeps the same absolute row it had,
                                     // which is the address a reader still uses to find it.
-                                    convertToFixedDestByPieces(
-                                            partitionIndex, pieceCount, columnTop, maxRow,
-                                            existingType, newType, srcFixFd, srcVarFd, dstFixFd
-                                    );
-                                    closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                                    try {
+                                        convertToFixedDestByPieces(
+                                                partitionIndex, pieceCount, columnTop, maxRow,
+                                                existingType, newType, srcFixFd, srcVarFd, dstFixFd
+                                        );
+                                    } finally {
+                                        // These two paths own the four descriptors outright - unlike
+                                        // dispatchConvertColumnPartitionTask, which hands them to
+                                        // cthConvertPartitionHandler and its own finally. The walk can
+                                        // throw: allocateDiskSpaceToPage and mapAppendColumnBuffer both
+                                        // raise CairoException on ENOSPC.
+                                        closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                                    }
                                 } else if (dstVarStringy && pieceWalkable && pieceCount > 1) {
                                     // Same piece walk, for a STRING/VARCHAR destination: the aux (index) vector
                                     // is padded like a live write would extend it, but the data vector is not -
                                     // a dead piece's rows contribute no bytes to the converted data file.
-                                    convertToVarDestByPieces(
-                                            partitionIndex, pieceCount, columnTop, maxRow,
-                                            existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd
-                                    );
-                                    closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                                    try {
+                                        convertToVarDestByPieces(
+                                                partitionIndex, pieceCount, columnTop, maxRow,
+                                                existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd
+                                        );
+                                    } finally {
+                                        closeFds(srcFixFd, srcVarFd, dstFixFd, dstVarFd);
+                                    }
                                 } else if (dispatchConvertColumnPartitionTask(
                                         existingType, newType, srcFixFd, srcVarFd, dstFixFd, dstVarFd, rowCount, partitionTimestamp)
                                 ) {

@@ -48,7 +48,7 @@ import org.junit.Test;
  * composite partitions can be split across several directories sharing one logical partition
  * (hardlink splits); this branch has none of that; a composite partition here is exactly what the
  * reference repo calls a "folder" - one directory, one {@code _txn} entry, one {@code _geometry}
- * chain. See PARTITION_COMPACTION_state.md for the corrections this port required.
+ * chain. See PARTITION_COMPACTION.md for the rules it applies.
  * <p>
  * JOIN, MOVE-TAIL, MAKE-PLAIN, TRIM-FILES and REWRITE are all implemented (PARTITION_COMPACTION.md Sec.9
  * steps 0, 1, 2, 3, 4, 5). MOVE-TAIL is ported onto this branch's classic-split machinery (a new sibling
@@ -64,7 +64,7 @@ import org.junit.Test;
  * nothing to wait for - see {@link #testRewriteLeavesAPinnedReadersDataIntact}.
  * <p>
  * JOIN has no dedicated test of its own here. {@code O3PartitionJob} folds list-and-file-adjacent pieces
- * INLINE, as part of the same commit that creates them (PARTITION_COMPACTION_state.md's "JOIN, inlined"),
+ * INLINE, as part of the same commit that creates them (PARTITION_COMPACTION.md's "JOIN, inlined"),
  * so by the time a housekeeping pass reaches {@code TableWriter}'s own, separate JOIN sweep
  * ({@code foldContiguousPieces} / {@code foldFoldableFolders}), an ordinary sequence of merge-append
  * writes has never been observed to leave it anything to fold - the planner's own tail-extend
@@ -743,7 +743,7 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * a composite partition is itself correct - a question {@link O3CompositePartitionAggregationTest}
      * tests directly. (Earlier history: a vectorized aggregate over a composite partition with dead
      * space used to return wrong results or crash the JVM - tracked as "D6" in the now-deleted
-     * PARTITION_COMPACTION_state.md - but that no longer reproduces against current HEAD.)
+     * an earlier revision of this branch - but that no longer reproduces against current HEAD.)
      */
     private static String fingerprintOfDay(String table, String day) throws Exception {
         final String sql = "select i from " + table + " where ts in '" + day + "'";

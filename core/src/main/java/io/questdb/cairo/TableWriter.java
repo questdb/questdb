@@ -651,6 +651,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.appendTimestampSetter = timestampSetter;
             configureAppendPosition();
             purgeUnusedPartitions();
+            foldCompositePartitionsWhenMergeAppendDisabled();
             minSplitPartitionTimestamp = findMinSplitPartitionTimestamp();
             clearTodoLog();
             this.slaveTxReader = new TxReader(ff);
@@ -2240,7 +2241,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.DETACH_ERR_REMOTE;
         }
 
-        // To detach the partition, squash it into a single folder if required
+        // To detach the partition, squash it into a single folder if required.
+        // compactPartitionToPlain first, for the same reason the parquet conversion needs it: a logical
+        // partition with no split siblings never enters squashSplitPartitions, so squashPartitionForce
+        // alone leaves a composite directory composite. Detach then hard-links that directory into
+        // <ts>.detached with its pieces intact, while attach reads every column file as one flat
+        // [0, liveRows) range from byte 0 and setPartitionFormat drops the composite flag.
+        compactPartitionToPlain(partitionIndex, "detach");
         squashPartitionForce(partitionIndex);
 
         // To check that partition is squashed, get the next partition and
@@ -6281,14 +6288,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void compactPartitionToPlain(int partitionIndex, String reason) {
         final PartitionGeometry geometry = getGeometry();
         while (geometry.isComposite(partitionIndex)) {
-            if (compactPhysicalPartition(partitionIndex, false, Long.MAX_VALUE) == COMPACTION_NONE) {
-                final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                throw CairoException.critical(0)
-                        .put("cannot compact composite partition ahead of ").put(reason)
-                        .put(" [table=").put(tableToken.getTableName())
-                        .put(", partition=").put(formatPartitionForTimestamp(partitionTs, txWriter.getPartitionNameTxn(partitionIndex)))
-                        .put(']');
+            if (compactPhysicalPartition(partitionIndex, false, Long.MAX_VALUE) != COMPACTION_NONE) {
+                continue;
             }
+            // MAKE-PLAIN is the only one of the three that can decline for a reason a retry does not
+            // clear on its own: a reader still resolving the geometry record this shape came from.
+            // REWRITE reaches the same plain shape by copying into a directory no reader has ever
+            // heard of, so it is never in that reader's way - fall back to it rather than fail an
+            // operation the caller cannot proceed without.
+            if (compactPartition(partitionIndex)) {
+                continue;
+            }
+            final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
+            throw CairoException.critical(0)
+                    .put("cannot compact composite partition ahead of ").put(reason)
+                    .put(" [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(formatPartitionForTimestamp(partitionTs, txWriter.getPartitionNameTxn(partitionIndex)))
+                    .put(']');
         }
     }
 
@@ -8329,7 +8345,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Unlike the reference design this is ported from, there is no "neighbours in the global piece list"
      * condition to check separately - a partition's pieces ARE the global list for that partition, so two
      * pieces that are ordinal-adjacent are automatically list-adjacent too. See
-     * PARTITION_COMPACTION_state.md for the corrections this port required.
+     * PARTITION_COMPACTION.md Sec.5 for the rule this port implements.
      *
      * @return true when a run was folded and a transaction committed
      */
@@ -8435,6 +8451,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         commitTxWriterAndPublishPendingPostingSealPurges();
         return true;
+    }
+
+    /**
+     * Folds every composite partition back to the ordinary, single-piece-at-row-0 shape when merge-append
+     * is switched OFF, each in its own transaction, before this writer processes a single row.
+     * <p>
+     * The flag guards the WRITE path only - {@link O3PartitionJob} dispatches to its composite handler
+     * behind it - but a composite partition on disk is a fact, not a setting. An operator who turns the
+     * flag on, ingests, then reverts it (production defaults to off, so reverting IS the default state)
+     * leaves directories the legacy native merge cannot read: it takes each column file as one flat
+     * {@code [0, liveRows)} range from row 0, while a composite directory can hold dead space at row 0
+     * and live rows above the live count. That is silent wrong data.
+     * <p>
+     * The constructor is the one point where no rows are in flight for either a WAL or a non-WAL table,
+     * and the flag is not reloadable, so a flip always brings a fresh writer through here. Every write
+     * path below can then rely on one invariant instead of guarding itself: with merge-append off, a
+     * writer never sees a composite partition.
+     */
+    private void foldCompositePartitionsWhenMergeAppendDisabled() {
+        if (configuration.isO3PartitionMergeAppendEnabled() || !PartitionBy.isPartitioned(partitionBy)) {
+            return;
+        }
+        int foldedCount = 0;
+        boolean lastPartitionFolded = false;
+        // Partition indices never shift here: compactPartitionToPlain forbids MOVE-TAIL, the one outcome
+        // that would insert a sibling partition.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (!txWriter.isPartitionComposite(i)) {
+                continue;
+            }
+            LOG.info().$("folding composite partition, merge-append is disabled [table=").$(tableToken)
+                    .$(", partition=").$ts(timestampDriver, txWriter.getPartitionTimestampByIndex(i))
+                    .I$();
+            compactPartitionToPlain(i, "merge-append being disabled");
+            lastPartitionFolded |= i == n - 1;
+            foldedCount++;
+        }
+        if (foldedCount == 0) {
+            return;
+        }
+        if (lastPartitionFolded) {
+            // It was left closed while it was composite - see openLastPartitionAndSetAppendPosition -
+            // so reposition it for the in-place append it can now take.
+            closeActivePartition(false);
+            openLastPartition();
+        }
+        processPartitionRemoveCandidates();
     }
 
     /**
@@ -9893,8 +9956,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * MOVE-TAIL (PARTITION_COMPACTION.md Sec.5, ported to this branch's classic-split machinery instead of
-     * the reference's hardlink/partitionTop scheme - see PARTITION_COMPACTION_state.md). Leaves the clean
-     * front's directory completely untouched and copies only the tail pieces into a brand new sibling
+     * the reference's hardlink/partitionTop scheme). Leaves the clean front's directory completely
+     * untouched and copies only the tail pieces into a brand new sibling
      * {@code attachedPartitions} entry. Declines (returns {@link #COMPACTION_NONE}) when there is nothing
      * useful to move: fewer than two pieces, the first piece does not start at row 0 (JOIN already ran, so
      * a still-nonzero first offset means the whole partition was relocated wholesale and there is no clean
@@ -15283,7 +15346,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 || blockRows > Integer.MAX_VALUE
                 || txWriter.getLagRowCount() != 0
                 || lastPartitionTimestamp == Long.MIN_VALUE
-                || isLastPartitionParquet()
+                // Composite as well as parquet: this parks the block above the last partition's live
+                // rows, which is exactly the file region a composite directory's relocated piece owns.
+                // Only reachable with the flag off (the flag-on early return above), i.e. on a table
+                // whose composite partitions predate the revert.
+                || isLastPartitionAppendBlocked()
                 || !isCommitPlainInsert()
                 || txWriter.getMaxTimestamp() > blockMin
                 || txWriter.getPartitionTimestampByTimestamp(blockMin) != lastPartitionTimestamp

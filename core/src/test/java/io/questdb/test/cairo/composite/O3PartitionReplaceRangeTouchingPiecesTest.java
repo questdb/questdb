@@ -42,7 +42,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 /**
  * Regression lock for the "can two composite pieces share a boundary timestamp" question raised while
- * auditing {@code TableWriter.moveTailToFreshPartition} (see PARTITION_COMPACTION_state.md). Two adjacent
+ * auditing {@code TableWriter.moveTailToFreshPartition}. Two adjacent
  * pieces sharing a boundary value would be genuinely ambiguous - {@code O3CompositeMergeStrategy}'s piece
  * range check is inclusive on both ends ({@code tsLo <= ts <= tsHi}) - and {@code findPieceContaining}
  * (used to resolve a REPLACE RANGE commit's own bounds to a piece, {@code O3PartitionJob.java:270-278})

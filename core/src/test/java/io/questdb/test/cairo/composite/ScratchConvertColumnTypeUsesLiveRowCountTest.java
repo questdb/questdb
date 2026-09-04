@@ -34,7 +34,7 @@ import org.junit.Test;
  * TableWriter.changeColumnType's "open new column files" block positions the CONVERTED column's append
  * memory at {@code txWriter.getTransientRowCount()} - the partition's LIVE row count - instead of lifting
  * it to {@code E} (the physical extent) via {@code getLastPartitionFileRowCount(...)}, the way every other
- * analogous site does (section 14 of COMPOSITE_PARTITION_STATE.md), and the way the sibling method
+ * analogous site does, and the way the sibling method
  * {@code changeSymbolCapacity} does it by skipping the reopen entirely behind
  * {@code !isLastPartitionAppendBlocked()}.
  * <p>

@@ -38,7 +38,7 @@ import java.io.Closeable;
 
 /**
  * Codec and I/O for {@code _geometry.<generation>}, the per-PHYSICAL-PARTITION geometry file that lives
- * inside the partition's own directory. See {@code PARTITION_GEOMETRY.md}.
+ * inside the partition's own directory. See {@code COMPOSITE_PARTITIONS.md}.
  * <p>
  * The file is APPEND-ONLY and every record is a FULL SNAPSHOT of the physical partition's geometry, not
  * a delta: a reader seeks to the one offset {@code _txn} publishes and is done, with no replay and no

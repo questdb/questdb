@@ -893,6 +893,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         super.setFuzzProperties(rnd);
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, fsAllowsMixedIO);
         node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1 + rnd.nextLong(engine.getConfiguration().getWalSegmentRolloverRowCount()));
+        // Production ships this OFF, the test defaults (Overrides) turn it ON. A 50/50 coin here keeps
+        // both configurations fuzzed: with it ON the table takes no WAL lag and tryFastAppendInOrderBlock
+        // returns before its body, so those two paths - both load-bearing on a default deployment - are
+        // only reached by the runs that draw false.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, rnd.nextBoolean());
         setRndPartitionCompactionProperties(rnd);
     }
 }
