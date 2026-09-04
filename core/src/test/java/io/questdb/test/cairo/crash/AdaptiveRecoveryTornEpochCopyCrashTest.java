@@ -101,6 +101,31 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
     }
 
     /**
+     * GREEN: a tampered {@code _meta.epoch} is rejected and recovery falls back safely.
+     * <p>
+     * The other three modes damage {@code _txn.epoch}; this one damages {@code _meta.epoch}, which no
+     * other test touches.
+     * <p>
+     * <b>What it does NOT reach, deliberately recorded:</b> this was written to exercise
+     * {@code RecoveryCoordinator}'s {@code epochMetadata.getTableId() != token.getTableId()} guard,
+     * which the coverage pass on PR #7411 found unreached. It does not get there. Editing the tableId
+     * also invalidates the {@link io.questdb.cairo.DurableEpochManifest} checksum -- the manifest
+     * covers all three payloads -- so the generation is rejected at the checksum, several steps
+     * earlier, and the guard is only ever evaluated against the untampered older generation, where the
+     * ids match. Verified with JaCoCo: the guard's condition line is covered, its {@code return false}
+     * is not.
+     * <p>
+     * Reaching that guard needs a manifest-CONSISTENT forgery: a {@code _meta.epoch} carrying a
+     * foreign tableId whose manifest checksum has been recomputed to match. Worth doing -- an epoch
+     * that loads cleanly but belongs to another table is worse than any torn copy, because nothing
+     * downstream distrusts it -- but it is a different piece of work from byte corruption.
+     */
+    @Test
+    public void testRecoveryFallsBackFromTamperedMetaEpoch() throws Exception {
+        assertTornCopyHandledSafely(TornMode.TAMPERED_META_EPOCH);
+    }
+
+    /**
      * GREEN (the fix): a STALE {@code _txn.epoch} whose {@code seqTxn} does not match the {@code _snapshot}
      * marker (the anchor trio disagree) is rejected by the seqTxn cross-check and skipped.
      */
@@ -237,7 +262,8 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
     private enum TornMode {
         TRUNCATE_TXN_EPOCH_TO_ZERO,
         CORRUPT_TXN_EPOCH_BODY,
-        MANIFEST_SEQTXN_MISMATCH
+        MANIFEST_SEQTXN_MISMATCH,
+        TAMPERED_META_EPOCH
     }
 
     private void tornByMode(TableToken tt, TornMode mode) {
@@ -253,6 +279,33 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractCairoTest {
                         Assert.assertTrue("truncate _txn.epoch to 0", ff.truncate(fd, 0));
                     } finally {
                         ff.close(fd);
+                    }
+                    break;
+                }
+                case TAMPERED_META_EPOCH: {
+                    // Patch the tableId field inside _meta.epoch. NOTE this also invalidates the
+                    // DurableEpochManifest checksum (it covers all three payloads), so what this
+                    // actually exercises is manifest rejection of a tampered _meta.epoch -- not the
+                    // tableId guard itself. See the test's javadoc.
+                    p.of(engine.getConfiguration().getDbRoot()).concat(tt)
+                            .concat(TableUtils.META_FILE_NAME).put(TableUtils.EPOCH_COPY_SUFFIX).put('.').put(1);
+                    Assert.assertTrue("the _meta.epoch must exist", ff.exists(p.$()));
+                    final long fdm = ff.openRW(p.$(), engine.getConfiguration().getWriterFileOpenOpts());
+                    Assert.assertTrue("must open _meta.epoch", fdm > 0);
+                    try {
+                        final long buf = io.questdb.std.Unsafe.malloc(Integer.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                        try {
+                            Assert.assertEquals(Integer.BYTES,
+                                    ff.read(fdm, buf, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID));
+                            final int original = io.questdb.std.Unsafe.getUnsafe().getInt(buf);
+                            io.questdb.std.Unsafe.getUnsafe().putInt(buf, original + 1000);
+                            Assert.assertEquals(Integer.BYTES,
+                                    ff.write(fdm, buf, Integer.BYTES, TableUtils.META_OFFSET_TABLE_ID));
+                        } finally {
+                            io.questdb.std.Unsafe.free(buf, Integer.BYTES, io.questdb.std.MemoryTag.NATIVE_DEFAULT);
+                        }
+                    } finally {
+                        ff.close(fdm);
                     }
                     break;
                 }
