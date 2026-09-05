@@ -446,7 +446,6 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
 
     @Test
     public void testKeyedStringAggGroupByOuter() throws Exception {
-        Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (category SYMBOL, item STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -638,7 +637,6 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
 
     @Test
     public void testNotKeyedStringAggGroupByOuter() throws Exception {
-        Assume.assumeFalse(enableParallelGroupBy);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (item STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE rates (min_len INT, rate DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
