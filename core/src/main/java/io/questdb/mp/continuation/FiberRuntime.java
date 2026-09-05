@@ -42,6 +42,7 @@ public final class FiberRuntime {
     public static final int NO_WORKER = -1;
     private static final long ADMISSION_OPEN = Long.MIN_VALUE;
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
+    private static final long DRAIN_TIME_BUDGET_NANOS = 2_000_000L;
     // Bound global-injection starvation under continuous local work without probing the shared
     // MPMC queue on every selection. The countdown measures successful selections, not time; 61
     // also leaves room for a global probe within the default mount budget of 64.
@@ -405,13 +406,26 @@ public final class FiberRuntime {
             return 0;
         }
         int attempts = 0;
+        long drainStartNanos = 0;
         while (attempts < attemptBudget) {
             final Fiber fiber = selectDetached();
             if (fiber == null) {
                 break;
             }
+            if (attempts == 0) {
+                drainStartNanos = System.nanoTime();
+            }
             attempts++;
-            processSelected(fiber, null, false);
+            final int processResult = process(fiber, false, null);
+            // Capture the yield reason before finalization can republish the fiber to another carrier.
+            final boolean isCooperativeYield = processResult == PROCESS_OWNED
+                    && fiber.getYieldReason() == Fiber.YIELD_COOPERATIVE;
+            if (processResult != PROCESS_TERMINATED) {
+                finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED, null);
+            }
+            if (isCooperativeYield && System.nanoTime() - drainStartNanos >= DRAIN_TIME_BUDGET_NANOS) {
+                break;
+            }
         }
         if (attempts == attemptBudget && hasQueuedWork()) {
             budgetExhaustionCount.increment();
@@ -1420,6 +1434,8 @@ public final class FiberRuntime {
                 finishFiberRetirement(fiber);
                 hasFiberOwnership = false;
                 finalizeOutcome(outcome);
+            } else if (fiber.getYieldReason() == Fiber.YIELD_COOPERATIVE) {
+                fiber.publishCooperativeYield();
             } else if (fiber.getYieldReason() == Fiber.YIELD_WAIT) {
                 fiber.publishWaiting();
             } else {

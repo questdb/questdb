@@ -47,6 +47,7 @@ import io.questdb.mp.continuation.TimerShards;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.datetime.NanosecondClock;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.tasks.GroupByLongTopKTask;
 import io.questdb.tasks.GroupByMergeShardTask;
@@ -60,6 +61,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigurationListener, FiberRuntimeQuiesceListener, QuietCloseable {
+    public static final long OWNER_YIELD_UNSET = Long.MIN_VALUE;
+    private static final long OWNER_HELP_YIELD_INTERVAL_NANOS = 1_000_000L;
     private static final long PUBLICATION_OPEN = Long.MIN_VALUE;
     private static final long PUBLICATION_PERMIT_MASK = Long.MAX_VALUE;
     private static final int QUIESCE_DRAINED = 3;
@@ -71,6 +74,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     private final FiberTaskPool<GroupByLongTopKFiberTask> longTopKTaskPool;
     private final FiberTaskPool<GroupByMergeShardFiberTask> mergeShardTaskPool;
     private final MessageBus messageBus;
+    private final NanosecondClock nanosecondClock;
     private final AtomicLong progressVersion = new AtomicLong();
     private final FiberEventWaitQueue progressWaitQueue = new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
     private final AtomicLong publicationAdmission = new AtomicLong(PUBLICATION_OPEN);
@@ -86,6 +90,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         // Stop each batch after it reaches one configured-max-frame's row count.
         this.batchRowBudget = engine.getConfiguration().getSqlPageFrameMaxRows();
         this.messageBus = messageBus;
+        this.nanosecondClock = engine.getConfiguration().getNanosecondClock();
         this.runtime = runtime;
         this.timerClock = engine.getConfiguration().getMillisecondClock();
         this.timerIntervalMillis = Math.max(1, engine.getConfiguration().getQueryContinuationWakeIntervalMillis());
@@ -131,6 +136,18 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
             failure = Misc.freeBestEffort(failure, vectorAggregateTaskPool);
             CairoException.rethrowCleanupFailure(failure);
         }
+    }
+
+    /**
+     * Whether the calling owner runs on a mounted Fiber in FIBER mode, i.e. whether it can park
+     * or yield cooperatively. Unlike {@link #isOwnerParkable()}, this ignores the dispatcher state:
+     * a cooperative yield goes through the Fiber runtime and stays valid while the dispatcher
+     * quiesces.
+     */
+    public static boolean isFiberOwner() {
+        return Fiber.isMounted()
+                && SuspensionScope.isFiberMode()
+                && Fiber.current() != null;
     }
 
     public boolean awaitProgress(
@@ -190,6 +207,47 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         );
         return switch (reason) {
             case FiberWaitCoordinator.REASON_PROGRESS, FiberWaitCoordinator.REASON_TIMER -> true;
+            case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
+            default -> throw new IllegalStateException(
+                    "unexpected query parallel drain wait reason [reason=" + reason + ']'
+            );
+        };
+    }
+
+    /**
+     * Waits for drain progress while the owner breaker is still healthy. Cancellation only wakes
+     * the Fiber; it never escapes this must-complete drain. The caller must propagate the observed
+     * cancellation to the shared task breaker, then use the non-cancellable overload so an already
+     * cancelled signal cannot make the drain spin.
+     */
+    public boolean awaitProgressWhileDraining(
+            AsyncQueryProgressState progressState,
+            long observedVersion,
+            long observedGlobalVersion,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        FiberCancellationSignal cancellationSignal = SuspensionScope.getCancellationSignal();
+        long cancellationSignalGeneration = SuspensionScope.getCancellationSignalGeneration();
+        if (cancellationSignal == null) {
+            final CancellationBinding cancellationBinding = SuspensionScope.getCancellationBindingScratch();
+            circuitBreaker.copyCancelledFlagTo(cancellationBinding);
+            final AtomicBoolean cancelledFlag = cancellationBinding.getFlag();
+            if (cancelledFlag instanceof FiberCancellationSignal signal) {
+                cancellationSignal = signal;
+                cancellationSignalGeneration = cancellationBinding.getGeneration(cancelledFlag);
+            }
+        }
+        final int reason = awaitProgress(
+                progressState,
+                observedVersion,
+                observedGlobalVersion,
+                cancellationSignal,
+                cancellationSignalGeneration
+        );
+        return switch (reason) {
+            case FiberWaitCoordinator.REASON_CANCEL,
+                    FiberWaitCoordinator.REASON_PROGRESS,
+                    FiberWaitCoordinator.REASON_TIMER -> true;
             case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
             default -> throw new IllegalStateException(
                     "unexpected query parallel drain wait reason [reason=" + reason + ']'
@@ -441,6 +499,27 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         }
     }
 
+    /**
+     * Throttles the cooperative yield of a Fiber owner that helps with its own unpublished work,
+     * so the owner gives the carrier up at most once per interval. Start with
+     * {@link #OWNER_YIELD_UNSET} and pass the returned value back on every call.
+     */
+    public long cooperateFiberOwner(long lastOwnerYieldNanos) {
+        final long now = nanosecondClock.getTicks();
+        if (lastOwnerYieldNanos == OWNER_YIELD_UNSET) {
+            return now;
+        }
+        final long elapsed = now - lastOwnerYieldNanos;
+        if (elapsed < 0) {
+            return now;
+        }
+        if (elapsed >= OWNER_HELP_YIELD_INTERVAL_NANOS) {
+            Fiber.yieldCooperatively();
+            return nanosecondClock.getTicks();
+        }
+        return lastOwnerYieldNanos;
+    }
+
     @TestOnly
     public int getLatestByCreatedTaskCount() {
         return latestByTaskPool.getCreatedCount();
@@ -468,9 +547,7 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
     public boolean isOwnerParkable() {
         return !isClosed
                 && quiesceState.get() == QUIESCE_OPEN
-                && Fiber.isMounted()
-                && SuspensionScope.isFiberMode()
-                && Fiber.current() != null;
+                && isFiberOwner();
     }
 
     @Override

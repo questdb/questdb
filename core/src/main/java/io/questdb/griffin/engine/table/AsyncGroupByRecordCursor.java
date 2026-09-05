@@ -255,11 +255,18 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         int reclaimed = 0;
         int total = 0;
         int processedCount = 0; // used for work stealing decisions
+        final boolean isFiberOwner = dispatcher != null
+                && !publicationPermit
+                && QueryParallelFiberDispatcher.isFiberOwner();
+        long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
         try {
             for (int shardIndex = 0; shardIndex < NUM_SHARDS; shardIndex++) {
                 if (dispatcher != null && !publicationPermit) {
                     circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    if (isFiberOwner) {
+                        lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
+                    }
                     final Map shard = atom.getDestShards().getQuick(shardIndex);
                     final DirectLongLongSortedList ownerList = atom.getLongTopKList(
                             -1,
@@ -279,7 +286,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (cursor < 0) {
                         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
-                        if (!isOwnerParkable && workStealingStrategy.shouldSteal(processedCount)) {
+                        if (workStealingStrategy.shouldSteal(processedCount)) {
+                            if (isOwnerParkable) {
+                                lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
+                            }
                             final Map shard = atom.getDestShards().getQuick(shardIndex);
                             final DirectLongLongSortedList ownerList = atom.getLongTopKList(-1, destList.getOrder(), destList.getCapacity());
                             shard.getCursor().longTopK(ownerList, longFunc);
@@ -330,7 +340,8 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     if (postAggregationDoneLatch.done(queuedCount)) {
                         break;
                     }
-                    if (circuitBreaker.checkIfTripped()) {
+                    final boolean isOwnerTripped = circuitBreaker.checkIfTripped();
+                    if (isOwnerTripped) {
                         postAggregationCircuitBreaker.cancel();
                     }
 
@@ -349,7 +360,19 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                             Os.pause();
                         }
                     } else if (isOwnerParkable) {
-                        if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
+                        final boolean isProgressObserved = isOwnerTripped
+                                ? dispatcher.awaitProgressWhileDraining(
+                                        progressState,
+                                        observedProgress,
+                                        observedGlobalProgress
+                                )
+                                : dispatcher.awaitProgressWhileDraining(
+                                        progressState,
+                                        observedProgress,
+                                        observedGlobalProgress,
+                                        circuitBreaker
+                                );
+                        if (!isProgressObserved) {
                             Os.pause();
                         }
                     } else {

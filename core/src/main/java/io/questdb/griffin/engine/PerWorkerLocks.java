@@ -192,15 +192,17 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
         }
         final SuspensionScope.Mode mode = SuspensionScope.getMode();
         if (mode == SuspensionScope.Mode.FIBER) {
-            final int fiberSlot = awaitSlot(
-                    slotStart,
-                    circuitBreaker instanceof SqlExecutionCircuitBreaker sqlCircuitBreaker
-                            ? sqlCircuitBreaker
-                            : null
-            );
+            final SqlExecutionCircuitBreaker sqlCircuitBreaker =
+                    circuitBreaker instanceof SqlExecutionCircuitBreaker sqlBreaker ? sqlBreaker : null;
+            final int fiberSlot = awaitSlot(slotStart, sqlCircuitBreaker);
             if (fiberSlot > -1) {
                 try {
-                    checkCircuitBreaker(circuitBreaker, statefulCircuitBreaker);
+                    // Cancellation can race with a grant; only the connection probe may be throttled here.
+                    if (sqlCircuitBreaker != null) {
+                        sqlCircuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                    } else {
+                        checkCircuitBreaker(circuitBreaker, statefulCircuitBreaker);
+                    }
                 } catch (Throwable th) {
                     releaseSlot(fiberSlot);
                     throw th;
@@ -216,8 +218,8 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                         .put("reducer slot wait could not suspend the mounted fiber")
                         .setInterruption(true);
             }
-            if (statefulCircuitBreaker != null) {
-                statefulCircuitBreaker.statefulThrowExceptionIfTripped();
+            if (sqlCircuitBreaker != null) {
+                sqlCircuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
             }
             throw CairoException.nonCritical().put("query aborted").setInterruption(true);
         }
