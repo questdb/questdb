@@ -1,0 +1,32 @@
+name: PR title rules
+
+# The tests for the title rules and for the reporting, kept out of pr_title.yml
+# for two reasons. They must not gate the verdict: run as a step of the job that
+# posts the status, a failing or flaky test stops check.js from running at all,
+# the required "PR title" status is never posted, and the pull request sits behind
+# a check that is merely missing. And they are only interesting when the checker
+# itself changes, so a path filter keeps a second near-identical row off every
+# pull request that has nothing to do with them.
+on:
+  pull_request:
+    paths:
+      - 'ci/validate-pr-title/**'
+      - '.github/workflows/pr_title.yml'
+      - '.github/workflows/pr_title_rules.yml'
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+      # No setup-node step: the runner ships a current Node, and nothing under
+      # ci/validate-pr-title depends on anything outside the standard library.
+      - name: Test the title rules and the reporting
+        working-directory: ./ci/validate-pr-title
+        run: |
+          node validate.test.js
+          node check.test.js
