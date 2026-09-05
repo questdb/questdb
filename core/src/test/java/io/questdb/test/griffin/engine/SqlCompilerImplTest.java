@@ -3288,7 +3288,7 @@ public class SqlCompilerImplTest extends AbstractCairoTest {
 
         assertQuery("alter table x convert to parquet list '1970-01-01' to '1970-01-02'")
                 .ddl(ddl)
-                .fails(22, "'partition' expected");
+                .fails(22, "'partition' or 'partitions' expected");
     }
 
     @Test
