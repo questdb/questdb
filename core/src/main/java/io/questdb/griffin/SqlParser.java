@@ -6786,6 +6786,13 @@ public class SqlParser {
                             .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
                 }
 
+                if (m.getSubsample() != null) {
+                    // SUBSAMPLE selects rows from the whole query result. Incremental refresh evaluates
+                    // the query once per refresh interval, so it cannot reproduce that selection.
+                    throw SqlException.position(m.getSubsamplePosition())
+                            .put("SUBSAMPLE on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
                 ObjList<QueryColumn> columns = m.getColumns();
                 QueryColumn windowFuncColumn = null;
                 for (int i = 0, n = columns.size(); i < n; i++) {

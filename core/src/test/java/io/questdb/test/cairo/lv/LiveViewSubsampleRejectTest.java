@@ -176,8 +176,10 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
 
     /**
      * Materialized views are the other incremental surface these functions must not reach. The
-     * window form is refused as a base-table window function; the SUBSAMPLE clause is refused
-     * because a matview requires an aggregation interval, which SUBSAMPLE never supplies.
+     * matview validator refuses the window form as a base-table window function and refuses the
+     * SUBSAMPLE clause outright. The clause composes with SAMPLE BY, so the sampling-interval check
+     * cannot stand in for that reject, and it desugars into a window function only after the
+     * validator has run, so the window-function reject cannot either.
      */
     @Test
     public void testMaterializedViewsRejectSubsampleFamily() throws Exception {
@@ -191,12 +193,15 @@ public class LiveViewSubsampleRejectTest extends AbstractLiveViewTest {
                         "window function on base table is not supported for materialized views: base"
                 );
             }
+            // The aggregate is aliased to v so every method spelling resolves on the completed
+            // projection, and SAMPLE BY supplies the interval a matview requires. The SUBSAMPLE clause
+            // is therefore the only thing the matview validator can refuse.
             for (String method : ALL_SUBSAMPLE_METHODS) {
                 assertException(
-                        "CREATE MATERIALIZED VIEW mv REFRESH IMMEDIATE AS (SELECT ts, v FROM base SUBSAMPLE " +
-                                method + ") TIMESTAMP(ts) PARTITION BY DAY",
-                        50,
-                        "materialized view query requires a sampling interval"
+                        "CREATE MATERIALIZED VIEW mv REFRESH IMMEDIATE AS (SELECT ts, avg(v) v FROM base SAMPLE BY 1h SUBSAMPLE " +
+                                method + ") PARTITION BY DAY",
+                        93,
+                        "SUBSAMPLE on base table is not supported for materialized views: base"
                 );
             }
         });
