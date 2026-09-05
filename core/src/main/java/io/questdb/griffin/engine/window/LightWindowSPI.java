@@ -25,11 +25,13 @@
 package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.RecordArray;
+import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import org.jetbrains.annotations.NotNull;
 
 final class LightWindowSPI implements WindowSPI {
     private final DirectLongList baseRowIds;
@@ -60,6 +62,13 @@ final class LightWindowSPI implements WindowSPI {
         narrowChain.recordAtRowIndex(lookupRecordNarrow, rowIndex);
         lookupRecord.of(lookupRecordBase, lookupRecordNarrow, rowIndex);
         return lookupRecord;
+    }
+
+    @Override
+    public void putArray(long rowIndex, int chainColIdx, @NotNull ArrayView value) {
+        int encoded = sourceMap.getQuick(chainColIdx);
+        assert encoded < 0;
+        narrowChain.putArrayAtRowIndex(rowIndex, -encoded - 1, value);
     }
 
     void of(RecordCursor baseCursor) {
