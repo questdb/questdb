@@ -51,7 +51,12 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
+import io.questdb.cairo.lv.LiveViewCompiledPlan;
+import io.questdb.cairo.lv.LiveViewPartitionKeyBinding;
+import io.questdb.cairo.lv.LiveViewPartitionKeyClassifier;
+import io.questdb.cairo.lv.LiveViewPartitionKeyDecision;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
 import io.questdb.cairo.sql.Function;
@@ -10570,6 +10575,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         ObjList<Function> functions = new ObjList<>();
         final ObjList<String> checkpointFactorySignatures = executionContext.isLiveViewCompile() ? new ObjList<>() : null;
+        // The one thing that decides how a live view keys a SYMBOL partition term, shared by
+        // every site below that builds a key: this method's two branches, the checkpoint key
+        // projector, and - through the compiled factory - the anchor window the refresh job
+        // builds later. Null for an ordinary query, which keys a SYMBOL verbatim.
+        //
+        // The translator comes off the execution context, which only a live view's own
+        // refresh/repair compile arms (LiveViewRefreshJob.compileViewSelect). It has to be
+        // known here, at construction, because the classifier's translator field is final -
+        // every term it admits keys through the resolved string when the context carries none
+        // (CREATE-time validation and EXPLAIN compile on the caller's own plain context), and
+        // through the translator's id once one is bound.
+        //
+        // The same context carries the view's persisted key decision, which narrows what this
+        // build's classifier may admit down to what the view was created keying as an id. It
+        // resolves to column indexes here because this is where the window input metadata the
+        // persisted names address lives.
+        final LiveViewPartitionKeyClassifier lvPartitionKeyClassifier = !executionContext.isLiveViewCompile() ? null
+                : new LiveViewPartitionKeyClassifier(
+                        executionContext.getLivePartitionKeyTranslator(),
+                        LiveViewPartitionKeyDecision.admittedSourceColumns(
+                                executionContext.getLivePartitionKeyDecision(),
+                                baseMetadata
+                        )
+                );
         // One entry per SELECT-list index: the normalized window that index's function was
         // compiled under, or null for a non-window column and for a window shape the Map
         // group compiler does not admit. Null as a whole for a live-view compile - see the
@@ -10577,6 +10606,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<WindowMapSpec> windowMapSpecs = executionContext.isLiveViewCompile() ? null : new ObjList<>();
         ObjList<WindowFunction> naturalOrderFunctions = null;
         ObjList<Function> partitionByFunctions = null;
+        LiveViewCheckpointKeyProjector checkpointKeyProjector = null;
         LiveViewCheckpointRowsPlan checkpointRowsPlan = null;
         // The bound window Map groups own a map each, so they are built into a local the
         // outer catch can free: the factory takes ownership only once its constructor has
@@ -10618,26 +10648,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
                         final int partitionByCount = partitionByFunctions.size();
-                        // SYMBOL partition columns under a live-view refresh must
-                        // route through the resolved STRING because the source
-                        // record yields WAL-segment-local symbol indices that
-                        // differ across cycles for the same string value.
-                        final boolean lvCompile = executionContext.isLiveViewCompile();
-                        BitSet lvWriteSymbolAsString = null;
+                        // A live view's SYMBOL partition column keys through the resolved
+                        // STRING unless a dictionary backs it, because the source record
+                        // yields WAL-segment-local symbol indices that differ across cycles
+                        // for the same string value. The classifier - not this loop - is
+                        // what says which, so the five other sites that key the same term
+                        // reach the same answer.
+                        final LiveViewPartitionKeyBinding keyBinding =
+                                new LiveViewPartitionKeyBinding(lvPartitionKeyClassifier, keyTypes);
                         for (int j = 0; j < partitionByCount; j++) {
-                            int type = partitionByFunctions.getQuick(j).getType();
-                            if (lvCompile && ColumnType.isSymbol(type)) {
-                                if (lvWriteSymbolAsString == null) {
-                                    lvWriteSymbolAsString = new BitSet();
-                                }
-                                lvWriteSymbolAsString.set(j);
-                                keyTypes.add(ColumnType.STRING);
-                            } else {
-                                keyTypes.add(type);
-                            }
+                            keyBinding.addClassifiedTerm(j, partitionByFunctions.getQuick(j), baseMetadata);
                         }
                         entityColumnFilter.of(partitionByCount);
-                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter, lvWriteSymbolAsString);
+                        partitionBySink = keyBinding.compileKeySink(configuration, asm, keyTypes, entityColumnFilter);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -10713,12 +10736,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // may share one partition map, which is what the shadow plan built
                         // after this loop works out.
                         //
-                        // Not for a live-view compile. A live-view function keeps its
-                        // accumulator in its own private partition map, which
-                        // LiveViewWindow.processRow resets on an anchor cross and the
-                        // checkpoint framework freezes and restores. Binding that function
-                        // into a group leaves the private map closed, so both would then
-                        // drive state nothing maintains.
+                        // Not for a live-view compile. A compatible live-view function is
+                        // already owned by LiveViewWindow, through the plan built a few
+                        // lines below this loop, and binding it to a second generic owner
+                        // would create two sources of truth for one accumulator. Unifying
+                        // the two owners is a later refactor, not an implicit side effect
+                        // of compiling a second plan beside the first.
                         if (windowMapSpecs != null) {
                             windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
                                     executionContext.getWindowContext(),
@@ -10783,7 +10806,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // For live-view compiles, collect the subset of window functions the ANCHOR
                 // runtime dispatches resetPartition to. The membership rule is stated in
                 // full at the collection site below.
-                final boolean lvCompile = executionContext.isLiveViewCompile();
+                //
+                // Read off the classifier rather than the context, so that everything below
+                // reached under this flag has a classifier to hand to the sites that need
+                // one - the two are created together or not at all.
+                final boolean lvCompile = lvPartitionKeyClassifier != null;
                 ObjList<WindowFunction> anchorableWindowFunctions = null;
                 for (int i = 0, size = functions.size(); i < size; i++) {
                     Function func = functions.getQuick(i);
@@ -10851,14 +10878,40 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // into a local the outer catch can free: the factory only takes ownership
                 // once its constructor has returned.
                 if (lvCompile) {
-                    checkpointRowsPlan = LiveViewCheckpointFunctionCompiler.rowsPlan(
+                    // The identity every checkpoint-capable function shares, compiled once
+                    // and handed to everything that has to name a key. The ROWS plan takes
+                    // it when its own functions partition that way, which is every view
+                    // that has one identity at all.
+                    checkpointKeyProjector = LiveViewCheckpointFunctionCompiler.sharedKeyProjector(
                             functions,
                             columns,
                             baseMetadata,
+                            lvPartitionKeyClassifier,
                             configuration,
                             asm,
                             functionParser,
                             executionContext
+                    );
+                    checkpointRowsPlan = LiveViewCheckpointFunctionCompiler.rowsPlan(
+                            functions,
+                            columns,
+                            baseMetadata,
+                            checkpointKeyProjector,
+                            lvPartitionKeyClassifier,
+                            configuration,
+                            asm,
+                            functionParser,
+                            executionContext
+                    );
+                    // Two classifications of one PARTITION BY meet here for the first time:
+                    // the key types each window function kept from the loop above, and the
+                    // projector's own. They cannot disagree while both come from the shared
+                    // classifier - that is the point of it - so this compares them for the
+                    // day one of them stops.
+                    LiveViewCheckpointFunctionCompiler.validatePartitionKeyAgreement(
+                            functions,
+                            columns,
+                            checkpointKeyProjector
                     );
                 }
                 // The groups this query's functions form. Non-owning references into
@@ -10876,15 +10929,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata,
                         functions,
                         anchorableWindowFunctions,
+                        lvPartitionKeyClassifier,
+                        checkpointKeyProjector,
                         lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null,
                         checkpointRowsPlan,
+                        // The fused window-state plan holds only non-owning references into
+                        // `functions`, so unlike the ROWS plan it needs no local the outer
+                        // catch has to free.
+                        lvCompile
+                                ? LiveViewCheckpointFunctionCompiler.windowStatePlan(
+                                functions,
+                                anchorableWindowFunctions,
+                                baseMetadata
+                        )
+                                : null,
                         windowAccumulatorPlans,
                         windowMapStates
                 );
+                checkpointKeyProjector = null;
                 checkpointRowsPlan = null;
                 windowMapStates = null;
                 return windowFactory;
             } else {
+                if (executionContext.isLiveViewCompile()) {
+                    // Everything below compiles to one of the two cached window factories,
+                    // and LiveViewCompiledPlan.of turns both away - so a live view never
+                    // runs what this branch builds. This throws the reject that CREATE
+                    // would have reported anyway, moved ahead of the build.
+                    //
+                    // It has to move because of what the branch would build under the
+                    // live-view partition-key classifier. The streaming branch above parses
+                    // each PARTITION BY term against baseMetadata; this one parses it
+                    // against chainMetadata, which passes 1 and 2 below assemble so that
+                    // every column the factory must return sits at the front. A term's
+                    // column index therefore names a different column in the two branches,
+                    // and a key sink built here would bind the term to whatever base column
+                    // shares its chain ordinal. Both are SYMBOL, both translate, and the
+                    // view keys its rows through the wrong column's dictionary - in range
+                    // for that dictionary, so nothing downstream rejects it. Rejecting the
+                    // compile is what keeps that unreachable rather than dormant.
+                    throw SqlException.$(model.getModelPosition(), LiveViewCompiledPlan.CACHED_WINDOW_REJECT_MESSAGE);
+                }
                 factoryMetadata.clear();
                 Misc.freeObjListAndClear(functions);
             }
@@ -10969,11 +11054,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // compiler does not admit. The pair is what CachedWindowMapGroups reads to find
             // the spec of a function a sort group collected.
             //
-            // Not for a live-view compile. The guard is defensive - validateLiveViewFactory
-            // rejects at CREATE every shape that compiles to a cached factory - and it holds
-            // for the same reason the streaming path skips the capture: binding a live-view
-            // function into a group leaves closed the private partition map that
-            // LiveViewWindow and the checkpoint framework drive.
+            // Not for a live-view compile, for the same reason the streaming path skips it: a
+            // compatible live-view function is already owned by LiveViewWindow, and one
+            // accumulator may have one owner. The guard is also defensive -
+            // validateLiveViewFactory rejects at CREATE every shape that compiles to a cached
+            // factory.
             final boolean isGroupingCachedWindows = !executionContext.isLiveViewCompile();
             final ObjList<WindowFunction> cachedWindowSpecFunctions = isGroupingCachedWindows ? new ObjList<>() : null;
             final ObjList<WindowMapSpec> cachedWindowMapSpecs = isGroupingCachedWindows ? new ObjList<>() : null;
@@ -11004,27 +11089,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         partitionByRecord = new VirtualRecord(partitionByFunctions);
                         keyTypes.clear();
                         final int partitionByCount = partitionByFunctions.size();
-                        // SYMBOL partition columns under a live-view refresh must
-                        // route through the resolved STRING because the source
-                        // record yields WAL-segment-local symbol indices that
-                        // differ across cycles for the same string value.
-                        final boolean lvCompile = executionContext.isLiveViewCompile();
-                        BitSet lvWriteSymbolAsString = null;
+                        // No live-view classification here, and no SYMBOL rewrite: a
+                        // live-view compile is rejected at the head of this branch, which is
+                        // what keeps a key sink whose column indexes are chain indexes from
+                        // ever being built for one.
                         for (int j = 0; j < partitionByCount; j++) {
-                            int type = partitionByFunctions.getQuick(j).getType();
-                            if (lvCompile && ColumnType.isSymbol(type)) {
-                                if (lvWriteSymbolAsString == null) {
-                                    lvWriteSymbolAsString = new BitSet();
-                                }
-                                lvWriteSymbolAsString.set(j);
-                                keyTypes.add(ColumnType.STRING);
-                            } else {
-                                keyTypes.add(type);
-                            }
+                            keyTypes.add(partitionByFunctions.getQuick(j).getType());
                         }
                         entityColumnFilter.of(partitionByCount);
                         // create sink
-                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter, lvWriteSymbolAsString);
+                        partitionBySink = RecordSinkFactory.getInstance(configuration, asm, keyTypes, entityColumnFilter, null);
                     } else {
                         partitionByRecord = null;
                         partitionBySink = null;
@@ -11287,6 +11361,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             Misc.free(base);
             Misc.free(checkpointRowsPlan);
+            Misc.free(checkpointKeyProjector);
             Misc.freeObjList(windowMapStates);
             Misc.free(cachedWindowMapGroups);
             Misc.freeObjList(functions);
@@ -12527,9 +12602,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
             // serial: it supports neither page frames, filter stealing nor time frames, so no parallel
             // operator (async filter, parallel GROUP BY) ever clones or snapshots this projection.
-            // Enforce the invariant unconditionally rather than with an assert: -ea strips asserts in
-            // production, and a future page-frame-capable union must fail loudly here instead of shipping
-            // a stale, empty dictionary snapshot to a worker.
+            // Enforce the invariant unconditionally rather than with an assert. QuestDB's Docker,
+            // shell-script and AMI launchers pass -ea, so an assert would fire for them, but the
+            // Windows service wrapper passes none and an embedding is free to disable assertions -
+            // and a future page-frame-capable union must fail loudly for those too, instead of
+            // shipping a stale, empty dictionary snapshot to a worker.
             if (unionFactory.supportsPageFrameCursor()
                     || unionFactory.supportsFilterStealing()
                     || unionFactory.supportsTimeFrameCursor()) {

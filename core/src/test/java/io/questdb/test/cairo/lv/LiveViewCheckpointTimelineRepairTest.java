@@ -30,7 +30,9 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairState;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
@@ -48,6 +50,7 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.Chars;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -63,6 +66,8 @@ import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * The localized out-of-order repair publishes as a timeline range splice rather
@@ -80,6 +85,152 @@ import org.junit.Test;
  * walking it.
  */
 public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
+
+    @Test
+    public void testChainedRepairQualifiesEachFunctionIdentityOncePerProbe() throws Exception {
+        assertMemoryLeak(() -> {
+            final int functionCount = 32;
+            final StringBuilder createTable = new StringBuilder(
+                    "CREATE TABLE base (ts TIMESTAMP, sym SYMBOL"
+            );
+            for (int f = 0; f < functionCount; f++) {
+                createTable.append(", x").append(f).append(" LONG");
+            }
+            createTable.append(") TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute(createTable);
+
+            final StringBuilder createView = new StringBuilder(
+                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, sym"
+            );
+            for (int f = 0; f < functionCount; f++) {
+                createView.append(", sum(x").append(f).append(") OVER (")
+                        .append("PARTITION BY sym ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW")
+                        .append(") s").append(f);
+            }
+            createView.append(" FROM base");
+            execute(createView);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int commit = 1; commit <= 3; commit++) {
+                    setCurrentMicros(currentMicros + 200_000);
+                    final StringBuilder insert = new StringBuilder("INSERT INTO base VALUES ('")
+                            .append(timestamp(commit * 10)).append("', 'k'");
+                    for (int f = 0; f < functionCount; f++) {
+                        insert.append(", ").append(commit + f);
+                    }
+                    insert.append(')');
+                    execute(insert);
+                    drainWalQueue();
+                    drainJob(job);
+                    drainWalQueue();
+                }
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final ObjList<WindowFunction> functions = unwrapWindowFunctions(instance);
+                Assert.assertEquals(functionCount, functions.size());
+                final ObjList<LiveViewCheckpointTimelineEntry> entries = new ObjList<>();
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                writer.beginRepair(checkpointsDir, null, null, true)
+                ) {
+                    capture.collectBoundaries(ts(timestamp(10)), ts(timestamp(40)), entries);
+                    Assert.assertTrue(entries.size() >= 2);
+                    capture.capture(entries.getQuick(0), functions, instance.getAnchorWindow(), 1);
+                    capture.resetFunctionIdentityQualificationCountForTest();
+                    for (int f = 0; f < functions.size(); f++) {
+                        functions.getQuick(f).requireCheckpointFullScan();
+                    }
+                    capture.capture(entries.getQuick(1), functions, instance.getAnchorWindow(), 2);
+                    Assert.assertEquals(
+                            "each partition probe must perform one constant-time identity qualification",
+                            functionCount,
+                            capture.getFunctionIdentityQualificationCountForTest()
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testChainedRepairFreesItsPublishedShellsWhenTheChainCannotOpen() throws Exception {
+        // A chaining capture opens the published root below the repaired interval from
+        // inside the chain's constructor, which allocates four native-holding shells
+        // first. The metadata read that opens them is one the subsystem treats as
+        // recoverable - beginCheckpointTimelineRepair logs the failure and retires the
+        // timeline instead - so the throw is an expected outcome rather than a fatal
+        // one. A constructor that throws never publishes this, so the assignment in
+        // openChain leaves the chain null and the capture's close() frees nothing:
+        // without the constructor's own guard every failed chained repair strands the
+        // shells it had already allocated, for the lifetime of the process.
+        final AtomicBoolean isSuperblockOpenFailing = new AtomicBoolean();
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                // The superblock is the first file the chain opens and the only one it
+                // opens read-write, so this fails openPublished and leaves the timeline
+                // read that precedes it - which maps metadata segments read-only -
+                // untouched.
+                if (isSuperblockOpenFailing.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final ObjList<LiveViewCheckpointTimelineEntry> entries = new ObjList<>();
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration);
+                        Path checkpointsDir = checkpointsDir(instance);
+                        LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                writer.beginRepair(checkpointsDir, null, null, true)
+                ) {
+                    isSuperblockOpenFailing.set(true);
+                    try {
+                        // The interval starts above the first boundary, so the chain
+                        // resolves a predecessor and takes the branch that allocates.
+                        capture.collectBoundaries(ts(timestamp(30)), ts(timestamp(50)), entries);
+                        Assert.fail("a chain cannot open over an unreadable superblock");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+                    } finally {
+                        isSuperblockOpenFailing.set(false);
+                    }
+                    // capture.size() reads 0 here whether the chain threw or was never
+                    // opened at all - only capture() ever stages a boundary - so it
+                    // proves nothing. The entries the timeline read already handed back
+                    // do: collectBoundaries fills them from the read-only range scan and
+                    // calls openChain only afterwards, so a non-empty list places the
+                    // throw above the read, in the chain's constructor.
+                    final int boundaryCount = entries.size();
+                    Assert.assertTrue(
+                            "the timeline range read must complete before the chain opens",
+                            boundaryCount > 0
+                    );
+                    // That constructor is the only place this path opens the superblock
+                    // read-write, and it reaches the open only when the interval resolved
+                    // a predecessor - the branch that allocates the four shells. With the
+                    // fault lifted the identical call completes, which pins the failure
+                    // on the injected open rather than on a chain that could not have
+                    // opened either way.
+                    capture.collectBoundaries(ts(timestamp(30)), ts(timestamp(50)), entries);
+                    Assert.assertEquals(
+                            "the same interval must collect the same boundaries once the open succeeds",
+                            boundaryCount,
+                            entries.size()
+                    );
+                }
+            }
+        });
+    }
 
     // Fields of one snapshotted logical entry: key, root page reference, effective position.
     private static final int ENTRY_CHECKPOINT_ID = 1;
@@ -164,7 +315,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir, null, null)) {
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
                         Assert.assertTrue(
                                 "the capture must allocate above the orphan, not onto it",
                                 capture.getDataSegmentId() > orphanSegmentId
@@ -265,7 +416,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 ) {
                     final LiveViewCheckpointTimelineStoreWriter.RepairResult result;
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir, null, null)) {
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
                         Assert.assertEquals(0, capture.size());
                         result = publish(writer, capture, instance, ts(timestamp(31)), 3);
                     }
@@ -446,6 +597,331 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                             "2026-01-01T00:01:40.000000Z\ta\t34.0\n" +
                             "2026-01-01T00:01:50.000000Z\ta\t38.0\n" +
                             "2026-01-01T00:02:00.000000Z\ta\t42.0\n");
+        });
+    }
+
+    @Test
+    public void testEofLocalizedRepairSplicesInsteadOfTruncating() throws Exception {
+        // A localized repair whose influence reaches the end of the base table, which is
+        // what an anchored view takes on every correction inside an open segment and what
+        // a bounded RANGE view takes whenever its frame outruns the frontier. The frame
+        // here is three minutes wide, so a correction at 5s converges past 185s - well
+        // above the 120s frontier - and the plan leaves H at end-of-frame. The replacement
+        // then runs to positive infinity and the state the replay ends on is promoted,
+        // rather than the pre-repair runtime being restored over it.
+        //
+        // Such a repair truncated the timeline at R, and R is below every root the cadence
+        // sealed, so the truncate found no prefix to preserve and retired the lot - twelve
+        // roots for one correction, with the post-replay seal putting a single one back at
+        // the frontier. It splices instead. The replay reconstructs every live key - a
+        // RANGE frame at any row at or above R reaches no further back than L - so a root
+        // it re-versions describes the whole truth, and the ladder survives the repair
+        // that moved the output under it.
+        assertMemoryLeak(() -> {
+            createWideRangeView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+
+                appendAndRefresh(job, 5, 100);
+
+                Assert.assertEquals("no root sits below the change", 0, instance.getO3ResumeReplayRows());
+                // L saturates at the view boundary - R - W is below it - and H is
+                // end-of-frame, so this repair reads and re-emits the whole history. The
+                // cost it saves is not here; it is in the ladder it leaves behind.
+                Assert.assertEquals(13, instance.getO3ReplayScanRows());
+                Assert.assertEquals(13, instance.getO3BoundaryReplayRows());
+
+                final LongList after = snapshotTimeline(instance);
+                Assert.assertEquals(
+                        "the splice must neither drop a logical entry nor add one - the newest"
+                                + " root it kept already sits at the frontier the seal would stamp",
+                        before.size(),
+                        after.size()
+                );
+                Assert.assertEquals(
+                        "the splice is this repair's one and only timeline publication",
+                        generationBefore + 1,
+                        generation(instance)
+                );
+                Assert.assertEquals(
+                        "every root sits above C, so every root is one it re-versioned",
+                        HISTORY_COMMITS,
+                        instance.getCheckpointRepairRootsVersioned()
+                );
+
+                // Same logical keys, new root versions, and positions the replay derived
+                // as "durable rows below R plus rows emitted at or below this boundary" -
+                // nothing is below R here, so each root gains the one row the correction
+                // inserted underneath it.
+                for (int i = 0; i < HISTORY_COMMITS; i++) {
+                    assertNewRoot(before, after, i);
+                    Assert.assertEquals(
+                            "repaired position at index " + i,
+                            i + 2,
+                            after.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION)
+                    );
+                }
+                Assert.assertFalse(
+                        "a published splice owes no repair marker",
+                        repairMarkerExists()
+                );
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:05.000000Z\ta\t100.0\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t101.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t115.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t121.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t128.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t136.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t145.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t155.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t166.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t178.0\n");
+        });
+    }
+
+    @Test
+    public void testTheBoundaryBoundDeclinesADeepEofSpliceAndTruncatesInstead() throws Exception {
+        // An end-of-frame repair collects every root above C rather than the handful
+        // inside a finite H, so how deep the correction reaches decides how many roots the
+        // splice re-versions. Past the configured bound, re-versioning them stops being
+        // worth what keeping the ladder buys - a repair that deep is bounded by the rows
+        // it replays long before it is bounded by its roots - and the repair drops back to
+        // the truncate every out-of-order head miss took before the splice existed.
+        //
+        // The same bound the resume path applies, and it declines rather than fails: the
+        // replacement, the output and the watermark are what they are with the splice.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 2);
+        assertMemoryLeak(() -> {
+            createWideRangeView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+
+                appendAndRefresh(job, 5, 100);
+
+                Assert.assertEquals(
+                        "the repair must decline the splice, not publish a partial one",
+                        0,
+                        instance.getCheckpointRepairRootsVersioned()
+                );
+                // R is below every root, so the truncate finds no prefix to preserve and
+                // retires outright - which is what the whole history costs once the bound
+                // refuses to keep it. The post-replay seal opens a fresh one.
+                Assert.assertEquals(1, entryCount(instance));
+                Assert.assertFalse("a retired timeline owes no marker", repairMarkerExists());
+                Assert.assertEquals(13, instance.getO3BoundaryReplayRows());
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts limit -1")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t178.0\n");
+        });
+    }
+
+    @Test
+    public void testAnUnwritableMarkerDeclinesTheEofSpliceRatherThanRunningUnprotected() throws Exception {
+        // The marker is what makes keeping the roots safe to attempt: between the
+        // replacement commit and the publication the timeline describes output that has
+        // moved, and only the marker turns a crash in there into a rebuild from the applied
+        // base. A repair that cannot write one therefore takes the truncate, which carries
+        // its own - it must not splice unprotected.
+        final AtomicBoolean failMarkerWrite = new AtomicBoolean(true);
+        final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (failMarkerWrite.get()
+                        && Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                    return Files.FILES_RENAME_ERR_OTHER;
+                }
+                return super.rename(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createWideRangeView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+
+                appendAndRefresh(job, 5, 100);
+
+                Assert.assertEquals(
+                        "no marker, no splice",
+                        0,
+                        instance.getCheckpointRepairRootsVersioned()
+                );
+                Assert.assertEquals("a published repair owes no descriptor", 0, repairDescriptorCount());
+                // The repair itself is unaffected: it read and re-emitted the same rows,
+                // and only the timeline it leaves behind is the coarse one.
+                Assert.assertEquals(13, instance.getO3BoundaryReplayRows());
+                Assert.assertEquals(13, instance.getO3ReplayScanRows());
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts limit -1")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t178.0\n");
+        });
+    }
+
+    @Test
+    public void testEofLocalizedRepairYieldsAndResumesAcrossRefreshTurns() throws Exception {
+        // The same end-of-frame repair as above, driven one base row per turn. Opening a
+        // session for a spliceable repair is what makes the turn budget reachable here at
+        // all - before it, only a repair that converged could park - so the promoted
+        // runtime and the unbounded capture both have to survive a park now.
+        //
+        // What it finally publishes is what the single-turn run publishes: the same rows
+        // read, the same rows emitted, the same splice over [C, +inf) and the same output.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createWideRangeView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final LongList before = snapshotTimeline(instance);
+                final long generationBefore = generation(instance);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('" + timestamp(5) + "', 'a', 100)");
+                drainWalQueue();
+
+                int turns = 0;
+                int parkedTurns = 0;
+                while (turns < 64 && job.processNotificationsForTest()) {
+                    turns++;
+                    if (instance.getSuspendedRepair() == null) {
+                        continue;
+                    }
+                    parkedTurns++;
+                    // Nothing a reader or a restart can see moves while the repair is
+                    // parked: the replacement is uncommitted, so the durable output is the
+                    // pre-repair one; no generation names the staged roots; and the base
+                    // range stays unconsumed. The roots the splice will re-version are
+                    // still the ones the cadence wrote, which is exactly what the marker
+                    // is there to protect against a crash at this point.
+                    Assert.assertEquals(HISTORY_COMMITS, durableRowCount(instance));
+                    Assert.assertEquals(generationBefore, generation(instance));
+                    Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+                    Assert.assertEquals(
+                            "a parked repair owns its staged files through its descriptor",
+                            1,
+                            repairDescriptorCount()
+                    );
+                    Assert.assertTrue(
+                            "a parked splice must hold its repair marker across the park",
+                            repairMarkerExists()
+                    );
+                }
+                drainWalQueue();
+
+                Assert.assertTrue("the replay must have yielded at least once", parkedTurns > 0);
+                Assert.assertNull("the repair must finish", instance.getSuspendedRepair());
+                Assert.assertEquals("a published repair owes no descriptor", 0, repairDescriptorCount());
+                Assert.assertFalse(
+                        "the turn that finishes the repair owes the marker its clear",
+                        repairMarkerExists()
+                );
+
+                // Identical to the single-turn run: the resume skips the rows its own turn
+                // already folded, so no row is read, folded or emitted twice.
+                Assert.assertEquals(13, instance.getO3ReplayScanRows());
+                Assert.assertEquals(13, instance.getO3BoundaryReplayRows());
+
+                final LongList after = snapshotTimeline(instance);
+                Assert.assertEquals(before.size(), after.size());
+                Assert.assertEquals(
+                        "however many turns it took, the splice is one publication",
+                        generationBefore + 1,
+                        generation(instance)
+                );
+                for (int i = 0; i < HISTORY_COMMITS; i++) {
+                    assertNewRoot(before, after, i);
+                    Assert.assertEquals(
+                            "repaired position at index " + i,
+                            i + 2,
+                            after.getQuick(i * ENTRY_SIZE + ENTRY_EFFECTIVE_POSITION)
+                    );
+                }
+            }
+
+            assertQuery("select ts, sym, s from lv order by ts")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:00:05.000000Z\ta\t100.0\n" +
+                            "2026-01-01T00:00:10.000000Z\ta\t101.0\n" +
+                            "2026-01-01T00:00:20.000000Z\ta\t103.0\n" +
+                            "2026-01-01T00:00:30.000000Z\ta\t106.0\n" +
+                            "2026-01-01T00:00:40.000000Z\ta\t110.0\n" +
+                            "2026-01-01T00:00:50.000000Z\ta\t115.0\n" +
+                            "2026-01-01T00:01:00.000000Z\ta\t121.0\n" +
+                            "2026-01-01T00:01:10.000000Z\ta\t128.0\n" +
+                            "2026-01-01T00:01:20.000000Z\ta\t136.0\n" +
+                            "2026-01-01T00:01:30.000000Z\ta\t145.0\n" +
+                            "2026-01-01T00:01:40.000000Z\ta\t155.0\n" +
+                            "2026-01-01T00:01:50.000000Z\ta\t166.0\n" +
+                            "2026-01-01T00:02:00.000000Z\ta\t178.0\n");
+        });
+    }
+
+    @Test
+    public void testRestartAfterAnEofLocalizedSpliceRestoresTheSplicedTimeline() throws Exception {
+        // The restart side of the end-of-frame splice. The splice leaves every root
+        // addressable and rewrites the durable output beneath them, so between the
+        // replacement commit and the publication the timeline describes a materialization
+        // that is no longer on disk - the window the repair marker exists to close, entered
+        // from the splice's side rather than the truncate's.
+        //
+        // Once the splice publishes there is nothing left to protect: the corrected roots
+        // describe the corrected output, the marker is cleared, and a restart restores from
+        // the timeline rather than taking the conservative rebuild from the applied base.
+        assertMemoryLeak(() -> {
+            createWideRangeView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                appendAndRefresh(job, 5, 100);
+                Assert.assertEquals(
+                        "the repair must splice rather than retire",
+                        HISTORY_COMMITS,
+                        instance.getCheckpointRepairRootsVersioned()
+                );
+                Assert.assertFalse(repairMarkerExists());
+            }
+
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            final LiveViewInstance reloaded = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(reloaded);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 130, 13);
+                Assert.assertTrue(reloaded.isCheckpointRestoreSucceeded());
+                Assert.assertEquals(
+                        "the restart must restore from the spliced timeline, not rebuild",
+                        0,
+                        reloaded.getO3BoundaryReplayRows()
+                );
+                Assert.assertEquals(14, reloaded.getLvRowsTotal());
+            }
+
+            // And the state it restored is the corrected one: the frame at 130s spans the
+            // whole history, so its sum carries the repaired 5s row.
+            assertQuery("select ts, sym, s from lv order by ts limit -1")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tsym\ts\n" +
+                            "2026-01-01T00:02:10.000000Z\ta\t191.0\n");
         });
     }
 
@@ -785,7 +1261,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
             @Override
             public int rename(LPSZ from, LPSZ to) {
-                if (Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIR_DIR_NAME)) {
+                // The marker file the repair writes beside the descriptor is named
+                // "_repairing", which carries the repair directory's own name as a
+                // substring - so the exclusion is what keeps this watching descriptor
+                // writes rather than every durable file the repair stages.
+                if (Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIR_DIR_NAME)
+                        && !Utf8s.containsAscii(to, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
                     descriptorWrites.add(Utf8s.stringFromUtf8Bytes(to));
                 }
                 return super.rename(from, to);
@@ -1342,7 +1823,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir, null, null)) {
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         try {
                             // H below the boundaries the capture holds: the splice would
@@ -1357,7 +1838,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         }
                     }
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir, null, null)) {
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
                         try {
                             writer.publishRepair(
                                     capture,
@@ -1365,9 +1846,11 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                                     normalizedBaseSeqTxn(instance) - 1,
                                     coveredLvSeqTxn(instance),
                                     0,
+                                    instance.getLifecycleIdentity(),
                                     true,
                                     ts(timestamp(50)),
-                                    0
+                                    0,
+                                    null
                             );
                             Assert.fail("expected a backward generation watermark rejection");
                         } catch (CairoException e) {
@@ -1381,6 +1864,142 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals("a refused repair must not publish", generationBefore, generation(instance));
             }
         });
+    }
+
+    @Test
+    public void testRefusedPublicationsPreserveAcceptedGenerationLifecycleState() throws Exception {
+        assertMemoryLeak(() -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long definitionTxn = instance.getLiveViewToken().getTableId();
+                final long lifecycleIdentity = instance.getLifecycleIdentity();
+                final LiveViewCheckpointLifecycleState state = engine.getLiveViewCheckpointLifecycleState();
+                final LongList pending = new LongList();
+                pending.add(41);
+                pending.add(42);
+                state.markReconciled(lifecycleIdentity);
+                state.replacePendingRetirements(lifecycleIdentity, pending);
+                state.markOrphanScanCompleted(lifecycleIdentity, false);
+                state.markOrphanRisk(lifecycleIdentity);
+                for (int i = 0; i < 17; i++) {
+                    state.incrementSweepsSinceOrphanScan(lifecycleIdentity);
+                }
+                final int pendingIdentity = state.getPendingRetirementIdentityForTest(lifecycleIdentity);
+
+                try (
+                        LiveViewCheckpointTimelineStoreWriter writer =
+                                new LiveViewCheckpointTimelineStoreWriter(configuration, state);
+                        Path checkpointsDir = checkpointsDir(instance)
+                ) {
+                    try {
+                        writer.append(
+                                checkpointsDir,
+                                new ObjList<>(),
+                                null,
+                                definitionTxn,
+                                0,
+                                normalizedBaseSeqTxn(instance),
+                                coveredLvSeqTxn(instance),
+                                1,
+                                lifecycleIdentity,
+                                true,
+                                0,
+                                0,
+                                Numbers.LONG_NULL,
+                                Numbers.LONG_NULL,
+                                null,
+                                null
+                        );
+                        Assert.fail("expected append definition identity mismatch");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "append definition identity mismatch");
+                    }
+                    assertLifecycleStateUnchanged("append", state, lifecycleIdentity, pendingIdentity);
+
+                    // A persisted identity mismatch must dominate even an unusable plan: the
+                    // publication lifecycle cannot be armed while validating the superblock.
+                    try {
+                        writer.publishCompaction(
+                                checkpointsDir,
+                                definitionTxn,
+                                1,
+                                lifecycleIdentity,
+                                true,
+                                null,
+                                null
+                        );
+                        Assert.fail("expected compaction definition identity mismatch");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "compaction definition identity mismatch");
+                    }
+                    assertLifecycleStateUnchanged("compaction", state, lifecycleIdentity, pendingIdentity);
+
+                    try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
+                        try {
+                            writer.publishRepair(
+                                    capture,
+                                    definitionTxn,
+                                    normalizedBaseSeqTxn(instance),
+                                    coveredLvSeqTxn(instance),
+                                    1,
+                                    lifecycleIdentity,
+                                    true,
+                                    Long.MAX_VALUE,
+                                    0,
+                                    null
+                            );
+                            Assert.fail("expected repair definition identity mismatch");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "repair definition identity mismatch");
+                        }
+                    }
+                    assertLifecycleStateUnchanged("repair", state, lifecycleIdentity, pendingIdentity);
+
+                    try {
+                        writer.publishTruncate(
+                                checkpointsDir,
+                                definitionTxn,
+                                1,
+                                lifecycleIdentity,
+                                Long.MAX_VALUE,
+                                true
+                        );
+                        Assert.fail("expected truncate definition identity mismatch");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "truncate definition identity mismatch");
+                    }
+                    assertLifecycleStateUnchanged("truncate", state, lifecycleIdentity, pendingIdentity);
+                }
+            }
+        });
+    }
+
+    private static void assertLifecycleStateUnchanged(
+            String operation,
+            LiveViewCheckpointLifecycleState state,
+            long lifecycleIdentity,
+            int pendingIdentity
+    ) {
+        Assert.assertTrue("refused " + operation + " must preserve reconciliation",
+                state.isReconciled(lifecycleIdentity));
+        Assert.assertTrue("refused " + operation + " must preserve orphan completion",
+                state.isOrphanScanCompleted(lifecycleIdentity));
+        Assert.assertTrue("refused " + operation + " must preserve orphan risk",
+                state.isOrphanScanNeeded(lifecycleIdentity));
+        Assert.assertEquals("refused " + operation + " must preserve cadence",
+                17, state.getSweepCountForTest(lifecycleIdentity));
+        Assert.assertEquals(
+                "refused " + operation + " must preserve the pending-list shell",
+                pendingIdentity,
+                state.getPendingRetirementIdentityForTest(lifecycleIdentity)
+        );
+        final LongList pending = state.getPendingRetirements(lifecycleIdentity);
+        Assert.assertNotNull(pending);
+        Assert.assertEquals(2, pending.size());
+        Assert.assertEquals(41, pending.getQuick(0));
+        Assert.assertEquals(42, pending.getQuick(1));
     }
 
     @Test
@@ -1400,7 +2019,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         Path checkpointsDir = checkpointsDir(instance)
                 ) {
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir, null, null)) {
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         appendAndRefresh(job, 130, 13);
                         try {
@@ -1884,6 +2503,12 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
         }
     }
 
+    private static boolean repairMarkerExists() {
+        try (Path dir = new Path()) {
+            return LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), checkpointsDir(dir));
+        }
+    }
+
     private static int repairDescriptorCount() {
         int count = 0;
         final FilesFacade ff = configuration.getFilesFacade();
@@ -1987,7 +2612,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 ) {
                     writer.setTestFailureStage(failureStage);
                     try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture =
-                                 writer.beginRepair(checkpointsDir, null, null)) {
+                                 writer.beginRepair(checkpointsDir, null, null, false)) {
                         captureRange(instance, capture, functions, ts(timestamp(30)), ts(timestamp(50)), new long[]{4, 6});
                         try {
                             publish(writer, capture, instance, ts(timestamp(50)), 2);
@@ -2303,6 +2928,26 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     /**
+     * The same shape over a frame three minutes wide, which is what puts a repair behind
+     * an end-of-frame bound: a correction anywhere in this history converges past the
+     * runtime frontier, so the plan can name no finite {@code H}.
+     * <p>
+     * The width also decides where the correction has to sit. An anchor below {@code R}
+     * makes the resume cheaper than a rebuild whose floor is {@code R - W}, and the plan
+     * takes it - so a case about the head-miss executor has to correct below every root
+     * the cadence sealed, which is what the reported view's own corrections do.
+     */
+    private void createWideRangeView() throws Exception {
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute(
+                "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                        "SELECT ts, sym, sum(x) OVER (" +
+                        "PARTITION BY sym ORDER BY ts RANGE BETWEEN '180' SECOND PRECEDING AND CURRENT ROW" +
+                        ") s FROM base"
+        );
+    }
+
+    /**
      * Rows the live view's own table durably holds.
      */
     private long durableRowCount(LiveViewInstance instance) {
@@ -2415,9 +3060,11 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 normalizedBaseSeqTxn,
                 coveredLvSeqTxn,
                 0,
+                instance.getLifecycleIdentity(),
                 true,
                 highTsExclusive,
-                suffixRowDelta
+                suffixRowDelta,
+                instance.getPartitionKeyTranslators()
         );
     }
 
@@ -2453,7 +3100,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         new LiveViewCheckpointTimelineStoreWriter(configuration);
                 Path checkpointsDir = checkpointsDir(instance)
         ) {
-            try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null, null)) {
+            try (LiveViewCheckpointTimelineStoreWriter.RepairCapture capture = writer.beginRepair(checkpointsDir, null, null, false)) {
                 captureRange(
                         instance,
                         capture,
@@ -2492,7 +3139,8 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                     checkpointId,
                     instance.getLiveViewToken().getTableId(),
                     functions,
-                    instance.getAnchorWindow()
+                    instance.getAnchorWindow(),
+                    instance.getPartitionKeyTranslators()
             );
         }
         return snapshotRuntime(functions);

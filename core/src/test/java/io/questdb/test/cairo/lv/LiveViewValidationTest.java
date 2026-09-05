@@ -28,8 +28,14 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.lv.LiveViewCompiledPlan;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.std.Chars;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -150,6 +156,157 @@ public class LiveViewValidationTest extends AbstractCairoTest {
                     + "SELECT ts, sym, avg(x) OVER w AS a FROM base "
                     + "WINDOW w AS (PARTITION BY sym ORDER BY ts RANGE BETWEEN 2 PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW)");
             execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testRejectSymbolOrderByInLiveViewWindow() throws Exception {
+        // rank()/dense_rank() keep a chain prefix of the previous row's ORDER BY values in their
+        // partition map, and freezeCheckpointState persists those slots verbatim - the raw ints
+        // recordValueSink copied out of the window's input record. Under a live view that record is
+        // the WAL segment page-frame cursor, whose symbol ints are transaction-local: WAL local ids
+        // restart on every commit, so a persisted symbol id names a different string after the next
+        // one. SYMBOL is fixed-width at 4 bytes, so isAllTypesFixedWidth - the only shape test
+        // supportsCheckpointState applies to the chain - does not turn it away.
+        //
+        // Nothing wrong is published today, and this test is the reason why: four independent
+        // CREATE-time gates keep a live view's window ORDER BY on the base table's designated
+        // timestamp, so the chain prefix can only ever hold a TIMESTAMP. They are spread across
+        // SqlParser and CairoEngine and none of them names the rank chain, so a relaxation of any
+        // one of them would land the wrong-ranks bug with nothing in between. Pin all four here.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, osym SYMBOL, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+
+            // 1. A ranking function needs an anchored WINDOW, which means a named one - so no inline
+            //    OVER (...) can carry a symbol ORDER BY. The explicit frames are the point: a
+            //    PARTITION-BY-keyed window over the DEFAULT frame is turned away earlier, by the
+            //    bare-unbounded rule, so only a non-default frame reaches this gate and leaves it
+            //    load-bearing. A bounded one first, since it is the case no other gate claims.
+            assertUnanchoredRankingRejected(
+                    "SELECT ts, sym, rank() OVER (PARTITION BY sym ORDER BY osym ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS r FROM base",
+                    "rank"
+            );
+            assertUnanchoredRankingRejected(
+                    "SELECT ts, sym, dense_rank() OVER (PARTITION BY sym ORDER BY osym ROWS BETWEEN 2 PRECEDING AND CURRENT ROW) AS r FROM base",
+                    "dense_rank"
+            );
+            // UNBOUNDED PRECEDING would also fail the unbounded-frame-start gate, and the two
+            // rejects share most of their wording, so match on the half only the ranking one
+            // carries - otherwise this case would pass while proving nothing about gate 1.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, rank() OVER (PARTITION BY sym ORDER BY osym ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS r FROM base",
+                    "cannot use rank() without an anchored WINDOW"
+            );
+            // An unpartitioned symbol ORDER BY compiles to RankFunction, which keeps no partition
+            // map and no chain prefix at all - but it is rejected here first, so the shape never
+            // has to be reasoned about downstream.
+            assertUnanchoredRankingRejected(
+                    "SELECT ts, sym, rank() OVER (ORDER BY osym) AS r FROM base",
+                    "rank"
+            );
+
+            // 2. Every named WINDOW must ORDER BY the designated timestamp, so the anchored form
+            //    gate 1 forces cannot name a symbol either. Both the direct definition and the
+            //    inheriting one, since WINDOW w2 AS (w ORDER BY osym) re-declares the ORDER BY.
+            assertSymbolWindowOrderByRejected(
+                    "SELECT ts, sym, rank() OVER w AS r FROM base " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY osym ANCHOR EXPRESSION timestamp_floor('1d', ts))"
+            );
+            assertSymbolWindowOrderByRejected(
+                    "SELECT ts, sym, rank() OVER w2 AS r FROM base " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts)), " +
+                            "w2 AS (w ORDER BY osym)"
+            );
+
+            // 3. Gate 2 matches the ORDER BY token against the designated timestamp's NAME, so the
+            //    remaining way in is to alias a symbol onto that name. The projection rule closes
+            //    it: the designated timestamp has to be projected as a plain column.
+            assertLiveViewShapeRejected(
+                    "SELECT osym AS ts, sym, rank() OVER w AS r FROM base " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))",
+                    "live view select must project the base table's designated timestamp 'ts' as a plain column"
+            );
+
+            // 4. And a subquery cannot rename the columns before the window sees them, because the
+            //    base table has to sit directly in the FROM clause.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, rank() OVER w AS r FROM (SELECT ts, sym, osym FROM base) " +
+                            "WINDOW w AS (PARTITION BY sym ORDER BY osym ANCHOR EXPRESSION timestamp_floor('1d', ts))",
+                    "live view requires a single base table in FROM clause"
+            );
+
+            // Positive control: the shape the gates do admit. Its chain prefix is the designated
+            // timestamp, which means the same thing in every transaction, so it checkpoints - the
+            // reject must not widen to it.
+            execute("CREATE LIVE VIEW lv_ts FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, rank() OVER w AS r FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+            execute("DROP LIVE VIEW lv_ts");
+        });
+    }
+
+    /**
+     * The cached-window branch of {@code SqlCodeGenerator.generateSelectWindow} refuses a
+     * live-view compile outright, rather than building a key sink no live view can reach.
+     * <p>
+     * It builds one against {@code chainMetadata}, which the branch assembles so that every
+     * column the factory must return sits at the front - so a PARTITION BY term's column
+     * index means a different column there than it does in the streaming branch. A key
+     * bound through that index would name whatever base column shares the term's chain
+     * ordinal: both SYMBOL, both resolvable, and the view would key its rows through the
+     * wrong column's dictionary with nothing downstream able to tell. The branch is dead for
+     * a live view either way - both cached factories are rejected once compiled - so the
+     * reject moves ahead of the build and the hazard stays unreachable rather than dormant.
+     * <p>
+     * Pinned here rather than through CREATE because CREATE cannot tell the two gates apart:
+     * both report the same message, deliberately.
+     */
+    @Test
+    public void testRejectCachedWindowAtCompileTime() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, sym2 SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // lead() needs two passes, which is what routes the compile into the cached
+            // branch. Two SYMBOL partition terms, so a chain-index binding would have a
+            // second SYMBOL column to land on.
+            final String selectSql = "SELECT ts, sym, lead(x) OVER (PARTITION BY sym, sym2 ORDER BY ts) AS l FROM base";
+
+            // Control: an ordinary compile still runs the branch and returns its factory, so
+            // the reject below is about the live-view compile and not about the query shape.
+            try (SqlCompiler compiler = engine.getSqlCompiler();
+                 RecordCursorFactory factory = select(compiler, selectSql, sqlExecutionContext)) {
+                RecordCursorFactory node = factory;
+                while (node instanceof QueryProgress) {
+                    node = node.getBaseFactory();
+                }
+                Assert.assertTrue(
+                        "expected a cached window factory, got " + node.getClass().getSimpleName(),
+                        node instanceof CachedWindowRecordCursorFactory
+                                || node instanceof CachedWindowLightRecordCursorFactory
+                );
+            }
+
+            sqlExecutionContext.setLiveViewCompile(true);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                //noinspection resource
+                select(compiler, selectSql, sqlExecutionContext);
+                Assert.fail("expected the code generator to reject a cached-window live-view compile");
+            } catch (SqlException e) {
+                Assert.assertTrue(
+                        "wrong message [msg=" + e.getFlyweightMessage() + ']',
+                        Chars.contains(e.getFlyweightMessage(), LiveViewCompiledPlan.CACHED_WINDOW_REJECT_MESSAGE)
+                );
+            } finally {
+                sqlExecutionContext.setLiveViewCompile(false);
+            }
+
+            // And CREATE keeps reporting what it always did, whichever of the two gates got
+            // there first. Spelled through an anchored named WINDOW because the bare
+            // unbounded window above is turned away by the parser long before either gate.
+            assertLiveViewShapeRejected(
+                    "SELECT ts, sym, cume_dist() OVER w AS c FROM base "
+                            + "WINDOW w AS (PARTITION BY sym, sym2 ORDER BY ts ANCHOR DAILY '00:00')",
+                    LiveViewCompiledPlan.CACHED_WINDOW_REJECT_MESSAGE
+            );
         });
     }
 
@@ -1289,6 +1446,21 @@ public class LiveViewValidationTest extends AbstractCairoTest {
             Assert.assertTrue(
                     "position " + pos + " must point at '" + offendingToken + "' in: " + fullSql,
                     pos >= 0 && fullSql.startsWith(offendingToken, pos)
+            );
+        }
+    }
+
+    private void assertSymbolWindowOrderByRejected(String selectSql) throws Exception {
+        try {
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " + selectSql);
+            // Should not reach here; drop defensively so a spurious success does not
+            // leave a view that trips the next assertion on the same name.
+            execute("DROP LIVE VIEW lv");
+            Assert.fail("expected named-window ORDER BY reject for: " + selectSql);
+        } catch (SqlException e) {
+            Assert.assertTrue(
+                    "wrong message [msg=" + e.getFlyweightMessage() + "] for: " + selectSql,
+                    Chars.contains(e.getFlyweightMessage(), "live view named WINDOW must ORDER BY ts")
             );
         }
     }

@@ -27,6 +27,11 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
+import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.datetime.DateLocaleFactory;
+import io.questdb.std.datetime.TimeZoneRules;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -44,14 +49,23 @@ import org.jetbrains.annotations.Nullable;
  * width nor a row count to state.
  * <p>
  * What makes the segment <b>fixed</b> is that its boundaries are a function of the
- * designated timestamp alone, so this plan computes them by arithmetic and reads no
- * base row to do it. The recognized anchor is a calendar-period floor of the
- * designated timestamp - {@code timestamp_floor('<stride><unit>', ts)}, which is also
- * what {@code ANCHOR DAILY} desugars to - whose bucket start is
- * {@link #getSegmentStart(long)} and whose next bucket start is
- * {@link #getSegmentEndExclusive(long)}. A localized repair of a change at {@code C}
- * therefore has {@code L} at the start of {@code C}'s segment and {@code H} at its end,
- * both clamped by the caller against {@code S}.
+ * designated timestamp alone, so this plan computes them without reading a base row.
+ * The recognized anchor is a calendar-period floor of the designated timestamp -
+ * {@code timestamp_floor('<stride><unit>', ts)}, which is also what {@code ANCHOR DAILY}
+ * desugars to - whose bucket start is {@link #getSegmentStart(long)} and whose next
+ * bucket start is {@link #getSegmentEndExclusive(long)}. A localized repair of a change
+ * at {@code C} therefore has {@code L} at the start of {@code C}'s segment and {@code H}
+ * at its end, both clamped by the caller against {@code S}.
+ * <p>
+ * A daily anchor carrying an IANA time zone desugars to {@code timestamp_floor_utc}
+ * instead, and {@link #ofTimeZone} builds the same two bounds for it. A civil day in a
+ * DST-observing zone is 23 or 25 hours wide across a transition, so its boundaries are
+ * not fixed-stride arithmetic - but they are still a function of the designated
+ * timestamp alone, computed from the zone's transition table rather than from a modulus.
+ * The variant floors and advances through the very primitives the runtime
+ * {@code timestamp_floor_utc} calls ({@link CommonUtils#getFloorUtcTzOffset} and
+ * {@link CommonUtils#offsetFlooredUtcResult}), so the grid it describes is the grid the
+ * runtime resets on rather than one that merely resembles it.
  * <p>
  * <b>The arithmetic checks itself.</b> The segment end is the floor's own next boundary,
  * which this derives by adding one period to the segment start - a step that is exact
@@ -64,11 +78,27 @@ import org.jetbrains.annotations.Nullable;
  * rebuild, so an anchor whose period this cannot reproduce costs the view only the
  * localized path.
  * <p>
- * Anchors outside the recognized shape - a time-zone-aware daily anchor whose buckets
- * change width at a DST transition, an anchor over a non-designated column, an
- * arbitrary expression - produce no plan at all. Declining is the conservative
- * direction: without a proven segment boundary there is nothing to bound a repair with,
- * and the view keeps the from-boundary rebuild it has today.
+ * The time-zone variant runs a self-check of its own on each bound and needs both more. A
+ * zone floor is not monotone through a transition: an anchor whose local wall time falls in
+ * the hour a spring-forward skips, or in the hour a fall-back repeats, reports boundaries
+ * that overlap or reverse for the rows around it. The end check catches that from above and
+ * answers EOF; the start check catches it from below and answers an open-below start.
+ * <p>
+ * <b>The two checks are independent, and refuse independently.</b> They are separate
+ * expressions over separate instants, so a probe on one of the two days a year this applies
+ * usually gets one finite bound and one refusal rather than two refusals: a start the
+ * runtime agrees with under an EOF end on the day the gap ends a segment, and an open-below
+ * start under a finite end on the day the gap starts one. Each refusal widens the repair on
+ * its own side and each surviving bound stands on its own proof, so a caller that reads one
+ * bound may take it. A caller that needs a <b>closed</b> segment must test both:
+ * {@link LiveViewCheckpointSegmentChangeSet#addRow} does, because an open-below start is a
+ * refusal rather than a floor a segment can be repaired from.
+ * <p>
+ * Anchors outside the recognized shape - an anchor over a non-designated column, an
+ * arbitrary expression, a zone name this cannot resolve - produce no plan at all.
+ * Declining is the conservative direction: without a proven segment boundary there is
+ * nothing to bound a repair with, and the view keeps the from-boundary rebuild it has
+ * today.
  */
 public final class LiveViewCheckpointAnchorPlan {
     private final char addUnit;
@@ -77,6 +107,13 @@ public final class LiveViewCheckpointAnchorPlan {
     private final long segmentOffset;
     private final int stride;
     private final int timestampType;
+    // How far from either end of the timestamp domain the zone conversions stop being
+    // representable. They shift a timestamp by one zone offset and read the table at the
+    // shifted value, and 48 hours bounds any offset difference a zone has ever carried -
+    // Samoa's 2011 date-line shift included. Zero for the plain anchor, which shifts nothing.
+    private final long tzGuard;
+    // The zone the buckets follow, or null when the anchor is fixed-stride arithmetic.
+    private final TimeZoneRules tzRules;
     private final char unit;
 
     private LiveViewCheckpointAnchorPlan(
@@ -86,7 +123,8 @@ public final class LiveViewCheckpointAnchorPlan {
             long segmentOffset,
             int timestampType,
             TimestampDriver driver,
-            TimestampDriver.TimestampFloorWithOffsetMethod floor
+            TimestampDriver.TimestampFloorWithOffsetMethod floor,
+            @Nullable TimeZoneRules tzRules
     ) {
         this.unit = unit;
         this.addUnit = addUnit;
@@ -95,6 +133,8 @@ public final class LiveViewCheckpointAnchorPlan {
         this.timestampType = timestampType;
         this.driver = driver;
         this.floor = floor;
+        this.tzRules = tzRules;
+        this.tzGuard = tzRules == null ? 0 : driver.fromDays(2);
     }
 
     /**
@@ -119,31 +159,63 @@ public final class LiveViewCheckpointAnchorPlan {
             long segmentOffset,
             int timestampType
     ) {
-        if (stride < 1 || !ColumnType.isTimestamp(timestampType)) {
+        return build(unit, stride, segmentOffset, timestampType, null);
+    }
+
+    /**
+     * Builds the plan for the same calendar-period anchor read in a named time zone -
+     * what {@code ANCHOR DAILY 'HH:MM' '<zone>'} desugars to - or returns null when the
+     * zone cannot be resolved or the period gives no usable segment arithmetic. Null is
+     * an ordinary answer here for the same reason it is in {@link #of}.
+     * <p>
+     * The zone shifts where the buckets sit and how wide they are; it does not change
+     * what a segment means, so the two bounds the caller reads are the same two. Both are
+     * computed in local time and returned as UTC instants, which is what the runtime
+     * {@code timestamp_floor_utc} anchor emits and therefore what the view's own output
+     * timestamps are comparable to.
+     *
+     * @param segmentOffset the origin the buckets are aligned to, on the <i>local</i>
+     *                      grid - {@code timestamp_floor_utc} treats its {@code from}
+     *                      argument as a modulus seed for local time rather than as a
+     *                      UTC instant
+     * @param timeZone      the zone name as the anchor expression spells it
+     */
+    public static @Nullable LiveViewCheckpointAnchorPlan ofTimeZone(
+            char unit,
+            int stride,
+            long segmentOffset,
+            int timestampType,
+            @NotNull CharSequence timeZone
+    ) {
+        if (!ColumnType.isTimestamp(timestampType)) {
             return null;
         }
-        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
-        final TimestampDriver.TimestampFloorWithOffsetMethod floor = driver.getTimestampFloorWithOffsetMethod(unit);
-        if (floor == null) {
+        final TimeZoneRules tzRules;
+        try {
+            tzRules = DateLocaleFactory.EN_LOCALE.getRules(
+                    timeZone,
+                    ColumnType.getTimestampDriver(timestampType).getTZRuleResolution()
+            );
+        } catch (NumericException e) {
+            // A persisted view was valid when it was created, so this should not happen -
+            // but declining is the answer this method already has for a shape it cannot
+            // describe, and it is the safe one for a zone that has left the tzdata since.
             return null;
         }
-        // add() and floor() spell the microsecond unit differently; every other unit is
-        // shared. An unknown unit makes add() return LONG_NULL, which no boundary can be.
-        final char addUnit = unit == 'U' ? 'u' : unit;
-        if (driver.add(0, addUnit, stride) == Numbers.LONG_NULL) {
-            return null;
-        }
-        return new LiveViewCheckpointAnchorPlan(unit, addUnit, stride, segmentOffset, timestampType, driver, floor);
+        return build(unit, stride, segmentOffset, timestampType, tzRules);
     }
 
     /**
      * Returns the exclusive end of the segment that contains {@code timestamp}, or
      * {@link Numbers#LONG_NULL} when the period cannot be advanced exactly - a
-     * sub-resolution unit, or an addition that leaves the timestamp domain. The
-     * absent answer is the high bound {@code H = EOF}: the caller may not treat it as
-     * a timestamp.
+     * sub-resolution unit, an addition that leaves the timestamp domain, or a zone
+     * transition the anchor's own wall time straddles. The absent answer is the high
+     * bound {@code H = EOF}: the caller may not treat it as a timestamp.
      */
     public long getSegmentEndExclusive(long timestamp) {
+        if (tzRules != null) {
+            return tzSegmentEndExclusive(timestamp);
+        }
         final long start = floor.floor(timestamp, stride, segmentOffset);
         if (start > timestamp) {
             // Every timestamp below the origin floors to the origin, so they share one
@@ -165,7 +237,9 @@ public final class LiveViewCheckpointAnchorPlan {
 
     /**
      * Returns the origin the segments are aligned to, in the designated timestamp's own
-     * units. Zero means epoch-aligned.
+     * units. Zero means epoch-aligned. For a time-zone anchor the origin lies on the
+     * zone's local grid rather than on the UTC one, which is how
+     * {@code timestamp_floor_utc} reads its own {@code from} argument.
      */
     public long getSegmentOffset() {
         return segmentOffset;
@@ -173,12 +247,18 @@ public final class LiveViewCheckpointAnchorPlan {
 
     /**
      * Returns the inclusive start of the segment that contains {@code timestamp}, or
-     * {@link Long#MIN_VALUE} when the segment is open below - which happens only for a
+     * {@link Long#MIN_VALUE} when the segment is open below - which happens for a
      * timestamp under a non-zero alignment origin, since every such row carries the
-     * origin as its anchor value. A caller clamps the floor to {@code S} either way, so
-     * the open-below case needs no separate branch.
+     * origin as its anchor value, and for a zone floor a transition makes non-monotone.
+     * A caller that clamps the floor to {@code S} needs no separate branch for it. A caller
+     * that instead needs a closed segment to repair on its own must reject it: it is not a
+     * floor, and {@link #getSegmentEndExclusive(long)} reports a finite end beside it often
+     * enough that reading the end alone proves nothing about the start.
      */
     public long getSegmentStart(long timestamp) {
+        if (tzRules != null) {
+            return tzSegmentStart(timestamp);
+        }
         final long start = floor.floor(timestamp, stride, segmentOffset);
         return start > timestamp ? Long.MIN_VALUE : start;
     }
@@ -199,5 +279,99 @@ public final class LiveViewCheckpointAnchorPlan {
      */
     public char getUnit() {
         return unit;
+    }
+
+    private static @Nullable LiveViewCheckpointAnchorPlan build(
+            char unit,
+            int stride,
+            long segmentOffset,
+            int timestampType,
+            @Nullable TimeZoneRules tzRules
+    ) {
+        if (stride < 1 || !ColumnType.isTimestamp(timestampType)) {
+            return null;
+        }
+        final TimestampDriver driver = ColumnType.getTimestampDriver(timestampType);
+        final TimestampDriver.TimestampFloorWithOffsetMethod floor = driver.getTimestampFloorWithOffsetMethod(unit);
+        if (floor == null) {
+            return null;
+        }
+        // add() and floor() spell the microsecond unit differently; every other unit is
+        // shared. An unknown unit makes add() return LONG_NULL, which no boundary can be.
+        final char addUnit = unit == 'U' ? 'u' : unit;
+        if (driver.add(0, addUnit, stride) == Numbers.LONG_NULL) {
+            return null;
+        }
+        return new LiveViewCheckpointAnchorPlan(unit, addUnit, stride, segmentOffset, timestampType, driver, floor, tzRules);
+    }
+
+    /**
+     * Whether a zone conversion of {@code timestamp} stays inside the timestamp domain.
+     * Every zone bound this plan computes shifts a value by one zone offset and reads the
+     * table at the shifted value, so a timestamp within a zone offset of either end has
+     * no bound to report rather than a wrapped one.
+     */
+    private boolean isTzRepresentable(long timestamp) {
+        return timestamp > Long.MIN_VALUE + tzGuard && timestamp < Long.MAX_VALUE - tzGuard;
+    }
+
+    /**
+     * The runtime {@code timestamp_floor_utc} floor, primitive for primitive: convert to
+     * local at the offset in force at {@code timestamp}, floor on the local grid, convert
+     * the floored value back to UTC at the offset in force there. Sharing the primitives
+     * is what makes this the anchor value the runtime computes rather than an
+     * approximation of it.
+     */
+    private long tzFloor(long timestamp) {
+        final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
+        final long flooredLocal = floor.floor(timestamp + tzOff, stride, segmentOffset);
+        return CommonUtils.offsetFlooredUtcResult(flooredLocal, tzOff, 0, tzRules, unit);
+    }
+
+    private long tzSegmentEndExclusive(long timestamp) {
+        if (!isTzRepresentable(timestamp)) {
+            return Numbers.LONG_NULL;
+        }
+        final long tzOff = CommonUtils.getFloorUtcTzOffset(tzRules, timestamp, unit);
+        final long local = timestamp + tzOff;
+        final long localStart = floor.floor(local, stride, segmentOffset);
+        // Every local time below the origin floors to it, so they share one segment that
+        // ends where the first aligned bucket starts.
+        final long localEnd = localStart > local ? localStart : driver.add(localStart, addUnit, stride);
+        if (!isTzRepresentable(localEnd)) {
+            return Numbers.LONG_NULL;
+        }
+        final long start = CommonUtils.offsetFlooredUtcResult(localStart, tzOff, 0, tzRules, unit);
+        final long end = CommonUtils.offsetFlooredUtcResult(localEnd, tzOff, 0, tzRules, unit);
+        // The same self-check the fixed-stride branch runs, against the same floor the
+        // runtime anchor uses. It carries more weight here: the conversion back to UTC
+        // reads the zone table at an approximation of the boundary's own instant, which a
+        // transition sitting on that boundary can resolve to the wrong side.
+        if (end <= timestamp
+                || !isTzRepresentable(end)
+                || tzFloor(end) != end
+                || tzFloor(end - 1) != start) {
+            return Numbers.LONG_NULL;
+        }
+        return end;
+    }
+
+    private long tzSegmentStart(long timestamp) {
+        if (!isTzRepresentable(timestamp)) {
+            return Long.MIN_VALUE;
+        }
+        final long start = tzFloor(timestamp);
+        if (start > timestamp || !isTzRepresentable(start)) {
+            return Long.MIN_VALUE;
+        }
+        // A zone floor is not monotone through a transition, so a row below this start can
+        // still carry it as its anchor value - and a repair floored at it would leave that
+        // row out. The second check is what catches that: the instant one below a genuine
+        // segment start belongs to the previous segment, and in the non-monotone case it
+        // floors back to this one instead.
+        if (tzFloor(start) != start || tzFloor(start - 1) == start) {
+            return Long.MIN_VALUE;
+        }
+        return start;
     }
 }

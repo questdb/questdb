@@ -34,6 +34,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
+import io.questdb.std.Unsafe;
+import io.questdb.test.tools.TestUtils;
+import java.nio.charset.StandardCharsets;
 
 public class DirectSymbolMapTest {
 
@@ -440,5 +443,140 @@ public class DirectSymbolMapTest {
                 map.close();
             }
         });
+    }
+
+
+    @Test
+    public void testBulkRestoreSelectsReverseIndexBuildByCardinality() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                final int n = 100_000;
+                map.ensureCapacity(n, 40L * n);
+                for (int i = 0; i < n; i++) {
+                    Assert.assertEquals(i, appendUtf8(map, "medium-" + i));
+                }
+                Assert.assertEquals(-1, map.buildReverseIndex());
+                Assert.assertEquals(0, map.getBulkReverseIndexSortedEntries());
+                Assert.assertEquals(0, map.keyOf("medium-0"));
+                Assert.assertEquals(n - 1, map.keyOf("medium-" + (n - 1)));
+            }
+
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                final int n = 100_001;
+                map.ensureCapacity(n, 40L * n);
+                for (int i = 0; i < n; i++) {
+                    Assert.assertEquals(i, appendUtf8(map, "large-" + i));
+                }
+                Assert.assertEquals(-1, map.buildReverseIndex());
+                Assert.assertEquals(n, map.getBulkReverseIndexSortedEntries());
+                Assert.assertEquals(0, map.keyOf("large-0"));
+                Assert.assertEquals(n - 1, map.keyOf("large-" + (n - 1)));
+            }
+        });
+    }
+
+    @Test
+    public void testBulkRestoreBuildsReverseIndexAndDetectsDuplicates() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                final int n = 10_000;
+                map.ensureCapacity(n, 40L * n);
+                for (int i = 0; i < n; i++) {
+                    Assert.assertEquals(i, appendUtf8(map, "acct-" + i));
+                }
+                // Nothing is probed until the index is built, and interning is refused meanwhile.
+                try {
+                    map.intern("acct-1");
+                    Assert.fail("intern must refuse a pending bulk build");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "pending a bulk build");
+                }
+                Assert.assertEquals(-1, map.buildReverseIndex());
+                Assert.assertEquals(n, map.size());
+                for (int i = 0; i < n; i++) {
+                    Assert.assertEquals(i, map.keyOf("acct-" + i));
+                    Assert.assertEquals("acct-" + i, Chars.toString(map.valueOf(i)));
+                }
+                Assert.assertEquals(-1, map.keyOf("acct-" + n));
+                // The map interns normally once built, and finds what the bulk load appended.
+                Assert.assertEquals(7, map.intern("acct-7"));
+                Assert.assertEquals(n, map.intern("acct-new"));
+
+                // A second bulk load on top of a built index, with a duplicate of an old entry.
+                Assert.assertEquals(n + 1, appendUtf8(map, "acct-fresh"));
+                Assert.assertEquals(n + 2, appendUtf8(map, "acct-42"));
+                Assert.assertEquals(n + 2, map.buildReverseIndex());
+            }
+        });
+    }
+
+    @Test
+    public void testBulkRestoreDecodesUtf8AndRejectsMalformedInput() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                final String[] values = {"", "a", "caf\u00e9", "\u20ac\u4e2d", "\ud83d\ude00x", "plain ascii key"};
+                for (int i = 0; i < values.length; i++) {
+                    Assert.assertEquals(i, appendUtf8(map, values[i]));
+                }
+                Assert.assertEquals(-1, map.buildReverseIndex());
+                for (int i = 0; i < values.length; i++) {
+                    Assert.assertEquals(values[i], Chars.toString(map.valueOf(i)));
+                    Assert.assertEquals(i, map.keyOf(values[i]));
+                    Assert.assertEquals(i, map.intern(values[i]));
+                }
+
+                final byte[][] malformed = {
+                        {(byte) 0x80},                                           // lone continuation
+                        {(byte) 0xc0, (byte) 0x80},                              // overlong NUL
+                        {(byte) 0xe0, (byte) 0x80, (byte) 0x80},                 // overlong 3-byte
+                        {(byte) 0xed, (byte) 0xa0, (byte) 0x80},                 // encoded surrogate
+                        {(byte) 0xf4, (byte) 0x90, (byte) 0x80, (byte) 0x80},    // past U+10FFFF
+                        {(byte) 0xe2, (byte) 0x82},                              // truncated
+                        {(byte) 0xc3, (byte) 0x28},                              // bad continuation
+                        {(byte) 0xff},                                           // invalid lead
+                };
+                final int sizeBefore = map.size();
+                for (byte[] bytes : malformed) {
+                    Assert.assertEquals(-1, appendUtf8(map, bytes));
+                    Assert.assertEquals(sizeBefore, map.size());
+                }
+                Assert.assertEquals(-1, map.buildReverseIndex());
+                Assert.assertEquals(sizeBefore, map.intern("after"));
+            }
+        });
+    }
+
+    @Test
+    public void testEnsureCapacitySizesBufferExactly() throws Exception {
+        assertMemoryLeak(() -> {
+            try (DirectSymbolMap map = new DirectSymbolMap(64, 4, MemoryTag.NATIVE_DEFAULT)) {
+                final int n = 1000;
+                final long payload = n * (4L + 2L * 12);
+                map.ensureCapacity(n, payload);
+                for (int i = 0; i < n; i++) {
+                    appendUtf8(map, String.format("acct-%07d", i));
+                }
+                Assert.assertEquals(-1, map.buildReverseIndex());
+                // Buffer, dense offsets and a small key map: no power-of-two round-up.
+                Assert.assertTrue(map.getForwardMemoryBytes() <= payload + 4L * n + 2048);
+            }
+        });
+    }
+
+    private static int appendUtf8(DirectSymbolMap map, String value) {
+        return appendUtf8(map, value.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static int appendUtf8(DirectSymbolMap map, byte[] bytes) {
+        final int len = bytes.length;
+        final long addr = Unsafe.malloc(Math.max(1, len), MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < len; i++) {
+                Unsafe.putByte(addr + i, bytes[i]);
+            }
+            return map.appendUtf8ForRestore(addr, len);
+        } finally {
+            Unsafe.free(addr, Math.max(1, len), MemoryTag.NATIVE_DEFAULT);
+        }
     }
 }

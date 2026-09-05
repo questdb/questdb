@@ -73,8 +73,10 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
@@ -1107,6 +1109,14 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertQuery("SELECT ts, sym, a FROM lv ORDER BY sym, ts").noLeakCheck().expectSize().returns(expectedRows);
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // The subject here is the function's own snapshot codec, and a function the
+                // fused plan groups no longer runs it - the window owns that state and the
+                // private map below is closed. Hand it back first, exactly as
+                // assertStatefulAnchorRoundTrip does: the codec is still what a residual
+                // function and the legacy-head upgrade adapter both go through, and
+                // declining migrates the accumulators into the private maps rather than
+                // dropping them.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
@@ -1407,6 +1417,13 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertNoRefreshFaults("lv");
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // The subject here is the function's own snapshot codec, and a function
+                // the fused plan groups no longer runs it - the window owns that state.
+                // Hand it back first: the codec is still what a residual function and the
+                // legacy-head upgrade adapter both go through, and declining migrates the
+                // accumulators into the private maps rather than dropping them. A no-op
+                // for every shape the plan does not group.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction fn = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(fn.supportsCheckpointState());
                 Map fnMap = fn.getPartitionMap();
@@ -1593,7 +1610,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
      * so a case there says nothing a case at 25 or 50 has not already said. One of eight and
      * seven of eight are what put each endpoint on its own side of a boundary.
      */
-    private void assertFrontierSweepTrigger(
+    private void assertFrontierSweepStalePercentTrigger(
             int dayTwoSymCount,
             int compactThreshold,
             long expectedSweeps,
@@ -1642,7 +1659,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 LiveViewWindow window = engine.getLiveViewRegistry().getViewInstance("lv").getAnchorWindow();
                 Assert.assertNotNull(window);
                 Assert.assertEquals(
-                        "the half-the-map arm decides whether " + (8 - dayTwoSymCount) + " of eight is enough",
+                        "the stale-percent arm decides whether " + (8 - dayTwoSymCount) + " of eight is enough",
                         expectedSweeps,
                         window.getCompactionCount()
                 );
@@ -1782,6 +1799,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     // guard themselves with the Windows Assume that
     // testRederiveAfterWalLossSurvivesBaseSymbolCapacityDrift explains: this helper asserts the
     // dictionary is gone, and on Windows the best-effort delete can no-op.
+    //
+    // The window partitions by sym::string, not the bare column: a direct SYMBOL partition term
+    // now keys its checkpoint through LiveViewSymbolIdRegistry, whose bound slot requires a
+    // reader pinned to a known base metadata version to stay interpretable. Partitioning by the
+    // resolved string instead keeps sym a plain referenced column - still the one this helper
+    // strands the WAL dictionary of, since it is still read and still needs resolving - without
+    // pulling the compiled factory's base reader onto that version-pinned path, which would let
+    // the capacity ALTER's metadata bump surface as a plain drift the ordinary drain recovers
+    // from directly, before the drain ever reaches the stranded dictionary this fixture exists
+    // to fault on. The cast changes no row this helper's callers observe: string equality groups
+    // the same rows sym's own equality would.
     private LiveViewInstance strandLaggingWalSymbolDictionary(AtomicBoolean failWalSymbolRelink) throws SqlException {
         execute("CREATE TABLE base (ts TIMESTAMP, x INT, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
         execute("""
@@ -1791,7 +1819,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         drainWalQueue();
         execute("""
                 CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM BEGINNING AS
-                SELECT ts, x, sym, count(*) OVER (PARTITION BY sym ORDER BY ts
+                SELECT ts, x, sym, count(*) OVER (PARTITION BY sym::string ORDER BY ts
                                                   ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn
                 FROM base""");
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
@@ -7917,6 +7945,391 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFlushLeadMultiCycleUnappliedBacklogDoesNotStrandStaleTierRows() throws Exception {
+        // Sibling of testFlushLeadUnappliedBlockIsRetriedOnQuiescentBase, which holds the LV
+        // TableWriter across ONE refresh cycle. Holding it across TWO used to leave the view
+        // permanently WRONG - not merely behind - with nothing raising a fault. This test covers
+        // the retryPendingLiveViewApply applier; the other applier, flushLead's own inline apply,
+        // has its own test directly below -
+        // testFlushLeadOwnApplyDrainingBacklogDoesNotStrandStaleTierRows.
+        // Each is red only with its own guard reverted, so both are load-bearing.
+        //
+        // Cycle 1 flushes a block whose inline apply no-ops on EntryUnavailableException, so
+        // flushLead un-stamps the slot and marks the tier stale. Cycle 2 therefore takes
+        // finishLeadRefresh's tierStale branch: it flushes (a second block, whose apply no-ops
+        // again) and then calls rebuildInMemoryTier, which restages the slot from the
+        // STILL-STALE disk, stamps it with that stale seqTxn and clears the stale marking. The
+        // slot is a correct tail of the disk it was staged from - but the LV WAL still carries
+        // two unapplied blocks, and the marking that would have told the next applier to rebuild
+        // is gone.
+        //
+        // Releasing the writer lets scanForLaggingViews / retryPendingLiveViewApply land the
+        // whole backlog, which makes the disk tier completely correct. The slot is not: it holds
+        // the OLD disk's tail. retryPendingLiveViewApply used to read isTierStale() as false and
+        // re-stamp the slot with the post-apply seqTxn instead of rebuilding it, and the read
+        // path's seam takes that stamp as proof that the slot's overlap band IS the disk scan's
+        // trailing leadStart rows. The seam then served diskSize - leadStart disk rows followed
+        // by the slot, dropping the newest leadStart rows of the LV table and re-emitting the
+        // slot's stale rows in their place. flushLead's own restamp carried the same flaw
+        // whenever its apply drained a backlog along with its own block.
+        //
+        // The substitution is one-for-one, so count(*) stayed RIGHT while the rows were WRONG -
+        // a count-only assertion passes either way. The content assertion below is the one that
+        // discriminates, and it compares the view against the same SELECT recomputed straight
+        // from the base.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Hold the LV TableWriter across TWO consecutive flush cycles. Each cycle's
+                // inline apply returns on EntryUnavailableException without applying, so both
+                // blocks stay committed-but-unapplied. The WAL apply lock reason is the one
+                // applyWal treats as a legitimate concurrent holder (isUnsolicitedTableLock).
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                }
+                Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
+                        2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertFalse("a busy writer must not suspend the LV table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+                // Both preconditions of the retry-site guard, asserted rather than assumed. Cycle
+                // 2's rebuild cleared the tier-stale marking, which is what makes the re-stamp
+                // this test forbids look legitimate to retryPendingLiveViewApply; a future change
+                // that left the marking set would route the retry into rebuildInMemoryTier for the
+                // wrong reason and leave this test green and vacuous.
+                Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
+                        + " re-stamp below look legitimate", instance.isTierStale());
+                final long committedSeqTxn = tracker.getSeqTxn();
+
+                // The writer is free again: the scan retries the apply and lands the backlog.
+                drainJob(job);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the retried apply must catch the LV table up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+                // The second precondition: retryPendingLiveViewApply, not flushLead, is the
+                // applier here. The base stays quiescent from the release onwards, so
+                // refreshInstance is skipped (head == processedTo) and no flush can run - and a
+                // flush that did run would commit a block and move the committed seqTxn. Pinning
+                // it unchanged keeps this test on the retry site if a future change ever lets a
+                // cycle re-enter flushLead on a quiescent base.
+                Assert.assertEquals("no flush may run after the writer is released: the retry site"
+                                + " must be the applier that lands the backlog",
+                        committedSeqTxn, tracker.getSeqTxn());
+            }
+
+            // The defect is silent. Pin that here, BEFORE the content assertions, so a future
+            // regression that merely starts raising a fault cannot be mistaken for a fix - and
+            // so the recompute oracle below stays honest (a fault self-heals into exactly that
+            // recompute, which would make the comparison pass either way).
+            assertNoRefreshFaults("lv");
+
+            // Passes with and without the defect: the seam drops as many disk rows as it
+            // substitutes slot rows. Kept to document why a count-only check catches nothing.
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n3\n");
+
+            // Both sides project the timestamp to VARCHAR so neither result carries a designated
+            // timestamp. The fluent battery asserts timestamp monotonicity BEFORE row content, and
+            // the seam's substitution breaks monotonicity too (it appends the stale slot row after
+            // the newer disk rows) - so a timestamped assertion would fail on the ordering and never
+            // show WHICH rows are wrong. The separate timestamped assertion further down covers the
+            // ordering contract on its own.
+            final String expected = "ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t2\t2\n" +
+                    "2026-04-01T00:00:02.000000Z\t3\t3\n";
+            // The oracle: the view's own SELECT recomputed from the base table.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // The view must hold exactly that. With the defect it holds
+            // (00:00:00, 1, 1), (00:00:00, 1, 1), (00:00:01, 2, 2) - the stale slot's row
+            // re-emitted in place of the newest row on disk.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // The view still has to present itself as an ascending designated-timestamp result:
+            // the seam must not emit a row whose timestamp goes backwards.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushLeadOwnApplyDrainingBacklogDoesNotStrandStaleTierRows() throws Exception {
+        // Pins flushLead's OWN re-stamp, the twin of the retry-site case that
+        // testFlushLeadMultiCycleUnappliedBacklogDoesNotStrandStaleTierRows pins. The two tests
+        // cover the two different appliers that can drain a committed-but-unapplied live-view
+        // backlog, and only this one reaches flushLead:
+        //
+        //   - that test releases the writer onto a QUIESCENT base, so refreshInstance is skipped
+        //     (head == processedTo) and scanForLaggingViews / retryPendingLiveViewApply is the
+        //     applier;
+        //   - this test releases the writer and then lands a FRESH base commit before the idle
+        //     scan gets a turn. processNotifications drains the notification queue first and only
+        //     calls scanForLaggingViews when that drain did no work, so the queue wins: the cycle
+        //     re-enters flushLead, and flushLead's own inline apply drains the whole backlog plus
+        //     the block it just committed. This is the ordinary-write-workload route.
+        //
+        // Without its guard, flushLead re-stamps the published slot with the post-apply seqTxn on
+        // the assumption that the apply landed exactly this flush's own lead. It did not: it also
+        // landed the two backlog blocks, whose rows sit on disk UNDERNEATH the slot's stale overlap
+        // band. That breaks the seam's identity - "the slot's overlap band IS the disk scan's
+        // trailing leadStart rows" - so the read serves diskSize - leadStart disk rows and then the
+        // slot, dropping the newest disk rows and re-emitting the slot's stale ones in their place.
+        //
+        // The substitution is one-for-one, so the row count stays right and no fault is raised.
+        // Revert flushLead's guard and this test goes red on CONTENT while every other live-view
+        // test - including its twin above, which drains the backlog through the other applier -
+        // stays green.
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Two held cycles build the backlog and, on the second, leave tierStale false:
+                // finishLeadRefresh's tierStale branch restages the slot from the still-stale disk
+                // and clears the marking while both blocks are still unapplied.
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                }
+                Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
+                        2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
+                                + " re-stamp below look legitimate",
+                        instance.isTierStale());
+
+                // The writer is free, and a fresh base commit is queued BEFORE the job runs again.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:03.000000Z', 4)");
+                drainWalQueue();
+
+                // ONE pass. The notification drain does work, so scanForLaggingViews cannot run in
+                // it - the retry site is out of reach and only flushLead's own apply can have
+                // caught the LV table up. Asserting that here is what pins this test to hunk 1
+                // rather than letting it drift onto the retry path.
+                Assert.assertTrue("the queued base commit must give the job work", job.run());
+                Assert.assertEquals("flushLead's own inline apply must have drained the backlog and"
+                                + " its own block in one pass, without the lagging-view scan",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the LV table must stay caught up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+            }
+
+            // Silent: the apply succeeded, so nothing faults while the view serves wrong rows.
+            // Asserted before the content, so a future regression that merely starts raising a
+            // fault cannot pass as a fix, and so the recompute oracle stays honest.
+            assertNoRefreshFaults("lv");
+
+            // Passes with and without the defect - the seam drops as many disk rows as it
+            // substitutes slot rows. Kept to document why a count-only check catches nothing.
+            assertQuery("SELECT count() FROM lv").noLeakCheck().noRandomAccess().expectSize()
+                    .returns("count\n4\n");
+
+            // Both sides project the timestamp to VARCHAR so neither result carries a designated
+            // timestamp: QueryAssertion checks timestamp monotonicity BEFORE row content, and the
+            // seam's substitution breaks monotonicity too, which would hide WHICH rows are wrong.
+            final String expected = "ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t2\t2\n" +
+                    "2026-04-01T00:00:02.000000Z\t3\t3\n" +
+                    "2026-04-01T00:00:03.000000Z\t4\t4\n";
+            // The oracle: the view's own SELECT recomputed from the base table.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // The view must hold exactly that. Without flushLead's guard it holds
+            // (00:00:00, 1, 1), (00:00:00, 1, 1), (00:00:01, 2, 2), (00:00:03, 4, 4) - the stale
+            // slot row re-emitted, and the row at 00:00:02 dropped off the disk side of the seam.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // And the view must still present itself as an ascending designated-timestamp result.
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot() throws Exception {
+        // The SECOND half of flushLead's post-apply guard:
+        //   lvAppliedSeqTxn != lvAppliedBefore + 1 || lvTracker.getSeqTxn() != lvAppliedSeqTxn
+        // The sibling above drives the first half - an apply that advances by MORE than one
+        // transaction. This one drives the second: an apply that advances by exactly one and still
+        // leaves the LV WAL behind, because it stopped part-way through the backlog. The apply
+        // drains the OLDEST outstanding block first, so the one transaction it landed is an
+        // earlier flush's block, not the block this flush just committed - the flushed lead is
+        // still off disk while the published slot holds it.
+        //
+        // Reaching that shape takes two test-side settings, because the harness suppresses it
+        // twice over. The apply loop stops when it crosses its per-table time quota
+        // (cairo.wal.apply.table.time.quota - in production the 1000 ms default, or a shutdown
+        // terminating the loop the same way), and Overrides pins that quota to -1 for every test,
+        // which makes the loop unbounded; the tests also freeze the clock, which would make even a
+        // zero quota unbounded. So this test sets the quota to zero AND installs a clock that
+        // advances one microsecond per read, armed for the single pass under test. The loop's
+        // firstRun guard still lands one transaction; every iteration after it reads a clock that
+        // has already passed the deadline, so the loop exits with the rest of the backlog
+        // outstanding and commitSeqTxn publishes exactly that one transaction.
+        //
+        // Without the second half of the guard flushLead falls through to restampSlotAfterFlush,
+        // which asserts that the slot's band IS the LV table's trailing rows at the applied
+        // seqTxn. Disk does not hold the slot's newest row at all here, so the seam serves the
+        // slot in place of rows disk really holds: the view shows the un-applied row and hides an
+        // applied one, at the same row count and with no fault raised.
+        final DriftingMicrosClock clock = new DriftingMicrosClock();
+        testMicrosClock = clock;
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_TABLE_TIME_QUOTA, 0);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final TableToken lvToken = instance.getLiveViewToken();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(lvToken);
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                // Baseline clean flush: the apply lands, so the slot and the disk agree.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                // Two held cycles build the backlog and, on the second, leave tierStale false:
+                // finishLeadRefresh's tierStale branch restages the slot from the still-stale disk
+                // and clears the marking while both blocks are still unapplied.
+                try (TableWriter ignore = engine.getWriterUnsafe(lvToken, TableUtils.WAL_2_TABLE_WRITE_REASON)) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:01.000000Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:02.000000Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                }
+                Assert.assertEquals("the two held cycles must leave two committed but unapplied LV blocks",
+                        2L, tracker.getSeqTxn() - tracker.getWriterTxn());
+                Assert.assertFalse("the tier-stale marking must be gone, which is what lets the"
+                        + " re-stamp below look legitimate", instance.isTierStale());
+
+                // The writer is free, and a fresh base commit is queued BEFORE the job runs again,
+                // so the notification drain wins over the lagging-view scan and the cycle
+                // re-enters flushLead - the same route the sibling above takes.
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:03.000000Z', 4)");
+                drainWalQueue();
+
+                final long appliedBefore = tracker.getWriterTxn();
+                clock.startDrifting();
+                try {
+                    Assert.assertTrue("the queued base commit must give the job work", job.run());
+                } finally {
+                    clock.stopDrifting();
+                }
+                Assert.assertEquals("the exhausted quota must stop flushLead's inline apply after"
+                        + " exactly one transaction", appliedBefore + 1, tracker.getWriterTxn());
+                Assert.assertEquals("the second backlog block and this flush's own block must stay"
+                        + " committed but unapplied", appliedBefore + 3, tracker.getSeqTxn());
+                Assert.assertFalse("a part-way apply must not suspend the LV table",
+                        engine.getTableSequencerAPI().isSuspended(lvToken));
+
+                // The discriminating read, taken while the LV WAL is still behind. Disk holds the
+                // baseline row plus the one block this apply landed, and the guard un-stamped the
+                // slot, so the seam disengages and the view serves exactly those - behind the base,
+                // never wrong. Without the guard flushLead re-stamps the slot, whose rows are the
+                // baseline row (restaged from the stale disk) and the just-flushed row that never
+                // reached disk, and the seam serves those instead.
+                assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                        .noLeakCheck().expectSize()
+                        .returns("ts\tx\trn\n" +
+                                "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                                "2026-04-01T00:00:01.000000Z\t2\t2\n");
+
+                // The clock is frozen again, so the quota no longer bites and the rest of the
+                // backlog lands.
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals("the retried apply must catch the LV table up",
+                        tracker.getSeqTxn(), tracker.getWriterTxn());
+            }
+
+            // Silent: the part-way apply succeeded as far as it went, so nothing faults. Asserted
+            // before the content, so a future regression that merely starts raising a fault cannot
+            // pass as a fix, and so the recompute oracle below stays honest.
+            assertNoRefreshFaults("lv");
+
+            final String expected = "ts\tx\trn\n" +
+                    "2026-04-01T00:00:00.000000Z\t1\t1\n" +
+                    "2026-04-01T00:00:01.000000Z\t2\t2\n" +
+                    "2026-04-01T00:00:02.000000Z\t3\t3\n" +
+                    "2026-04-01T00:00:03.000000Z\t4\t4\n";
+            // The oracle: the view's own SELECT recomputed from the base table.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            // Once the backlog lands the view must hold exactly that, and must still present
+            // itself as an ascending designated-timestamp result.
+            assertQuery("SELECT ts::VARCHAR AS ts, x, rn FROM lv ORDER BY 1")
+                    .noLeakCheck().expectSize().returns(expected);
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
+                    .noLeakCheck().timestamp("ts").expectSize().returns(expected);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSeedResumeWaitsForPendingApplyBeforeReadingFloor() throws Exception {
         // Regression for the seed-resume floor: the resume path calls the void applyWalDirect to
         // fold a committed-but-unapplied seed block into the on-disk row count it derives the
@@ -12055,6 +12468,47 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnchorResetsMaxLongAcrossDayBoundary() throws Exception {
+        // The LONG twin of testAnchorResetsMaxAcrossDayBoundary, over a different
+        // implementation: max(LONG) compiles to
+        // MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction,
+        // which re-arms its extremum slot with Numbers.LONG_NULL where the DOUBLE class
+        // re-arms with Double.NaN.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, max(x) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1 max climbs 5 -> 50; day 2 starts fresh at 3 (lower than day 1's 50).
+            // The two day-2 expectations separate all three outcomes the reset can have:
+            // 3 is the re-anchored maximum, 50 would be day 1's maximum carried forward,
+            // and an empty column would be the LONG_NULL sentinel the reset wrote and
+            // nothing re-armed.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 50, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 3, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t5\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t50\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t50\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t3\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t7\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsFirstValueAcrossDayBoundary() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -13314,22 +13768,61 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testFrontierSweepFiresOnANearlyWhollyStaleMap() throws Exception {
-        // Seven of eight partitions stale, which clears the half-the-map arm, so the sweep
-        // drops all seven and leaves the one partition still following the frontier. The
-        // contrast to the case below, which holds at three of eight: the pair is what makes
-        // either assertion about the arm rather than about the frontier accounting, since a
-        // change to the accounting would move both numbers together and break both.
-        assertFrontierSweepTrigger(1, 2, 1L, 1L);
+    public void testFrontierSweepStalePercentBelowTheDefaultFiresEarlier() throws Exception {
+        // The same commits as testFrontierSweepStalePercentDefaultHoldsBelowHalfTheMap, with the
+        // stale-percent arm lowered to 25. Three of eight is 37.5%, so the arm now passes and the
+        // sweep drops the three day-1-only partitions. The pair is what makes either assertion
+        // about the arm rather than about the frontier accounting: a change to the accounting
+        // would move both numbers together and break both tests.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 25);
+        assertFrontierSweepStalePercentTrigger(5, 2, 1L, 5L);
     }
 
     @Test
-    public void testFrontierSweepHoldsBelowHalfTheMap() throws Exception {
+    public void testFrontierSweepStalePercentDefaultFiresOnANearlyWhollyStaleMap() throws Exception {
+        // The contrast the 100 case needs. Seven of eight is 87.5%, which the 50 default
+        // accepts, so the sweep drops all seven and leaves the one partition still following
+        // the frontier. Without this, the 100 case below would only be repeating what the
+        // default already refuses at three of eight.
+        assertFrontierSweepStalePercentTrigger(1, 2, 1L, 1L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentDefaultHoldsBelowHalfTheMap() throws Exception {
         // Eight day-1 partitions, five of which follow the frontier into day 2. The day-3 row
         // then leaves stalePartitionCount at 3 against an eight-entry map, which clears the
-        // absolute threshold (2) and leaves the half-the-map arm alone to decide. Three of
-        // eight is not half, so no sweep fires.
-        assertFrontierSweepTrigger(5, 2, 0L, 8L);
+        // absolute threshold (2) and leaves the stale-percent arm alone to decide. At the 50
+        // default 3/8 is not enough and no sweep fires.
+        assertFrontierSweepStalePercentTrigger(5, 2, 0L, 8L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentHundredHoldsBelowAWhollyStaleMap() throws Exception {
+        // The upper endpoint. At 100 the arm reads stalePartitionCount >= mapSize, so a map
+        // one entry short of wholly stale still does not sweep - the same seven of eight the
+        // default fires on above. That pair is what makes this about the endpoint: every
+        // setting up to 87 compacts this workload and only 88 upwards refuses it.
+        //
+        // The share is in fact unreachable: the row that reaches the trigger has just put its
+        // own partition in the current bucket, and the map is the three buckets added up, so
+        // stalePartitionCount is at most mapSize - 1 whenever the arm is read and 100 disables
+        // the sweep outright. The case pins the refusal either way, which is what the setting
+        // has to mean.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 100);
+        assertFrontierSweepStalePercentTrigger(1, 2, 0L, 8L);
+    }
+
+    @Test
+    public void testFrontierSweepStalePercentZeroLeavesTheCountArmsToDecide() throws Exception {
+        // The lower endpoint, at the thinnest stale share the fixture can produce: one of
+        // eight, 12.5%, which every setting from 13 upwards refuses. At 0 the arm reads
+        // stalePartitionCount * 100 >= 0, which no stale count can fail, so the two count
+        // arms - the absolute threshold, dropped to 1 here, and a non-empty stale set - are
+        // all that remains between a frontier move and a sweep, and the one stale partition
+        // goes. That a *zero* stale count still does not sweep is the threshold arm's doing,
+        // not this one's, so that half of "the gate is removed" is not observable here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT, 0);
+        assertFrontierSweepStalePercentTrigger(7, 1, 1L, 7L);
     }
 
     @Test
@@ -14301,6 +14794,142 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testAnchorResetsMinLongAcrossDayBoundary() throws Exception {
+        // The LONG twin of testAnchorResetsMinAcrossDayBoundary. It is a different
+        // implementation, not a re-run of the same one: min(LONG) compiles to
+        // MinLongWindowFunctionFactory's LESS_THAN over
+        // MaxLongWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction,
+        // whose re-arm sentinel is Numbers.LONG_NULL where the DOUBLE class uses NaN.
+        // LONG_NULL is Long.MIN_VALUE, so it is also the one sentinel a bare
+        // `l < current` can never beat: a slot left on it stays on it, and the rest of
+        // the bucket reports NULL rather than a running minimum.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, min(x) OVER w AS m FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 1 min falls 50 -> 5; day 2 starts fresh at 30 (higher than day 1's 5).
+            // The two day-2 expectations separate all three outcomes the reset can have:
+            // 30 is the re-anchored minimum, 5 would be day 1's minimum carried forward,
+            // and an empty column would be the LONG_NULL sentinel the reset wrote and
+            // nothing re-armed.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 50, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 30, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, m FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tm\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t50\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t5\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t5\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t30\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t7\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsDoubleExtremaWithoutFusionAcrossDayBoundary() throws Exception {
+        // The DOUBLE twin of testAnchorResetsLongExtremaWithoutFusionAcrossDayBoundary.
+        // With the fusion kill switch off the window declines the state plan, both calls
+        // keep their own private map, and the crossing runs
+        // MaxDoubleWindowFunctionFactory.MaxMinOverUnboundedPartitionRowsFrameFunction's
+        // resetPartition/computeNext pair instead of the group's accumulateWindowState.
+        // resetPartition re-arms the slot by writing the NaN sentinel, and the DOUBLE
+        // asymmetry mirrors the LONG one: Double.compare(d, NaN) is -1 for every finite d,
+        // so max's `compare > 0` holds for no row while min's `compare < 0` holds for
+        // every one. Only computeNext's `Numbers.isNull(max) ||` disjunct re-anchors both,
+        // and it can only fire because the reset wrote that sentinel.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x DOUBLE, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, max(x) OVER w AS mx, min(x) OVER w AS mn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 2 is bracketed by day 1 on both sides - its max 30.0 is below day 1's
+            // 50.0 and its min 30.0 is above day 1's 5.0 - so a carried-forward extremum
+            // fails on either column. Every value is strictly positive, so a slot the
+            // reset left on a zero-filled map entry also fails: min would report 0.0 for
+            // the whole view. The non-null day-2 expectations fail a third way if a slot
+            // is left reading the NaN sentinel.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 50.0, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 5.0, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25.0, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 30.0, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7.0, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, mx, mn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tmx\tmn\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t50.0\t50.0\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t50.0\t5.0\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t50.0\t5.0\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t30.0\t30.0\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t30.0\t7.0\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAnchorResetsLongExtremaWithoutFusionAcrossDayBoundary() throws Exception {
+        // The same crossing on the other runtime. With the fusion kill switch off, the
+        // window declines the state plan, both calls keep their own private map, and the
+        // crossing runs MaxMinOverUnboundedPartitionRowsFrameFunction's
+        // resetPartition/computeNext pair instead of the group's accumulateWindowState.
+        // computeNext re-anchors on `max == Numbers.LONG_NULL ||`, and that disjunct
+        // carries min alone: resetPartition re-arms the slot with LONG_NULL, which is
+        // Long.MIN_VALUE, so max's `l > Long.MIN_VALUE` already holds for every non-null
+        // row while min's `l < Long.MIN_VALUE` holds for none of them.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_MAP_FUSION_ENABLED, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x LONG, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, max(x) OVER w AS mx, min(x) OVER w AS mn FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1d', ts))");
+
+            // Day 2 is bracketed by day 1 on both sides - its max 30 is below day 1's 50
+            // and its min 30 is above day 1's 5 - so a carried-forward extremum fails on
+            // either column, and the non-null day-2 expectations fail again if a slot is
+            // left reading the LONG_NULL sentinel.
+            execute("INSERT INTO base (ts, x, sym) VALUES " +
+                    "('2026-08-01T00:00:00.000000Z', 50, 'a'), " +
+                    "('2026-08-01T01:00:00.000000Z', 5, 'a'), " +
+                    "('2026-08-01T02:00:00.000000Z', 25, 'a'), " +
+                    "('2026-08-02T00:00:00.000000Z', 30, 'a'), " +
+                    "('2026-08-02T01:00:00.000000Z', 7, 'a')");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                drainJob(job);
+            }
+            drainWalQueue();
+
+            assertQuery("SELECT ts, sym, mx, mn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("ts\tsym\tmx\tmn\n" +
+                    "2026-08-01T00:00:00.000000Z\ta\t50\t50\n" +
+                    "2026-08-01T01:00:00.000000Z\ta\t50\t5\n" +
+                    "2026-08-01T02:00:00.000000Z\ta\t50\t5\n" +
+                    "2026-08-02T00:00:00.000000Z\ta\t30\t30\n" +
+                    "2026-08-02T01:00:00.000000Z\ta\t30\t7\n");
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testAnchorResetsVarPopAcrossDayBoundary() throws Exception {
         // var_pop shares the Welford state with stddev/var_samp; resetPartition
         // zeroes count/mean/m2 so day 2's variance covers day 2 rows only.
@@ -14905,7 +15534,17 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // generation's shape, collection, cost, and localized repair. The last
         // block ends on the three that describe a repair's shape rather than one
         // repair's progress: checkpoint_repair_plan for what the view's SQL
-        // admits, then the last repair's effective disposition and denial.
+        // admits, then the last repair's effective disposition and denial. The
+        // checkpoint_segment_repair_gate and checkpoint_keyed_scan_gate follow:
+        // they describe the SQL as well.
+        // checkpoint_row_count_mismatches closes the checkpoint set - the one
+        // column that says the view's own bookkeeping stopped describing its
+        // output. The two keyed open-segment execution counters are appended so
+        // operators can distinguish a healthy checkpoint resume from a cold
+        // bootstrap without binding to refresh-job test hooks.
+        // The partition_key_* group closes the set: what the view's LV-private
+        // partition-key dictionary holds, the anchor map's live key count to read
+        // that against, and the three resident structures apart.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -14931,7 +15570,18 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         + "checkpoint_repair_roots_versioned\tcheckpoint_repair_new_bytes\t"
                         + "checkpoint_repair_resumes\tcheckpoint_repair_failures\t"
                         + "checkpoint_repair_plan\tcheckpoint_repair_last_disposition\t"
-                        + "checkpoint_repair_last_denial\tcheckpoint_seal_failures\n");
+                        + "checkpoint_repair_last_denial\tcheckpoint_seal_failures\t"
+                        + "checkpoint_segment_repair_gate\tcheckpoint_keyed_scan_gate\t"
+                        + "checkpoint_row_count_mismatches\t"
+                        + "o3_open_segment_keyed_resume_count\t"
+                        + "o3_open_segment_cold_keyed_replay_count\t"
+                        + "checkpoint_effective_duration_micros\t"
+                        + "checkpoint_last_correction_depth_micros\t"
+                        + "checkpoint_correction_depth_sample_count\t"
+                        + "partition_key_dictionary_columns\tpartition_key_dictionary_size\t"
+                        + "partition_key_live_count\tpartition_key_dictionary_forward_bytes\t"
+                        + "partition_key_dictionary_reverse_bytes\tpartition_key_base_id_cache_bytes\t"
+                        + "partition_key_dirty_band_bytes\tpartition_key_dictionary_interns\n");
             } finally {
                 execute("DROP LIVE VIEW lv");
             }
@@ -16674,12 +17324,16 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                     // Sanity-check the documented payload prefix:
                     //   STR windowName (INT len + len * CHAR), INT keyCount=1,
-                    //   INT keyType=STRING, INT anchorValueType=TIMESTAMP,
-                    //   LONG partitionCount=2.
-                    // The persisted key column type is STRING (not SYMBOL):
-                    // LiveViewWindow.build rewrites SYMBOL partition columns as
-                    // STRING in the anchor map's key types so cross-WAL-segment
-                    // SYMBOL collisions can't corrupt the partition state.
+                    //   INT keyType=SYMBOL, INT anchorValueType=TIMESTAMP,
+                    //   INT componentStateBytes, LONG partitionCount=2.
+                    // componentStateBytes is what the fused group's accumulators add per
+                    // entry, and 8 here: the view's one sum(x) is a (sum, nonNullCount)
+                    // component the window owns.
+                    // The persisted key column type is SYMBOL, not STRING: a direct SYMBOL
+                    // partition term routes through this view's own LiveViewSymbolIdRegistry,
+                    // which assigns each base symbol a stable LV-private int id, so a raw
+                    // int key can no longer collide across WAL segments the way a raw
+                    // per-segment symbol id would.
                     long off = payloadStart;
                     final int nameLen = sink.getInt(off);
                     off += Integer.BYTES;
@@ -16688,9 +17342,15 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     off += (long) nameLen * Character.BYTES;
                     Assert.assertEquals("single key column", 1, sink.getInt(off));
                     off += Integer.BYTES;
-                    Assert.assertEquals("key column is STRING (SYMBOL columns route through resolved STRING)", ColumnType.STRING, sink.getInt(off));
+                    Assert.assertEquals("key column is SYMBOL (LV-private translated id)", ColumnType.SYMBOL, sink.getInt(off));
                     off += Integer.BYTES;
                     Assert.assertEquals("anchor value type is TIMESTAMP", ColumnType.TIMESTAMP, sink.getInt(off));
+                    off += Integer.BYTES;
+                    Assert.assertEquals(
+                            "the fused (sum, nonNullCount) component rides in the payload",
+                            Double.BYTES + Long.BYTES,
+                            sink.getInt(off)
+                    );
                     off += Integer.BYTES;
                     Assert.assertEquals("partition count is 2", 2L, sink.getLong(off));
 
@@ -17044,6 +17704,69 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     preFunctionMapSize,
                     reloaded.getAnchorWindow().getAnchorMapSize()
             );
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testAdaptiveCheckpointDurationTracksCorrectionDepth() throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 60 * Micros.MINUTE_MICROS);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, sym, sum(x) OVER w AS s FROM base " +
+                    "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base VALUES ('2026-06-01T00:00:00.000000Z', 'a', 1.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(currentMicros + 2 * Micros.SECOND_MICROS);
+                execute("INSERT INTO base VALUES ('2026-06-01T00:20:00.000000Z', 'a', 2.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                setCurrentMicros(currentMicros + 2 * Micros.SECOND_MICROS);
+                execute("INSERT INTO base VALUES ('2026-06-01T00:10:00.000000Z', 'a', 3.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertEquals(10 * Micros.MINUTE_MICROS, instance.getAdaptiveCheckpointLastCorrectionDepthMicros());
+                Assert.assertEquals(5 * Micros.MINUTE_MICROS, instance.getAdaptiveCheckpointDurationMicros());
+                Assert.assertEquals(1, instance.getAdaptiveCheckpointCorrectionCount());
+                assertQuery(
+                        "SELECT checkpoint_effective_duration_micros, " +
+                                "checkpoint_last_correction_depth_micros, " +
+                                "checkpoint_correction_depth_sample_count " +
+                                "FROM live_views() WHERE view_name = 'lv'"
+                ).noLeakCheck().noRandomAccess().returns(
+                        "checkpoint_effective_duration_micros\tcheckpoint_last_correction_depth_micros\t" +
+                                "checkpoint_correction_depth_sample_count\n" +
+                                "300000000\t600000000\t1\n"
+                );
+
+                final long repairHead = instance.getHeadCheckpointLvSeqTxn();
+                setCurrentMicros(currentMicros + 5 * Micros.MINUTE_MICROS);
+                execute("INSERT INTO base VALUES ('2026-06-01T00:30:00.000000Z', 'a', 4.0)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                Assert.assertNotEquals(
+                        "the learned five-minute duration must seal before the configured hour",
+                        repairHead,
+                        instance.getHeadCheckpointLvSeqTxn()
+                );
+            }
 
             execute("DROP LIVE VIEW lv");
         });
@@ -17605,6 +18328,11 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                         "2026-08-01T01:00:00.000000Z\tb\t2\n");
 
                 LiveViewInstance lv = engine.getLiveViewRegistry().getViewInstance("lv");
+                // row_number() joins the fused row-count component, so the window owns
+                // the counters and this function keeps no map. Hand them back: the codec
+                // under test is the function's own, which the legacy-head upgrade adapter
+                // still reads every partition through.
+                lv.getAnchorWindow().bindCheckpointWindowStatePlan(null);
                 WindowFunction rnFunc = lv.getAnchorWindow().getFunctions().getQuick(0);
                 Assert.assertTrue(rnFunc.supportsCheckpointState());
                 Map fnMap = rnFunc.getPartitionMap();
@@ -17703,6 +18431,10 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             );
             Assert.assertEquals(preLastProcessed, reloaded.getLastProcessedSeqTxn());
 
+            // The restore filled the window's fused value; handing the plan back lowers
+            // each counter into the map row_number owns outside a group, which is where
+            // this case reads them and what the same numbers coming out proves.
+            reloaded.getAnchorWindow().bindCheckpointWindowStatePlan(null);
             Map fnMap = reloaded.getAnchorWindow().getFunctions().getQuick(0).getPartitionMap();
             Assert.assertEquals("row_number's partition map rehydrates its partition count", 2L, fnMap.size());
             MapRecordCursor mc = fnMap.getCursor();
@@ -18750,10 +19482,25 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                             Numbers.LONG_NULL,
                             lv.getHeadCheckpointMaxTs()
                     );
-                    Assert.assertNotEquals(
-                            "head checkpoint state bytes populated post O3 replay",
+                    // The anchored repair localizes behind an end-of-frame bound and
+                    // publishes its timeline as a range splice, which appends no root of
+                    // its own: the newest boundary is the one it re-versioned, already at
+                    // the frontier the seal would stamp. So the head is re-stamped over a
+                    // boundary that already exists and its state-byte figure - a
+                    // diagnostic column - reads 0 until the next cadence seal writes a
+                    // root. What matters is that the ladder is still there.
+                    Assert.assertEquals(
+                            "a splice appends no root, so the head restamps at 0 bytes",
                             0L,
                             lv.getHeadCheckpointStateBytes()
+                    );
+                    Assert.assertTrue(
+                            "the repair must splice its timeline rather than retire it",
+                            lv.getCheckpointRepairRootsVersioned() > 0
+                    );
+                    Assert.assertTrue(
+                            "the boundary the splice re-versioned must survive the repair",
+                            lv.getCheckpointTimeline()[LiveViewInstance.CHECKPOINT_TIMELINE_ENTRIES] > 0
                     );
                 }
             }
@@ -20759,9 +21506,19 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertNotEquals(Numbers.LONG_NULL, postReplayLvSeqTxn);
                 Assert.assertNotEquals(preO3HeadLvSeqTxn, postReplayLvSeqTxn);
                 Assert.assertNotEquals(Numbers.LONG_NULL, lv.getHeadCheckpointMaxTs());
+                // The repair spliced its timeline rather than retiring it, so it appended
+                // no root and the head re-stamps over the boundary it re-versioned. The
+                // state-byte column is diagnostic and reads 0 until the next cadence seal
+                // writes a root of its own; the lvSeqTxn and maxTs above are the two the
+                // post-replay head is actually for.
+                Assert.assertEquals(
+                        "a splice appends no root, so the head restamps at 0 bytes",
+                        0L,
+                        lv.getHeadCheckpointStateBytes()
+                );
                 Assert.assertTrue(
-                        "post-replay state_bytes populated",
-                        lv.getHeadCheckpointStateBytes() > 0L
+                        "the repair must splice its timeline rather than retire it",
+                        lv.getCheckpointRepairRootsVersioned() > 0
                 );
 
 
@@ -21243,6 +22000,40 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                     "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0\n" +
                     ");\n");
             assertShowCreateLiveViewRoundTrips("lv");
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testShowCreateLiveViewCachedFactoryAfterViewRecreated() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            drainWalQueue();
+
+            try (RecordCursorFactory factory = select("SHOW CREATE LIVE VIEW lv")) {
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .returns("ddl\n" +
+                                "CREATE LIVE VIEW 'lv' FLUSH EVERY 1s IN MEMORY 1s PARTITION BY DAY START FROM NOW AS (\n" +
+                                "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
+                                ");\n");
+
+                execute("DROP LIVE VIEW lv");
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 2s START FROM NOW AS " +
+                        "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+                drainWalQueue();
+
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .returns("ddl\n" +
+                                "CREATE LIVE VIEW 'lv' FLUSH EVERY 2s IN MEMORY 2s PARTITION BY DAY START FROM NOW AS (\n" +
+                                "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base\n" +
+                                ");\n");
+            }
             execute("DROP LIVE VIEW lv");
         });
     }
@@ -22660,5 +23451,34 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             assertShowCreateLiveViewRoundTrips("lv");
             execute("DROP LIVE VIEW lv");
         });
+    }
+
+    /**
+     * Reads like the default test clock - frozen on {@code currentMicros} - until
+     * {@link #startDrifting()} arms it, after which every read returns one microsecond later than
+     * the last. The WAL apply loop computes its deadline from one clock read and tests every later
+     * iteration against another, so an armed drift plus a zero
+     * {@code cairo.wal.apply.table.time.quota} stops the apply after the transaction its firstRun
+     * guard forces through. That is the part-way apply
+     * {@link #testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot} is about; nothing
+     * else in the suite needs it, and a frozen clock leaves even a zero quota unbounded.
+     */
+    private static final class DriftingMicrosClock implements MicrosecondClock {
+        private long drift;
+        private boolean isDrifting;
+
+        @Override
+        public long getTicks() {
+            final long base = currentMicros != -1 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
+            return isDrifting ? base + drift++ : base;
+        }
+
+        private void startDrifting() {
+            isDrifting = true;
+        }
+
+        private void stopDrifting() {
+            isDrifting = false;
+        }
     }
 }

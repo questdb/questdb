@@ -31,9 +31,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 /**
  * Checksummed metadata root for the optional anchored-window state.
@@ -66,9 +66,16 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
     private final LiveViewCheckpointPageRef partitionMapRootRef = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointMetaSegmentReader reader;
     private int anchorValueType;
+    /**
+     * Images of the open root, borrowed from {@link #decodedBytes} on the decode
+     * path and from the caller's compiled plan on the builder path. A publication
+     * opens the same root more than once, so decoding fresh arrays would charge
+     * the identity to every open.
+     */
+    private final LiveViewCheckpointByteArrayPool decodedBytes = new LiveViewCheckpointByteArrayPool();
     private byte[] keySchema = new byte[0];
-    private long[] segmentIds = new long[0];
-    private long[] segmentUseCounts = new long[0];
+    private final LongList segmentIds = new LongList();
+    private final LongList segmentUseCounts = new LongList();
     private byte[] windowName = new byte[0];
 
     public LiveViewCheckpointAnchorRoot(@NotNull CairoConfiguration configuration) {
@@ -102,15 +109,15 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
     }
 
     public long getSegmentId(int index) {
-        return segmentIds[index];
+        return segmentIds.getQuick(index);
     }
 
     public long getSegmentUseCount(int index) {
-        return segmentUseCounts[index];
+        return segmentUseCounts.getQuick(index);
     }
 
     public int getSegmentUseCountSize() {
-        return segmentIds.length;
+        return segmentIds.size();
     }
 
     public byte[] getWindowName() {
@@ -118,11 +125,28 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
     }
 
     public void of(@Transient @NotNull Path checkpointsDir, @NotNull LiveViewCheckpointPageRef rootRef) {
+        if (!of0(checkpointsDir, rootRef)) {
+            throw LiveViewCheckpointMetadata.invalid("anchor root page kind unknown, kind=").put(reader.getPageKind());
+        }
+    }
+
+    /**
+     * Decodes {@code rootRef} when it names a legacy anchor root, and answers false when
+     * it names the fused {@link LiveViewCheckpointWindowRoot} that stands in the same
+     * place. The two are a tagged union read by page kind, so meeting the other one is
+     * an ordinary answer - a view whose recompile dropped its window-state plan converts
+     * back to the anchor shape on its next seal - rather than corruption.
+     */
+    public boolean ofIfAnchorRoot(@Transient @NotNull Path checkpointsDir, @NotNull LiveViewCheckpointPageRef rootRef) {
+        return of0(checkpointsDir, rootRef);
+    }
+
+    private boolean of0(Path checkpointsDir, LiveViewCheckpointPageRef rootRef) {
         LiveViewCheckpointMetadata.validateMetaRef(rootRef, false, "anchor root");
         reader.of(checkpointsDir, rootRef.getSegmentId());
         reader.openPage(rootRef);
         if (reader.getPageKind() != PAGE_KIND) {
-            throw LiveViewCheckpointMetadata.invalid("anchor root page kind unknown, kind=").put(reader.getPageKind());
+            return false;
         }
         final int payloadLength = reader.getPagePayloadLength();
         if (payloadLength < FIXED_SIZE) {
@@ -156,11 +180,17 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
             throw LiveViewCheckpointMetadata.invalid("anchor root payload length mismatch")
                     .put(" [expected=").put(expectedLength).put(", actual=").put(payloadLength).put(']');
         }
-        windowName = LiveViewCheckpointMetadata.readBytes(reader, FIXED_SIZE, windowNameLength);
-        keySchema = LiveViewCheckpointMetadata.readBytes(reader, FIXED_SIZE + (long) windowNameLength, keySchemaLength);
+        decodedBytes.reset();
+        windowName = LiveViewCheckpointMetadata.readBytes(reader, FIXED_SIZE, windowNameLength, decodedBytes);
+        keySchema = LiveViewCheckpointMetadata.readBytes(
+                reader,
+                FIXED_SIZE + (long) windowNameLength,
+                keySchemaLength,
+                decodedBytes
+        );
         long offset = FIXED_SIZE + (long) windowNameLength + keySchemaLength;
-        segmentIds = new long[segmentCount];
-        segmentUseCounts = new long[segmentCount];
+        segmentIds.clear();
+        segmentUseCounts.clear();
         long previous = -1;
         for (int i = 0; i < segmentCount; i++) {
             final long segmentId = reader.getLong(offset);
@@ -170,11 +200,12 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
                         .put(" [segmentId=").put(segmentId).put(", previous=").put(previous)
                         .put(", useCount=").put(useCount).put(']');
             }
-            segmentIds[i] = segmentId;
-            segmentUseCounts[i] = useCount;
+            segmentIds.add(segmentId);
+            segmentUseCounts.add(useCount);
             previous = segmentId;
             offset += 2L * Long.BYTES;
         }
+        return true;
     }
 
     /**
@@ -208,6 +239,16 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
         return scalarState;
     }
 
+    void clearBorrowedCompiled() {
+        windowName = null;
+        keySchema = null;
+    }
+
+    @TestOnly
+    boolean isBorrowingCompiledForTest(byte[] windowName, byte[] keySchema) {
+        return this.windowName == windowName && this.keySchema == keySchema;
+    }
+
     void ofBuilder(
             byte[] windowName,
             int anchorValueType,
@@ -215,20 +256,20 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
             LiveViewCheckpointPageRef partitionMapRootRef,
             LongList segmentUseCounts
     ) {
-        this.windowName = Arrays.copyOf(windowName, windowName.length);
+        this.windowName = windowName;
         this.anchorValueType = anchorValueType;
-        this.keySchema = Arrays.copyOf(keySchema, keySchema.length);
+        this.keySchema = keySchema;
         this.partitionMapRootRef.of(
                 partitionMapRootRef.getSegmentId(),
                 partitionMapRootRef.getOffset(),
                 partitionMapRootRef.getLength()
         );
         final int count = segmentUseCounts.size() / 2;
-        segmentIds = new long[count];
-        this.segmentUseCounts = new long[count];
+        segmentIds.clear();
+        this.segmentUseCounts.clear();
         for (int i = 0; i < count; i++) {
-            segmentIds[i] = segmentUseCounts.getQuick(i * 2);
-            this.segmentUseCounts[i] = segmentUseCounts.getQuick(i * 2 + 1);
+            segmentIds.add(segmentUseCounts.getQuick(i * 2));
+            this.segmentUseCounts.add(segmentUseCounts.getQuick(i * 2 + 1));
         }
     }
 
@@ -238,13 +279,13 @@ public class LiveViewCheckpointAnchorRoot implements Closeable {
         mem.putInt(anchorValueType);
         mem.putInt(windowName.length);
         mem.putInt(keySchema.length);
-        mem.putInt(segmentIds.length);
+        mem.putInt(segmentIds.size());
         LiveViewCheckpointMetadata.putMetaRef(mem, partitionMapRootRef);
         LiveViewCheckpointMetadata.putBytes(mem, windowName);
         LiveViewCheckpointMetadata.putBytes(mem, keySchema);
-        for (int i = 0; i < segmentIds.length; i++) {
-            mem.putLong(segmentIds[i]);
-            mem.putLong(segmentUseCounts[i]);
+        for (int i = 0, n = segmentIds.size(); i < n; i++) {
+            mem.putLong(segmentIds.getQuick(i));
+            mem.putLong(segmentUseCounts.getQuick(i));
         }
         writer.endPage(out);
     }

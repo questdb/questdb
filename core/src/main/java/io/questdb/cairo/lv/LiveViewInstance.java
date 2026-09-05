@@ -105,7 +105,38 @@ public class LiveViewInstance implements QuietCloseable {
             Numbers.LONG_NULL, 0L, Numbers.LONG_NULL, 0L, 0L, 0L, Numbers.LONG_NULL, 0L
     };
     private static final long[] EMPTY_HEAD_CHECKPOINT = {Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL};
+
+    /**
+     * @return the {@code LiveViewCheckpointRepairPlan.DENIAL_*} half of a packed repair
+     * outcome word. See {@link #checkpointRepairOutcome}
+     */
+    public static int repairDenialReasonOf(long outcome) {
+        return (int) outcome;
+    }
+
+    /**
+     * @return the {@code LiveViewCheckpointRepairPlan.DISPOSITION_*} half of a packed
+     * repair outcome word. See {@link #checkpointRepairOutcome}
+     */
+    public static int repairDispositionOf(long outcome) {
+        return (int) (outcome >>> 32);
+    }
+
     private final LiveViewDefinition definition;
+    private final long lifecycleIdentity;
+    // Whether this view's own table carries dedup keys - (designated timestamp, projected
+    // partition key), the identity a sparse repair publication upserts on. Resolved where
+    // the instance is built, off the table's own metadata, because that is where the flags
+    // live: the sequencer metadata a WalWriter reads does not carry them, and the current
+    // configuration cannot answer it either - a view CREATEd with the identity keeps it
+    // however the switch moves afterwards. False for every view created without it, which
+    // is every view today.
+    private final boolean isDedupKeyed;
+    // The non-timestamp half of that identity: the output column the table deduplicates
+    // on, or LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN. A sparse publication has to
+    // upsert on the same pair a repair proves unique, and "the table deduplicates" alone
+    // does not name the column it deduplicates by.
+    private final int dedupKeyColumnIndex;
     // Cancellation flag the refresh worker binds into its execution context's circuit
     // breaker for the duration of a cycle over this view. DROP and invalidation set it,
     // so a scan already inside the compiled cursor unwinds instead of running to
@@ -124,6 +155,19 @@ public class LiveViewInstance implements QuietCloseable {
     // Built once from anchorFunction + the compiled SELECT's window functions. Drives the
     // per-row resetPartition dispatch when the LV has an anchored named WINDOW.
     private LiveViewWindow anchorWindow;
+    // The view's SELECT compiled a second time, holding the window state a converging
+    // out-of-order repair replays into so the primary's is never wiped. Built on the first
+    // repair that can use it and freed with the primary factory, whose shape it mirrors.
+    private LiveViewRepairRuntime repairRuntime;
+    // Compiled full scan of the view's OWN table, and the copier that puts one of its rows
+    // back into the view's WAL. A keyed repair publishes the segment's unaffected keys
+    // from the view's stored output rather than from the base, and this is what reads it;
+    // null until the first such repair compiles it. Freed with the view's other compiled
+    // artifacts, because the copier's cache key is the view's WAL metadata version and a
+    // recompile that changes the view's own schema moves it.
+    private RecordCursorFactory storedRowScanFactory;
+    private RecordToRowCopier storedRowCopier;
+    private long storedRowCopierMetadataVersion = -1;
     // Base seqTxn the deferred cycle waited on when it armed applyLagDeferUntilUs. The pre-latch
     // guard clears the floor early once the base applies past this point, so a caught-up view
     // converges without waiting out the wall-clock floor (which a frozen clock never crosses).
@@ -230,6 +274,16 @@ public class LiveViewInstance implements QuietCloseable {
     // via live_views().checkpoint_last_lookup_depth, where the property worth
     // watching is that it tracks log(checkpoint count), not the count itself.
     private volatile long checkpointLastLookupDepth = Numbers.LONG_NULL;
+    // Which of the two halves of a scoped, keyed repair this view's SQL admits, as
+    // LiveViewSegmentRepairEnvelope GATE_* codes: whether a correction in a closed anchor
+    // segment can be repaired over that segment alone, and whether that repair's replay
+    // could follow the affected keys' rows rather than the whole segment. Both are
+    // properties of the compiled SELECT, and they exist so a view that would never take
+    // the cheaper route is legible before a late row reaches it. The refresh worker
+    // settles them when it compiles the factory; volatile for the catalogue thread.
+    // GATE_UNKNOWN until then.
+    private volatile int segmentScopeGate = LiveViewSegmentRepairEnvelope.GATE_UNKNOWN;
+    private volatile int keyedScanGate = LiveViewSegmentRepairEnvelope.GATE_UNKNOWN;
     // Bounds of the localized repair currently suspended across refresh turns:
     // {inProgress, C, L, H}. Packed into one immutable long[] published by
     // volatile store so the catalogue never pairs one repair's floor with
@@ -257,17 +311,48 @@ public class LiveViewInstance implements QuietCloseable {
     // In-memory only - they reset on restart, like the o3_* counters.
     private volatile long checkpointRepairFailures;
     private volatile long checkpointRepairNewBytes;
+    // Assertion-only bookkeeping that pins the publication order checkpointRepairOutcome
+    // below depends on: how many times an o3_* repair counter has been bumped, and the
+    // value that counter carried when the last publishCheckpointRepairOutcome() ran. Both
+    // move only from inside an assert expression - armCheckpointRepairPublish() and
+    // hasCheckpointRepairPublishArming() - so under -da neither is ever written and the
+    // class behaves exactly as it would without them. Volatile for the same reason
+    // checkpointRepairPlannedOutcome is: successive repairs of one view can land on
+    // different refresh workers, and a stale read here would fail an assertion that
+    // guards nothing the reader can see. Nothing outside an assert reads them.
+    private volatile long checkpointRepairO3BumpEpoch;
+    private volatile long checkpointRepairO3BumpEpochAtPublish;
     // What this view's last out-of-order repair actually did: the
     // LiveViewCheckpointRepairPlan DISPOSITION_* code in the high 32 bits and the
     // DENIAL_* code naming why it read more than a localized rebuild would in the low
     // 32. Packed into one volatile long so the catalogue never pairs one repair's
     // disposition with another's reason. Zero (no disposition, nothing denied) until
-    // the view runs its first repair. Bumped only on the refresh worker at planning
-    // time; volatile for the catalogue thread. In-memory only - it resets on restart,
-    // like the counters above.
+    // the view runs its first repair. In-memory only - it resets on restart, like the
+    // counters above.
+    // The refresh worker writes it through publishCheckpointRepairOutcome() at replay
+    // completion, after the o3_* row counters have been bumped, and never at planning
+    // time: the counters are what the replay cost, so a disposition published ahead of
+    // them would name an executor whose rows no counter carries yet. That pairing is
+    // what an operator reads the two columns together for, and a parked repair holds
+    // planning and completion whole refresh turns apart.
     private volatile long checkpointRepairOutcome;
+    // The outcome the current repair's planning settled on, waiting for that repair's
+    // replay to finish and hand it to checkpointRepairOutcome above. Same packing.
+    // Written and read only by the refresh worker holding this view's refresh latch, but
+    // volatile all the same: successive repairs of one view can land on different
+    // workers, and a plain long is neither guaranteed visible across them nor guaranteed
+    // to be read whole.
+    private volatile long checkpointRepairPlannedOutcome;
     private volatile long checkpointRepairResumes;
     private volatile long checkpointRepairRootsVersioned;
+    // Seals this view has refused because the rows it emitted and the rows its
+    // table holds disagreed. Every timeline root carries lvRowsTotal as its
+    // cumulative lvRowPosition, so a counter that has drifted from the durable
+    // output writes a ladder no reader can detect and a restart can only fail on.
+    // The seal that finds the drift re-seats the counter, retires the timeline and
+    // bumps this. Bumped only on the refresh worker; volatile for the catalogue
+    // thread. In-memory only - it resets on restart, like the counters above.
+    private volatile long checkpointRowCountMismatches;
     // Cadence seals this view has failed, counted for the whole process lifetime
     // rather than per streak. A permanently failing seal is otherwise invisible:
     // the refresh job swallows the fault, the view keeps serving correct results,
@@ -306,6 +391,10 @@ public class LiveViewInstance implements QuietCloseable {
     // state to still be the one that sealed it.
     private long headCheckpointRootId = Numbers.LONG_NULL;
     private RecordCursorFactory headCheckpointRootWindowFactory;
+    // Per-view timing model for open-segment executor selection. It follows the
+    // instance lifetime so unrelated views and replaced compiled runtimes never share
+    // learned state width or scan rates.
+    private final LiveViewCheckpointOpenSegmentCost openSegmentRepairCost = new LiveViewCheckpointOpenSegmentCost();
     // Elapsed wall-clock (micros) of the most recent head-checkpoint write
     // (maybeWriteHeadCheckpoint: freeze the function state, append a logical
     // root, publish the timeline generation). Numbers.LONG_NULL until the first
@@ -322,6 +411,31 @@ public class LiveViewInstance implements QuietCloseable {
     // freeCachedRefreshState(). Null when the view has no anchored window; a limit of 0
     // (the default) accounts but never throws. Mutated only under the refresh latch.
     private MemoryTracker memoryTracker;
+    // The view's LV-private symbol-id dictionaries, one per distinct base SYMBOL column its
+    // PARTITION BY terms key by, or null for a view whose terms key none. Deliberately NOT
+    // freed by freeCompiledArtifacts(): the ids are durable, they name strings rather than
+    // base ids, and a base-schema recompile rebinds the same slots to the same columns. It
+    // dies with the cached refresh state and BEFORE memoryTracker, which its dictionaries
+    // charge. Mutated only under the refresh latch.
+    private LiveViewSymbolIdRegistry partitionKeyTranslators;
+    // Footprint mirror for the dictionaries above, published by the refresh worker at the end
+    // of every turn so the catalogue thread can report them without walking a registry the
+    // refresh latch - and nothing else - serialises. Numbers.LONG_NULL for the whole group
+    // until the view compiles its SELECT, and again once freeCachedRefreshState() drops the
+    // registry: a view that holds no dictionary says something different from a compiled view
+    // whose PARTITION BY translates nothing and reports zeroes.
+    //
+    // Each field carries its own freshness. The worker stores them one at a time rather than
+    // publishing one tuple, so a reader can pair one turn's dictionary size with the next
+    // turn's byte totals. Read a trend across turns, not a ratio within one.
+    private volatile long partitionKeyBaseIdCacheBytes = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionaryColumns = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionaryForwardBytes = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionaryInterns = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionaryReverseBytes = Numbers.LONG_NULL;
+    private volatile long partitionKeyDictionarySize = Numbers.LONG_NULL;
+    private volatile long partitionKeyDirtyBandBytes = Numbers.LONG_NULL;
+    private volatile long partitionKeyLiveCount = Numbers.LONG_NULL;
     // Restart-restore single-shot flag. The refresh worker flips it true on
     // the first cycle after CREATE / restart, regardless of whether a usable
     // timeline root was found - one attempt is the contract, no retries. Mutated only
@@ -341,6 +455,30 @@ public class LiveViewInstance implements QuietCloseable {
     // trigger has fired this cycle. Mirrored as volatile because the catalogue
     // may surface it via live_views() later.
     private volatile long lastCheckpointWrittenUs = Numbers.LONG_NULL;
+    // Per-view duration cadence learned from out-of-order arrivals. The latest
+    // correction depth is halved so a similarly late next row has a complete
+    // checkpoint interval below it rather than landing on the newest boundary.
+    // Tightening is immediate; upward relaxation is capped at 25% per step so
+    // one deep correction cannot abruptly discard a cadence that recent shallow
+    // corrections proved useful. Two inputs relax it: a shallower correction
+    // sample, and each seal that a real write stamped
+    // (relaxAdaptiveCheckpointCadenceOnSeal) - without the latter, one late row
+    // would pin the tightened cadence for the life of the process. All three
+    // fields are in-memory observability and reset on restart. Mutated by the
+    // refresh worker under the refresh latch; volatile for live_views().
+    private volatile long adaptiveCheckpointCorrectionCount;
+    private volatile long adaptiveCheckpointDurationMicros = Numbers.LONG_NULL;
+    private volatile long adaptiveCheckpointLastCorrectionDepthMicros = Numbers.LONG_NULL;
+    // The configured ceiling the last correction learned against, so the per-seal
+    // relaxation knows where to stop. LONG_NULL until the first correction, which
+    // is also when adaptiveCheckpointDurationMicros stops being LONG_NULL. Not
+    // surfaced by live_views(), and only the refresh worker touches it.
+    private long adaptiveCheckpointCeilingMicros = Numbers.LONG_NULL;
+    // Set by a correction and consumed by the next seal, which is the seal that
+    // correction's own O3 repair forces. That first seal is what the tightening
+    // asked for, so it relaxes nothing; every later seal without a fresh
+    // correction pays one step. See relaxAdaptiveCheckpointCadenceOnSeal().
+    private boolean hasAdaptiveCheckpointCorrectionSinceSeal;
     // Wall-clock (micros) of the most recent successful LV WAL commit. Used by
     // LiveViewRefreshJob to enforce FLUSH EVERY: a refresh that arrives within
     // flushEveryMicros of the previous commit is skipped, so high-rate base
@@ -437,6 +575,19 @@ public class LiveViewInstance implements QuietCloseable {
     // current value. In-memory only - resets to 0 on restart. Surfaced via
     // live_views().o3_replay_scan_rows.
     private volatile long o3ReplayScanRows;
+    // Cumulative count of open-segment checkpoint resumes whose replay followed
+    // only the correction's indexed key domain. This is the steady-state keyed
+    // route: a growing value means the checkpoint ladder is supplying a usable
+    // root below the correction. Bumped only on the refresh-worker thread;
+    // volatile for live_views(). In-memory only - resets to 0 on restart.
+    private volatile long o3OpenSegmentKeyedResumeCount;
+    // Cumulative count of localized open-segment head misses replayed cold by key
+    // from the active anchor segment's origin. This is the bootstrap/fallback
+    // counterpart to o3OpenSegmentKeyedResumeCount: it should stop growing once
+    // repairs preserve usable roots above the segment origin. Bumped only on the
+    // refresh-worker thread; volatile for live_views(). In-memory only - resets
+    // to 0 on restart.
+    private volatile long o3OpenSegmentColdKeyedReplayCount;
     // Cumulative count of live-view rows re-emitted by bounded resume-from-anchor O3
     // replays (replayFromAnchor - the tail re-evaluation above the newest logical
     // boundary strictly below the change). Surfaced via
@@ -633,9 +784,18 @@ public class LiveViewInstance implements QuietCloseable {
     // live_views().writer_stall_micros for operator visibility.
     private volatile long writerStallStartUs = Numbers.LONG_NULL;
 
-    public LiveViewInstance(LiveViewDefinition definition, TableToken liveViewToken) {
+    public LiveViewInstance(
+            LiveViewDefinition definition,
+            TableToken liveViewToken,
+            long lifecycleIdentity,
+            boolean isDedupKeyed,
+            int dedupKeyColumnIndex
+    ) {
         this.definition = definition;
         this.liveViewToken = liveViewToken;
+        this.lifecycleIdentity = lifecycleIdentity;
+        this.isDedupKeyed = isDedupKeyed;
+        this.dedupKeyColumnIndex = dedupKeyColumnIndex;
         this.stubState = null;
     }
 
@@ -648,9 +808,12 @@ public class LiveViewInstance implements QuietCloseable {
      * it with the matching {@code view_status}; the refresh worker never runs against it,
      * and DROP LIVE VIEW removes it best-effort.
      */
-    public LiveViewInstance(TableToken liveViewToken, LiveViewLifecycleState stubState) {
+    public LiveViewInstance(TableToken liveViewToken, LiveViewLifecycleState stubState, long lifecycleIdentity) {
         this.definition = null;
         this.liveViewToken = liveViewToken;
+        this.lifecycleIdentity = lifecycleIdentity;
+        this.isDedupKeyed = false;
+        this.dedupKeyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
         this.stubState = stubState;
     }
 
@@ -709,6 +872,8 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void bumpO3BoundaryReplayRows(long n) {
         o3BoundaryReplayRows += n;
+        // Assertion-only, and never evaluated under -da. See armCheckpointRepairPublish().
+        assert armCheckpointRepairPublish();
     }
 
     /**
@@ -730,6 +895,75 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void bumpO3ReplayScanRows(long n) {
         o3ReplayScanRows += n;
+        // Assertion-only, and never evaluated under -da. See armCheckpointRepairPublish().
+        assert armCheckpointRepairPublish();
+    }
+
+    /**
+     * Records one open-segment checkpoint resume that followed only the
+     * correction's indexed keys. Exposed via
+     * {@code live_views().o3_open_segment_keyed_resume_count}.
+     */
+    public void recordO3OpenSegmentKeyedResume() {
+        o3OpenSegmentKeyedResumeCount++;
+    }
+
+    /**
+     * Records one localized open-segment head miss replayed cold by key from the
+     * active anchor segment's origin. Exposed via
+     * {@code live_views().o3_open_segment_cold_keyed_replay_count}.
+     */
+    public void recordO3OpenSegmentColdKeyedReplay() {
+        o3OpenSegmentColdKeyedReplayCount++;
+    }
+
+    /**
+     * Learns a duration cadence from one observed out-of-order correction depth.
+     * The configured duration stays the ceiling, while {@code minDurationMicros}
+     * (normally the view's FLUSH EVERY interval) prevents a target the refresh
+     * cycle cannot physically realize.
+     */
+    public void recordAdaptiveCheckpointCorrection(
+            long correctionDepthMicros,
+            long configuredDurationMicros,
+            long minDurationMicros
+    ) {
+        if (correctionDepthMicros <= 0) {
+            return;
+        }
+        adaptiveCheckpointLastCorrectionDepthMicros = correctionDepthMicros;
+        adaptiveCheckpointCorrectionCount++;
+        adaptiveCheckpointCeilingMicros = configuredDurationMicros;
+        hasAdaptiveCheckpointCorrectionSinceSeal = true;
+        if (configuredDurationMicros <= 0) {
+            // Zero already fires on every eligible cycle; negative values retain
+            // the same legacy comparison semantics rather than being normalized.
+            adaptiveCheckpointDurationMicros = configuredDurationMicros;
+            return;
+        }
+
+        final long halfDepth = correctionDepthMicros / 2 + correctionDepthMicros % 2;
+        final long floor = Math.max(1, minDurationMicros);
+        final long desired = Math.min(configuredDurationMicros, Math.max(floor, halfDepth));
+        final long current = adaptiveCheckpointDurationMicros;
+        if (current == Numbers.LONG_NULL || desired <= current) {
+            adaptiveCheckpointDurationMicros = desired;
+            return;
+        }
+
+        final long step = Math.max(1, current / 4);
+        adaptiveCheckpointDurationMicros = current >= desired - step
+                ? desired
+                : current + step;
+    }
+
+    /**
+     * Returns the duration cadence currently in force. Before the first observed
+     * correction this is the configured ceiling.
+     */
+    public long getEffectiveCheckpointDurationMicros(long configuredDurationMicros) {
+        final long learned = adaptiveCheckpointDurationMicros;
+        return learned == Numbers.LONG_NULL ? configuredDurationMicros : learned;
     }
 
     /**
@@ -741,6 +975,8 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public void bumpO3ResumeReplayRows(long n) {
         o3ResumeReplayRows += n;
+        // Assertion-only, and never evaluated under -da. See armCheckpointRepairPublish().
+        assert armCheckpointRepairPublish();
     }
 
     /**
@@ -789,6 +1025,23 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Returns this view's LV-private symbol-id dictionaries, creating them on first use.
+     * <p>
+     * Call it only after {@link #setMemoryTracker}: the registry binds the tracker its
+     * dictionaries charge at construction, and rebinding a live dictionary would have to free
+     * its blocks under whichever tracker charged them. The registry then outlives every
+     * compiled factory the view goes through, which is what keeps an id stable across a
+     * base-schema recompile.
+     */
+    public @NotNull LiveViewSymbolIdRegistry ensurePartitionKeyTranslators() {
+        if (partitionKeyTranslators == null) {
+            partitionKeyTranslators = new LiveViewSymbolIdRegistry(getLiveViewToken());
+            partitionKeyTranslators.setMemoryTracker(memoryTracker);
+        }
+        return partitionKeyTranslators;
+    }
+
+    /**
      * Companion to {@link #startCheckpoint(SqlExecutionCircuitBreaker)}. Clears the freeze gate so
      * the refresh worker resumes on its next turn and wakes any thread blocked
      * in {@link #waitForUnfrozen()}. Idempotent.
@@ -826,6 +1079,24 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Non-monotonic restore of {@link #getMinSeenTsSinceCheckpoint()}, used by a
+     * converging out-of-order repair to put the batch-minimum window back where the
+     * pre-repair runtime left it.
+     * <p>
+     * The repair's replay reads down to its own scan floor and every row it feeds lowers
+     * this value, but the runtime the repair puts back afterwards holds none of those
+     * rows - it is the state the replay was taken aside from. So the value has to go back
+     * up, which {@link #setLatestSeenTs} cannot express. Travels with
+     * {@link io.questdb.cairo.lv.LiveViewCheckpointSealCarryover}, which restores it only
+     * alongside the dirty sets whose keys describe the same batch. Bypassing the
+     * monotonic clamp is intentional and unsafe in any other context, hence the explicit
+     * name.
+     */
+    public void forceSetMinSeenTsSinceCheckpoint(long ts) {
+        minSeenTsSinceCheckpoint = ts;
+    }
+
+    /**
      * Releases the base-table snapshot pinned across the seed sweep (see
      * {@link #getSeedBaseReader()}). The reader is borrowed, not detached, so
      * {@code close()} returns it to the pool from any thread. Idempotent (null-safe).
@@ -856,6 +1127,26 @@ public class LiveViewInstance implements QuietCloseable {
         return applyLagDeferUntilUs;
     }
 
+    /**
+     * @return the {@code LiveViewSegmentRepairEnvelope.GATE_*} code naming whether this
+     * view's SQL admits repairing a correction that lands in a closed anchor segment over
+     * that segment alone, or {@code GATE_UNKNOWN} before the view compiles its SELECT. See
+     * {@link #segmentScopeGate}
+     */
+    public int getSegmentScopeGate() {
+        return segmentScopeGate;
+    }
+
+    /**
+     * @return the {@code LiveViewSegmentRepairEnvelope.GATE_*} code naming whether a
+     * replay of one closed anchor segment could follow the affected keys' rows rather than
+     * every row of the segment, or {@code GATE_UNKNOWN} before the view compiles its
+     * SELECT. See {@link #keyedScanGate}
+     */
+    public int getKeyedScanGate() {
+        return keyedScanGate;
+    }
+
     public long getBelowLowerBoundCount() {
         return belowLowerBoundCount;
     }
@@ -873,12 +1164,30 @@ public class LiveViewInstance implements QuietCloseable {
         return compiledPlan;
     }
 
+    /**
+     * The output column beside the designated timestamp that this view's own table
+     * deduplicates on, or {@link LiveViewCheckpointOutputUniqueness#NO_KEY_COLUMN}.
+     * <p>
+     * A repair publishing sparsely upserts on {@code (designated timestamp, this column)}
+     * and proves that pair unique first, so the two have to be the same column: a repair
+     * that proved one identity and published on another would collapse rows nothing
+     * checked. Resolved off the table's own metadata where the instance is built, for the
+     * reason {@link #isDedupKeyed()} gives.
+     */
+    public int getDedupKeyColumnIndex() {
+        return dedupKeyColumnIndex;
+    }
+
     public long getDedupRawWalCleanCycles() {
         return dedupRawWalCleanCycles;
     }
 
     public LiveViewDefinition getDefinition() {
         return definition;
+    }
+
+    public long getLifecycleIdentity() {
+        return lifecycleIdentity;
     }
 
     /**
@@ -989,7 +1298,7 @@ public class LiveViewInstance implements QuietCloseable {
      * separates the two. See {@link #checkpointRepairOutcome}
      */
     public int getCheckpointRepairLastDenialReason() {
-        return (int) checkpointRepairOutcome;
+        return repairDenialReasonOf(checkpointRepairOutcome);
     }
 
     /**
@@ -998,11 +1307,33 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link #checkpointRepairOutcome}
      */
     public int getCheckpointRepairLastDisposition() {
-        return (int) (checkpointRepairOutcome >>> 32);
+        return repairDispositionOf(checkpointRepairOutcome);
+    }
+
+    /**
+     * @return the whole packed outcome word of the view's last completed out-of-order
+     * repair, to be split with {@link #repairDispositionOf(long)} and
+     * {@link #repairDenialReasonOf(long)}. One read gives a caller that needs both
+     * halves - the {@code live_views()} scan does - a disposition and a denial from the
+     * same repair, which two separate getter calls cannot promise.
+     * See {@link #checkpointRepairOutcome}
+     */
+    public long getCheckpointRepairLastOutcome() {
+        return checkpointRepairOutcome;
     }
 
     public long getCheckpointRepairNewBytes() {
         return checkpointRepairNewBytes;
+    }
+
+    /**
+     * @return the {@code LiveViewCheckpointRepairPlan.DENIAL_*} code the repair currently
+     * in flight settled on at planning time, which the catalogue does not report until
+     * that repair finishes. Refresh worker only. See
+     * {@link #checkpointRepairPlannedOutcome}
+     */
+    public int getCheckpointRepairPlannedDenialReason() {
+        return repairDenialReasonOf(checkpointRepairPlannedOutcome);
     }
 
     public long getCheckpointRepairResumes() {
@@ -1011,6 +1342,17 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getCheckpointRepairRootsVersioned() {
         return checkpointRepairRootsVersioned;
+    }
+
+    /**
+     * @return seals this view has refused because its emitted-row counter and its
+     * durable row count disagreed. Any non-zero value means rows the view emitted
+     * never reached its table - or rows it never emitted did - and that the
+     * timeline was retired rather than extended over the drift; see
+     * {@link #checkpointRowCountMismatches}
+     */
+    public long getCheckpointRowCountMismatches() {
+        return checkpointRowCountMismatches;
     }
 
     /**
@@ -1085,6 +1427,10 @@ public class LiveViewInstance implements QuietCloseable {
         return new long[]{local[HEAD_CHECKPOINT_LV_SEQ_TXN], local[HEAD_CHECKPOINT_MAX_TS]};
     }
 
+    public LiveViewCheckpointOpenSegmentCost getOpenSegmentRepairCost() {
+        return openSegmentRepairCost;
+    }
+
     public long getHeadCheckpointStateBytes() {
         return headCheckpoint[HEAD_CHECKPOINT_STATE_BYTES];
     }
@@ -1096,6 +1442,18 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getHeadCheckpointWriteMicros() {
         return headCheckpointWriteMicros;
+    }
+
+    public long getAdaptiveCheckpointCorrectionCount() {
+        return adaptiveCheckpointCorrectionCount;
+    }
+
+    public long getAdaptiveCheckpointDurationMicros() {
+        return adaptiveCheckpointDurationMicros;
+    }
+
+    public long getAdaptiveCheckpointLastCorrectionDepthMicros() {
+        return adaptiveCheckpointLastCorrectionDepthMicros;
     }
 
     public LiveViewInMemoryTier getInMemoryTier() {
@@ -1197,6 +1555,95 @@ public class LiveViewInstance implements QuietCloseable {
         return memoryTracker;
     }
 
+    /**
+     * @return this view's LV-private symbol-id dictionaries, or null while no partition term
+     * keys through one. Null is the answer for every view whose PARTITION BY holds no direct
+     * base SYMBOL term, and for every view at all until a compile binds the registry.
+     */
+    public @Nullable LiveViewSymbolIdRegistry getPartitionKeyTranslators() {
+        return partitionKeyTranslators;
+    }
+
+    /**
+     * @return bytes the {@code baseId -> lvId} caches held at the last refresh turn. A pure
+     * accelerator - the durable format needs none of it and a restart re-earns it one resolve
+     * per distinct id - but it is an IntList indexed by base id, so one resolve of a high base
+     * id sizes it to that id whatever else the view keys by. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyBaseIdCacheBytes() {
+        return partitionKeyBaseIdCacheBytes;
+    }
+
+    /**
+     * @return how many base SYMBOL columns this view's PARTITION BY terms key through an
+     * LV-private dictionary, as of the last refresh turn. Zero for a compiled view that
+     * translates nothing, NULL before the view compiles its SELECT. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionaryColumns() {
+        return partitionKeyDictionaryColumns;
+    }
+
+    /**
+     * @return bytes the {@code lvId -> string} halves held at the last refresh turn. This is
+     * the one resident structure the durable format requires. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionaryForwardBytes() {
+        return partitionKeyDictionaryForwardBytes;
+    }
+
+    /**
+     * @return ids the dictionaries have assigned since this instance was created, as of the
+     * last refresh turn. A restarted instance starts over at zero while the dictionary it
+     * restores does not, so this is the growth rate rather than the size. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionaryInterns() {
+        return partitionKeyDictionaryInterns;
+    }
+
+    /**
+     * @return bytes the {@code string -> lvId} reverse indexes held at the last refresh turn.
+     * Rebuildable from the forward half rather than required by the durable format. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionaryReverseBytes() {
+        return partitionKeyDictionaryReverseBytes;
+    }
+
+    /**
+     * @return ids every bound dictionary has handed out, as of the last refresh turn. The
+     * dictionary is durable and append-only, so this only ever grows for the life of the
+     * view's checkpoint history - read it against
+     * {@link #getPartitionKeyLiveCount()}, which the frontier sweep does bound. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDictionarySize() {
+        return partitionKeyDictionarySize;
+    }
+
+    /**
+     * @return bytes the WAL dirty-band scratch held at the last refresh turn. It grows to the
+     * widest transaction band a row has reached and is never released between transactions,
+     * which is what keeps arming a cursor O(1). See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyDirtyBandBytes() {
+        return partitionKeyDirtyBandBytes;
+    }
+
+    /**
+     * @return partition keys the anchor map held at the last refresh turn, or NULL for a view
+     * with no anchored window. Unlike the dictionary beside it this is bounded: the frontier
+     * sweep evicts a key whose partition has aged out. See
+     * {@link #recordPartitionKeyDictionaryStats()}
+     */
+    public long getPartitionKeyLiveCount() {
+        return partitionKeyLiveCount;
+    }
+
     public long getO3BoundaryReplayRows() {
         return o3BoundaryReplayRows;
     }
@@ -1207,6 +1654,14 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getO3ReplayScanRows() {
         return o3ReplayScanRows;
+    }
+
+    public long getO3OpenSegmentKeyedResumeCount() {
+        return o3OpenSegmentKeyedResumeCount;
+    }
+
+    public long getO3OpenSegmentColdKeyedReplayCount() {
+        return o3OpenSegmentColdKeyedReplayCount;
     }
 
     public long getO3ResumeReplayRows() {
@@ -1274,6 +1729,30 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long getSeedCheckpointDataOffset() {
         return seedCheckpointDataOffset;
+    }
+
+    /**
+     * @return the isolated runtime a converging out-of-order repair replays through, or
+     * null before the first such repair built one. See {@link LiveViewRepairRuntime}.
+     */
+    public LiveViewRepairRuntime getRepairRuntime() {
+        return repairRuntime;
+    }
+
+    /**
+     * @return the compiled full scan of the view's own table a keyed repair reads its
+     * unaffected keys' rows through, or null before one compiled it
+     */
+    public RecordCursorFactory getStoredRowScanFactory() {
+        return storedRowScanFactory;
+    }
+
+    public RecordToRowCopier getStoredRowCopier() {
+        return storedRowCopier;
+    }
+
+    public long getStoredRowCopierMetadataVersion() {
+        return storedRowCopierMetadataVersion;
     }
 
     /**
@@ -1364,6 +1843,18 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public long incrementAndGetSealsSincePurge() {
         return ++sealsSincePurge;
+    }
+
+    /**
+     * Whether this view's own table carries the {@code (designated timestamp, projected
+     * partition key)} dedup keys a sparse repair publication upserts on.
+     * <p>
+     * The forward path reads it to keep its own commits off those keys - see
+     * {@code WalWriter.commitLiveViewWithoutDedup} - which is what lets a view whose output
+     * legitimately repeats a pair carry the identity a repair would publish on.
+     */
+    public boolean isDedupKeyed() {
+        return isDedupKeyed;
     }
 
     public boolean isDropped() {
@@ -1587,6 +2078,8 @@ public class LiveViewInstance implements QuietCloseable {
         // through the old factory's column layout.
         recordToRowCopier = null;
         recordRowCopierMetadataVersion = -1;
+        storedRowCopier = null;
+        storedRowCopierMetadataVersion = -1;
     }
 
     /**
@@ -1626,6 +2119,29 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Hands the outcome {@link #recordCheckpointRepairOutcome(int, int)} settled at
+     * planning time to the catalogue. The refresh worker calls it once per repair, at
+     * replay completion and <b>after</b> the {@code o3_*} row counters that repair moved,
+     * so a reader of {@code live_views()} that sees the new disposition sees the rows it
+     * cost too. A repair that never completes - it parked and its candidate was
+     * discarded, or it threw - publishes nothing and leaves the previous repair's outcome
+     * standing, which is what "the view's last repair" means.
+     * <p>
+     * The assertion pins that "after" against a later refactor: both call sites bump their
+     * counters in the same straight-line block that publishes, so every publish is dominated
+     * by a bump and the guard cannot fire on a repair that yields, parks, unwinds, throws or
+     * is discarded - none of those reach this method at all. It arms on the bump having
+     * happened rather than on what it carried, so a repair that legitimately moved zero rows
+     * still passes. Moving a publish above its counters is what fails it.
+     * See {@link #checkpointRepairOutcome}.
+     */
+    public void publishCheckpointRepairOutcome() {
+        assert hasCheckpointRepairPublishArming()
+                : "publish the repair disposition after the o3_* counters that repair moved";
+        checkpointRepairOutcome = checkpointRepairPlannedOutcome;
+    }
+
+    /**
      * Publishes what the last lifecycle reconciliation's purge sweep found while
      * walking the pinned generation's segment catalogue.
      */
@@ -1652,14 +2168,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Publishes what one out-of-order repair decided: the executor it selected and the
+     * Records what one out-of-order repair decided: the executor it selected and the
      * {@code LiveViewCheckpointRepairPlan.DENIAL_*} code naming why it reads more than a
      * localized rebuild would. The refresh worker calls it once per planned repair, so a
-     * suspended repair that continues in a later turn keeps the outcome its planning
-     * turn published. See {@link #checkpointRepairOutcome}.
+     * suspended repair that continues in a later turn keeps what its planning turn
+     * decided. The catalogue reports none of it until
+     * {@link #publishCheckpointRepairOutcome()} hands it over at replay completion.
+     * See {@link #checkpointRepairPlannedOutcome}.
      */
     public void recordCheckpointRepairOutcome(int disposition, int denialReason) {
-        checkpointRepairOutcome = ((long) disposition << 32) | (denialReason & 0xffff_ffffL);
+        checkpointRepairPlannedOutcome = ((long) disposition << 32) | (denialReason & 0xffff_ffffL);
     }
 
     /**
@@ -1676,6 +2194,14 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordCheckpointRepairSplice(long rootsVersioned, long newBytes) {
         checkpointRepairRootsVersioned += rootsVersioned;
         checkpointRepairNewBytes += newBytes;
+    }
+
+    /**
+     * Records one seal refused because the emitted-row counter and the durable row
+     * count disagreed. See {@link #checkpointRowCountMismatches}.
+     */
+    public void recordCheckpointRowCountMismatch() {
+        checkpointRowCountMismatches++;
     }
 
     /**
@@ -1708,6 +2234,37 @@ public class LiveViewInstance implements QuietCloseable {
                     .put("live view checkpoint timeline WAL floor must be non-negative");
         }
         checkpointTimelineWalPurgeFloor = walPurgeFloor;
+    }
+
+    /**
+     * Mirrors what this view's LV-private partition-key dictionary costs to keep, and how many
+     * partition keys its anchor map holds to read that cost against. The refresh worker calls
+     * it at the end of every turn, under the refresh latch - the registry's only serialisation
+     * - so that the catalogue thread reads eight published longs instead of walking a registry
+     * another worker may be interning into or freeing.
+     * <p>
+     * A view holding no registry - one that has not compiled its SELECT, or whose cached
+     * refresh state has since been freed - reports NULL for the whole group, which says
+     * something different from a compiled view whose PARTITION BY translates nothing and
+     * reports a column count of zero. See {@link #partitionKeyDictionarySize}
+     */
+    public void recordPartitionKeyDictionaryStats() {
+        final LiveViewSymbolIdRegistry registry = partitionKeyTranslators;
+        if (registry == null) {
+            clearPartitionKeyDictionaryStats();
+            return;
+        }
+        partitionKeyDictionaryColumns = registry.getBoundSlotCount();
+        partitionKeyDictionarySize = registry.getTotalDictionarySize();
+        partitionKeyDictionaryForwardBytes = registry.getForwardDictionaryBytes();
+        partitionKeyDictionaryReverseBytes = registry.getReverseDictionaryBytes();
+        partitionKeyBaseIdCacheBytes = registry.getBaseIdCacheBytes();
+        partitionKeyDirtyBandBytes = registry.getDirtyBandBytes();
+        partitionKeyDictionaryInterns = registry.getInternCount();
+        // The anchor map is the key set the frontier sweep bounds. A view with no anchored
+        // window has no such set to report the unbounded dictionary against.
+        final LiveViewWindow window = anchorWindow;
+        partitionKeyLiveCount = window == null ? Numbers.LONG_NULL : window.getAnchorMapSize();
     }
 
     /**
@@ -1806,6 +2363,9 @@ public class LiveViewInstance implements QuietCloseable {
         this.seedCheckpointDataOffset = dataOffset;
         this.seedCheckpointMaxTs = maxTs;
         this.lastCheckpointWrittenUs = writtenUs;
+        if (writtenUs != Numbers.LONG_NULL) {
+            relaxAdaptiveCheckpointCadenceOnSeal();
+        }
     }
 
     /**
@@ -1874,6 +2434,16 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records which halves of a scoped, keyed repair this view's SQL admits. The refresh
+     * worker calls this every time it compiles the factory, beside
+     * {@link #setCheckpointRepairDependencyPlans(int)}. See {@link #segmentScopeGate}
+     */
+    public void setSegmentRepairGates(int segmentScopeGate, int keyedScanGate) {
+        this.segmentScopeGate = segmentScopeGate;
+        this.keyedScanGate = keyedScanGate;
+    }
+
+    /**
      * Records which dependency plans cover the compiled SELECT's window functions.
      * The refresh worker calls this every time it compiles the factory, so a view
      * whose cached factory was freed and rebuilt reports the rebuilt one's plans. See
@@ -1932,6 +2502,9 @@ public class LiveViewInstance implements QuietCloseable {
         this.rowsSinceLastCheckpointWritten = 0;
         this.minSeenTsSinceCheckpoint = Long.MAX_VALUE;
         this.lastCheckpointWrittenUs = writtenUs;
+        if (writtenUs != Numbers.LONG_NULL) {
+            relaxAdaptiveCheckpointCadenceOnSeal();
+        }
         // Every head transition invalidates the root identity by default: the
         // caller re-stamps it through setHeadCheckpointRoot only when it actually
         // published (or restored) the root this head mirrors. A caller that seals
@@ -2074,6 +2647,33 @@ public class LiveViewInstance implements QuietCloseable {
 
     public void setSeedBaseReader(TableReader seedBaseReader) {
         this.seedBaseReader = seedBaseReader;
+    }
+
+    /**
+     * Adopts the isolated repair runtime, freeing whatever this view held before. Called
+     * under the refresh latch, by the worker that built it.
+     */
+    public void setRepairRuntime(@Nullable LiveViewRepairRuntime repairRuntime) {
+        if (this.repairRuntime != repairRuntime) {
+            Misc.free(this.repairRuntime);
+            this.repairRuntime = repairRuntime;
+        }
+    }
+
+    /**
+     * Adopts the compiled scan of the view's own table, freeing whatever this view held
+     * before. Called under the refresh latch, by the worker that built it.
+     */
+    public void setStoredRowScanFactory(@Nullable RecordCursorFactory storedRowScanFactory) {
+        if (this.storedRowScanFactory != storedRowScanFactory) {
+            Misc.free(this.storedRowScanFactory);
+            this.storedRowScanFactory = storedRowScanFactory;
+        }
+    }
+
+    public void setStoredRowCopier(RecordToRowCopier copier, long metadataVersion) {
+        this.storedRowCopier = copier;
+        this.storedRowCopierMetadataVersion = metadataVersion;
     }
 
     public void setSeedDataOffset(long seedDataOffset) {
@@ -2349,6 +2949,18 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Records that one {@code o3_*} repair counter moved, arming the next
+     * {@link #publishCheckpointRepairOutcome()}. Always returns {@code true}, so the
+     * {@code assert} statements that call it never fail; they exist only so that a
+     * {@code -da} run never evaluates the call and production pays nothing for the
+     * bookkeeping. See {@link #checkpointRepairO3BumpEpoch}.
+     */
+    private boolean armCheckpointRepairPublish() {
+        checkpointRepairO3BumpEpoch++;
+        return true;
+    }
+
+    /**
      * Spins briefly, then sleeps, until the refresh latch is acquired. The caller
      * owns the latch on return and must release it.
      * <p>
@@ -2376,6 +2988,21 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
+     * Retires the partition-key footprint mirror to NULL, which is what a view holding no
+     * registry reports. See {@link #recordPartitionKeyDictionaryStats()}
+     */
+    private void clearPartitionKeyDictionaryStats() {
+        partitionKeyBaseIdCacheBytes = Numbers.LONG_NULL;
+        partitionKeyDictionaryColumns = Numbers.LONG_NULL;
+        partitionKeyDictionaryForwardBytes = Numbers.LONG_NULL;
+        partitionKeyDictionaryInterns = Numbers.LONG_NULL;
+        partitionKeyDictionaryReverseBytes = Numbers.LONG_NULL;
+        partitionKeyDictionarySize = Numbers.LONG_NULL;
+        partitionKeyDirtyBandBytes = Numbers.LONG_NULL;
+        partitionKeyLiveCount = Numbers.LONG_NULL;
+    }
+
+    /**
      * Full-teardown free in the one order {@link #memoryTracker} tolerates. The in-memory tier
      * AND the compiled artifacts (the factory's per-partition function maps, the anchor map) all
      * charge the tracker, so all must release before it is closed. Closing the tracker with a
@@ -2387,6 +3014,13 @@ public class LiveViewInstance implements QuietCloseable {
     private void freeCachedRefreshState() {
         inMemoryTier = Misc.free(inMemoryTier);
         freeCompiledArtifacts();
+        // Between the artifacts and the tracker on purpose: the dictionaries charge the
+        // tracker, so they have to release before it closes, and they outlive a recompile,
+        // so freeCompiledArtifacts() must not be the thing that takes them.
+        partitionKeyTranslators = Misc.free(partitionKeyTranslators);
+        // The mirror named a registry that no longer exists. Retire it rather than leaving
+        // the catalogue reporting the footprint of a dictionary this view has already freed.
+        clearPartitionKeyDictionaryStats();
         memoryTracker = Misc.free(memoryTracker);
     }
 
@@ -2403,6 +3037,17 @@ public class LiveViewInstance implements QuietCloseable {
         compiledPlan = null;
         anchorWindow = Misc.free(anchorWindow);
         anchorFunction = Misc.free(anchorFunction);
+        // The isolated repair runtime mirrors the primary's shape, so it dies with it: a
+        // repair replaying through functions compiled against the old base metadata would
+        // stage roots the rebuilt view cannot read. The parked-repair guard in the refresh
+        // job turns that into a discarded candidate rather than a continued replay.
+        repairRuntime = Misc.free(repairRuntime);
+        // Compiled expressions determine both state width and replay work. Rates learned
+        // from the old shape must not steer the replacement plan.
+        openSegmentRepairCost.reset();
+        // The scan of the view's own table names its columns by the schema the compiled
+        // SELECT produced, so it dies with that SELECT for the same reason.
+        storedRowScanFactory = Misc.free(storedRowScanFactory);
         // The head's root was frozen from the window state those artifacts own, and
         // that state dies with them. A head still claiming a root over state nothing
         // holds must not outlive them: whoever rebuilds re-seals, and only that seal
@@ -2410,6 +3055,20 @@ public class LiveViewInstance implements QuietCloseable {
         // teardown as well as the base-schema recompile, whose rebuild can fail.
         headCheckpointRootId = Numbers.LONG_NULL;
         headCheckpointRootWindowFactory = null;
+    }
+
+    /**
+     * Whether an {@code o3_*} repair counter has moved since the last
+     * {@link #publishCheckpointRepairOutcome()}, disarming as it reports so a second publish
+     * with no counter between the two reads as unarmed. Called only from an {@code assert},
+     * so a {@code -da} run never evaluates it. See {@link #checkpointRepairO3BumpEpoch}.
+     */
+    private boolean hasCheckpointRepairPublishArming() {
+        if (checkpointRepairO3BumpEpoch == checkpointRepairO3BumpEpochAtPublish) {
+            return false;
+        }
+        checkpointRepairO3BumpEpochAtPublish = checkpointRepairO3BumpEpoch;
+        return true;
     }
 
     /**
@@ -2428,6 +3087,49 @@ public class LiveViewInstance implements QuietCloseable {
                 plan.getReplayLowTs(),
                 plan.isHighBoundEof() ? Numbers.LONG_NULL : plan.getHighTsExclusive()
         };
+    }
+
+    /**
+     * Walks the learned cadence one 25% step back towards the configured ceiling
+     * the last correction learned against. Called from the two methods that stamp
+     * {@link #lastCheckpointWrittenUs} from a seal this process actually wrote -
+     * {@link #setHeadCheckpoint} and {@link #recordSeedCheckpointWritten} - and
+     * never from a restored head, which sealed nothing.
+     * <p>
+     * The first seal after a correction is exempt - that is the seal the same
+     * correction's repair forced, and it is the one the tightening asked for.
+     * <p>
+     * Absence of corrections is otherwise not an input:
+     * {@link #recordAdaptiveCheckpointCorrection} relaxes only on a further, and
+     * shallower, sample, so a single late row would hold the tightened cadence -
+     * up to 300x the seal rate at the shipped defaults - for the life of the
+     * process. Charging one step per seal makes the tightening pay for itself:
+     * the tighter the cadence, the faster the seals it causes retire it, while a
+     * view that keeps taking late rows keeps re-tightening on every correction.
+     */
+    private void relaxAdaptiveCheckpointCadenceOnSeal() {
+        // Read the volatile cadence first: recordAdaptiveCheckpointCorrection
+        // stores the two plain fields below before its own volatile store, so this
+        // load publishes them to whichever refresh worker holds the latch next.
+        // A LONG_NULL cadence also means no correction has run, hence no flag to
+        // consume.
+        final long current = adaptiveCheckpointDurationMicros;
+        final long ceiling = adaptiveCheckpointCeilingMicros;
+        if (current == Numbers.LONG_NULL || ceiling == Numbers.LONG_NULL || current >= ceiling) {
+            return;
+        }
+        if (hasAdaptiveCheckpointCorrectionSinceSeal) {
+            // The seal the correction that set this flag forced. Honour the cadence
+            // it just learned for one whole interval before charging it anything.
+            hasAdaptiveCheckpointCorrectionSinceSeal = false;
+            return;
+        }
+        // Matches the per-sample relaxation step in
+        // recordAdaptiveCheckpointCorrection. current < ceiling holds above, so
+        // the sum only overflows for an absurdly configured ceiling; treat that
+        // wrap as having reached it.
+        final long relaxed = current + Math.max(1, current / 4);
+        adaptiveCheckpointDurationMicros = relaxed < current || relaxed >= ceiling ? ceiling : relaxed;
     }
 
 }

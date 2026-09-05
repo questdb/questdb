@@ -86,30 +86,17 @@ public class LiveViewCheckpointRepairPlanTest {
     public void testAnchorBoundsRunOnlyForARepairThatCouldUseThem() throws SqlException {
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
 
-        // No change ceiling: nothing says which segment the change stops in.
-        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, NO_CHANGE_MAX_TS, 9_000, UNPRICED);
-        assertAnchorRebuildIsUnlocalized(plan);
-
-        // No runtime frontier: the repair cannot put the window state - including the
-        // anchor map - back, so it must not stop short of the tail.
-        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, NO_RUNTIME_FRONTIER, UNPRICED);
-        assertAnchorRebuildIsUnlocalized(plan);
-
         // Output the runtime holds but has not made durable sits above the live-view
-        // table's frontier, and a replacement stopping at H would neither re-emit it nor
-        // leave it on disk.
+        // table's frontier. The anchor arm's own repair would come out EOF and re-emit
+        // that tail, so the term is not what keeps it safe - but a repair runs against a
+        // quiesced runtime whose output is flushed, so declining costs the ordinary
+        // repair nothing and keeps the un-flushed lead off the anchor path entirely.
         plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 8_000, 6_000, 9_000, UNPRICED);
         assertAnchorRebuildIsUnlocalized(plan);
 
         // The live-view table holds no durable row, so R collapses to S and the rebuild
         // re-emits the whole history whatever the segment says.
         plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, NO_DURABLE_OUTPUT, 6_000, 9_000, UNPRICED);
-        assertAnchorRebuildIsUnlocalized(plan);
-
-        // The frontier sits inside the segment the change lands in, so the change is
-        // NOT outside the state the runtime currently holds - the state the replay ends
-        // on is the correct one and must be promoted, which a finite H would prevent.
-        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 7_000, 6_000, 7_000, UNPRICED);
         assertAnchorRebuildIsUnlocalized(plan);
 
         // A resume is bounded by its anchor, so the segment is never consulted.
@@ -119,17 +106,149 @@ public class LiveViewCheckpointRepairPlanTest {
     }
 
     @Test
-    public void testAnchorSegmentDeclinesWithoutARepresentableSegmentEnd() throws SqlException {
+    public void testAnchorArmLocalizesBehindAnEofBound() throws SqlException {
+        // The three inputs a finite H is derived from, each missing in turn. A ROWS view
+        // denies on every one of them; an anchored view localizes behind the EOF bound
+        // they leave, because the anchor expires by time: L is the start of R's segment,
+        // so a key with no row at or above L has no row in that segment at all. Its
+        // accumulator is about to be reset by the anchor the moment its next row arrives
+        // and it emits nothing at or above R in the meantime, so promoting the replay's
+        // state loses only what the anchor was going to discard.
+        //
+        // What that buys is the whole point: R rises from S to the correction floor, so
+        // the replacement is the correction depth rather than the view, and L rises from
+        // S to the start of R's segment, so the scan stops tracking the view's lifetime.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+
+        // No change ceiling: nothing says which segment the change stops in, so the arm
+        // computes no segment end at all rather than one off a LONG_NULL input.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, NO_CHANGE_MAX_TS, 9_000, UNPRICED);
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 4_000, 5_000);
+
+        // No runtime frontier: LONG_NULL is Long.MIN_VALUE, so the frontier comparison
+        // would decide the tag rather than skip it. The arm reads the missing input as
+        // EOF up front instead, which is the same disposition by a route that does not
+        // depend on a sentinel's numeric value.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, NO_RUNTIME_FRONTIER, UNPRICED);
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 4_000, 5_000);
+
+        // The frontier sits inside the segment the change lands in - it reached 7_000
+        // and the segment converges at 8_000 - so the state the replay ends on is the
+        // correct one and must be promoted. This is the case the whole change is for.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 7_000, 6_000, 7_000, UNPRICED);
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 4_000, 5_000);
+
+        // A frontier at the segment end takes the other branch: H comes back FINITE and
+        // the pre-repair runtime is restored rather than promoted. The two branches share
+        // the guard, so the finite one is asserted beside them.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, 8_000, UNPRICED);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(HighBoundTag.FINITE, plan.getHighBoundTag());
+        Assert.assertEquals(8_000, plan.getHighTsExclusive());
+        Assert.assertTrue(plan.isRuntimeStatePreserved());
+    }
+
+    @Test
+    public void testAnchorSegmentLocalizesWithoutARepresentableSegmentEnd() throws SqlException {
         // A nanosecond anchor period over a microsecond column advances nothing, so the
-        // segment has no end the plan can name. That is H = EOF, and an anchored view
-        // must not localize on it: promoting the replay's state would drop every
-        // partition whose rows all sit below L, exactly as it would for a ROWS frame.
+        // segment has no end the plan can name. That is H = EOF, and an anchor localizes
+        // behind it: a period too fine to compute a boundary for still resets every
+        // accumulator, which is the whole of the argument.
         final LiveViewCheckpointAnchorPlan subResolution =
                 LiveViewCheckpointAnchorPlan.of('n', 1, 0, ColumnType.TIMESTAMP_MICRO);
         Assert.assertNotNull(subResolution);
         final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
         plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, subResolution, true, 9_000, 6_000, 9_000, UNPRICED);
 
+        // A segment one unit wide starts at R itself, so the replay needs no warm-up at
+        // all: L and R coincide.
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 5_000, 5_000);
+    }
+
+    @Test
+    public void testAnchorWithRowsKeepsTheFiniteBoundRequirement() throws SqlException {
+        // The EOF localization is the anchor's alone. A view carrying a ROWS function as
+        // well still needs a finite H, because a ROWS frame never expires by time: a key
+        // whose rows all sit below L holds state the replay cannot reconstruct, and the
+        // promotion an EOF bound forces would lose it. hasRows is what keeps the
+        // requirement, so it holds whatever the anchor proves alongside.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+
+        // No change ceiling, which the anchor alone localizes behind above.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.FINITE, 8_000), SEGMENTS_OF_4000, true, 9_000, NO_CHANGE_MAX_TS, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_CHANGE_CEILING);
+
+        // No runtime frontier, likewise.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.FINITE, 8_000), SEGMENTS_OF_4000, true, 9_000, 6_000, NO_RUNTIME_FRONTIER, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_RUNTIME_FRONTIER);
+
+        // A frontier below the union's H, likewise: the anchor would promote, the ROWS
+        // frame may not, and the union takes the stricter of the two.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.FINITE, 8_000), SEGMENTS_OF_4000, true, 7_000, 6_000, 7_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_FRONTIER_BELOW_CONVERGENCE);
+
+        // A ROWS discovery that proved no bound of its own denies too, even though the
+        // segment named one: EOF sits above every timestamp, so the union sinks to it.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.EOF, Numbers.LONG_NULL), SEGMENTS_OF_4000, true, 9_000, 6_000, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_CONVERGENCE_BOUND);
+
+        // And with every input in hand the pair localizes, which is what makes the four
+        // denials above about the missing input rather than about the shape.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.FINITE, 8_000), SEGMENTS_OF_4000, true, 9_000, 6_000, 9_000, UNPRICED);
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(HighBoundTag.FINITE, plan.getHighBoundTag());
+        Assert.assertEquals(8_000, plan.getHighTsExclusive());
+        Assert.assertTrue(plan.isRuntimeStatePreserved());
+    }
+
+    @Test
+    public void testAnchorUnionWithARangeArmBehindAnEofBound() throws SqlException {
+        // Both arms lose their finite bound to the same missing input, so neither names
+        // an H - and the floors still union. L takes the lower of R - W and the segment
+        // start, which only widens the warm-up, and both arms survive the promotion for
+        // the same reason: each expires by time.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 2_000, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, NO_CHANGE_MAX_TS, 9_000, UNPRICED);
+
+        // R - W = 3_000 sits below the segment start 4_000, so the RANGE arm owns L.
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 3_000, 5_000);
+
+        // The other order: a frame narrower than the segment leaves the segment start as
+        // the lower of the two.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, NO_CHANGE_MAX_TS, 9_000, UNPRICED);
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 4_000, 5_000);
+    }
+
+    @Test
+    public void testAnchorArmContributesItsFloorWithoutACeiling() throws SqlException {
+        // An arm that proves no H still proves where R's segment starts, and the floor is
+        // derived from R alone. Reading it off the plan rather than off the arm is what
+        // stops an EOF repair from falling back to the view boundary and rescanning the
+        // view's whole lifetime - the scan cost the localization exists to remove.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+
+        // R = 21_000 lands in the segment starting at 20_000, four segments above S.
+        plan.of(new TestAnchors(), 21_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 30_000, NO_CHANGE_MAX_TS, 30_000, UNPRICED);
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 20_000, 21_000);
+
+        // And the view's own boundary still clamps it: a START FROM inside R's segment
+        // leaves L there, because the rows below it were never the view's to replay.
+        plan.of(new TestAnchors(), 21_000, 20_500, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 30_000, NO_CHANGE_MAX_TS, 30_000, UNPRICED);
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 20_500, 21_000);
+    }
+
+    @Test
+    public void testAnchorSegmentEndAtOrBelowTheOutputFloorStaysDenied() throws SqlException {
+        // The other half of the segment-end guard, which does NOT become an EOF bound. An
+        // end at or below R says every changed row sits below the view's own boundary, so
+        // the replacement range is empty - as true behind an EOF bound as behind a finite
+        // one, and a different thing from an arm that named no end at all.
+        final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+
+        // C = 5_000 and D = 9_000 put R at 5_000, while the change stops at 500 - in the
+        // segment ending at 4_000, which is below R.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 500, 9_000, UNPRICED);
+        assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_CONVERGENCE_BOUND);
         assertAnchorRebuildIsUnlocalized(plan);
     }
 
@@ -151,10 +270,13 @@ public class LiveViewCheckpointRepairPlanTest {
         Assert.assertEquals(8_000, plan.getHighTsExclusive());
 
         // The frontier now sits between the two arms' bounds. It clears the RANGE arm's
-        // 6_101 but not the union's 8_000, and it is the union the runtime is restored
-        // against - so the plan declines rather than stopping where only one arm converged.
+        // 6_101 but not the union's 8_000, so the plan may not stop at either: it cannot
+        // restore the runtime against a bound the frontier has not reached, and stopping
+        // where only one arm converged would leave the other's output unrepaired. Both
+        // arms expire by time, though, so it takes the EOF bound and promotes what the
+        // replay ends on - keeping the floors, which is what the localization is for.
         plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, 100, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, 7_000, UNPRICED);
-        assertAnchorRebuildIsUnlocalized(plan);
+        assertAnchorRebuildIsLocalizedBehindEof(plan, 4_000, 5_000);
     }
 
     @Test
@@ -471,21 +593,26 @@ public class LiveViewCheckpointRepairPlanTest {
 
         // The three inputs a finite high bound needs, each missing in turn. They are
         // separate codes because they call for separate actions: bound the change set,
-        // give the view checkpoint-capable functions, flush the output.
-        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, NO_CHANGE_MAX_TS, 9_000, UNPRICED);
+        // give the view checkpoint-capable functions, flush the output. The first two are
+        // stated over a ROWS arm, which is the shape that still denies on them - an
+        // anchored view localizes behind the EOF bound they leave, and its dispositions
+        // are pinned in testAnchorArmLocalizesBehindAnEofBound.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.FINITE, 8_000), NO_ANCHOR, true, 9_000, NO_CHANGE_MAX_TS, 9_000, UNPRICED);
         assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_CHANGE_CEILING);
 
-        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 6_000, NO_RUNTIME_FRONTIER, UNPRICED);
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.FINITE, 8_000), NO_ANCHOR, true, 9_000, 6_000, NO_RUNTIME_FRONTIER, UNPRICED);
         assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_RUNTIME_FRONTIER);
 
+        // The third the anchor arm keeps as a guard of its own, so it reads the same way
+        // over either shape.
         plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 8_000, 6_000, 9_000, UNPRICED);
         assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_UNFLUSHED_OUTPUT);
 
-        // A nanosecond anchor period over a microsecond column names no segment end.
-        final LiveViewCheckpointAnchorPlan subResolution =
-                LiveViewCheckpointAnchorPlan.of('n', 1, 0, ColumnType.TIMESTAMP_MICRO);
-        Assert.assertNotNull(subResolution);
-        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, subResolution, true, 9_000, 6_000, 9_000, UNPRICED);
+        // An anchor segment whose end does not clear R: every changed row sits below the
+        // view's own boundary, so the replacement range is empty. A segment end that
+        // cannot be named at all is not this - that is an EOF bound the anchor localizes
+        // behind.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 9_000, 500, 9_000, UNPRICED);
         assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_NO_CONVERGENCE_BOUND);
 
         // A ROWS discovery that ran to completion and proved no bound, against one a
@@ -497,9 +624,10 @@ public class LiveViewCheckpointRepairPlanTest {
         plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(1_000, HighBoundTag.EOF, Numbers.LONG_NULL, true), NO_ANCHOR, true, 9_000, 6_000, 9_000, UNPRICED);
         assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_SCAN_BUDGET);
 
-        // The segment converges at 8_000 but the runtime has only reached 7_000, so the
-        // change is inside the frame the runtime currently holds.
-        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, NO_ROWS, SEGMENTS_OF_4000, true, 7_000, 6_000, 7_000, UNPRICED);
+        // The ROWS discovery converges at 8_000 but the runtime has only reached 7_000,
+        // so the change is inside the frame the runtime currently holds - and a ROWS
+        // frame, unlike an anchor, cannot promote what the replay ends on instead.
+        plan.of(new TestAnchors(), 5_000, 1_000, 9, 9, Numbers.LONG_NULL, NO_RANGE, new TestRowsBounds(4_000, HighBoundTag.FINITE, 8_000), NO_ANCHOR, true, 7_000, 6_000, 7_000, UNPRICED);
         assertDenial(plan, LiveViewCheckpointRepairPlan.DENIAL_FRONTIER_BELOW_CONVERGENCE);
 
         // A repair that read exactly [L, H) was denied nothing, and the column stays
@@ -1169,6 +1297,32 @@ public class LiveViewCheckpointRepairPlanTest {
         // Gap with a non-DATA trigger: the plan already retires everything and
         // rebuilds, so reading the base WAL-E would change nothing.
         Assert.assertFalse(LiveViewCheckpointRepairPlan.isApplyAheadClassificationRequired(Numbers.LONG_NULL, 7, 8));
+    }
+
+    /**
+     * An anchored rebuild that localized behind an {@code EOF} bound: both floors raised
+     * off the view boundary, no finite {@code H}, and the replay's state promoted rather
+     * than the pre-repair runtime restored. The floors are what the repair is for - a
+     * replacement of the correction depth instead of the view, read from the start of
+     * {@code R}'s segment instead of the view's lifetime - so every case states both.
+     */
+    private static void assertAnchorRebuildIsLocalizedBehindEof(
+            LiveViewCheckpointRepairPlan plan,
+            long expectedReplayLowTs,
+            long expectedOutputLowTs
+    ) {
+        Assert.assertFalse(plan.isResumeFromAnchor());
+        Assert.assertTrue(plan.isLocalized());
+        Assert.assertEquals(LiveViewCheckpointRepairPlan.DENIAL_NONE, plan.getDenialReason());
+        Assert.assertEquals(expectedReplayLowTs, plan.getReplayLowTs());
+        Assert.assertEquals(expectedOutputLowTs, plan.getOutputLowTs());
+        assertEofHighBound(plan);
+        // An EOF bound promotes what the replay ends on, which is the disposition the
+        // segment-reset argument licenses and the one a ROWS frame may not take.
+        Assert.assertFalse(plan.isRuntimeStatePreserved());
+        // No ROWS arm ran, so the replay describes every key it needs to - which is what
+        // lets a later change splice the timeline rather than truncate it.
+        Assert.assertTrue(plan.isReplayStateKeyComplete());
     }
 
     /**

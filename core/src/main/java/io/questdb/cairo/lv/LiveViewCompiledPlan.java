@@ -87,6 +87,14 @@ import org.jetbrains.annotations.Nullable;
  * treated as the filter.
  */
 public final class LiveViewCompiledPlan {
+    /**
+     * The reject a view whose window functions need caching or multi-pass evaluation gets.
+     * Shared with {@code SqlCodeGenerator}, which reports it before it builds the cached
+     * factory this class would turn away: one message, whichever of the two fires first.
+     */
+    public static final String CACHED_WINDOW_REJECT_MESSAGE =
+            "live view select may only use window functions that support incremental refresh; "
+                    + "this query requires caching or multi-pass evaluation";
     private final RecordCursorFactory filterFactory;
     // The three optional nodes are kept for traceOutputColumnToBaseScan, which walks their
     // functions and cross index. Driving the refresh chain goes through the cursors below
@@ -283,6 +291,41 @@ public final class LiveViewCompiledPlan {
     }
 
     /**
+     * Resolves a window-input column back to the base-scan column it passes through, or
+     * {@code -1} when it is computed rather than passed through.
+     * <p>
+     * This is the tail of {@link #traceOutputColumnToBaseScan(int)}, entered at the
+     * window's input rather than at the view's output, and it answers a different
+     * question: a PARTITION BY key resolves against
+     * {@link #getWindowInputMetadata() the window's input}, so tracing it to a base column
+     * is what decides whether that key is a base column an index can name or an expression
+     * only a full scan can produce.
+     *
+     * @param windowInputColumnIndex a column index into {@link #getWindowInputMetadata()}
+     * @return the column index into {@link #getBaseScanMetadata()}, or {@code -1}
+     */
+    public int traceWindowInputColumnToBaseScan(int windowInputColumnIndex) {
+        int index = windowInputColumnIndex;
+        if (index < 0) {
+            return -1;
+        }
+        if (inputProjection != null) {
+            index = traceThroughProjection(inputProjection, index);
+            if (index < 0) {
+                return -1;
+            }
+        }
+        if (inputMapping != null) {
+            final IntList crossIndex = inputMapping.getColumnCrossIndex();
+            if (index >= crossIndex.size()) {
+                return -1;
+            }
+            index = crossIndex.getQuick(index);
+        }
+        return index >= 0 && index < getBaseScanMetadata().getColumnCount() ? index : -1;
+    }
+
+    /**
      * Rebuilds the compiled nodes between the base scan and the window over {@code source},
      * so the window sees rows in the shape its functions were compiled against. Returns
      * {@code source} unchanged when the window reads the scan directly.
@@ -384,8 +427,7 @@ public final class LiveViewCompiledPlan {
      */
     private static void rejectCachedWindow(RecordCursorFactory node, int position) throws SqlException {
         if (node instanceof CachedWindowRecordCursorFactory || node instanceof CachedWindowLightRecordCursorFactory) {
-            throw SqlException.$(position, "live view select may only use window functions that support incremental refresh; " +
-                    "this query requires caching or multi-pass evaluation");
+            throw SqlException.$(position, CACHED_WINDOW_REJECT_MESSAGE);
         }
     }
 

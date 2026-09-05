@@ -31,9 +31,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 /**
  * Copy-on-write builder for partition maps. A batch is applied to one transient
@@ -56,12 +56,16 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
     private final int internalCapacity;
     private final int leafCapacity;
     private final LiveViewCheckpointPartitionMapReader reader;
+    private final LiveViewCheckpointPartitionMapObjectPool objectPool;
     private final LongList releasedSegmentIds = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
     private int lastSegmentPageCount;
+    private boolean isPreparedChanged;
+    private LiveViewCheckpointPartitionMapNode mutateSibling;
+    private LiveViewCheckpointPartitionMapNode preparedRoot;
 
     public LiveViewCheckpointPartitionMapWriter(@NotNull CairoConfiguration configuration) {
-        this(configuration, 64, 64);
+        this(configuration, 64, 64, new LiveViewCheckpointPartitionMapObjectPool());
     }
 
     public LiveViewCheckpointPartitionMapWriter(
@@ -69,35 +73,61 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
             int leafCapacity,
             int internalCapacity
     ) {
+        this(configuration, leafCapacity, internalCapacity, new LiveViewCheckpointPartitionMapObjectPool());
+    }
+
+    @TestOnly
+    public LiveViewCheckpointPartitionMapWriter(
+            @NotNull CairoConfiguration configuration,
+            int leafCapacity,
+            int internalCapacity,
+            @NotNull LiveViewCheckpointPartitionMapWriter poolOwner
+    ) {
+        this(configuration, leafCapacity, internalCapacity, poolOwner.objectPool);
+    }
+
+    LiveViewCheckpointPartitionMapWriter(
+            @NotNull CairoConfiguration configuration,
+            @NotNull LiveViewCheckpointPartitionMapObjectPool objectPool
+    ) {
+        this(configuration, 64, 64, objectPool);
+    }
+
+    private LiveViewCheckpointPartitionMapWriter(
+            @NotNull CairoConfiguration configuration,
+            int leafCapacity,
+            int internalCapacity,
+            @NotNull LiveViewCheckpointPartitionMapObjectPool objectPool
+    ) {
         if (leafCapacity < 2 || internalCapacity < 2) {
             throw CairoException.critical(0).put("live view checkpoint partition map capacity must be at least 2");
         }
         this.leafCapacity = leafCapacity;
         this.internalCapacity = internalCapacity;
+        this.objectPool = objectPool;
         this.reader = new LiveViewCheckpointPartitionMapReader(configuration);
         this.segmentWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
     }
 
     public void apply(
             @NotNull LiveViewCheckpointPageRef oldRoot,
-            @NotNull Mutation[] mutations,
-            int mutationCount,
+            @NotNull LiveViewCheckpointMutationArena mutations,
             long newSegmentId,
             @NotNull LiveViewCheckpointPageRef newRootOut
     ) {
         lastSegmentPageCount = 0;
-        final Prepared prepared = prepare(oldRoot, mutations, mutationCount);
-        if (!prepared.changed) {
+        prepare(oldRoot, mutations);
+        if (!isPreparedChanged) {
             copy(oldRoot, newRootOut);
             return;
         }
-        if (prepared.root.count() == 0) {
-            releaseSource(prepared.root);
+        if (preparedRoot.count() == 0) {
+            releaseSource(preparedRoot);
             newRootOut.clear();
             return;
         }
         segmentWriter.of(checkpointsDir, newSegmentId);
-        writePrepared(prepared.root, segmentWriter, newRootOut);
+        writePrepared(preparedRoot, segmentWriter, newRootOut);
         segmentWriter.commit();
     }
 
@@ -106,6 +136,17 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
         Misc.free(reader);
         Misc.free(segmentWriter);
         Misc.free(checkpointsDir);
+    }
+
+    /**
+     * Releases every mapping and in-flight segment this build held while keeping
+     * the reader, writer and pooled node shells, so the next build reuses them
+     * without holding a mapping into a file a retire or compaction unlinks.
+     */
+    public void detach() {
+        reader.detach();
+        segmentWriter.discard();
+        releasedSegmentIds.clear();
     }
 
     /**
@@ -121,6 +162,16 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
         return lastSegmentPageCount;
     }
 
+    @TestOnly
+    public int getObjectPoolIdentityForTest() {
+        return System.identityHashCode(objectPool);
+    }
+
+    @TestOnly
+    public int getRetainedObjectCountForTest() {
+        return objectPool.getRetainedObjectCount();
+    }
+
     public void of(@Transient @NotNull Path checkpointsDir) {
         this.checkpointsDir.of(checkpointsDir);
         reader.of(checkpointsDir);
@@ -128,63 +179,71 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
 
     boolean applyToOpenSegment(
             @NotNull LiveViewCheckpointPageRef oldRoot,
-            @NotNull Mutation[] mutations,
-            int mutationCount,
+            @NotNull LiveViewCheckpointMutationArena mutations,
             @NotNull LiveViewCheckpointMetaSegmentWriter writer,
             @NotNull LiveViewCheckpointPageRef newRootOut
     ) {
         lastSegmentPageCount = 0;
-        final Prepared prepared = prepare(oldRoot, mutations, mutationCount);
-        if (!prepared.changed) {
+        prepare(oldRoot, mutations);
+        if (!isPreparedChanged) {
             copy(oldRoot, newRootOut);
             return false;
         }
-        writePrepared(prepared.root, writer, newRootOut);
+        writePrepared(preparedRoot, writer, newRootOut);
         return true;
     }
 
-    private LiveViewCheckpointPartitionMapNode load(LiveViewCheckpointPageRef ref) {
-        final LiveViewCheckpointPartitionMapNode node = new LiveViewCheckpointPartitionMapNode();
-        reader.openAndDecode(ref.getSegmentId(), ref.getOffset(), ref.getLength(), node);
+    private LiveViewCheckpointPartitionMapNode load(
+            LiveViewCheckpointPageRef ref,
+            LiveViewCheckpointMutationArena mutations
+    ) {
+        final LiveViewCheckpointPartitionMapNode node = nextNode();
+        reader.openAndDecode(
+                ref.getSegmentId(),
+                ref.getOffset(),
+                ref.getLength(),
+                node,
+                mutations,
+                objectPool.decodedPageRefs()
+        );
         node.sourceSegmentId = ref.getSegmentId();
         return node;
     }
 
     private boolean mutate(
             LiveViewCheckpointPartitionMapNode node,
-            Mutation mutation,
-            Split splitOut
+            LiveViewCheckpointMutationArena mutations,
+            int mutationIndex
     ) {
-        splitOut.sibling = null;
+        mutateSibling = null;
         if (node.isLeaf()) {
-            final int index = node.lowerBound(mutation.entry.getKey());
-            final boolean exists = index < node.count()
-                    && LiveViewCheckpointMetadata.compareBytes(node.keys[index], mutation.entry.getKey()) == 0;
-            if (mutation.remove) {
+            final int index = node.lowerBound(mutations, mutationIndex);
+            final boolean exists = index < node.count() && node.keyEqualsAt(index, mutations, mutationIndex);
+            if (mutations.operation(mutationIndex) == LiveViewCheckpointMutationArena.OP_REMOVE) {
                 if (!exists) {
                     return false;
                 }
                 node.removeEntry(index);
-            } else if (exists
-                    && Arrays.equals(node.scalarStates[index], mutation.entry.getScalarState())
-                    && LiveViewCheckpointPartitionMapEntry.refsEqual(node.statePageRefs[index], mutation.entry.statePageRefs())) {
+            } else if (exists && node.valueEquals(index, mutations, mutationIndex)) {
                 return false;
             } else {
-                node.putEntry(index, mutation.entry);
+                node.putEntry(index, mutations, mutationIndex);
             }
             if (node.count() > leafCapacity) {
-                splitOut.sibling = node.split();
+                mutateSibling = nextNode();
+                node.splitInto(mutateSibling);
             }
             return true;
         }
 
-        final int childIndex = node.childIndex(mutation.entry.getKey());
+        final int childIndex = node.childIndex(mutations, mutationIndex);
         final LiveViewCheckpointPartitionMapNode existingDirty = node.childNodes[childIndex];
-        final LiveViewCheckpointPartitionMapNode child = existingDirty != null ? existingDirty : load(node.childRefs[childIndex]);
-        final Split childSplit = new Split();
-        if (!mutate(child, mutation, childSplit)) {
+        final LiveViewCheckpointPartitionMapNode child =
+                existingDirty != null ? existingDirty : load(node.childRefs[childIndex], mutations);
+        if (!mutate(child, mutations, mutationIndex)) {
             return false;
         }
+        final LiveViewCheckpointPartitionMapNode childSibling = mutateSibling;
         if (child.count() == 0) {
             // The child's own children were removed one at a time, each releasing
             // its page as it went, so the emptied node is the last page of the
@@ -193,57 +252,51 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
             node.removeChild(childIndex);
         } else {
             node.setChild(childIndex, child);
-            if (childSplit.sibling != null) {
-                node.insertChild(childIndex + 1, childSplit.sibling);
+            if (childSibling != null) {
+                node.insertChild(childIndex + 1, childSibling);
             }
         }
         if (node.count() > internalCapacity) {
-            splitOut.sibling = node.split();
+            mutateSibling = nextNode();
+            node.splitInto(mutateSibling);
+        } else {
+            mutateSibling = null;
         }
         return true;
     }
 
-    private Prepared prepare(LiveViewCheckpointPageRef oldRoot, Mutation[] mutations, int mutationCount) {
-        if (mutationCount < 0 || mutationCount > mutations.length) {
-            throw CairoException.critical(0).put("invalid live view checkpoint partition mutation count, count=").put(mutationCount);
-        }
+    private void prepare(LiveViewCheckpointPageRef oldRoot, LiveViewCheckpointMutationArena mutations) {
         releasedSegmentIds.clear();
+        objectPool.reset();
+        final int mutationCount = mutations.getMutationCount();
         if (mutationCount == 0) {
-            return new Prepared(null, false);
+            preparedRoot = null;
+            isPreparedChanged = false;
+            return;
         }
-        final Mutation[] sorted = new Mutation[mutationCount];
-        for (int i = 0; i < mutationCount; i++) {
-            if (mutations[i] == null) {
-                throw CairoException.critical(0).put("null live view checkpoint partition mutation");
-            }
-            mutations[i].validate();
-            sorted[i] = mutations[i];
-        }
-        Arrays.sort(sorted, (a, b) -> LiveViewCheckpointMetadata.compareBytes(a.entry.getKey(), b.entry.getKey()));
-        for (int i = 1; i < sorted.length; i++) {
-            if (LiveViewCheckpointMetadata.compareBytes(sorted[i - 1].entry.getKey(), sorted[i].entry.getKey()) == 0) {
-                throw CairoException.critical(0).put("duplicate live view checkpoint partition mutation key");
-            }
-        }
+        mutations.sortAndValidate();
 
         LiveViewCheckpointPartitionMapNode root;
         if (oldRoot.isNull()) {
-            root = new LiveViewCheckpointPartitionMapNode();
+            root = nextNode();
             root.resetLeaf();
         } else {
             LiveViewCheckpointMetadata.validateMetaRef(oldRoot, false, "partition map root");
-            root = load(oldRoot);
+            root = load(oldRoot, mutations);
         }
         boolean changed = false;
-        final Split split = new Split();
-        for (int i = 0; i < sorted.length; i++) {
-            if (mutate(root, sorted[i], split)) {
+        for (int i = 0; i < mutationCount; i++) {
+            final int mutationIndex = mutations.getSortedMutationIndex(i);
+            if (mutations.operation(mutationIndex) == LiveViewCheckpointMutationArena.OP_DOMAIN) {
+                continue;
+            }
+            if (mutate(root, mutations, mutationIndex)) {
                 changed = true;
-                if (split.sibling != null) {
-                    final LiveViewCheckpointPartitionMapNode newRoot = new LiveViewCheckpointPartitionMapNode();
+                if (mutateSibling != null) {
+                    final LiveViewCheckpointPartitionMapNode newRoot = nextNode();
                     newRoot.resetInternal();
                     newRoot.insertChild(0, root);
-                    newRoot.insertChild(1, split.sibling);
+                    newRoot.insertChild(1, mutateSibling);
                     root = newRoot;
                 }
                 while (!root.isLeaf() && root.count() == 1) {
@@ -252,11 +305,14 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
                     // whether or not a later mutation dirties it, and releases
                     // its own page at that point.
                     releaseSource(root);
-                    root = root.childNodes[0] != null ? root.childNodes[0] : load(root.childRefs[0]);
+                    root = root.childNodes[0] != null
+                            ? root.childNodes[0]
+                            : load(root.childRefs[0], mutations);
                 }
             }
         }
-        return new Prepared(root, changed);
+        preparedRoot = root;
+        isPreparedChanged = changed;
     }
 
     /**
@@ -278,7 +334,7 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
         if (!node.isLeaf()) {
             for (int i = 0; i < node.count(); i++) {
                 if (node.childNodes[i] != null) {
-                    final LiveViewCheckpointPageRef childRef = new LiveViewCheckpointPageRef();
+                    final LiveViewCheckpointPageRef childRef = nextPageRef();
                     serialize(node.childNodes[i], writer, childRef);
                     node.childRefs[i] = childRef;
                     node.childNodes[i] = null;
@@ -307,57 +363,12 @@ public class LiveViewCheckpointPartitionMapWriter implements Closeable {
         to.of(from.getSegmentId(), from.getOffset(), from.getLength());
     }
 
-    public static final class Mutation {
-        private final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-        private boolean remove;
-
-        public Mutation put(
-                @NotNull byte[] key,
-                @NotNull byte[] scalarState,
-                @NotNull LiveViewCheckpointStatePageRef[] statePageRefs
-        ) {
-            entry.of(key, scalarState, statePageRefs);
-            remove = false;
-            return this;
-        }
-
-        public Mutation remove(@NotNull byte[] key) {
-            entry.of(key, new byte[0], new LiveViewCheckpointStatePageRef[0]);
-            remove = true;
-            return this;
-        }
-
-        LiveViewCheckpointPartitionMapEntry entry() {
-            return entry;
-        }
-
-        boolean isRemove() {
-            return remove;
-        }
-
-        private void validate() {
-            LiveViewCheckpointMetadata.validateByteArrayLength(entry.getKey().length, "partition key");
-            LiveViewCheckpointMetadata.validateByteArrayLength(entry.getScalarState().length, "partition scalar state");
-            if (entry.getStatePageCount() > LiveViewCheckpointMetadata.MAX_STATE_PAGE_REFS) {
-                throw CairoException.critical(0).put("too many live view checkpoint partition state page references");
-            }
-            for (int i = 0; i < entry.getStatePageCount(); i++) {
-                LiveViewCheckpointMetadata.validateStateRef(entry.getStatePageRef(i), false, "partition");
-            }
-        }
+    private LiveViewCheckpointPartitionMapNode nextNode() {
+        return objectPool.nextNode();
     }
 
-    private static final class Prepared {
-        private final boolean changed;
-        private final LiveViewCheckpointPartitionMapNode root;
-
-        private Prepared(LiveViewCheckpointPartitionMapNode root, boolean changed) {
-            this.root = root;
-            this.changed = changed;
-        }
+    private LiveViewCheckpointPageRef nextPageRef() {
+        return objectPool.nextOutputPageRef();
     }
 
-    private static final class Split {
-        private LiveViewCheckpointPartitionMapNode sibling;
-    }
 }

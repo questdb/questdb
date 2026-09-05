@@ -27,6 +27,8 @@ package io.questdb.griffin.engine.functions.window;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
+import io.questdb.cairo.lv.LiveViewCheckpointContracts;
+import io.questdb.cairo.lv.LiveViewCheckpointSealState;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
@@ -46,6 +48,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
@@ -109,9 +112,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     protected long tombstoneCount;
     protected int tombstoneValueIndex = -1;
     // The fused window-state slots this function reads out of the group owner's one map
-    // value, or -1 when it owns its state as it always has. Installed once at compile
-    // time: WindowMapState.createGroups binds every projection through
-    // bindWindowStateSlots, and nothing unbinds one afterwards.
+    // value, or -1 when it owns its state as it always has. Installed through
+    // bindWindowStateSlots: WindowMapState binds every projection once at compile time for
+    // an ordinary query, and LiveViewWindowStatePlan binds and clears one on the refresh
+    // worker for an anchored live view.
     //
     // The component's base is the "am I fused" answer because every binding has one: the
     // counter used to serve, and stopped when the extremum families arrived - they carry a
@@ -158,6 +162,22 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         return partitionByRecord == null ? null : partitionByRecord.getFunctions();
     }
 
+    /**
+     * Puts the parked bookkeeping back and re-stamps the baseline against the generation
+     * the repair's splice published. Whatever dirty set the replay built in the meantime
+     * is freed: it names the keys of a state nothing holds any more.
+     */
+    @Override
+    public void attachCheckpointSealState(@NotNull LiveViewCheckpointSealState state, long generation) {
+        Misc.free(checkpointDirtyPartitions);
+        checkpointDirtyPartitions = state.takeDirtySet();
+        hasCheckpointDirtyTracking = state.hasDirtyTracking();
+        hasCheckpointEvictionsRecorded = state.hasEvictionsRecorded();
+        checkpointLogicalStateBytes = state.getLogicalStateBytes();
+        checkpointBaselineGeneration = generation;
+        isCheckpointFullScanRequired = false;
+    }
+
     @Override
     public void close() {
         super.close();
@@ -169,6 +189,33 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
         // invariant of a live dirty set, and this one is no longer live.
         hasCheckpointDirtyTracking = false;
         Misc.freeObjList(partitionByRecord.getFunctions());
+    }
+
+    /**
+     * Hands the baseline, the byte figure and the dirty set to {@code state} and leaves
+     * this function in the position {@link #requireCheckpointFullScan()} leaves it in -
+     * except that the set travels rather than being emptied, so an attach can put the
+     * cadence back exactly where it stood.
+     */
+    @Override
+    public void detachCheckpointSealState(@NotNull LiveViewCheckpointSealState state) {
+        if (isCheckpointFullScanRequired || checkpointBaselineGeneration == Numbers.LONG_NULL) {
+            return;
+        }
+        state.of(
+                checkpointDirtyPartitions,
+                hasCheckpointDirtyTracking,
+                hasCheckpointEvictionsRecorded,
+                checkpointLogicalStateBytes
+        );
+        checkpointDirtyPartitions = null;
+        // Goes with the map for the reason close() and reset() give: the flag is an
+        // invariant of a live dirty set, and this function no longer holds one.
+        hasCheckpointDirtyTracking = false;
+        hasCheckpointEvictionsRecorded = false;
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        checkpointLogicalStateBytes = 0;
+        isCheckpointFullScanRequired = true;
     }
 
     @Override
@@ -229,18 +276,16 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * maintain a dirty set of its own, which is exactly the population that never freezes
      * incrementally anyway. It never creates the dirty set: only
      * {@link #markCheckpointPartitionDirty(Record)} does, so a function whose
-     * {@link #markPartitionAlive(Record)} never marks cannot be handed the incremental
-     * path by the sweep alone.
+     * {@link #markPartitionAlive(Record, boolean)} never marks cannot be handed the
+     * incremental path by the sweep alone.
      */
     @Override
     public boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
         if (isWindowStateOwned()) {
-            // A fused function keeps nothing here to record: its own map stays closed for
-            // its whole life and the group holds the one accumulator. True is the answer
-            // that keeps the caller off the conservative complete freeze a false imposes.
-            // The branch is defensive - LiveViewWindow's frontier sweep is the only caller,
-            // and a live-view compile forms no group at all, since SqlCodeGenerator
-            // captures no WindowMapSpec for one.
+            // The window holds this function's state in its own map, so the sweep drops
+            // the accumulator by dropping the fused entry and records the removal in the
+            // window's one dirty set. There is nothing of this function's left to record,
+            // and true is the honest answer: the removal is tracked, just not here.
             return true;
         }
         if (tombstoneValueIndex < 0 || !hasCheckpointDirtyTracking) {
@@ -263,21 +308,30 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * fires when at least one tombstoned entry exists, which means
      * processRow saw an anchor cross on some partition in the recent past.
      * <p>
+     * The dirty mark rides on {@code isFirstCadenceTouch} rather than on every row.
+     * That flag is the anchor's, read off a value the caller had already loaded, so a
+     * repeat row inside one cadence costs neither the key serialization the mark's sink
+     * does nor the probe into the dirty map that follows it. What the set has to name is
+     * every key whose state moved since the last publication, and the first row of a
+     * cadence names the key every later row of that cadence moves - see
+     * {@link #markCheckpointPartitionDirty(Record)} for the whole contract.
+     * <p>
      * Subclasses that need to clear additional per-partition scratch state
      * may override; most do not. An override that keeps the checkpoint dirty
      * tracking must call {@link #markCheckpointPartitionDirty(Record)} on every
-     * path through the method - see that method's contract.
+     * flagged path through the method - see that method's contract.
      */
     @Override
-    public void markPartitionAlive(Record record) {
+    public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
         if (isWindowStateOwned()) {
-            // A fused function's own map stays closed, so it carries no tombstone bit to
-            // clear and no dirty set to mark, and the group keeps neither. Defensive for
-            // the same reason the eviction hook above is: LiveViewWindow.processRow is the
-            // only caller and a live-view compile binds no function into a group.
+            // Nothing of this function's is tombstoned or marked dirty any more: the
+            // window loads the one value this row touches, keeps it alive and marks it
+            // once, for the group.
             return;
         }
-        markCheckpointPartitionDirty(record);
+        if (isFirstCadenceTouch) {
+            markCheckpointPartitionDirty(record);
+        }
         if (tombstoneValueIndex < 0 || tombstoneCount == 0) {
             return;
         }
@@ -300,6 +354,18 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     }
 
     /**
+     * Moves the provisional repair stamp onto the generation the splice published,
+     * leaving the dirty set - the keys the replay touched above the newest root the
+     * splice holds - for the head seal that follows to freeze.
+     */
+    @Override
+    public void onCheckpointRepairBaselinePublished(long generation) {
+        if (checkpointBaselineGeneration == LiveViewCheckpointContracts.REPAIR_BASELINE_GENERATION) {
+            checkpointBaselineGeneration = generation;
+        }
+    }
+
+    /**
      * Empties the partition-state map and zeroes the tombstone counter before the
      * live-view snapshot framework rehydrates partitions. Native-memory-backed
      * subclasses (ring/deque functions) override to also reset their backing arena
@@ -308,9 +374,10 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     @Override
     public void onCheckpointRestoreBegin() {
         // A fused function's map stays closed, for the reason reopen() leaves it closed:
-        // the group holds the one value layout, and this function has no state of its own
-        // for a restore to replace. The isOpen() term is what keeps the clear off such a
-        // map - nothing reopens one, here or in reopen().
+        // the window owns the group's one value layout, and the state a restore replaces is
+        // in that map rather than in this one. The legacy-checkpoint adapter is the single
+        // path that does restore into the private map, and it opens the map itself first -
+        // see LiveViewWindowStatePlan.reopenProjectionMaps - so the clear below is its.
         if (map != null && (!isWindowStateOwned() || map.isOpen())) {
             // On a fresh restart the lazy per-partition map is still closed: the
             // live-view restore path (restoreFromHead) runs before any cursor
@@ -341,14 +408,27 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
 
     @Override
     public void reopen() {
-        // A fused function's map stays closed: the group allocated one value layout for
-        // every function in it, and reopening this one would charge the per-query
-        // MemoryTracker for a map no row ever writes to. No other path reopens it either -
-        // onCheckpointRestoreBegin's clear also stands off a map that is not open.
+        // A fused function's map stays closed: the window allocated one value layout for
+        // the whole group and reopening this one would charge the per-view tracker for a
+        // map no row ever writes to. The legacy-checkpoint adapter is the one path that
+        // reopens it, and it closes it again as soon as it has hoisted the state across.
         if (map != null && !isWindowStateOwned()) {
             map.reopen();
         }
         tombstoneCount = 0;
+    }
+
+    /**
+     * Drops the baseline and the dirty set the next seal would have built on. The two go
+     * together: a full scan reads neither, and leaving the set standing would make the
+     * seal after that one freeze keys whose entries it already wrote.
+     */
+    @Override
+    public void requireCheckpointFullScan() {
+        checkpointBaselineGeneration = Numbers.LONG_NULL;
+        checkpointLogicalStateBytes = 0;
+        isCheckpointFullScanRequired = true;
+        clearCheckpointDirtyPartitions();
     }
 
     @Override
@@ -365,9 +445,8 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
             boolean hasRecordedCheckpointRemovals
     ) {
         if (isWindowStateOwned()) {
-            // A fused function's own map stays closed, so it holds no key a sweep could
-            // prune, and the group's map is not this method's to walk. Defensive, like the
-            // eviction and aliveness hooks above.
+            // The sweep rebuilt the window's fused map, and this function's accumulator
+            // rode across inside the entries it kept. There is no second map to prune.
             return;
         }
         if (!hasRecordedCheckpointRemovals) {
@@ -520,11 +599,14 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * has the same key layout as the state map, so the existing partition sink can
      * populate it without allocating or serialising a key on every input row.
      * <p>
-     * <b>Call this on every path through {@link #markPartitionAlive(Record)} or on
-     * none at all.</b> A seal that finds a dirty map freezes exactly the keys it
-     * names and leaves every other entry of the persistent root alone, so a key
-     * whose state moved without being marked keeps the root's stale image - a wrong
-     * result that only surfaces on a restart. Opting out is fail-safe by
+     * <b>Call this on every {@code isFirstCadenceTouch} path through
+     * {@link #markPartitionAlive(Record, boolean)} or on none at all.</b> A seal that
+     * finds a dirty map freezes exactly the keys it names and leaves every other entry
+     * of the persistent root alone, so a key whose state moved without being marked
+     * keeps the root's stale image - a wrong result that only surfaces on a restart.
+     * The flag loses nothing the set needs: the anchor raises it on the first row a
+     * cadence sees for a partition and lowers it only once that row's marks are all
+     * made, so every key a cadence moves is named, once. Opting out is fail-safe by
      * construction: this is the only place the map is created and the only place
      * {@code hasCheckpointDirtyTracking} is set, so a function that never calls this
      * leaves {@link #getCheckpointDirtyPartitionMap()} null, has the sweep's eviction

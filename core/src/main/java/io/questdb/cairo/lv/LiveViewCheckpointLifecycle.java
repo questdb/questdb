@@ -31,6 +31,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
@@ -255,10 +256,12 @@ public final class LiveViewCheckpointLifecycle {
             long orphanUpperBound,
             boolean primaryOwner
     ) {
-        final CleanupResult result = new CleanupResult(protectedCeiling);
+        // Ordered before the scratch: a steady cadence seal reaches this with an
+        // upper bound the ceiling already covers, so the common path builds nothing.
         if (!primaryOwner || orphanUpperBound <= protectedCeiling) {
-            return new CleanupStats(0, 0);
+            return CleanupStats.NONE;
         }
+        final CleanupResult result = new CleanupResult(protectedCeiling);
         try (Path path = new Path()) {
             purgeFinalOrphansInDir(
                     configuration.getFilesFacade(),
@@ -277,7 +280,7 @@ public final class LiveViewCheckpointLifecycle {
                     result
             );
         }
-        return new CleanupStats(result.removed, result.failed);
+        return new CleanupStats(result.removed, result.failed, result.visited);
     }
 
     /**
@@ -334,7 +337,7 @@ public final class LiveViewCheckpointLifecycle {
             // A root that failed bounded validation, or a generation whose
             // catalogue has no root at all, is no evidence that anything on disk
             // is free.
-            return new CleanupStats(0, 0);
+            return new CleanupStats(0, 0, 0);
         }
         final CleanupResult result = new CleanupResult(0);
         try (LiveViewCheckpointSegmentDirectoryReader directory =
@@ -365,7 +368,7 @@ public final class LiveViewCheckpointLifecycle {
             LOG.error().$("could not read the live view checkpoint catalogue while collecting orphans [path=")
                     .$(checkpointsDir).$(", error=").$safe(e.getFlyweightMessage()).I$();
         }
-        return new CleanupStats(result.removed, result.failed);
+        return new CleanupStats(result.removed, result.failed, result.visited);
     }
 
     /**
@@ -406,6 +409,16 @@ public final class LiveViewCheckpointLifecycle {
                 logRemoveFailure(ff, path);
             }
             LiveViewCheckpointLayout.repairingMarkerPath(path, checkpointsDir);
+            path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
+            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                success = false;
+                logRemoveFailure(ff, path);
+            }
+            LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir);
+            if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
+                success = false;
+                logRemoveFailure(ff, path);
+            }
             path.put(LiveViewCheckpointLayout.TMP_SUFFIX);
             if (ff.exists(path.$()) && !ff.removeQuiet(path.$())) {
                 success = false;
@@ -454,7 +467,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;
@@ -465,6 +480,7 @@ public final class LiveViewCheckpointLifecycle {
                 if (namePtr == 0) {
                     continue;
                 }
+                result.visited++;
                 name.clear();
                 if (!Utf8s.utf8ToUtf16Z(namePtr, name)
                         || Chars.equals(name, ".")
@@ -494,11 +510,12 @@ public final class LiveViewCheckpointLifecycle {
 
     /**
      * Reports whether {@code checkpointsDir} holds a top-level entry outside the
-     * current layout. Everything this build writes there is one of five names -
+     * current layout. Everything this build writes there is one of six names -
      * the {@code _timeline} superblock, the {@code _repairing} prefix-preservation
-     * marker, and the {@code meta}, {@code data} and {@code repair} directories -
-     * so anything else came from a build that arranged checkpoint state
-     * differently. Earlier development builds left the {@code _ring} manifest and
+     * marker, the {@code _retirements} work set, and the {@code meta}, {@code data}
+     * and {@code repair} directories - so anything else came from a build that
+     * arranged checkpoint state differently. Earlier development builds left the
+     * {@code _ring} manifest and
      * per-checkpoint {@code .cp} / {@code .scp} files at this level, which is what
      * the check most often finds.
      */
@@ -510,7 +527,9 @@ public final class LiveViewCheckpointLifecycle {
         if (findPtr == 0) {
             return false;
         }
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         try {
             do {
                 final long namePtr = ff.findName(findPtr);
@@ -525,6 +544,8 @@ public final class LiveViewCheckpointLifecycle {
                         || Chars.equals(name, "..")
                         || Chars.equals(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
                         || Chars.startsWith(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)
+                        || Chars.equals(name, LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME)
+                        || Chars.equals(name, LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.META_DIR_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.DATA_DIR_NAME)
                         || Chars.equals(name, LiveViewCheckpointLayout.REPAIR_DIR_NAME)) {
@@ -621,7 +642,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;
@@ -662,7 +685,9 @@ public final class LiveViewCheckpointLifecycle {
             return;
         }
         final int dirLen = dir.size();
-        final StringSink name = new StringSink();
+        // Thread-local: the sweep fills and consumes the sink inside its own loop and
+        // nothing it calls reaches for the same sink, so it needs no instance of its own.
+        final StringSink name = Misc.getThreadLocalSink();
         final long findPtr = ff.findFirst(dir.$());
         if (findPtr == 0) {
             return;
@@ -673,6 +698,7 @@ public final class LiveViewCheckpointLifecycle {
                 if (namePtr == 0) {
                     continue;
                 }
+                result.visited++;
                 name.clear();
                 if (!Utf8s.utf8ToUtf16Z(namePtr, name)
                         || !Chars.startsWith(name, prefix)
@@ -794,6 +820,7 @@ public final class LiveViewCheckpointLifecycle {
         private long finalOrphanUpperBound;
         private int failed;
         private int removed;
+        private int visited;
 
         private CleanupResult(long finalOrphanUpperBound) {
             this.finalOrphanUpperBound = finalOrphanUpperBound;
@@ -970,13 +997,15 @@ public final class LiveViewCheckpointLifecycle {
     }
 
     public static final class CleanupStats {
-        private static final CleanupStats NONE = new CleanupStats(0, 0);
+        private static final CleanupStats NONE = new CleanupStats(0, 0, 0);
         private final int failedCount;
         private final int removedCount;
+        private final int visitedCount;
 
-        private CleanupStats(int removedCount, int failedCount) {
+        private CleanupStats(int removedCount, int failedCount, int visitedCount) {
             this.removedCount = removedCount;
             this.failedCount = failedCount;
+            this.visitedCount = visitedCount;
         }
 
         public int getFailedCount() {
@@ -985,6 +1014,10 @@ public final class LiveViewCheckpointLifecycle {
 
         public int getRemovedCount() {
             return removedCount;
+        }
+
+        public int getVisitedCount() {
+            return visitedCount;
         }
     }
 }

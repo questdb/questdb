@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
@@ -41,6 +42,7 @@ import io.questdb.griffin.engine.functions.window.LastValueDoubleWindowFunctionF
 import io.questdb.griffin.engine.functions.window.MaxDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MaxLongWindowFunctionFactory;
 import io.questdb.griffin.engine.functions.window.MinDoubleWindowFunctionFactory;
+import io.questdb.griffin.engine.functions.window.RankFunctionFactory;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -658,16 +660,16 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         );
         Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES.getColumnType(0));
 
-        // The live-view layout keeps both extra bytes: the initialized flag at slot 1 (read only
-        // behind the liveView gate) and the tombstone at slot 2 (anchor-driven map compaction).
-        Assert.assertEquals(3, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
+        // The live-view layout adds the tombstone byte and nothing else. The value slot ahead
+        // of it is the whole of the accumulator, which is what lets a fused live-view window
+        // carry this state in one slot of its own map value and persist it through the
+        // component codec - see LiveViewAccumulatorDescriptor.familyCodecVersion.
+        Assert.assertEquals(2, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
         Assert.assertEquals(ColumnType.DOUBLE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
         Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));
-        Assert.assertEquals(ColumnType.BYTE, MaxDoubleWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(2));
-        Assert.assertEquals(3, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
+        Assert.assertEquals(2, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnCount());
         Assert.assertEquals(ColumnType.LONG, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(0));
         Assert.assertEquals(ColumnType.BYTE, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(1));
-        Assert.assertEquals(ColumnType.BYTE, MaxLongWindowFunctionFactory.MAX_COLUMN_TYPES_LV.getColumnType(2));
     }
 
     @Test
@@ -1100,6 +1102,46 @@ public class WindowFunctionUnitTest extends AbstractCairoTest {
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 46, 19, a));
         f.computeNext(TestDefaults.createRecord(columnTypes, (long) 119, 19, b));
         Assert.assertEquals(a, f.getDouble(null), 1e-6);
+    }
+
+    @Test
+    public void testRankChainStabilityRejectsSymbol() {
+        // supportsCheckpointState() tests the rank chain prefix for fixed width, because the
+        // restore path writes MapValue slots and has no STRING setter. Fixed width alone would
+        // admit SYMBOL, whose 4 bytes are a WAL-local id that names a different string after the
+        // next commit - freezeCheckpointState would persist it and a later cycle would compare it
+        // against a rank map rebuilt from a different symbol table. Four CREATE-time gates keep a
+        // live view's window ORDER BY on the designated timestamp today (see
+        // LiveViewValidationTest.testRejectSymbolOrderByInLiveViewWindow), so this predicate is a
+        // backstop rather than a live path; assert it directly, since no SQL can reach it.
+        final ArrayColumnTypes timestampOnly = new ArrayColumnTypes();
+        timestampOnly.add(ColumnType.TIMESTAMP);
+        Assert.assertTrue(RankFunctionFactory.hasCheckpointStableChainTypes(timestampOnly));
+
+        final ArrayColumnTypes symbolOnly = new ArrayColumnTypes();
+        symbolOnly.add(ColumnType.SYMBOL);
+        Assert.assertFalse(RankFunctionFactory.hasCheckpointStableChainTypes(symbolOnly));
+
+        // A symbol anywhere in a composite chain disqualifies the whole prefix, not just its own
+        // slot: the comparator reads the slots as one key image.
+        final ArrayColumnTypes mixed = new ArrayColumnTypes();
+        mixed.add(ColumnType.TIMESTAMP);
+        mixed.add(ColumnType.SYMBOL);
+        mixed.add(ColumnType.LONG);
+        Assert.assertFalse(RankFunctionFactory.hasCheckpointStableChainTypes(mixed));
+
+        // Every other fixed-width type carries its own meaning and stays admitted.
+        final ArrayColumnTypes fixedWidth = new ArrayColumnTypes();
+        fixedWidth.add(ColumnType.BYTE);
+        fixedWidth.add(ColumnType.SHORT);
+        fixedWidth.add(ColumnType.INT);
+        fixedWidth.add(ColumnType.LONG);
+        fixedWidth.add(ColumnType.DOUBLE);
+        fixedWidth.add(ColumnType.TIMESTAMP);
+        Assert.assertTrue(RankFunctionFactory.hasCheckpointStableChainTypes(fixedWidth));
+
+        // An empty chain is vacuously stable - the ORDER BY-less shapes never reach a chain at all.
+        Assert.assertTrue(RankFunctionFactory.hasCheckpointStableChainTypes(new ArrayColumnTypes()));
     }
 
     @Test

@@ -31,7 +31,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.SimpleReadWriteLock;
 
-import java.util.Map;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.function.Function;
 
@@ -43,6 +42,13 @@ import java.util.function.Function;
  * notification path and DDL invalidation paths. Both updates happen under the
  * per-base-table write lock so that refresh/invalidate readers never observe a
  * torn state.
+ * <p>
+ * Whole-registry readers walk {@link #allViews} instead of a map view. A
+ * {@code ConcurrentHashMap} iterator allocates one wrapper per step - and an
+ * {@code entrySet()} one allocates a {@code Map.Entry} per view on top - which
+ * the refresh pool's idle scan would charge to every sweep. Registration
+ * rebuilds the snapshot instead, so the cost lands on DDL, which is rare, and
+ * the recurring scan reads a plain {@link ObjList}.
  */
 public class LiveViewRegistry implements QuietCloseable {
     private final Function<CharSequence, DepList> createDepList = name -> new DepList();
@@ -50,6 +56,15 @@ public class LiveViewRegistry implements QuietCloseable {
     // Key is the base table name. Entries are never removed (grow-only, bounded by
     // distinct base tables that ever had a live view registered).
     private final ConcurrentHashMap<DepList> viewsByBaseTable = new ConcurrentHashMap<>(false);
+    /**
+     * Every registered instance, republished as a fresh list on each registration
+     * change. A reader takes the reference once and walks it without allocating;
+     * a rebuild never mutates a list a reader may already hold, so the snapshot
+     * a scan reads stays internally consistent even when a concurrent DDL
+     * replaces it. Its staleness window matches the weakly consistent map
+     * iterator it replaces.
+     */
+    private volatile ObjList<LiveViewInstance> allViews = new ObjList<>();
 
     @Override
     public void close() {
@@ -57,14 +72,16 @@ public class LiveViewRegistry implements QuietCloseable {
     }
 
     public void clear() {
-        for (Map.Entry<CharSequence, LiveViewInstance> entry : viewsByName.entrySet()) {
-            Misc.free(entry.getValue());
+        final ObjList<LiveViewInstance> views = allViews;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            Misc.free(views.getQuick(i));
         }
         viewsByName.clear();
+        republishViews();
         for (DepList list : viewsByBaseTable.values()) {
-            ObjList<LiveViewInstance> views = list.lockForWrite();
+            ObjList<LiveViewInstance> baseViews = list.lockForWrite();
             try {
-                views.clear();
+                baseViews.clear();
             } finally {
                 list.unlockAfterWrite();
             }
@@ -80,8 +97,9 @@ public class LiveViewRegistry implements QuietCloseable {
      * (no concurrent turn can resume it).
      */
     public void discardSuspendedRepairs() {
-        for (LiveViewInstance instance : viewsByName.values()) {
-            instance.discardSuspendedRepair();
+        final ObjList<LiveViewInstance> views = allViews;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            views.getQuick(i).discardSuspendedRepair();
         }
     }
 
@@ -93,8 +111,9 @@ public class LiveViewRegistry implements QuietCloseable {
      * stopped (no concurrent sweep turn).
      */
     public void freeSeedBaseReaders() {
-        for (LiveViewInstance instance : viewsByName.values()) {
-            instance.freeSeedBaseReader();
+        final ObjList<LiveViewInstance> views = allViews;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            views.getQuick(i).freeSeedBaseReader();
         }
     }
 
@@ -109,7 +128,9 @@ public class LiveViewRegistry implements QuietCloseable {
      */
     public void getShardedViews(ObjList<LiveViewInstance> sink, int workerId, int workerCount) {
         sink.clear();
-        for (LiveViewInstance instance : viewsByName.values()) {
+        final ObjList<LiveViewInstance> views = allViews;
+        for (int i = 0, n = views.size(); i < n; i++) {
+            final LiveViewInstance instance = views.getQuick(i);
             if (workerCount <= 1 || Math.floorMod(instance.getLiveViewToken().getTableId(), workerCount) == workerId) {
                 sink.add(instance);
             }
@@ -125,9 +146,7 @@ public class LiveViewRegistry implements QuietCloseable {
      */
     public void getViews(ObjList<LiveViewInstance> sink) {
         sink.clear();
-        for (LiveViewInstance instance : viewsByName.values()) {
-            sink.add(instance);
-        }
+        sink.addAll(allViews);
     }
 
     /**
@@ -164,6 +183,7 @@ public class LiveViewRegistry implements QuietCloseable {
         } finally {
             list.unlockAfterWrite();
         }
+        republishViews();
     }
 
     /**
@@ -175,6 +195,7 @@ public class LiveViewRegistry implements QuietCloseable {
      */
     public void registerStubView(LiveViewInstance instance) {
         viewsByName.put(instance.getLiveViewToken().getTableName(), instance);
+        republishViews();
     }
 
     public LiveViewInstance removeView(CharSequence name) {
@@ -197,6 +218,9 @@ public class LiveViewRegistry implements QuietCloseable {
                 }
             }
         }
+        if (instance != null) {
+            republishViews();
+        }
         return instance;
     }
 
@@ -213,6 +237,17 @@ public class LiveViewRegistry implements QuietCloseable {
      * {@link #registerView} and {@link #removeView}, so a concurrent
      * {@link #getViewsForBaseTable} reader never observes the two maps torn apart. The fan-out
      * list holds instances, not names, so it needs no update.
+     * <p>
+     * Both branches republish the {@link #allViews} snapshot after the re-key, even though the
+     * rename moves one instance between two keys and so leaves the snapshot's contents unchanged.
+     * The re-key is a {@code remove} followed by a {@code put}, and the gap between them is not
+     * covered by anything {@link #republishViews} respects: a concurrent registration or removal
+     * over a <em>different</em> base table takes a different fan-out lock, so its rebuild can run
+     * inside the gap and publish a list missing this instance. Without a republish here that list
+     * is the durable one, and the instance drops out of {@code live_views()}, out of
+     * {@link #getShardedViews}, and out of the {@link #clear()} free loop that closes instances at
+     * engine teardown. Republishing after the {@code put} makes this thread's rebuild the last one
+     * ordered on the monitor, which heals it.
      *
      * @return the renamed instance, or {@code null} when no view is registered under
      * {@code oldName}
@@ -229,6 +264,7 @@ public class LiveViewRegistry implements QuietCloseable {
             viewsByName.remove(oldName);
             instance.updateToken(updatedToken);
             viewsByName.put(updatedToken.getTableName(), instance);
+            republishViews();
             return instance;
         }
         final DepList list = viewsByBaseTable.computeIfAbsent(definition.getBaseTableName(), createDepList);
@@ -241,7 +277,29 @@ public class LiveViewRegistry implements QuietCloseable {
         } finally {
             list.unlockAfterWrite();
         }
+        republishViews();
         return instance;
+    }
+
+    /**
+     * Rebuilds the whole-registry snapshot from the name map. Every {@code viewsByName} mutator
+     * calls it - registration, removal, rename and teardown; each publishes a new list rather than
+     * mutating the one readers hold, so a scan already walking the previous
+     * snapshot finishes over a stable view.
+     * <p>
+     * The monitor covers both the traversal and the {@code allViews} assignment, and every caller
+     * invokes it after its own map mutation. Together those two properties are what make the last
+     * rebuild ordered on the monitor observe every completed mutation, so a rebuild that a
+     * concurrent mutator ran against a half-applied map is always healed rather than left standing.
+     * Splitting the traversal out of the monitor, or calling this before the mutation it publishes,
+     * breaks that.
+     */
+    private synchronized void republishViews() {
+        final ObjList<LiveViewInstance> rebuilt = new ObjList<>(viewsByName.size());
+        for (LiveViewInstance instance : viewsByName.values()) {
+            rebuilt.add(instance);
+        }
+        allViews = rebuilt;
     }
 
     private static class DepList {

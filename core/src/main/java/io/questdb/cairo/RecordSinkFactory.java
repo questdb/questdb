@@ -24,6 +24,8 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.lv.LiveViewSymbolIdTranslator;
+import io.questdb.cairo.lv.LiveViewTranslatingRecord;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.log.Log;
@@ -335,6 +337,7 @@ public class RecordSinkFactory {
                 null,
                 writeSymbolAsString,
                 null,
+                null,
                 null
         );
     }
@@ -376,7 +379,8 @@ public class RecordSinkFactory {
                         skewIndex,
                         writeSymbolAsString,
                         writeStringAsVarchar,
-                        writeTimestampAsNanos
+                        writeTimestampAsNanos,
+                        null
                 );
             case SINK_TYPE_CHUNKED:
                 Class<RecordSink> chunkedClass = getChunkedInstanceClassOrNull(
@@ -413,7 +417,8 @@ public class RecordSinkFactory {
                     skewIndex,
                     writeSymbolAsString,
                     writeStringAsVarchar,
-                    writeTimestampAsNanos
+                    writeTimestampAsNanos,
+                    null
             );
         }
 
@@ -1493,7 +1498,8 @@ public class RecordSinkFactory {
                         skewIndex,
                         writeSymbolAsString,
                         writeStringAsVarchar,
-                        writeTimestampAsNanos
+                        writeTimestampAsNanos,
+                        null
                 );
             } catch (BytecodeException e) {
                 // Single-sink generation failed, signal to use looping
@@ -1520,6 +1526,56 @@ public class RecordSinkFactory {
         }
     }
 
+    /**
+     * Compiles a key sink that writes each bound SYMBOL column as the LV-private integer id
+     * {@code translator} maps its raw id to, rather than as the raw id or the resolved string.
+     * This is the sink-side of the two mechanisms in
+     * {@link LiveViewTranslatingRecord} - here the translator call is compiled into the copy
+     * method, there it sits in a flyweight over the record - and the two take the same binding
+     * vector so a caller can swap one for the other without rebuilding it. This is the one a
+     * live view binds: it is cheaper per row on every key shape, and the suppression below is
+     * one place rather than every site that compiles a sink.
+     * <p>
+     * The mode is entirely opt-in. With no binding vector the generator pools nothing extra
+     * and emits the same bytes it emitted before the mode existed, which is what keeps the
+     * join and GROUP BY sinks that share this factory out of its blast radius.
+     * <p>
+     * Single-method generation only. A partition key is a handful of columns, so it never
+     * approaches the chunking threshold, and neither the chunked generator nor
+     * {@link LoopingRecordSink} knows the mode.
+     *
+     * @param symbolIdSlotByColumn translator slot per column index,
+     *                             {@link LiveViewTranslatingRecord#NOT_TRANSLATED} where the
+     *                             column writes the way it always did
+     */
+    public static RecordSink getTranslatingInstance(
+            @NotNull BytecodeAssembler asm,
+            ColumnTypes columnTypes,
+            @Transient @NotNull ColumnFilter columnFilter,
+            @Transient @NotNull IntList symbolIdSlotByColumn,
+            @NotNull LiveViewSymbolIdTranslator translator
+    ) {
+        final Class<RecordSink> clazz = getSingleInstanceClass(
+                asm,
+                columnTypes,
+                columnFilter,
+                null,
+                null,
+                null,
+                null,
+                null,
+                symbolIdSlotByColumn
+        );
+        // Deliberately no column filter, so the sink reports no direct column. The batched
+        // keyed-GROUP-BY path in Unordered4Map.probeBatch reads a direct column straight out
+        // of page-frame memory and never calls the sink, which for a translated key would key
+        // on the raw WAL id - in range for the dictionary, so nothing downstream would reject
+        // it. A single-column key is exactly the shape that shortcut fires on.
+        final RecordSink sink = createSinkFromClass(clazz, null, null);
+        ((BaseRecordSink) sink).setSymbolIdTranslator(translator);
+        return sink;
+    }
+
     private static Class<RecordSink> getSingleInstanceClass(
             @NotNull BytecodeAssembler asm,
             @Transient ColumnTypes columnTypes,
@@ -1528,7 +1584,8 @@ public class RecordSinkFactory {
             @Transient @Nullable IntList skewIndex,
             @Nullable BitSet writeSymbolAsString,
             @Nullable BitSet writeStringAsVarchar,
-            @Nullable BitSet writeTimestampAsNanos
+            @Nullable BitSet writeTimestampAsNanos,
+            @Transient @Nullable IntList symbolIdSlotByColumn
     ) {
         asm.init(RecordSink.class);
         asm.setupPool();
@@ -1630,6 +1687,23 @@ public class RecordSinkFactory {
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
         final int setFunctionsSigIndex = asm.poolUtf8("(Lio/questdb/std/ObjList;)V");
 
+        // The translated-symbol mode reads the translator off the base class rather than off a
+        // field of the generated class, so the class stays keyed by which columns translate while
+        // the instance carries the binding. Pool the two entries only when a column asks for them:
+        // an untranslated sink must still generate byte-for-byte what it generated before.
+        int tTranslate = -1;
+        int translatorFieldIndex = -1;
+        if (symbolIdSlotByColumn != null) {
+            tTranslate = asm.poolInterfaceMethod(LiveViewSymbolIdTranslator.class, "translate", "(II)I");
+            translatorFieldIndex = asm.poolField(
+                    superClassIndex,
+                    asm.poolNameAndType(
+                            asm.poolUtf8("symbolIdTranslator"),
+                            asm.poolUtf8("Lio/questdb/cairo/lv/LiveViewSymbolIdTranslator;")
+                    )
+            );
+        }
+
         final int getIndex = asm.poolMethod(ObjList.class, "get", "(I)Ljava/lang/Object;");
 
         final int typeIndex = asm.poolUtf8("Lio/questdb/cairo/sql/Function;");
@@ -1717,6 +1791,9 @@ public class RecordSinkFactory {
             final boolean symAsString = writeSymbolAsString != null && writeSymbolAsString.get(index);
             final boolean strAsVarchar = writeStringAsVarchar != null && writeStringAsVarchar.get(index);
             final boolean timestampAsNanos = writeTimestampAsNanos != null && writeTimestampAsNanos.get(index);
+            final int symbolIdSlot = symbolIdSlotByColumn != null && index < symbolIdSlotByColumn.size()
+                    ? symbolIdSlotByColumn.getQuick(index)
+                    : LiveViewTranslatingRecord.NOT_TRANSLATED;
             int skewedIndex;
             switch (factor * ColumnType.tagOf(type)) {
                 case ColumnType.INT:
@@ -1734,6 +1811,19 @@ public class RecordSinkFactory {
                     asm.invokeInterface(wPutIPv4, 1);
                     break;
                 case ColumnType.SYMBOL:
+                    if (symbolIdSlot != LiveViewTranslatingRecord.NOT_TRANSLATED) {
+                        // w.putInt(this.symbolIdTranslator.translate(slot, r.getInt(idx)))
+                        asm.aload(2);
+                        asm.aload(0);
+                        asm.getfield(translatorFieldIndex);
+                        asm.iconst(symbolIdSlot);
+                        asm.aload(1);
+                        asm.iconst(getSkewedIndex(index, skewIndex));
+                        asm.invokeInterface(rGetInt, 1);
+                        asm.invokeInterface(tTranslate, 2);
+                        asm.invokeInterface(wPutInt, 1);
+                        break;
+                    }
                     asm.aload(2);
                     asm.aload(1);
                     asm.iconst(getSkewedIndex(index, skewIndex));
@@ -2388,6 +2478,14 @@ public class RecordSinkFactory {
      * memory.
      */
     public abstract static class BaseRecordSink implements RecordSink {
+        /**
+         * The translator a sink generated in translated-symbol mode reads its LV-private
+         * partition-key ids through. Public because the generated subclass loads it with a
+         * {@code getfield} against this class rather than a field of its own, which is what
+         * keeps the generated class keyed by which columns translate while the instance
+         * carries the binding. Null on every other sink, and never read by one.
+         */
+        public LiveViewSymbolIdTranslator symbolIdTranslator;
         private int directColumnIndex = -1;
 
         @Override
@@ -2397,6 +2495,10 @@ public class RecordSinkFactory {
 
         public final void setDirectColumnIndex(int directColumnIndex) {
             this.directColumnIndex = directColumnIndex;
+        }
+
+        public final void setSymbolIdTranslator(LiveViewSymbolIdTranslator symbolIdTranslator) {
+            this.symbolIdTranslator = symbolIdTranslator;
         }
     }
 }
