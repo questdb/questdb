@@ -252,6 +252,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         // Enforce off-heap buffer management when rebound to a different query
         if (!sameQueryExecution) {
             filteredRows.resetCapacity();
+            dataAddresses.resetCapacity();  
+            auxAddresses.resetCapacity();
         } else {
             filteredRows.clear();
         }
