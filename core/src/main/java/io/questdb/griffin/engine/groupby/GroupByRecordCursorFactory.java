@@ -410,9 +410,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
         private void buildDataMap() {
             final Record baseRecord = managedCursor.getRecord();
             // Consult the breaker before the build loop, so an empty base scan still observes cancellation.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             while (managedCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final MapKey key = dataMap.withKey();
                 mapSink.copy(baseRecord, key);
                 MapValue value = key.createValue();

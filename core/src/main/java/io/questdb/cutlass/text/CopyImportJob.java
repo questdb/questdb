@@ -102,9 +102,6 @@ public class CopyImportJob extends AbstractQueueConsumerJob<CopyImportTask> impl
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. close()
-        // nulls the fields and guards fileBufSize, keeping the call idempotent.
         close();
     }
 

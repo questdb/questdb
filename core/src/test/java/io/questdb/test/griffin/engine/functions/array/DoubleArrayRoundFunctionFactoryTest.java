@@ -28,6 +28,7 @@ package io.questdb.test.griffin.engine.functions.array;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -199,7 +200,7 @@ public class DoubleArrayRoundFunctionFactoryTest extends AbstractCairoTest {
     public void testPosScalePosValueParallel() throws Exception {
         execute("create table tmp as (select rnd_symbol('a','b','v') sym, rnd_double_array(1,0) book from long_sequence(10000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

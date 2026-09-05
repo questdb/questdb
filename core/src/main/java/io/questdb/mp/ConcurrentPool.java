@@ -24,6 +24,8 @@
 
 package io.questdb.mp;
 
+import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -46,9 +48,18 @@ public class ConcurrentPool<T> {
     private final AtomicInteger count = new AtomicInteger(0);
     private final ConcurrentQueue<T> queue;
 
+    @TestOnly
+    public static <T> ConcurrentPool<T> createForTesting(ObjectFactory<T> slotFactory) {
+        return new ConcurrentPool<>(slotFactory);
+    }
+
     public ConcurrentPool() {
+        this(() -> null);
+    }
+
+    private ConcurrentPool(ObjectFactory<T> slotFactory) {
         //noinspection unchecked
-        this.queue = new ConcurrentQueue<T>(() -> null, POOL_MANIPULATOR);
+        this.queue = new ConcurrentQueue<T>(slotFactory, POOL_MANIPULATOR);
     }
 
     public int capacity() {
@@ -70,5 +81,24 @@ public class ConcurrentPool<T> {
     public void push(T item) {
         queue.enqueue(item);
         count.incrementAndGet();
+    }
+
+    public boolean tryPush(T item, int maxSize) {
+        while (true) {
+            final int currentCount = count.get();
+            if (currentCount >= maxSize) {
+                return false;
+            }
+            if (count.compareAndSet(currentCount, currentCount + 1)) {
+                break;
+            }
+        }
+        try {
+            queue.enqueue(item);
+            return true;
+        } catch (Throwable th) {
+            count.decrementAndGet();
+            throw th;
+        }
     }
 }

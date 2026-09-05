@@ -27,6 +27,7 @@ package io.questdb.cairo.wal.seq;
 import io.questdb.cairo.MemorySerializer;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -135,6 +136,22 @@ public interface TableTransactionLogFile extends Closeable {
      * @return cursor
      */
     TransactionLogCursor getCursor(long txnLo, @Transient Path path);
+
+    /**
+     * Returns the cursor to read transactions from the log
+     *
+     * @param txnLo      transaction id to start reading from
+     * @param path       to the log
+     * @param cursorPool optional caller-owned cursor pool
+     * @return cursor
+     */
+    default TransactionLogCursor getCursor(
+            long txnLo,
+            @Transient Path path,
+            @Nullable TableSequencerCursorPool cursorPool
+    ) {
+        return getCursor(txnLo, path);
+    }
 
     /**
      * @return Returns true if the table is marked as dropped in the sequencer log files

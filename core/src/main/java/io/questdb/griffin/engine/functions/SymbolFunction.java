@@ -274,8 +274,9 @@ public abstract class SymbolFunction implements Function, SymbolTable {
      * <p>
      * A function that reports {@link #supportsParallelism()} {@code == true} must return an
      * independent snapshot here, safe to read from another thread while this function keeps
-     * advancing. A function that reports {@code supportsParallelism() == false} is never cloned for
-     * a parallel worker, so it MAY instead return a live view over its own (single-threaded) state.
+     * advancing. A function that reports {@code supportsParallelism() == false} is cloned per
+     * worker for a parallel filter (it is also thread-unsafe), so each instance stays
+     * single-threaded and MAY instead return a live view over its own state.
      * Such a view is valid only for serial reads, but like any other implementation it must return
      * values that stay readable for the life of the table: a caller may hold a value across further
      * reads of the source function.

@@ -90,7 +90,7 @@ class ExceptAllCastRecordCursor extends AbstractSetRecordCursor {
             if (key.notFound()) {
                 return true;
             }
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         }
         return false;
     }
@@ -120,7 +120,7 @@ class ExceptAllCastRecordCursor extends AbstractSetRecordCursor {
             MapKey key = map.withKey();
             key.put(castRecord, recordSink);
             key.createValue();
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         }
         // this is an optimisation to release TableReader in case "this"
         // cursor lingers around. If there is exception or circuit breaker fault

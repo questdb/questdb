@@ -33,7 +33,13 @@ import io.questdb.cutlass.http.Retry;
 import io.questdb.cutlass.http.RetryAttemptAttributes;
 import io.questdb.cutlass.http.WaitProcessor;
 import io.questdb.cutlass.http.WaitProcessorConfiguration;
+import io.questdb.mp.continuation.Fiber;
+import io.questdb.mp.continuation.FiberRuntime;
+import io.questdb.mp.continuation.FiberRuntimeState;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.LaunchResult;
 import io.questdb.std.datetime.millitime.MillisecondClock;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Rule;
@@ -52,6 +58,51 @@ public class WaitProcessorTest {
             .build();
     private long currentTimeMs;
     private int job1Attempts = 0;
+
+    @Test
+    public void testCloseFreesOnlyCurrentRetryIncarnation() {
+        final WaitProcessor processor = createProcessor();
+        final int[] closed = {0};
+        final long[] currentIncarnation = {1};
+        final Retry retry = new Retry() {
+            private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
+
+            @Override
+            public void close() {
+                closed[0]++;
+            }
+
+            @Override
+            public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public RetryAttemptAttributes getAttemptDetails() {
+                return attemptAttributes;
+            }
+
+            @Override
+            public boolean isRetryCurrent(long taskIncarnation) {
+                return currentIncarnation[0] == taskIncarnation;
+            }
+
+            @Override
+            public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+                throw new UnsupportedOperationException();
+            }
+        };
+
+        processor.reschedule(retry, currentIncarnation[0]);
+        Assert.assertTrue(processor.runSerially());
+        currentIncarnation[0]++;
+        currentTimeMs += 10;
+        processor.reschedule(retry, currentIncarnation[0]);
+        Assert.assertTrue(processor.runSerially());
+        processor.close();
+
+        Assert.assertEquals(1, closed[0]);
+    }
 
     @Test
     public void testCloseFreesRetryStrandedInOutQueue() {
@@ -138,12 +189,157 @@ public class WaitProcessorTest {
         }
 
         int attempt0 = jobAttempts[0];
-        System.out.println("Rerun attempts: " + attempt0);
         Assert.assertTrue(attempt0 > 0);
 
         for (int i = 1; i < jobAttempts.length; i++) {
-            Assert.assertEquals(attempt0, jobAttempts[0]);
+            Assert.assertEquals(attempt0, jobAttempts[i]);
         }
+    }
+
+    @Test
+    public void testPublishedRetryCannotLaunchReopenedTask() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final WaitProcessor processor = createProcessor();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            try {
+                final PublishedRetryTask task = new PublishedRetryTask(processor);
+                final long publishedIncarnation = task.getIncarnation();
+
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(8));
+                Assert.assertTrue(task.isCancelled());
+                Assert.assertEquals(1, task.runCount);
+
+                task.reopen();
+                Assert.assertEquals(publishedIncarnation + 1, task.getIncarnation());
+
+                Assert.assertTrue(processor.runSerially());
+                task.getAttemptDetails().nextRunTimestamp = Long.MAX_VALUE;
+                currentTimeMs += 10;
+                Assert.assertTrue(processor.runSerially());
+
+                final LaunchResult[] launchResult = {null};
+                Assert.assertTrue(processor.launchReruns(runtime, (fiber, reservationEpoch, retry, taskIncarnation) -> {
+                    Assert.assertSame(task, retry);
+                    Assert.assertEquals(publishedIncarnation, taskIncarnation);
+                    launchResult[0] = runtime.launchReserved(
+                            fiber,
+                            reservationEpoch,
+                            task,
+                            taskIncarnation
+                    );
+                }));
+                Assert.assertEquals(LaunchResult.STALE_INCARNATION, launchResult[0]);
+                Assert.assertEquals(FiberTask.STATE_IDLE, task.getScheduleState());
+                Assert.assertEquals(1, task.runCount);
+            } finally {
+                processor.close();
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testRetryLaunchFailureReleasesFiberAndRetry() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final WaitProcessor processor = createProcessor();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final boolean[] isClosed = {false};
+            final Retry retry = new Retry() {
+                private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
+
+                @Override
+                public void close() {
+                    isClosed[0] = true;
+                }
+
+                @Override
+                public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+                    throw new UnsupportedOperationException();
+                }
+
+                @Override
+                public RetryAttemptAttributes getAttemptDetails() {
+                    return attemptAttributes;
+                }
+
+                @Override
+                public boolean tryRerun(
+                        HttpRequestProcessorSelector selector,
+                        RescheduleContext rescheduleContext
+                ) {
+                    throw new UnsupportedOperationException();
+                }
+            };
+            try {
+                processor.reschedule(retry, 1);
+                Assert.assertTrue(processor.runSerially());
+                currentTimeMs += 10;
+                Assert.assertTrue(processor.runSerially());
+
+                final OutOfMemoryError failure = new OutOfMemoryError("test launch failure");
+                try {
+                    processor.launchReruns(runtime, (_, _, _, _) -> {
+                        throw failure;
+                    });
+                    Assert.fail("expected launch failure");
+                } catch (OutOfMemoryError expected) {
+                    Assert.assertSame(failure, expected);
+                }
+
+                Assert.assertTrue(isClosed[0]);
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+            } finally {
+                processor.close();
+                close(runtime);
+            }
+        });
+    }
+
+    @Test
+    public void testSaturationLeavesRetryInOutQueue() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final WaitProcessor processor = createProcessor();
+            final FiberRuntime runtime = new FiberRuntime(1);
+            Fiber heldFiber = null;
+            long heldFiberEpoch = 0;
+            try {
+                final Retry retry = createRetry();
+                processor.reschedule(retry, 1);
+                Assert.assertTrue(processor.runSerially());
+                currentTimeMs += 10;
+                Assert.assertTrue(processor.runSerially());
+
+                heldFiber = runtime.tryReserveFiber();
+                Assert.assertNotNull(heldFiber);
+                heldFiberEpoch = heldFiber.getReservationEpoch();
+                Assert.assertFalse(
+                        processor.launchReruns(
+                                runtime,
+                                (fiber, reservationEpoch, queuedRetry, taskIncarnation) -> {
+                                    throw new AssertionError("saturated retry must remain queued");
+                                }
+                        )
+                );
+
+                runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
+                heldFiber = null;
+                final int[] launchCount = {0};
+                Assert.assertTrue(processor.launchReruns(runtime, (fiber, reservationEpoch, queuedRetry, taskIncarnation) -> {
+                    Assert.assertSame(retry, queuedRetry);
+                    Assert.assertEquals(1, taskIncarnation);
+                    launchCount[0]++;
+                    runtime.releaseReservedFiber(fiber, reservationEpoch);
+                }));
+                Assert.assertEquals(1, launchCount[0]);
+            } finally {
+                if (heldFiber != null) {
+                    runtime.releaseReservedFiber(heldFiber, heldFiberEpoch);
+                }
+                processor.close();
+                close(runtime);
+            }
+        });
     }
 
     @Test
@@ -159,7 +355,6 @@ public class WaitProcessorTest {
             processor.runSerially();
         }
 
-        System.out.println("Rerun attempts: " + job1Attempts);
         Assert.assertEquals("Job runs expected to be 10 but are: " + job1Attempts, 10, job1Attempts);
     }
 
@@ -177,6 +372,16 @@ public class WaitProcessorTest {
             processor.runSerially();
         }
         Assert.assertEquals(0, job1Attempts);
+    }
+
+    private static void close(FiberRuntime runtime) {
+        runtime.beginQuiesce();
+        final long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
+            runtime.drain(64);
+        }
+        Assert.assertTrue(runtime.awaitClosed(deadline));
+        runtime.closeAfterDrained();
     }
 
     private static HttpRequestProcessorSelector createEmptySelector() {
@@ -253,5 +458,46 @@ public class WaitProcessorTest {
                 return false;
             }
         };
+    }
+
+    private static class PublishedRetryTask extends FiberTask implements Retry {
+        private final RetryAttemptAttributes attemptAttributes = new RetryAttemptAttributes();
+        private final WaitProcessor processor;
+        private int runCount;
+
+        private PublishedRetryTask(WaitProcessor processor) {
+            this.processor = processor;
+        }
+
+        @Override
+        public void close() {
+        }
+
+        @Override
+        public void fail(HttpRequestProcessorSelector selector, HttpException e) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public RetryAttemptAttributes getAttemptDetails() {
+            return attemptAttributes;
+        }
+
+        @Override
+        public boolean tryRerun(HttpRequestProcessorSelector selector, RescheduleContext rescheduleContext) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        protected void onParked() {
+            processor.reschedule(this, getIncarnation());
+            Assert.assertTrue(signalAxisA(SIGNAL_DISCONNECT));
+        }
+
+        @Override
+        protected boolean runStep() {
+            runCount++;
+            return false;
+        }
     }
 }

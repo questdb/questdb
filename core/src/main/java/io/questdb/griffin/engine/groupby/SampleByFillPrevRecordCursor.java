@@ -170,7 +170,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
         do {
             long timestamp = getBaseRecordTimestamp();
             if (timestamp < next) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
                 final MapKey key = map.withKey();
@@ -216,7 +216,7 @@ class SampleByFillPrevRecordCursor extends AbstractVirtualRecordSampleByCursor i
 
         int n = groupByFunctions.size();
         while (baseCursor.hasNext()) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             MapKey key = map.withKey();
             keyMapSink.copy(baseRecord, key);
             MapValue value = key.createValue();

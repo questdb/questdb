@@ -38,7 +38,7 @@ import java.util.concurrent.Delayed;
  * <p>Identity-based equality (default {@link Object#equals}) is used: {@link java.util.concurrent.DelayQueue}
  * orders entries by {@link Delayed#compareTo}, never by {@code equals}.
  */
-public interface DelayedFireable extends Delayed {
+public interface DelayedFireable extends DelayHeap.Entry {
     /**
      * Called by the shard timer thread when this entry's deadline pops. Implementations
      * must route this through their CAS state machine: if another path has already

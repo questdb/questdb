@@ -25,6 +25,7 @@
 package io.questdb.cutlass.qwp.server.egress;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -41,6 +42,8 @@ import io.questdb.cutlass.qwp.codec.QwpEgressConnSymbolDict;
 import io.questdb.cutlass.qwp.codec.QwpEgressMsgKind;
 import io.questdb.cutlass.qwp.codec.QwpResultBatchBuffer;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -67,6 +70,7 @@ import java.util.concurrent.atomic.AtomicLong;
 public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware {
 
     private static final Log LOG = LogFactory.getLog(QwpEgressProcessorState.class);
+    private static final long SQL_EXECUTION_OWNER_UNINITIALIZED = Long.MIN_VALUE;
     // Test-only default overrides for the CACHE_RESET soft caps. Set these
     // before opening a connection so every new {@link QwpEgressProcessorState}
     // picks them up in its constructor; set back to {@code -1} at the end of
@@ -184,7 +188,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     private int pendingHandshakeBytes;
     private int recvBufferLen;
+    private boolean isSqlExecutionOwnerMounted;
     private SecurityContext securityContext;
+    private SqlExecutionContext sqlExecutionOwnerContext;
+    private long sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
     /**
      * Streaming-state for an in-flight query. Populated when the query starts; cleared
      * (and resources freed) on completion, error, or disconnect. Lets the upgrade
@@ -252,6 +259,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     private int streamingPageFrameIndex;
     private long streamingPageFrameRow;
     private long streamingPageFrameRowHi;
+    private boolean streamingFactoryCacheable;
     /**
      * {@code volatile}: the CANCEL handler compares the current request id
      * against the incoming target; see the note on {@link #streamingActive}.
@@ -374,13 +382,33 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         }
     }
 
+    public void beginSqlExecutionOwner(
+            CharSequence query,
+            SqlExecutionContext executionContext,
+            short compiledQueryType
+    ) {
+        if (sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
+            throw new IllegalStateException("QWP SQL execution owner is already initialized");
+        }
+        final long ownerId = executionContext.getCairoEngine().beginSqlExecution(
+                query,
+                executionContext,
+                compiledQueryType
+        );
+        sqlExecutionOwnerContext = executionContext;
+        sqlExecutionOwnerId = ownerId;
+        isSqlExecutionOwnerMounted = ownerId > -1;
+    }
+
     public void beginStreaming(
             long requestId,
             RecordCursorFactory factory,
             RecordCursor cursor,
             int columnCount,
             long initialCredit,
-            CharSequence sqlText
+            CharSequence sqlText,
+            short compiledQueryType,
+            boolean queryCacheable
     ) {
         // Defence in depth: if a caller forgets to check isStreamingActive(), free the
         // previous factory/cursor before overwriting. The primary gate lives in
@@ -400,6 +428,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingCreditRemaining.set(initialCredit);
         this.streamingCreditSuspended = false;
         this.streamingRowsEmitted = 0;
+        this.streamingFactoryCacheable = compiledQueryType == CompiledQuery.SELECT && queryCacheable;
         this.streamingSqlText = sqlText != null ? Chars.toString(sqlText) : null;
         this.streamingActive = true;
         // Native symbol keys are per-cursor: clear the per-column native-key -> conn-id
@@ -422,7 +451,9 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             PageFrameCursor pageFrameCursor,
             int columnCount,
             long initialCredit,
-            CharSequence sqlText
+            CharSequence sqlText,
+            short compiledQueryType,
+            boolean queryCacheable
     ) {
         if (streamingActive) {
             endStreaming();
@@ -450,6 +481,7 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         this.streamingCreditRemaining.set(initialCredit);
         this.streamingCreditSuspended = false;
         this.streamingRowsEmitted = 0;
+        this.streamingFactoryCacheable = compiledQueryType == CompiledQuery.SELECT && queryCacheable;
         this.streamingPageFrameIndex = 0;
         this.streamingPageFrameRow = 0;
         this.streamingPageFrameRowHi = 0;
@@ -619,23 +651,57 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * <p>
      * Idempotent -- safe to call from completion, error, or disconnect paths.
      */
+    public void endSqlExecutionOwner() {
+        final long ownerId = sqlExecutionOwnerId;
+        try {
+            if (ownerId != SQL_EXECUTION_OWNER_UNINITIALIZED) {
+                sqlExecutionOwnerContext.getCairoEngine().endSqlExecution(ownerId, sqlExecutionOwnerContext);
+            }
+        } finally {
+            isSqlExecutionOwnerMounted = false;
+            sqlExecutionOwnerContext = null;
+            sqlExecutionOwnerId = SQL_EXECUTION_OWNER_UNINITIALIZED;
+        }
+    }
+
     public void endStreaming() {
         streamingActive = false;
         streamingCurrentPageFrame = null;
+        final RecordCursor streamingCursor = this.streamingCursor;
+        this.streamingCursor = null;
+        final PageFrameCursor streamingPageFrameCursor = this.streamingPageFrameCursor;
+        this.streamingPageFrameCursor = null;
+        final RecordCursorFactory streamingFactory = this.streamingFactory;
+        this.streamingFactory = null;
+
+        Throwable cleanupFailure = null;
         if (pageFrameMemoryRecord != null) {
-            // of(null) also drops the record's borrowed SymbolTableSource; clear()
-            // alone only abandons its page-address aliases.
-            pageFrameMemoryRecord.of(null);
+            try {
+                // of(null) also drops the record's borrowed SymbolTableSource; clear()
+                // alone only abandons its page-address aliases.
+                pageFrameMemoryRecord.of(null);
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
         }
         if (pageFrameMemoryPool != null) {
-            pageFrameMemoryPool.releaseQueryResources();
+            try {
+                pageFrameMemoryPool.releaseQueryResources();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
         }
         if (pageFrameAddressCache != null) {
-            pageFrameAddressCache.clear();
+            try {
+                pageFrameAddressCache.clear();
+            } catch (Throwable th) {
+                cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+            }
         }
-        streamingCursor = Misc.free(streamingCursor);
-        streamingPageFrameCursor = Misc.free(streamingPageFrameCursor);
-        streamingFactory = Misc.free(streamingFactory);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingCursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPageFrameCursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingFactory);
+
         streamingColumnCount = 0;
         streamingBatchSeq = 0;
         streamingBatchSeqCommitted = false;
@@ -643,10 +709,17 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingCreditInitial = 0;
         streamingCreditRemaining.set(0);
         streamingCreditSuspended = false;
+        streamingFactoryCacheable = false;
         streamingPageFrameIndex = 0;
         streamingPageFrameRow = 0;
         streamingPageFrameRowHi = 0;
         streamingSqlText = null;
+        try {
+            endSqlExecutionOwner();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public QwpResultBatchBuffer getBatchBuffer() {
@@ -798,6 +871,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         return streamingActive;
     }
 
+    public boolean isSqlExecutionOwnerStarted() {
+        return sqlExecutionOwnerId != SQL_EXECUTION_OWNER_UNINITIALIZED;
+    }
+
     /**
      * True if a CANCEL frame has been observed for this query since it started
      * streaming.
@@ -821,6 +898,10 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      */
     public boolean isStreamingCreditSuspended() {
         return streamingCreditSuspended;
+    }
+
+    public boolean isStreamingFactoryCacheable() {
+        return streamingFactoryCacheable;
     }
 
     /**
@@ -892,6 +973,44 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         streamingBatchSeqCommitted = true;
     }
 
+    public void parkSqlExecutionOwner() {
+        try {
+            suspendStreamingTimer();
+        } finally {
+            unmountSqlExecutionOwner();
+        }
+    }
+
+    public void publishSqlExecutionOwner(CharSequence query, boolean containsSecret) {
+        if (sqlExecutionOwnerId > -1) {
+            sqlExecutionOwnerContext.getCairoEngine().publishSqlExecutionQuery(
+                    sqlExecutionOwnerId,
+                    query,
+                    containsSecret,
+                    sqlExecutionOwnerContext
+            );
+        }
+    }
+
+    public void resumeSqlExecutionOwner() {
+        resumeStreamingTimer();
+        mountSqlExecutionOwner();
+    }
+
+    /**
+     * Forwards a consumer-resume notification to the retained streaming cursor.
+     * Deferred QWP sends flush before callers invoke this method, so query progress
+     * excludes only completed client/network wait intervals from active time.
+     */
+    public void resumeStreamingTimer() {
+        if (streamingCursor != null) {
+            streamingCursor.resumeTimer();
+        }
+        if (streamingPageFrameCursor != null) {
+            streamingPageFrameCursor.resumeTimer();
+        }
+    }
+
     /**
      * Test-only: override the egress CACHE_RESET soft caps so tests can trip
      * resets at low entry counts without stuffing the connection with millions
@@ -953,6 +1072,19 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
     }
 
     /**
+     * Forwards a consumer-suspension notification to the retained streaming cursor.
+     * Both cursor kinds are retained by this state across credit and socket parks.
+     */
+    public void suspendStreamingTimer() {
+        if (streamingCursor != null) {
+            streamingCursor.suspendTimer();
+        }
+        if (streamingPageFrameCursor != null) {
+            streamingPageFrameCursor.suspendTimer();
+        }
+    }
+
+    /**
      * Returns the native {@code ZSTD_CCtx} pointer, allocating it on first use.
      * Caller must already know compression is active (codec != COMPRESSION_NONE)
      * -- no null check is performed. Returns 0 if native allocation fails, which
@@ -998,5 +1130,25 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
             zstdCompressScratchCapacity = cap;
         }
         return zstdCompressScratchAddr;
+    }
+
+    private void mountSqlExecutionOwner() {
+        if (sqlExecutionOwnerId > -1 && !isSqlExecutionOwnerMounted) {
+            sqlExecutionOwnerContext.getCairoEngine().mountSqlExecution(
+                    sqlExecutionOwnerId,
+                    sqlExecutionOwnerContext
+            );
+            isSqlExecutionOwnerMounted = true;
+        }
+    }
+
+    private void unmountSqlExecutionOwner() {
+        if (sqlExecutionOwnerId > -1 && isSqlExecutionOwnerMounted) {
+            sqlExecutionOwnerContext.getCairoEngine().unmountSqlExecution(
+                    sqlExecutionOwnerId,
+                    sqlExecutionOwnerContext
+            );
+            isSqlExecutionOwnerMounted = false;
+        }
     }
 }

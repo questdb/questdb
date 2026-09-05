@@ -437,7 +437,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         private void buildRecordChain() {
             // Consult the breaker before building, so even an empty base scan still observes cancellation.
             // Runs once per cursor open, guarded by isRecordChainBuilt.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             final Record record = baseCursor.getRecord();
             final Record chainRecord = recordChain.getRecord();
             final boolean hasOrdered = orderedGroupCount > 0;
@@ -447,7 +447,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
             final int forwardStateCount = forwardStates != null ? forwardStates.size() : 0;
             if (hasOrdered || forwardFnCount > 0) {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     recordChainOffset = recordChain.put(record);
                     recordChain.recordAt(chainRecord, recordChainOffset);
                     if (hasOrdered) {
@@ -467,13 +467,13 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 }
                 if (hasOrdered) {
                     for (int i = 0; i < orderedGroupCount; i++) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         sortBuffers.getQuick(i).finishPut(circuitBreaker);
                     }
                 }
             } else {
                 while (baseCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     recordChainOffset = recordChain.put(record);
                 }
             }
@@ -491,7 +491,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     final int stateCount = states != null ? states.size() : 0;
                     group.toTop();
                     while (group.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         offset = group.next();
                         recordChain.recordAt(chainRecord, offset);
                         for (int g = 0; g < stateCount; g++) {
@@ -511,7 +511,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 final int backwardStateCount = backwardStates != null ? backwardStates.size() : 0;
                 recordChain.toBottom();
                 while (recordChain.hasPrev()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final long rowId = chainRecord.getRowId();
                     for (int g = 0; g < backwardStateCount; g++) {
                         backwardStates.getQuick(g).computeNext(chainRecord);
@@ -556,7 +556,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     final int stateCount = states != null ? states.size() : 0;
                     group.toTop();
                     while (group.hasNext()) {
-                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                         offset = group.next();
                         recordChain.recordAt(chainRecord, offset);
                         for (int g = 0; g < stateCount; g++) {
@@ -576,7 +576,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                 final int pass2StateCount = pass2States != null ? pass2States.size() : 0;
                 recordChain.toTop();
                 while (recordChain.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final long rowId = chainRecord.getRowId();
                     for (int g = 0; g < pass2StateCount; g++) {
                         pass2States.getQuick(g).projectPass2(chainRecord);

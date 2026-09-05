@@ -192,7 +192,7 @@ public class DistinctTimeSeriesRecordCursorFactory extends AbstractRecordCursorF
             }
 
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 final long timestamp = record.getTimestamp(timestampIndex);
                 if (timestamp != prevTimestamp) {
                     prevTimestamp = timestamp;

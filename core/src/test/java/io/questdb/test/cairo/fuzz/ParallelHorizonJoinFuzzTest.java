@@ -32,6 +32,7 @@ import io.questdb.mp.WorkerPool;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assume;
 import org.junit.Before;
@@ -102,7 +103,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         // freed; otherwise it leaks NATIVE_ND_ARRAY native memory, scaling with worker count.
         Assume.assumeTrue(enableParallelHorizonJoin);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -353,7 +354,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
 
         assertMemoryLeak(() -> {
             // 3 workers vs 2 slaves to trigger the indexing mismatch.
-            final WorkerPool pool = new WorkerPool(() -> 3);
+            final WorkerPool pool = new TestWorkerPool(3, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -515,7 +516,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         String referenceQuery = ref.toString();
 
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -629,7 +630,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         String referenceQuery = ref.toString();
 
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -802,7 +803,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         String referenceQuery = ref.toString();
 
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

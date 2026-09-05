@@ -187,7 +187,7 @@ public class UnnestRecordCursorFactory extends AbstractRecordCursorFactory {
         @Override
         public boolean hasNext() {
             while (true) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (isMasterPending) {
                     if (!baseCursor.hasNext()) {
                         return false;

@@ -25,11 +25,14 @@
 package io.questdb.test.cairo.sql;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerWrapper;
 import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
+import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.network.NetworkFacade;
 import io.questdb.network.NetworkFacadeImpl;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -41,7 +44,12 @@ import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 /**
  * Pins the wall-clock throttle on the breaker's connection probe: cancellation and timeout
@@ -54,6 +62,109 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
 
     private static final long THROTTLE = 100;
+
+    @Test
+    public void testAtomicBooleanConditionalClearLinearizesWithCancel() throws Exception {
+        assertMemoryLeak(() -> assertConditionalClearLinearizesWithCancel(
+                new AtomicBooleanCircuitBreaker(engine)
+        ));
+    }
+
+    @Test
+    public void testCooperativePollVariantsUseEngineHookAfterBreakerCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger pollCount = new AtomicInteger();
+            try (CairoEngine pollingEngine = new CairoEngine(configuration, false) {
+                @Override
+                public void onSqlExecutionCooperativePoll() {
+                    pollCount.incrementAndGet();
+                }
+            }) {
+                final int stride = SqlExecutionCircuitBreaker.COOPERATIVE_POLL_STRIDE;
+                final AtomicBooleanCircuitBreaker atomicBreaker = new AtomicBooleanCircuitBreaker(pollingEngine);
+                // the first cooperative boundary polls; every variant shares one stride countdown
+                Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
+                Assert.assertEquals(1, pollCount.get());
+                Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield(0, -1));
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, atomicBreaker.getStateOrYield(0, -1));
+                atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
+                atomicBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                atomicBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                Assert.assertEquals(1, pollCount.get());
+                for (int i = 7; i < stride; i++) {
+                    Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
+                }
+                Assert.assertEquals(1, pollCount.get());
+                Assert.assertFalse(atomicBreaker.checkIfTrippedOrYield());
+                Assert.assertEquals("the stride boundary polls again", 2, pollCount.get());
+                atomicBreaker.clear();
+                atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
+                Assert.assertEquals("a query boundary restarts the stride", 3, pollCount.get());
+
+                final TestMillisecondClock clock = new TestMillisecondClock(1_000);
+                final SqlExecutionCircuitBreakerConfiguration config =
+                        new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                            @Override
+                            public @NotNull MillisecondClock getClock() {
+                                return clock;
+                            }
+                        };
+                try (
+                        NetworkSqlExecutionCircuitBreaker networkBreaker =
+                                new NetworkSqlExecutionCircuitBreaker(pollingEngine, config);
+                        SqlExecutionCircuitBreakerWrapper wrapper =
+                                new SqlExecutionCircuitBreakerWrapper(pollingEngine, config)
+                ) {
+                    networkBreaker.resetTimer();
+                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
+                    Assert.assertEquals(4, pollCount.get());
+                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield(1_000, -1));
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_OK, networkBreaker.getStateOrYield());
+                    Assert.assertEquals(
+                            SqlExecutionCircuitBreaker.STATE_OK,
+                            networkBreaker.getStateOrYield(1_000, -1)
+                    );
+                    networkBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    networkBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                    networkBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                    Assert.assertEquals(4, pollCount.get());
+                    for (int i = 7; i < stride; i++) {
+                        Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
+                    }
+                    Assert.assertFalse(networkBreaker.checkIfTrippedOrYield());
+                    Assert.assertEquals(5, pollCount.get());
+                    networkBreaker.clear();
+                    networkBreaker.resetTimer();
+                    networkBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    Assert.assertEquals(6, pollCount.get());
+
+                    // init is a query boundary; afterwards the wrapper's boundaries share the delegate's stride
+                    wrapper.init(networkBreaker);
+                    Assert.assertFalse(wrapper.checkIfTrippedOrYield());
+                    Assert.assertEquals(7, pollCount.get());
+                    for (int i = 1; i < stride; i++) {
+                        Assert.assertFalse(wrapper.checkIfTrippedOrYield());
+                    }
+                    Assert.assertEquals(7, pollCount.get());
+                    Assert.assertFalse(wrapper.checkIfTrippedOrYield());
+                    Assert.assertEquals(8, pollCount.get());
+                }
+
+                atomicBreaker.clear();
+                atomicBreaker.setCancelledFlag(new AtomicBoolean(true));
+                Assert.assertTrue(atomicBreaker.checkIfTrippedOrYield());
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, atomicBreaker.getStateOrYield());
+                try {
+                    atomicBreaker.statefulThrowExceptionIfTrippedOrYield();
+                    Assert.fail("expected cancellation");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isInterruption());
+                }
+                Assert.assertEquals("the engine hook must not run after a tripped breaker", 8, pollCount.get());
+            }
+        });
+    }
 
     @Test
     public void testCheckIfTrippedNoThrottleBypassesWindow() throws Exception {
@@ -114,6 +225,16 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                 clock.millis += THROTTLE;
                 Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_BROKEN_CONNECTION, breaker.getState());
                 Assert.assertEquals(2, breaker.probeCount);
+            }
+        });
+    }
+
+    @Test
+    public void testNetworkConditionalClearLinearizesWithCancel() throws Exception {
+        assertMemoryLeak(() -> {
+            TestMillisecondClock clock = new TestMillisecondClock(1_000);
+            try (TestNetworkSqlExecutionCircuitBreaker breaker = newBreaker(clock, 100_000)) {
+                assertConditionalClearLinearizesWithCancel(breaker);
             }
         });
     }
@@ -287,6 +408,118 @@ public class NetworkSqlExecutionCircuitBreakerTest extends AbstractCairoTest {
                 Assert.assertEquals("probe must fire once the window elapses across re-inits", 2, probeCount[0]);
             }
         });
+    }
+
+    @Test
+    public void testWrapperPreservesCancellationGeneration() throws Exception {
+        assertMemoryLeak(() -> {
+            final SqlExecutionCircuitBreakerConfiguration config =
+                    new DefaultSqlExecutionCircuitBreakerConfiguration();
+            try (
+                    NetworkSqlExecutionCircuitBreaker ownerBreaker =
+                            new NetworkSqlExecutionCircuitBreaker(engine, config);
+                    SqlExecutionCircuitBreakerWrapper wrapper =
+                            new SqlExecutionCircuitBreakerWrapper(engine, config)
+            ) {
+                final FiberCancellationSignal signal = new FiberCancellationSignal();
+                final long staleGeneration = signal.getGeneration();
+                ownerBreaker.setCancelledFlag(signal, staleGeneration);
+                final long currentGeneration = signal.reopen();
+
+                wrapper.init(ownerBreaker);
+                try {
+                    wrapper.statefulThrowExceptionIfTrippedNoThrottle();
+                    Assert.fail("expected stale cancellation binding to fail closed");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isInterruption());
+                    Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+                }
+
+                wrapper.cancel();
+                Assert.assertFalse(signal.isCancelled(currentGeneration));
+            }
+        });
+    }
+
+    private static void assertConditionalClearLinearizesWithCancel(SqlExecutionCircuitBreaker breaker) throws Exception {
+        FiberCancellationSignal signal = new FiberCancellationSignal();
+        breaker.setCancelledFlag(signal);
+
+        CountDownLatch cancelStarted = new CountDownLatch(1);
+        CountDownLatch clearStarted = new CountDownLatch(1);
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread cancelThread = new Thread(() -> {
+            cancelStarted.countDown();
+            try {
+                breaker.cancel();
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        }, "circuit-breaker-cancel");
+        Thread clearThread = new Thread(() -> {
+            clearStarted.countDown();
+            try {
+                breaker.clearCancelledFlag(signal);
+            } catch (Throwable th) {
+                failure.compareAndSet(null, th);
+            }
+        }, "circuit-breaker-clear");
+
+        boolean isClearBlocked = false;
+        try {
+            synchronized (signal) {
+                cancelThread.start();
+                await(cancelStarted);
+                Assert.assertTrue("cancel did not block on the cancellation signal", awaitBlocked(cancelThread));
+
+                clearThread.start();
+                await(clearStarted);
+                isClearBlocked = awaitBlocked(clearThread);
+            }
+        } finally {
+            join(cancelThread);
+            join(clearThread);
+        }
+
+        Throwable th = failure.get();
+        if (th != null) {
+            throw new AssertionError(th);
+        }
+        Assert.assertTrue("conditional clear completed before the in-flight cancel", isClearBlocked);
+        Assert.assertTrue(signal.get());
+        Assert.assertNull(breaker.getCancelledFlag());
+
+        AtomicBoolean replacement = new AtomicBoolean();
+        breaker.setCancelledFlag(replacement);
+        breaker.clearCancelledFlag(signal);
+        Assert.assertSame(replacement, breaker.getCancelledFlag());
+        breaker.clearCancelledFlag(replacement);
+        Assert.assertNull(breaker.getCancelledFlag());
+    }
+
+    private static void await(CountDownLatch latch) throws InterruptedException {
+        Assert.assertTrue("thread did not start", latch.await(10, TimeUnit.SECONDS));
+    }
+
+    private static boolean awaitBlocked(Thread thread) {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        while (System.nanoTime() < deadline) {
+            Thread.State state = thread.getState();
+            if (state == Thread.State.BLOCKED) {
+                return true;
+            }
+            if (state == Thread.State.TERMINATED) {
+                return false;
+            }
+            LockSupport.parkNanos(100_000);
+        }
+        Assert.fail("thread did not block or terminate [name=" + thread.getName() + ", state=" + thread.getState() + ']');
+        return false;
+    }
+
+    private static void join(Thread thread) throws InterruptedException {
+        thread.join(TimeUnit.SECONDS.toMillis(10));
+        Assert.assertFalse("thread did not terminate [name=" + thread.getName() + ']', thread.isAlive());
     }
 
     private static TestNetworkSqlExecutionCircuitBreaker newBreaker(MillisecondClock clock, long queryTimeout) {

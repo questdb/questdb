@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
@@ -63,6 +64,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     boolean allowNonDeterministicFunctions();
 
     void changePageFrameSizes(int minRows, int maxRows);
+
+    default void clearCancelledFlag(AtomicBoolean expected) {
+        getCircuitBreaker().clearCancelledFlag(expected);
+        getSimpleCircuitBreaker().clearCancelledFlag(expected);
+    }
+
+    default void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        getCircuitBreaker().clearCancelledFlag(expected, expectedGeneration);
+        getSimpleCircuitBreaker().clearCancelledFlag(expected, expectedGeneration);
+    }
 
     void clearWindowContext();
 
@@ -100,6 +111,11 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default boolean containsSecret() {
         return false;
+    }
+
+    default void copyCancelledFlagsTo(CancellationBinding circuitBreakerTarget, CancellationBinding simpleCircuitBreakerTarget) {
+        getCircuitBreaker().copyCancelledFlagTo(circuitBreakerTarget);
+        getSimpleCircuitBreaker().copyCancelledFlagTo(simpleCircuitBreakerTarget);
     }
 
     default Rnd getAsyncRandom() {
@@ -147,6 +163,14 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     @Nullable
     default MemoryTracker getMemoryTracker() {
         return null;
+    }
+
+    /**
+     * Returns the protocol execution owner currently mounted on this context, or {@code -1}.
+     * Enterprise uses this identity to retain one managed owner across protocol execution segments.
+     */
+    default long getQueryRegistryOwnerId() {
+        return -1;
     }
 
     default @NotNull MessageBus getMessageBus() {
@@ -208,6 +232,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     int getSharedQueryWorkerCount();
 
+    @NotNull
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
     default int getTableStatus(Path path, CharSequence tableName) {
@@ -300,6 +325,19 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
+    default boolean isResourceGroupBypassed() {
+        return false;
+    }
+
+    /**
+     * Returns {@code true} for engine-owned SQL that is run as part of bootstrap or background
+     * maintenance rather than on behalf of a client query. Such work is governed by its owning
+     * subsystem instead of client-query admission and scheduling.
+     */
+    default boolean isSystemSql() {
+        return false;
+    }
+
     boolean isTimestampRequired();
 
     default boolean isUninterruptible() {
@@ -339,6 +377,21 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void reset();
 
+    default void restoreCancelledFlag(
+            AtomicBoolean expected,
+            CancellationBinding circuitBreakerPrevious,
+            CancellationBinding simpleCircuitBreakerPrevious
+    ) {
+        final SqlExecutionCircuitBreaker circuitBreaker = getCircuitBreaker();
+        final SqlExecutionCircuitBreaker simpleCircuitBreaker = getSimpleCircuitBreaker();
+        if (circuitBreaker.getCancelledFlag() == expected) {
+            circuitBreaker.setCancelledFlag(circuitBreakerPrevious);
+        }
+        if (simpleCircuitBreaker != circuitBreaker && simpleCircuitBreaker.getCancelledFlag() == expected) {
+            simpleCircuitBreaker.setCancelledFlag(simpleCircuitBreakerPrevious);
+        }
+    }
+
     void restoreToDefaultPageFrameSizes();
 
     void setAllowNonDeterministicFunction(boolean value);
@@ -346,6 +399,16 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     void setCacheHit(boolean value);
 
     void setCancelledFlag(AtomicBoolean cancelled);
+
+    default void setCancelledFlag(CancellationBinding source) {
+        getCircuitBreaker().setCancelledFlag(source);
+        getSimpleCircuitBreaker().setCancelledFlag(source);
+    }
+
+    default void setCancelledFlag(AtomicBoolean cancelled, long generation) {
+        getCircuitBreaker().setCancelledFlag(cancelled, generation);
+        getSimpleCircuitBreaker().setCancelledFlag(cancelled, generation);
+    }
 
     void setCloneSymbolTables(boolean cloneSymbolTables);
 
@@ -366,6 +429,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * at workload end so the context is ready for the next workload.
      */
     default void setMemoryTracker(@Nullable MemoryTracker tracker) {
+    }
+
+    /**
+     * Binds the protocol execution owner for nested QueryRegistry registrations on this context.
+     */
+    default void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
     }
 
     void setNowAndFixClock(long now, int nowTimestampType);
@@ -394,6 +463,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
      * not track reader leaks.
      */
     default void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
+    }
+
+    default void setResourceGroupBypassed(boolean resourceGroupBypassed) {
     }
 
     void setUseSimpleCircuitBreaker(boolean value);

@@ -141,17 +141,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native resources through this hook at halt. Misc.free
-        // nulls the fields, keeping the call idempotent.
+        // cloneInstance() mints a fresh job per worker, so the pool frees each
+        // instance's native resources through this hook at halt.
         close();
-    }
-
-    @Override
-    public void recycleInstance() {
-        mvRefreshTask.clear();
-        lastAttemptSeqTxn = 0L;
-        lastCommittedRows = 0L;
     }
 
     private static long calculateSkipTransactionCount(TableToken tableToken, long initialSeqTxn, WalTxnDetails walTxnDetails) {
@@ -1128,6 +1120,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
      * pool worker never races the LV's own refresh worker.
      */
     public void applyWalDirect(@NotNull TableToken tableToken, WorkerContext runStatus) {
+        // WAL apply must never fiber-suspend, or an applied UPDATE that waits on WAL progress
+        // would park the apply it depends on; generateUpdate rejects such statements at compile
+        // time, and no caller reaches applyWal from a mounted fiber.
         applyWal(tableToken, engine, operationExecutor, runStatus);
     }
 

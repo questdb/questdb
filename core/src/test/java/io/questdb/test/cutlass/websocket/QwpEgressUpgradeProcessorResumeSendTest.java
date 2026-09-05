@@ -25,6 +25,15 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cairo.security.AllowAllSecurityContext;
+import io.questdb.cairo.sql.ColumnMapping;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.StaticSymbolTable;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cutlass.http.DefaultHttpServerConfiguration;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -33,9 +42,11 @@ import io.questdb.cutlass.http.HttpServerConfiguration;
 import io.questdb.cutlass.http.LocalValue;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressProcessorState;
 import io.questdb.cutlass.qwp.server.egress.QwpEgressUpgradeProcessor;
+import io.questdb.griffin.CompiledQuery;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.PlainSocketFactory;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -82,6 +93,127 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
                     Assert.assertFalse(context.isSwitchProtocolCalled());
                 } finally {
                     Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResumeSendLeavesStreamingTimerSuspendedUntilDeferredFlushCompletes() throws Exception {
+        // This is transport fault injection, not a client-contract assertion. A retained
+        // cursor is already parked when resumeSend starts. The first flush re-parks, so its
+        // timer must remain suspended; only the second, successful flush may resume it.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            try (QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(engine, httpConfig, 1)) {
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                try (TestableContext context = new TestableContext(httpConfig, new MockRawSocket(sendBuf, SEND_BUFFER_SIZE))) {
+                    QwpEgressProcessorState state = setupState(context);
+                    TimerSpyRecordCursor cursor = new TimerSpyRecordCursor();
+                    state.beginStreaming(1, null, cursor, 0, 1, null, CompiledQuery.NONE, false);
+                    state.consumeStreamingCredit(1);
+                    state.suspendStreamingTimer();
+                    context.setResumeSendThrowsPeerSlow(true);
+
+                    try {
+                        processor.resumeSend(context);
+                        Assert.fail("Expected PeerIsSlowToReadException");
+                    } catch (PeerIsSlowToReadException expected) {
+                        // expected: deferred bytes are still not flushed
+                    }
+                    Assert.assertEquals("re-park must not resume the retained cursor", 0, cursor.resumeCalls);
+                    Assert.assertEquals(1, cursor.suspendCalls);
+
+                    context.setResumeSendThrowsPeerSlow(false);
+                    processor.resumeSend(context);
+
+                    Assert.assertEquals("successful deferred flush resumes before result production", 1, cursor.resumeCalls);
+                    Assert.assertEquals(
+                            "credit exhaustion after the resumed flush re-suspends the cursor",
+                            2,
+                            cursor.suspendCalls
+                    );
+                    Assert.assertTrue(state.isStreamingCreditSuspended());
+                    state.endStreaming();
+                    Assert.assertTrue(cursor.isClosed);
+                } finally {
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testResumeSendReparkSuspendsStreamingTimer() throws Exception {
+        // The deferred flush completed, but resumed result production itself hit PISR.
+        // That second park must suspend the cursor before the exception reaches the dispatcher.
+        assertMemoryLeak(() -> {
+            HttpFullFatServerConfiguration httpConfig = new DefaultHttpServerConfiguration(configuration);
+            try (QwpEgressUpgradeProcessor processor = new QwpEgressUpgradeProcessor(engine, httpConfig, 1)) {
+                long sendBuf = Unsafe.malloc(SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                MockRawSocket rawSocket = new MockRawSocket(sendBuf, SEND_BUFFER_SIZE);
+                rawSocket.setThrowPeerSlow(true);
+                try (TestableContext context = new TestableContext(httpConfig, rawSocket)) {
+                    QwpEgressProcessorState state = setupState(context);
+                    TimerSpyRecordCursor cursor = new TimerSpyRecordCursor();
+                    state.beginStreaming(1, null, cursor, 0, 1, null, CompiledQuery.NONE, false);
+                    state.suspendStreamingTimer();
+
+                    try {
+                        processor.resumeSend(context);
+                        Assert.fail("Expected PeerIsSlowToReadException");
+                    } catch (PeerIsSlowToReadException expected) {
+                        // expected: result production, not deferred flushing, re-parked
+                    }
+                    Assert.assertEquals(1, cursor.resumeCalls);
+                    Assert.assertEquals(2, cursor.suspendCalls);
+                    state.endStreaming();
+                } finally {
+                    Unsafe.free(sendBuf, SEND_BUFFER_SIZE, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStateForwardsTimersToPageFrameCursor() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE qwp_timer_page (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO qwp_timer_page SELECT x, x::TIMESTAMP FROM long_sequence(2)");
+
+            try (QwpEgressProcessorState state = new QwpEgressProcessorState(configuration)) {
+                RecordCursorFactory factory = null;
+                PageFrameCursor pageFrameCursor = null;
+                try {
+                    factory = select("SELECT * FROM qwp_timer_page");
+                    pageFrameCursor = factory.getPageFrameCursor(
+                            sqlExecutionContext,
+                            PartitionFrameCursorFactory.ORDER_ASC
+                    );
+                    Assert.assertNotNull(pageFrameCursor);
+                    TimerSpyPageFrameCursor cursor = new TimerSpyPageFrameCursor(pageFrameCursor);
+                    state.beginStreamingPageFrame(
+                            1,
+                            factory,
+                            cursor,
+                            2,
+                            0,
+                            "SELECT * FROM qwp_timer_page",
+                            CompiledQuery.NONE,
+                            false
+                    );
+                    factory = null;
+                    pageFrameCursor = null;
+
+                    state.suspendStreamingTimer();
+                    state.resumeStreamingTimer();
+
+                    Assert.assertEquals(1, cursor.suspendCalls);
+                    Assert.assertEquals(1, cursor.resumeCalls);
+                    state.endStreaming();
+                } finally {
+                    Misc.free(pageFrameCursor);
+                    Misc.free(factory);
                 }
             }
         });
@@ -176,11 +308,143 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
         return state;
     }
 
+    private static class TimerSpyPageFrameCursor implements PageFrameCursor {
+        private final PageFrameCursor base;
+        private int resumeCalls;
+        private int suspendCalls;
+
+        private TimerSpyPageFrameCursor(PageFrameCursor base) {
+            this.base = base;
+        }
+
+        @Override
+        public void calculateSize(RecordCursor.Counter counter) {
+            base.calculateSize(counter);
+        }
+
+        @Override
+        public void close() {
+            base.close();
+        }
+
+        @Override
+        public ColumnMapping getColumnMapping() {
+            return base.getColumnMapping();
+        }
+
+        @Override
+        public long getRemainingRowsInInterval() {
+            return base.getRemainingRowsInInterval();
+        }
+
+        @Override
+        public StaticSymbolTable getSymbolTable(int columnIndex) {
+            return base.getSymbolTable(columnIndex);
+        }
+
+        @Override
+        public boolean isExternal() {
+            return base.isExternal();
+        }
+
+        @Override
+        public PageFrame next(long skipTarget) {
+            return base.next(skipTarget);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return base.newSymbolTable(columnIndex);
+        }
+
+        @Override
+        public void resumeTimer() {
+            resumeCalls++;
+            base.resumeTimer();
+        }
+
+        @Override
+        public long size() {
+            return base.size();
+        }
+
+        @Override
+        public void suspendTimer() {
+            suspendCalls++;
+            base.suspendTimer();
+        }
+
+        @Override
+        public boolean supportsSizeCalculation() {
+            return base.supportsSizeCalculation();
+        }
+
+        @Override
+        public void toTop() {
+            base.toTop();
+        }
+    }
+
+    private static class TimerSpyRecordCursor implements RecordCursor {
+        private boolean isClosed;
+        private int resumeCalls;
+        private int suspendCalls;
+
+        @Override
+        public void close() {
+            isClosed = true;
+        }
+
+        @Override
+        public Record getRecord() {
+            return null;
+        }
+
+        @Override
+        public Record getRecordB() {
+            return null;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return true;
+        }
+
+        @Override
+        public long preComputedStateSize() {
+            return 0;
+        }
+
+        @Override
+        public void recordAt(Record record, long atRowId) {
+        }
+
+        @Override
+        public void resumeTimer() {
+            resumeCalls++;
+        }
+
+        @Override
+        public long size() {
+            return 0;
+        }
+
+        @Override
+        public void suspendTimer() {
+            suspendCalls++;
+        }
+
+        @Override
+        public void toTop() {
+        }
+    }
+
     private static class MockRawSocket implements HttpRawSocket {
         private final long bufferAddress;
         private final int bufferSize;
         int sendCallCount;
         int sentSize;
+        private boolean isThrowPeerSlow;
 
         MockRawSocket(long bufferAddress, int bufferSize) {
             this.bufferAddress = bufferAddress;
@@ -198,9 +462,16 @@ public class QwpEgressUpgradeProcessorResumeSendTest extends AbstractCairoTest {
         }
 
         @Override
-        public void send(int size) {
+        public void send(int size) throws PeerIsSlowToReadException {
             sendCallCount++;
             sentSize = size;
+            if (isThrowPeerSlow) {
+                throw PeerIsSlowToReadException.INSTANCE;
+            }
+        }
+
+        void setThrowPeerSlow(boolean isThrowPeerSlow) {
+            this.isThrowPeerSlow = isThrowPeerSlow;
         }
     }
 

@@ -154,6 +154,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private static final int MATCH_NO_MATCH = 0;
     private static final int MATCH_PARTIAL_MATCH = 2;
     private final CairoConfiguration configuration;
+    private final SqlExecutionRequirements executionRequirements = new SqlExecutionRequirements();
     private final FunctionFactoryCache functionFactoryCache;
     private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
     private final Long256Impl long256Sink = new Long256Impl();
@@ -164,6 +165,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
     private final IntList undefinedVariables = new IntList();
     private boolean cursorFunctionInstantiated;
+    private int executionRequirementPosition = -1;
     private String lastFunctionFactorySignature;
     private RecordMetadata metadata;
     private SqlCodeGenerator sqlCodeGenerator;
@@ -228,6 +230,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     @Override
     public void clear() {
+        this.executionRequirements.clear();
+        this.executionRequirementPosition = -1;
         this.positionStack.clear();
         this.functionStack.clear();
         this.lastFunctionFactorySignature = null;
@@ -285,6 +289,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             }
         }
         return false;
+    }
+
+    public SqlExecutionRequirements getExecutionRequirements() {
+        return executionRequirements;
     }
 
     public FunctionFactoryCache getFunctionFactoryCache() {
@@ -486,6 +494,18 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             functionStack.push(createFunction(node, mutableArgs, mutableArgPositions));
         }
         positionStack.push(node.position);
+    }
+
+    int enterExecutionRequirementPosition(int position) {
+        final int previousPosition = executionRequirementPosition;
+        if (previousPosition < 0) {
+            executionRequirementPosition = position;
+        }
+        return previousPosition;
+    }
+
+    void restoreExecutionRequirementPosition(int position) {
+        executionRequirementPosition = position;
     }
 
     private static int countWindowOverloads(ObjList<FunctionFactoryDescriptor> overload) {
@@ -728,6 +748,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             Misc.free(function, exception);
             throw exception;
         }
+        executionRequirements.add(
+                factory.getExecutionRequirements(),
+                executionRequirementPosition > -1 ? executionRequirementPosition : position
+        );
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }

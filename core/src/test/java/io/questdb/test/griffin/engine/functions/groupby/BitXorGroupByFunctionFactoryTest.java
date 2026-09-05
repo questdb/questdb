@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -247,7 +248,7 @@ public class BitXorGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBitXorLongParallel() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_long(0, 255, 0) val from long_sequence(100000))");
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, bit_xor(val) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -258,7 +259,7 @@ public class BitXorGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBitXorLongParallelWithNulls() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, case when x % 3 = 0 then null else rnd_long(0, 255, 0) end val from long_sequence(100000))");
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, bit_xor(val) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -269,7 +270,7 @@ public class BitXorGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBitXorIntParallel() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, rnd_int(0, 255, 0) val from long_sequence(100000))");
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, bit_xor(val) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -280,7 +281,7 @@ public class BitXorGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testBitXorIntParallelWithNulls() throws Exception {
         execute("create table tab as (select rnd_symbol('A','B','C','D','E') sym, case when x % 3 = 0 then null else rnd_int(0, 255, 0) end val from long_sequence(100000))");
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                 String sql = "select sym, bit_xor(val) from tab group by sym order by sym";
                 TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);

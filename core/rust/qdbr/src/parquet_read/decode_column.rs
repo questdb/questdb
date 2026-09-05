@@ -204,8 +204,7 @@ pub fn decode_column_chunk_with_params(
     } = ctx;
 
     if reset_bufs {
-        varchar_slice_buf_pool.append(&mut bufs.page_buffers);
-        bufs.reset();
+        bufs.reset_for_decode(varchar_slice_buf_pool);
     }
 
     let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
@@ -221,6 +220,7 @@ pub fn decode_column_chunk_with_params(
                         dict_page,
                         varchar_slice_dict_bufs,
                         varchar_slice_buf_pool,
+                        bufs,
                     )?
                 } else {
                     decompress_sliced_dict(dict_page, dict_decompress_buffer)?
@@ -246,6 +246,7 @@ pub fn decode_column_chunk_with_params(
                                 decompress_buffer,
                                 &mut varchar_slice_page_bufs,
                                 varchar_slice_buf_pool,
+                                bufs,
                             )?
                         } else {
                             decompress_sliced_data(&page, decompress_buffer)?
@@ -273,6 +274,7 @@ pub fn decode_column_chunk_with_params(
                             decompress_buffer,
                             &mut varchar_slice_page_bufs,
                             varchar_slice_buf_pool,
+                            bufs,
                         )?
                     } else {
                         decompress_sliced_data(&page, decompress_buffer)?
@@ -361,8 +363,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
         ..
     } = ctx;
 
-    varchar_slice_buf_pool.append(&mut bufs.page_buffers);
-    bufs.reset();
+    bufs.reset_for_decode(varchar_slice_buf_pool);
 
     let mut varchar_slice_page_bufs: Vec<Vec<u8>> = Vec::new();
     varchar_slice_dict_bufs.clear();
@@ -377,6 +378,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                         dict_page,
                         varchar_slice_dict_bufs,
                         varchar_slice_buf_pool,
+                        bufs,
                     )?
                 } else {
                     decompress_sliced_dict(dict_page, dict_decompress_buffer)?
@@ -424,6 +426,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                             decompress_buffer,
                             &mut varchar_slice_page_bufs,
                             varchar_slice_buf_pool,
+                            bufs,
                         )?;
                         decode_page_filtered::<true>(
                             &page,
@@ -450,6 +453,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                             decompress_buffer,
                             &mut varchar_slice_page_bufs,
                             varchar_slice_buf_pool,
+                            bufs,
                         )?;
                         decode_page_filtered::<false>(
                             &page,
@@ -482,6 +486,7 @@ pub fn decode_column_chunk_filtered_with_params<const FILL_NULLS: bool>(
                         decompress_buffer,
                         &mut varchar_slice_page_bufs,
                         varchar_slice_buf_pool,
+                        bufs,
                     )?;
                     let page_row_count = page_row_count(&page, col_info.column_type)?;
                     let page_end = page_row_start.checked_add(page_row_count).ok_or_else(|| {
@@ -578,6 +583,7 @@ fn decompress_data_page<'a>(
     decompress_buffer: &'a mut Vec<u8>,
     varchar_slice_page_bufs: &'a mut Vec<Vec<u8>>,
     varchar_slice_buf_pool: &mut Vec<Vec<u8>>,
+    bufs: &mut ColumnChunkBuffers,
 ) -> ParquetResult<crate::parquet_read::page::DataPage<'a>> {
     if is_varchar_slice {
         decompress_varchar_slice_data(
@@ -585,6 +591,7 @@ fn decompress_data_page<'a>(
             decompress_buffer,
             varchar_slice_page_bufs,
             varchar_slice_buf_pool,
+            bufs,
         )
     } else {
         decompress_sliced_data(page, decompress_buffer)

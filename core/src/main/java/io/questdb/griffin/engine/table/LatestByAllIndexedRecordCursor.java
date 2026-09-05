@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.table;
 import io.questdb.MessageBus;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
@@ -34,6 +35,9 @@ import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.async.AsyncQueryErrorState;
+import io.questdb.cairo.sql.async.AsyncQueryProgressState;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.geohash.GeoHashNative;
@@ -47,13 +51,16 @@ import io.questdb.std.Transient;
 import io.questdb.std.Vect;
 import io.questdb.tasks.LatestByTask;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final long indexShift = 0;
     private final DirectLongList prefixes;
+    private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final DirectLongList rows;
+    private final AsyncQueryErrorState scanError = new AsyncQueryErrorState();
     private final AtomicBooleanCircuitBreaker sharedCircuitBreaker;
     private long aIndex;
     private long aLimit;
@@ -90,7 +97,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public boolean hasNext() {
-        circuitBreaker.statefulThrowExceptionIfTripped();
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         if (!isTreeMapBuilt) {
             buildTreeMap();
             isTreeMapBuilt = true;
@@ -194,6 +201,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             }
 
             sharedCircuitBreaker.reset();
+            scanError.clear();
         } else {
             final long chunkSize = getChunkSize(keyCount, sharedQueryWorkerCount);
             taskCount = getTaskCount(keyCount, chunkSize);
@@ -215,7 +223,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence pubSeq = bus.getLatestByPubSeq();
         final Sequence subSeq = bus.getLatestBySubSeq();
-
+        final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
 
         int queuedCount = 0;
         long foundRowCount = 0;
@@ -246,75 +254,101 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 doneLatch.reset();
 
                 queuedCount = 0;
-                for (long i = 0; i < taskCount; i++) {
-                    final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
-                    final long found = LatestByArguments.getRowsSize(argsAddress);
-                    final long keyHi = LatestByArguments.getKeyHi(argsAddress);
-                    final long keyLo = LatestByArguments.getKeyLo(argsAddress);
+                final boolean publicationPermit = dispatcher != null && dispatcher.tryAcquirePublication();
+                try {
+                    for (long i = 0; i < taskCount; i++) {
+                        final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
+                        final long found = LatestByArguments.getRowsSize(argsAddress);
+                        final long keyHi = LatestByArguments.getKeyHi(argsAddress);
+                        final long keyLo = LatestByArguments.getKeyLo(argsAddress);
 
-                    // Skip range if all keys found
-                    if (found >= keyHi - keyLo) {
-                        continue;
+                        if (found >= keyHi - keyLo) {
+                            continue;
+                        }
+
+                        while (true) {
+                            final long observedProgress = progressState.getVersion();
+                            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+                            final long seq = dispatcher != null && !publicationPermit ? -1 : pubSeq.next();
+                            if (seq < 0) {
+                                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+                                if (publicationPermit && isOwnerParkable) {
+                                    if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
+                                        Os.pause();
+                                    }
+                                    continue;
+                                }
+                                GeoHashNative.latestByAndFilterPrefix(
+                                        frameMemoryPool,
+                                        keyBaseAddress,
+                                        keysMemorySize,
+                                        valueBaseAddress,
+                                        valuesMemorySize,
+                                        argsAddress,
+                                        unIndexedNullCount,
+                                        partitionHi,
+                                        partitionLo,
+                                        frameIndex,
+                                        valueBlockCapacity,
+                                        geoHashColumnIndex,
+                                        geoHashColumnType,
+                                        prefixesAddress,
+                                        prefixesCount
+                                );
+                            } else {
+                                queue.get(seq).of(
+                                        frameAddressCache,
+                                        keyBaseAddress,
+                                        keysMemorySize,
+                                        valueBaseAddress,
+                                        valuesMemorySize,
+                                        argsAddress,
+                                        unIndexedNullCount,
+                                        partitionHi,
+                                        partitionLo,
+                                        frameIndex,
+                                        valueBlockCapacity,
+                                        geoHashColumnIndex,
+                                        geoHashColumnType,
+                                        prefixesAddress,
+                                        prefixesCount,
+                                        doneLatch,
+                                        sharedCircuitBreaker,
+                                        progressState,
+                                        scanError
+                                );
+                                pubSeq.done(seq);
+                                queuedCount++;
+                            }
+                            break;
+                        }
                     }
-
-                    final long seq = pubSeq.next();
-                    if (seq < 0) {
-                        circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-                        GeoHashNative.latestByAndFilterPrefix(
-                                frameMemoryPool,
-                                keyBaseAddress,
-                                keysMemorySize,
-                                valueBaseAddress,
-                                valuesMemorySize,
-                                argsAddress,
-                                unIndexedNullCount,
-                                partitionHi,
-                                partitionLo,
-                                frameIndex,
-                                valueBlockCapacity,
-                                geoHashColumnIndex,
-                                geoHashColumnType,
-                                prefixesAddress,
-                                prefixesCount
-                        );
-                    } else {
-                        queue.get(seq).of(
-                                frameAddressCache,
-                                keyBaseAddress,
-                                keysMemorySize,
-                                valueBaseAddress,
-                                valuesMemorySize,
-                                argsAddress,
-                                unIndexedNullCount,
-                                partitionHi,
-                                partitionLo,
-                                frameIndex,
-                                valueBlockCapacity,
-                                geoHashColumnIndex,
-                                geoHashColumnType,
-                                prefixesAddress,
-                                prefixesCount,
-                                doneLatch,
-                                sharedCircuitBreaker
-                        );
-                        pubSeq.done(seq);
-                        queuedCount++;
+                } finally {
+                    if (dispatcher != null && publicationPermit) {
+                        dispatcher.releasePublication();
                     }
                 }
 
-                // process our own queue
-                // this should fix deadlock with 1 worker configuration
-                while (!doneLatch.done(queuedCount)) {
-                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
-                    long seq = subSeq.next();
-                    if (seq > -1) {
-                        try {
-                            queue.get(seq).run();
-                        } finally {
-                            subSeq.done(seq);
+                while (true) {
+                    final long observedProgress = progressState.getVersion();
+                    final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+                    final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+                    if (doneLatch.done(queuedCount)) {
+                        break;
+                    }
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                    if (isOwnerParkable) {
+                        if (!dispatcher.awaitProgress(progressState, observedProgress, observedGlobalProgress, circuitBreaker)) {
+                            Os.pause();
                         }
                     } else {
-                        Os.pause();
+                        long seq = subSeq.next();
+                        if (seq > -1) {
+                            runStolenTask(queue, subSeq, seq, dispatcher);
+                        } else {
+                            Os.pause();
+                        }
                     }
                 }
 
@@ -331,10 +365,21 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             throw th;
         } finally {
             processTasks(queuedCount);
-            if (sharedCircuitBreaker.checkIfTripped()) {
+            if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
                 LatestByArguments.releaseMemoryArray(argumentsAddress, taskCount);
                 argumentsAddress = 0;
             }
+        }
+
+        if (sharedCircuitBreaker.checkIfTrippedOrYield()) {
+            // A tripped shared breaker on the non-throw path means a worker scan failed, or the
+            // dispatcher aborted queued tasks (quiesce); either way the row set is incomplete, so
+            // the query must fail rather than return partial rows.
+            if (scanError.hasError()) {
+                scanError.throwError();
+            }
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
+            throw CairoException.queryCancelled();
         }
 
         long rowCount = 0;
@@ -352,22 +397,66 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         Vect.sortULongAscInPlace(rows.getAddress(), aLimit);
     }
 
+    // A stolen task publishes its own failure to its owner's error state and breaker before
+    // rethrowing. Propagating a foreign task's exception here would fail this healthy query with
+    // another query's error, so only an own-task failure escapes.
+    private void runStolenTask(
+            RingQueue<LatestByTask> queue,
+            Sequence subSeq,
+            long seq,
+            @Nullable QueryParallelFiberDispatcher dispatcher
+    ) {
+        final LatestByTask task = queue.get(seq);
+        final boolean isOwnTask = task.getCircuitBreaker() == sharedCircuitBreaker;
+        final AsyncQueryProgressState stolenProgress = task.getProgressState();
+        try {
+            task.run();
+        } catch (Throwable th) {
+            if (isOwnTask) {
+                throw th;
+            }
+        } finally {
+            try {
+                task.clear();
+            } finally {
+                // done(seq) releases the slot
+                subSeq.done(seq);
+                if (dispatcher != null) {
+                    try {
+                        dispatcher.signalQueueProgress();
+                    } finally {
+                        dispatcher.signalOwnerProgress(stolenProgress);
+                    }
+                }
+            }
+        }
+    }
+
     private void processTasks(int queuedCount) {
         final RingQueue<LatestByTask> queue = bus.getLatestByQueue();
         final Sequence subSeq = bus.getLatestBySubSeq();
-        while (!doneLatch.done(queuedCount)) {
-            long seq = subSeq.next();
-            if (seq > -1) {
-                if (circuitBreaker.checkIfTripped()) {
-                    sharedCircuitBreaker.cancel();
-                }
-                try {
-                    queue.get(seq).run();
-                } finally {
-                    subSeq.done(seq);
+        final QueryParallelFiberDispatcher dispatcher = bus.getQueryParallelFiberDispatcher();
+        while (true) {
+            final long observedProgress = progressState.getVersion();
+            final long observedGlobalProgress = dispatcher != null ? dispatcher.getProgressVersion() : 0;
+            final boolean isOwnerParkable = dispatcher != null && dispatcher.isOwnerParkable();
+            if (doneLatch.done(queuedCount)) {
+                break;
+            }
+            if (circuitBreaker.checkIfTrippedOrYield()) {
+                sharedCircuitBreaker.cancel();
+            }
+            if (isOwnerParkable) {
+                if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
+                    Os.pause();
                 }
             } else {
-                Os.pause();
+                long seq = subSeq.next();
+                if (seq > -1) {
+                    runStolenTask(queue, subSeq, seq, dispatcher);
+                } else {
+                    Os.pause();
+                }
             }
         }
     }

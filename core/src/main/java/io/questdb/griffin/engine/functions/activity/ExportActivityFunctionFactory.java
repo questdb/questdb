@@ -97,7 +97,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
         @Override
         public boolean hasNext() {
             while (++entryIndex < size) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (copyExportContext.getAndCopyEntry(entryIds.get(entryIndex), entry)) {
                     if (isAdmin || Objects.equals(entry.getPrincipal(), principal)) {
                         return true;
@@ -232,7 +232,7 @@ public class ExportActivityFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.of(executionContext);
             return cursor;
         }

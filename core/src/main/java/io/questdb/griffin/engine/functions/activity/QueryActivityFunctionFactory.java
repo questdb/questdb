@@ -99,7 +99,7 @@ public class QueryActivityFunctionFactory implements FunctionFactory {
         @Override
         public boolean hasNext() {
             // Consult the breaker at the top, so even an empty/fully-filtered registry scan stays cancellable.
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             while (++entryIndex < entryIds.size()) {
                 final long queryId = entryIds.get(entryIndex);
                 final QueryRegistry.Entry entry = queryRegistry.getEntry(queryId);

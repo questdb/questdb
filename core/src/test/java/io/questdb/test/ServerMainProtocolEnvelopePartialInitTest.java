@@ -160,7 +160,7 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
                 // The MinHttpEnvelope.start() driven via the orchestrator path normally consults
                 // ServerMain.this.orchestrator via testInitForEnvelopeTests(); register a fresh
                 // MinHttpEnvelope and drive start() directly so the throw fires.
-                Component envelope = newMinHttpEnvelopeViaReflection(server);
+                Component envelope = server.testNewMinHttpEnvelope();
                 LifecycleContext ctx = newDetachedContext(server, envelope.name());
                 boolean threw = false;
                 try {
@@ -209,28 +209,6 @@ public class ServerMainProtocolEnvelopePartialInitTest extends AbstractBootstrap
                 );
             }
         });
-    }
-
-    /**
-     * Build a fresh {@code MinHttpEnvelope} instance via reflection. There is no
-     * {@code testNewMinHttpEnvelope()} factory on {@link ServerMain}; we construct
-     * one directly through the inner class's hosting reference. The envelope captures
-     * {@code ServerMain.this} so the overridden {@link Services#createMinHttpServer}
-     * in the test subclass fires on start().
-     */
-    private static Component newMinHttpEnvelopeViaReflection(ServerMain server) throws Exception {
-        // The inner class MinHttpEnvelope lives on ServerMain; use the published factory if it
-        // exists, otherwise reflect through the inner-class ctor.
-        try {
-            // Prefer a published factory if one is added in a future plan; today we know none
-            // exists for MinHttpEnvelope, so we go through the reflective path.
-            return (Component) ServerMain.class.getMethod("testNewMinHttpEnvelope").invoke(server);
-        } catch (NoSuchMethodException ignore) {
-            Class<?> inner = Class.forName("io.questdb.ServerMain$MinHttpEnvelope");
-            java.lang.reflect.Constructor<?> ctor = inner.getDeclaredConstructor(ServerMain.class, io.questdb.log.Log.class);
-            ctor.setAccessible(true);
-            return (Component) ctor.newInstance(server, io.questdb.log.LogFactory.getLog(ServerMainProtocolEnvelopePartialInitTest.class));
-        }
     }
 
     /**

@@ -48,9 +48,11 @@ impl DecodeContext {
 /// Scope guard that empties the VarcharSlice reuse pool and scratch vecs when it
 /// drops, so a row-group decode releases them on success and error paths alike.
 ///
-/// During a decode the column loop parks a column's old `page_buffers` in
-/// `varchar_slice_buf_pool` so the next column can reuse them, and stages
-/// in-flight page/dict buffers in the scratch vecs. On a successful return the
+/// During an untracked decode the column loop parks a column's old
+/// `page_buffers` in `varchar_slice_buf_pool` so the next column can reuse them.
+/// A tracker-bound decode drops old buffers before crediting their physical
+/// capacity, preserving the hard ceiling. Both modes stage in-flight page/dict
+/// buffers in the scratch vecs. On a successful return the
 /// scratch vecs have already drained into `ColumnChunkBuffers::page_buffers`
 /// (counted by the Java byte budget via `page_buffers_size`) and only unused
 /// spares remain in the pool, so the drop is equivalent to the previous explicit
@@ -66,8 +68,8 @@ impl DecodeContext {
 /// and the next decode would free those buffers anyway when it clears the
 /// scratch vecs at the start of each column chunk.
 ///
-/// Same-slot reuse is preserved: the next decode re-parks the live
-/// `page_buffers` it drains from `ColumnChunkBuffers`.
+/// Same-slot reuse is preserved for untracked decodes: the next decode re-parks
+/// the live `page_buffers` it drains from `ColumnChunkBuffers`.
 pub struct VarcharSliceBufGuard<'a> {
     ctx: &'a mut DecodeContext,
 }
@@ -186,14 +188,18 @@ pub struct ColumnChunkBuffers {
     /// the `chunkColumnTopOffset` field offset. 0 when there is no column top.
     pub column_top: usize,
 
+    /// Allocated capacity of `page_buffers` last published by `refresh_ptrs`.
+    /// This is tracked separately from the exposed logical byte size so spare
+    /// system-allocator capacity cannot escape a hard query-memory ceiling.
+    /// Not read from Java.
+    page_buffers_capacity: usize,
+
     /// Bytes of `page_buffers` currently charged against the per-query memory
-    /// tracker. The `page_buffers` payload is backed by the system allocator,
-    /// not the tracker-aware `AcVec`, so it would otherwise escape the per-query
-    /// limit: a wide-payload VarcharSlice row group could materialize unbounded
-    /// while the tracked `aux_vec` (16 bytes per row) stays small. `refresh_ptrs`
-    /// charges the growth and `reset` / `Drop` credit it back, keeping the
-    /// tracker balanced. Always equals the amount this chunk last added to the
-    /// tracker; 0 when nothing is charged. Not read from Java.
+    /// tracker. The payload is backed by the system allocator, not the
+    /// tracker-aware `AcVec`, so VarcharSlice decompression reserves it explicitly
+    /// before allowing a buffer to grow. `refresh_ptrs` reconciles the published
+    /// payload, and `reset` / `Drop` credit it back. Always equals the amount this
+    /// chunk added to the tracker; 0 when nothing is charged. Not read from Java.
     page_buffers_charged: usize,
 
     /// Count of `page_buffers` entries already summed into `page_buffers_size`.

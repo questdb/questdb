@@ -196,6 +196,12 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
     }
 
     @Override
+    public boolean hasPendingIOEvents() {
+        final long next = ioEventSubSeq.current() + 1;
+        return ioEventSubSeq.getBarrier().availableIndex(next) >= next;
+    }
+
+    @Override
     public boolean isListening() {
         return listening;
     }
@@ -222,6 +228,15 @@ public abstract class AbstractIODispatcher<C extends IOContext<C>> extends Synch
                         .$(", e=").$safe(e.getFlyweightMessage())
                         .I$();
                 disconnect(connectionContext, DISCONNECT_REASON_TLS_SESSION_INIT_FAILED);
+            } catch (Throwable th) {
+                try {
+                    disconnect(connectionContext, DISCONNECT_REASON_SERVER_ERROR);
+                } catch (Throwable cleanupError) {
+                    if (cleanupError != th) {
+                        th.addSuppressed(cleanupError);
+                    }
+                }
+                throw th;
             }
         }
 

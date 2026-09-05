@@ -512,9 +512,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     @Override
     public boolean run(@NotNull WorkerContext workerContext) {
-        // workerId is the fixed per-worker identity captured at assign(int, job)
-        // time. The continuation framework may remount this job on a peer carrier,
-        // so workerContext.carrierId() is not asserted against it here.
         return processNotifications();
     }
 
@@ -4877,7 +4874,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // invalidation and engine shutdown - none of which is worth
                                 // finishing a rebuild for, and all of which otherwise wait it
                                 // out.
-                                circuitBreaker.statefulThrowExceptionIfTripped();
+                                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                                 long ts = outRecord.getTimestamp(cursorTimestampIndex);
                                 // Segmenting the replay at the logical boundaries it
                                 // crosses happens one level down, in
@@ -5947,7 +5944,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // plain failure: handleRefreshFailure skips the flush-retry budget only
                 // for a cancellation, and counting one would invalidate the view durably
                 // on the way down - the exact hazard its comment describes.
-                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottleOrYield();
             } catch (Throwable th) {
                 reader.close();
                 throw th;

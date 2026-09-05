@@ -1,5 +1,6 @@
 package io.questdb.test.log;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cutlass.http.client.HttpClientFactory;
 import io.questdb.griffin.engine.QueryProgress;
@@ -10,6 +11,8 @@ import io.questdb.test.tools.LogCapture;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Map;
 
 public class SqlLoggingTest extends AbstractCairoTest {
     private static final LogCapture capture = new LogCapture();
@@ -57,7 +60,13 @@ public class SqlLoggingTest extends AbstractCairoTest {
     @Test
     public void testSimple() throws Exception {
         assertMemoryLeak(() -> {
-            try (final ServerMain serverMain = ServerMain.create(root)) {
+            try (final ServerMain serverMain = ServerMain.create(
+                    root,
+                    Map.of(
+                            PropertyKey.HTTP_BIND_TO.getEnvVarName(), "127.0.0.1:0",
+                            PropertyKey.QUERY_TRACING_ENABLED.getEnvVarName(), "true"
+                    )
+            )) {
                 serverMain.start();
 
                 // HTTP JSON test
@@ -92,6 +101,7 @@ public class SqlLoggingTest extends AbstractCairoTest {
             assertOnlyOnce("fin \\[id=\\d+, sql=`create table x");
             assertOnlyOnce("fin.*?insert into x values");
             assertOnlyOnce("fin.*?select count\\(\\) from x");
+            assertOnlyOnce("fin.*?sql=`select count\\(\\) from x`,.*?, client_wait=-?\\d+, ttfr=-?\\d+");
             assertOnlyOnce("fin.*?alter table x add");
             assertOnlyOnce("fin.*?update x set c");
             assertOnlyOnce("fin.*?rename table x to y");

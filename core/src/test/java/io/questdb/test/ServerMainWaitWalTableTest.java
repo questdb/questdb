@@ -85,7 +85,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 PropertyKey.SHARED_WORKER_COUNT + "=1",
                 PropertyKey.PG_WORKER_COUNT + "=1",
                 // Tighter than the 1s production default: tests that rely on a
-                // wake-cycle to observe timeout/cancel/dropped should not stretch
+                // wake-cycle to observe timeout/disconnect should not stretch
                 // out to a full second per cycle.
                 PropertyKey.GRIFFIN_QUERY_CONTINUATION_WAKE_INTERVAL + "=100"
         ));
@@ -107,12 +107,11 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
             //   - multi-waiter notifyOnDrop terminal: K helpers parked, then DROP;
             //   - multi-waiter setSuspended terminal: K helpers parked, then suspend.
             // Background drainer + inserter threads keep the shared tracker hot, so
-            // concurrent fireWaiters vs registerWaiter races and the
-            // ContinuationQueue MPMC drain path are exercised throughout. The shard
+            // concurrent fireWaiters vs registerWaiter races and the fiber
+            // run queue are exercised throughout. The shard
             // count is set to >= 2 so register() distribution and concurrent timer
             // threads contend on different shards; the worker count is >= 2 so two
-            // parked waits can each be on a different carrier and concurrent
-            // scheduleResume traffic on the origin pools' resume queues is exercised.
+            // parked waits can each be on a different carrier.
             // The two terminal scenarios are the explicit gap closures: until now,
             // notifyOnDrop / setSuspended were only validated with a single waiter.
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -311,6 +310,69 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
                 Assert.assertTrue("no dropped-connection waits ran (seeds=" + seed0 + "L, " + seed1 + "L)", droppedCount.get() > 0);
                 Assert.assertTrue("no multi-waiter drop terminal ran (seeds=" + seed0 + "L, " + seed1 + "L)", dropTerminalCount.get() > 0);
                 Assert.assertTrue("no multi-waiter suspend terminal ran (seeds=" + seed0 + "L, " + seed1 + "L)", suspendTerminalCount.get() > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testServerCloseAbandonsParkedWaitWalTable() throws Exception {
+        assertMemoryLeak(() -> {
+            // Composition guard: wait_wal_table() parks a fiber on the WAL wait queue,
+            // then the server shuts down underneath it. Close must abandon the parked
+            // fiber and disconnect the client instead of waiting for WAL progress that
+            // never comes (apply is disabled). query.timeout sits far above the close
+            // bound so a timeout cannot fake a prompt close.
+            final ServerMain serverMain = ServerMain.create(root, new HashMap<>() {{
+                put(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
+                put(PropertyKey.QUERY_TIMEOUT.getEnvVarName(), "120s");
+            }});
+            boolean isServerClosed = false;
+            try {
+                serverMain.start();
+
+                try (
+                        Connection setupConn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                        Statement stmt = setupConn.createStatement()
+                ) {
+                    stmt.execute("CREATE TABLE foo (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    stmt.execute("INSERT INTO foo VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+                }
+
+                final CountDownLatch clientDone = new CountDownLatch(1);
+                final AtomicReference<Throwable> clientOutcome = new AtomicReference<>();
+                final Thread waiter = new Thread(() -> {
+                    try (
+                            Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
+                            Statement stmt = conn.createStatement()
+                    ) {
+                        stmt.executeQuery("SELECT wait_wal_table('foo')");
+                    } catch (Throwable th) {
+                        clientOutcome.set(th);
+                    } finally {
+                        clientDone.countDown();
+                    }
+                }, "wait-wal-table-at-shutdown");
+                waiter.setDaemon(true);
+                waiter.start();
+
+                awaitWaiterRegistered(serverMain);
+
+                final long closeStartMs = System.currentTimeMillis();
+                serverMain.close();
+                isServerClosed = true;
+                final long closeMs = System.currentTimeMillis() - closeStartMs;
+                Assert.assertTrue(
+                        "server close blocked on a parked wait_wal_table: took " + closeMs + " ms",
+                        closeMs < 30_000
+                );
+                Assert.assertTrue("waiting client did not observe shutdown", clientDone.await(10, TimeUnit.SECONDS));
+                waiter.join(5_000);
+                Assert.assertFalse("waiter thread did not terminate", waiter.isAlive());
+                Assert.assertNotNull("client completed wait_wal_table against a closed server", clientOutcome.get());
+            } finally {
+                if (!isServerClosed) {
+                    serverMain.close();
+                }
             }
         });
     }
@@ -945,8 +1007,7 @@ public class ServerMainWaitWalTableTest extends AbstractBootstrapTest {
     }
 
     private static void runCancelledWaitFuzz(Rnd tr, AtomicInteger counter) throws Exception {
-        // stmt.cancel mid-park: the breaker tripper observes the cancel on the
-        // next wake-recheck and the parked body throws.
+        // stmt.cancel mid-park directly fires the cancellation wait registration.
         try (
                 Connection conn = DriverManager.getConnection(PG_CONNECTION_URI, PG_CONNECTION_PROPERTIES);
                 Statement stmt = conn.createStatement()

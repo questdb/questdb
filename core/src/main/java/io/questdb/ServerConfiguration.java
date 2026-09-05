@@ -33,11 +33,16 @@ import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.metrics.MetricsConfiguration;
+import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
 import io.questdb.std.str.Utf8StringSink;
 
 public interface ServerConfiguration {
     String OSS = "OSS";
+
+    default WorkerPool createWorkerPool(WorkerPoolConfiguration configuration) {
+        return new WorkerPool(configuration);
+    }
 
     /**
      * Exports subset of configuration options into the provided sink. The config is exported

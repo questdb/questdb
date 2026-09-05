@@ -41,6 +41,7 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.SystemSqlExecutionContext;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.griffin.engine.ops.CreateTableOperationImpl;
 import io.questdb.log.Log;
@@ -154,7 +155,7 @@ public class CopyExportContext {
                     if (securityContext != null) {
                         securityContext.authorizeCopyCancel(securityContext);
                     }
-                    cb.cancel();
+                    e.requestCancellation();
                 }
                 return true;
             }
@@ -240,7 +241,7 @@ public class CopyExportContext {
         CairoConfiguration configuration = engine.getConfiguration();
         int logRetentionDays = configuration.getSqlCopyLogRetentionDays();
         final String statusTableName = configuration.getSystemTableNamePrefix() + "copy_export_log";
-        try (SqlCompiler compiler = engine.getSqlCompiler(); var sqlExecutionContext = new SqlExecutionContextImpl(engine, 1)) {
+        try (SqlCompiler compiler = engine.getSqlCompiler(); var sqlExecutionContext = new SystemSqlExecutionContext(engine, 1)) {
             sqlExecutionContext.with(configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(), null, null);
             statusTableToken = compiler.query()
                     .$("CREATE TABLE IF NOT EXISTS \"")
@@ -482,6 +483,8 @@ public class CopyExportContext {
         final StringSink fileName = new StringSink();
         final StringSink sqlText = new StringSink();
         AtomicBooleanCircuitBreaker atomicBooleanCircuitBreaker;
+        private volatile boolean cancellationRequested;
+        private boolean containsSecret;
         int finishedPartitionCount = 0;
         long id = INACTIVE_COPY_ID;
         CopyExportRequestTask.Phase phase;
@@ -497,6 +500,8 @@ public class CopyExportContext {
 
         @Override
         public void clear() {
+            this.cancellationRequested = false;
+            this.containsSecret = false;
             this.securityContext = null;
             if (atomicBooleanCircuitBreaker != null) {
                 atomicBooleanCircuitBreaker.clear();
@@ -520,12 +525,24 @@ public class CopyExportContext {
             return realCircuitBreaker;
         }
 
+        public boolean containsSecret() {
+            return containsSecret;
+        }
+
+        public boolean isCancellationRequested() {
+            return cancellationRequested;
+        }
+
         public long getId() {
             return id;
         }
 
         public SecurityContext getSecurityContext() {
             return securityContext;
+        }
+
+        public CharSequence getSqlText() {
+            return sqlText;
         }
 
         public ExportTaskEntry of(
@@ -540,6 +557,8 @@ public class CopyExportContext {
                 atomicBooleanCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             }
             this.id = id;
+            this.cancellationRequested = false;
+            this.containsSecret = false;
             this.securityContext = context;
             this.sqlText.clear();
             this.sqlText.put(sqlText);
@@ -556,8 +575,20 @@ public class CopyExportContext {
             return this;
         }
 
+        public void requestCancellation() {
+            cancellationRequested = true;
+            final SqlExecutionCircuitBreaker circuitBreaker = realCircuitBreaker;
+            if (circuitBreaker != null) {
+                circuitBreaker.cancel();
+            }
+        }
+
         public void setFinishedPartitionCount(int finishedPartitionCount) {
             this.finishedPartitionCount = finishedPartitionCount;
+        }
+
+        public void setContainsSecret(boolean containsSecret) {
+            this.containsSecret = containsSecret;
         }
 
         public void setPhase(CopyExportRequestTask.Phase phase) {
@@ -586,5 +617,3 @@ public class CopyExportContext {
         }
     }
 }
-
-

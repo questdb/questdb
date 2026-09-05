@@ -835,7 +835,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();
             return cursor;
@@ -892,7 +892,7 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             ensureInitialize();
             if (matchIndex < pendingFiles.size()) {
                 Utf8Sequence path = pendingFiles.getQuick(matchIndex++);

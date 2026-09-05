@@ -37,6 +37,7 @@ import io.questdb.cutlass.text.CopyExportContext;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.ops.CreateTableOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -51,16 +52,20 @@ import static io.questdb.cairo.sql.RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
 
 public class HTTPSerialParquetExporter extends BaseParquetExporter {
     private static final Log LOG = LogFactory.getLog(HTTPSerialParquetExporter.class);
+    private final SqlExecutionContextImpl parentSqlExecutionContext;
     // Streaming export state (persists across PeerIsSlowToReadException resumes).
     // Borrowed from ExportQueryProcessorState via setup methods; not owned.
     private ParquetExportMode exportMode;
     private RecordCursor fullCursor;
+    private boolean isTempTableOwned;
     private HybridColumnMaterializer materializer;
     private DirectLongList materializerColumnData;
     private PageFrameCursor streamingPfc;
+    private TableToken tempTableToken;
 
-    public HTTPSerialParquetExporter(CairoEngine engine) {
+    public HTTPSerialParquetExporter(CairoEngine engine, SqlExecutionContextImpl parentSqlExecutionContext) {
         super(engine);
+        this.parentSqlExecutionContext = parentSqlExecutionContext;
     }
 
     /**
@@ -69,35 +74,52 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
      */
     public void clearExportResources() {
         exportMode = null;
-        fullCursor = Misc.free(fullCursor);
-        streamingPfc = Misc.free(streamingPfc);
+        final RecordCursor fullCursor = this.fullCursor;
+        this.fullCursor = null;
+        final PageFrameCursor streamingPfc = this.streamingPfc;
+        this.streamingPfc = null;
         materializer = null;
         materializerColumnData = null;
-        clearMemoryTracker();
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, fullCursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPfc);
+        try {
+            clearTempTable();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
+    @Override
+    public void of(CopyExportRequestTask task) {
+        this.task = task;
+        this.circuitBreaker = task.getCircuitBreaker();
     }
 
     public CopyExportRequestTask.Phase process() throws Exception {
-        TableToken tableToken = null;
         CopyExportContext.ExportTaskEntry entry = task.getEntry();
-        final CairoEngine cairoEngine = sqlExecutionContext.getCairoEngine();
+        final CairoEngine cairoEngine = parentSqlExecutionContext.getCairoEngine();
         RecordCursorFactory factory = null;
         CopyExportRequestTask.Phase phase = CopyExportRequestTask.Phase.NONE;
         CreateTableOperation createOp = null;
-        sqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
+        boolean isSuspended = false;
+        parentSqlExecutionContext.setNowAndFixClock(task.getNow(), task.getNowTimestampType());
 
         try {
             createOp = task.getCreateOp();
-            if (createOp != null) {
+            if (createOp != null && !isTempTableOwned) {
                 // TEMP_TABLE path: create temp table and populate with data
+                isTempTableOwned = true;
                 insertSelectReporter.of(circuitBreaker, entry, task.getCopyID(), task.getTableName());
                 createOp.setCopyDataProgressReporter(insertSelectReporter);
                 phase = CopyExportRequestTask.Phase.POPULATING_TEMP_TABLE;
                 entry.setPhase(phase);
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.STARTED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
                 LOG.info().$("starting to create temporary table and populate with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(task.getTableName()).$(']').$();
-                createOp.execute(sqlExecutionContext, null);
-                tableToken = cairoEngine.verifyTableName(task.getTableName());
-                LOG.info().$("completed creating temporary table and populating with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(tableToken).$(']').$();
+                createOp.execute(parentSqlExecutionContext, null);
+                tempTableToken = cairoEngine.verifyTableName(task.getTableName());
+                LOG.info().$("completed creating temporary table and populating with data [id=").$hexPadded(task.getCopyID()).$(", table=").$(tempTableToken).$(']').$();
                 copyExportContext.updateStatus(phase, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
 
                 try (SqlCompiler compiler = cairoEngine.getSqlCompiler()) {
@@ -111,16 +133,15 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
                     }
                     // in security context that doesn't allow database modifications we would allow
                     // temp table creation and selection in this particular setting.
-                    SecurityContext sec = sqlExecutionContext.getSecurityContext();
+                    SecurityContext sec = parentSqlExecutionContext.swapSecurityContext(AllowAllSecurityContext.INSTANCE);
                     PageFrameCursor pageFrameCursor;
                     try {
-                        sqlExecutionContext.with(AllowAllSecurityContext.INSTANCE);
-                        CompiledQuery cc = compiler.compile(sql, sqlExecutionContext);
+                        CompiledQuery cc = compiler.compile(sql, parentSqlExecutionContext);
                         factory = cc.getRecordCursorFactory();
                         assert factory.supportsPageFrameCursor(); // simple temp table must support page frame cursor
-                        pageFrameCursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC);
+                        pageFrameCursor = factory.getPageFrameCursor(parentSqlExecutionContext, ORDER_ASC);
                     } finally {
-                        sqlExecutionContext.with(sec);
+                        parentSqlExecutionContext.swapSecurityContext(sec);
                     }
                     task.setUpStreamPartitionParquetExporter(factory, pageFrameCursor, factory.getMetadata(), descending);
                     factory = null; // transfer ownership to the task
@@ -136,7 +157,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
                 case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> processStreamExport();
             }
         } catch (PeerIsSlowToReadException e) {
-            createOp = null;
+            isSuspended = true;
             throw e;
         } catch (Throwable e) {
             CharSequence message;
@@ -166,9 +187,10 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
             );
             throw e;
         } finally {
-            if (createOp != null) {
-                task.getStreamPartitionParquetExporter().freeOwnedPageFrameCursor();
-                dropTempTable(entry, tableToken);
+            // A slow client is the only resumable exit from process(). Keep the materialized
+            // table for that continuation; all normal and terminal exceptional exits drop it.
+            if (!isSuspended) {
+                clearTempTable();
             }
         }
         clearExportResources();
@@ -187,6 +209,30 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         return phase;
     }
 
+    public void resumeCursorTimer() {
+        if (exportMode == null) {
+            return;
+        }
+        switch (exportMode) {
+            case CURSOR_BASED -> {
+                if (fullCursor != null) {
+                    fullCursor.resumeTimer();
+                }
+            }
+            case PAGE_FRAME_BACKED -> {
+                if (streamingPfc != null) {
+                    streamingPfc.resumeTimer();
+                }
+            }
+            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> {
+                final PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
+                if (taskPageFrameCursor != null) {
+                    taskPageFrameCursor.resumeTimer();
+                }
+            }
+        }
+    }
+
     public void setExportMode(ParquetExportMode exportMode) {
         this.exportMode = exportMode;
     }
@@ -203,10 +249,58 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         this.materializerColumnData = materializerColumnData;
     }
 
+    public void suspendCursorTimer() {
+        if (exportMode == null) {
+            return;
+        }
+        switch (exportMode) {
+            case CURSOR_BASED -> {
+                if (fullCursor != null) {
+                    fullCursor.suspendTimer();
+                }
+            }
+            case PAGE_FRAME_BACKED -> {
+                if (streamingPfc != null) {
+                    streamingPfc.suspendTimer();
+                }
+            }
+            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> {
+                final PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
+                if (taskPageFrameCursor != null) {
+                    taskPageFrameCursor.suspendTimer();
+                }
+            }
+        }
+    }
+
+    private void clearTempTable() {
+        if (!isTempTableOwned) {
+            return;
+        }
+
+        // Clear the Rust writer before closing its page-frame cursor and dropping the table:
+        // it may still retain pointers into the mapped table after a backpressured callback.
+        isTempTableOwned = false;
+        final TableToken tempTableToken = this.tempTableToken;
+        this.tempTableToken = null;
+        Throwable cleanupFailure = null;
+        try {
+            task.getStreamPartitionParquetExporter().clear();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        try {
+            dropTempTable(task.getEntry(), tempTableToken);
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
+    }
+
     private void processHybridStreamExport() throws Exception {
         boolean isPageFrameBacked = exportMode == ParquetExportMode.PAGE_FRAME_BACKED;
         CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
-        if (circuitBreaker.checkIfTripped()) {
+        if (circuitBreaker.checkIfTrippedOrYield()) {
             LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
@@ -219,14 +313,13 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         }
 
         long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
-        drainHybridFrames(
+        final long totalRows = drainHybridFrames(
                 exporter, materializer, materializerColumnData,
                 isPageFrameBacked ? streamingPfc : null,
                 isPageFrameBacked ? null : fullCursor,
                 batchSize, CopyExportRequestTask.Phase.STREAM_SENDING_DATA
         );
 
-        long totalRows = exporter.getTotalRows();
         copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
         LOG.info().$("hybrid stream export completed [id=").$hexPadded(task.getCopyID())
                 .$(", totalRows=").$(totalRows)
@@ -237,7 +330,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         PageFrameCursor pageFrameCursor = task.getPageFrameCursor();
         assert pageFrameCursor != null;
         CopyExportRequestTask.StreamPartitionParquetExporter exporter = task.getStreamPartitionParquetExporter();
-        if (circuitBreaker.checkIfTripped()) {
+        if (circuitBreaker.checkIfTrippedOrYield()) {
             LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
             throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
         }
@@ -255,7 +348,7 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         // Initialize with current value to avoid spurious release after resume from PeerIsSlowToReadException
         long previousRowsWritten = exporter.getRowsWrittenToRowGroups();
         while ((frame = pageFrameCursor.next()) != null) {
-            if (circuitBreaker.checkIfTripped()) {
+            if (circuitBreaker.checkIfTrippedOrYield()) {
                 LOG.error().$("copy was cancelled [id=").$hexPadded(task.getCopyID()).$(']').$();
                 throw CopyExportException.instance(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, -1).put("cancelled by user").setInterruption(true).setCancellation(true);
             }

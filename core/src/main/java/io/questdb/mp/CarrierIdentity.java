@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.std.CarrierLocal;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Os;
 
 import java.lang.foreign.FunctionDescriptor;
@@ -97,6 +98,36 @@ public final class CarrierIdentity {
         }
     }
 
+    public static void detachMemoryTracker() {
+        try {
+            MemoryTrackerSymbols.DETACH.invokeExact();
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
+    public static void detachMemoryTracker(long trackerAddress, long generation) {
+        try {
+            MemoryTrackerSymbols.DETACH_IF.invokeExact(trackerAddress, generation);
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
+    public static void publishMemoryTracker() {
+        try {
+            MemoryTrackerSymbols.PUBLISH.invokeExact();
+        } catch (RuntimeException | Error e) {
+            throw e;
+        } catch (Throwable t) {
+            throw new AssertionError(t);
+        }
+    }
+
     /**
      * Releases the {@link CarrierLocal} row pinned to the current carrier id and
      * resets the per-thread slot to {@link #UNBOUND}. Idempotent; a no-op on threads
@@ -109,13 +140,17 @@ public final class CarrierIdentity {
         if (id < 0) {
             return;
         }
-        CarrierLocal.releaseRow(id);
         try {
-            BIND.invokeExact(UNBOUND);
-        } catch (RuntimeException | Error e) {
-            throw e;
-        } catch (Throwable t) {
-            throw new AssertionError(t);
+            MemoryTracker.detachResourceMemoryCurrentThread();
+        } finally {
+            CarrierLocal.releaseRow(id);
+            try {
+                BIND.invokeExact(UNBOUND);
+            } catch (RuntimeException | Error e) {
+                throw e;
+            } catch (Throwable t) {
+                throw new AssertionError(t);
+            }
         }
         // Order matters: push to RECYCLED only AFTER releaseRow has nulled the
         // slot and the per-thread Rust TLS has been reset. A concurrent bind()
@@ -136,6 +171,43 @@ public final class CarrierIdentity {
         @Override
         public void copyTo(IdHolder dest) {
             dest.id = id;
+        }
+    }
+
+    /**
+     * Resource-memory extension symbols are resolved only when an extended
+     * tracker is active. Base OSS carrier identity therefore depends only on
+     * the base carrier ABI.
+     */
+    private static final class MemoryTrackerSymbols {
+        private static final MethodHandle DETACH;
+        private static final MethodHandle DETACH_IF;
+        private static final MethodHandle PUBLISH;
+
+        static {
+            final SymbolLookup lookup = SymbolLookup.loaderLookup();
+            final Linker linker = Linker.nativeLinker();
+            DETACH = linker.downcallHandle(
+                    lookup.find("qdb_memory_tracker_detach").orElseThrow(
+                            () -> new ExceptionInInitializerError(
+                                    "symbol qdb_memory_tracker_detach not found in libquestdbr"
+                            )),
+                    FunctionDescriptor.ofVoid(),
+                    Linker.Option.critical(false));
+            DETACH_IF = linker.downcallHandle(
+                    lookup.find("qdb_memory_tracker_detach_if").orElseThrow(
+                            () -> new ExceptionInInitializerError(
+                                    "symbol qdb_memory_tracker_detach_if not found in libquestdbr"
+                            )),
+                    FunctionDescriptor.ofVoid(ValueLayout.JAVA_LONG, ValueLayout.JAVA_LONG),
+                    Linker.Option.critical(false));
+            PUBLISH = linker.downcallHandle(
+                    lookup.find("qdb_memory_tracker_publish").orElseThrow(
+                            () -> new ExceptionInInitializerError(
+                                    "symbol qdb_memory_tracker_publish not found in libquestdbr"
+                            )),
+                    FunctionDescriptor.ofVoid(),
+                    Linker.Option.critical(false));
         }
     }
 

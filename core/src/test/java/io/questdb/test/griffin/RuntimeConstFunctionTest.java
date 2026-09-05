@@ -61,6 +61,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Before;
 import org.junit.Test;
@@ -1018,7 +1019,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         // filter rather than rewriting it into a designated-timestamp interval scan. The plan check
         // proves the async filter engaged; the cursor comparison proves the folded result matches the
         // literal-threshold reference, which folds at compile time.
-        final WorkerPool pool = new WorkerPool(() -> 4);
+        final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
