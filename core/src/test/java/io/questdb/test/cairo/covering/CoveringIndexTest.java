@@ -38,6 +38,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.FSSTNative;
@@ -55,6 +56,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,6 +67,7 @@ import io.questdb.std.DirectBitSet;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -12264,6 +12267,195 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    // Regression for NULL covered values after a full seal poisoned the lazy
+    // covered-column read maps: writeSidecarsPerColumn (name-based covers) maps
+    // each covered column, writes its sidecar, then unmaps it -- leaving the
+    // read-map arrays allocated with every entry zeroed.
+    // ensureCoveredColumnReadMaps() early-returns on the non-null arrays, so
+    // every later covered read in the SAME writer instance -- post-seal gen
+    // flushes (writeSidecarGenData) and incremental-seal dirty strides
+    // (writeSidecarStrideData) -- resolved source addr 0 and silently wrote
+    // NULL covered values while the row-id postings stayed correct. Surfaced
+    // by PostingIndexO3ConcurrencyFuzzTest#testCoveringPostingParquetO3SpillFuzz
+    // (-Dfuzz.s0=2677701527170915 -Dfuzz.s1=1788547351855), where a tiny spill
+    // budget forces many flush/seal cycles inside one indexing run, mixing
+    // full and incremental seals.
+    @Test
+    public void testIncrementalSealAfterFullSealKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "incr_after_full_cover";
+            int keyCount = 300; // 2 strides: 0..255 in stride 0, 256..299 in stride 1
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+
+                // Covered LONG column on disk: rowId r -> 1000 + r, keyCount + 1 rows.
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int r = 0; r <= keyCount; r++) {
+                        data.putLong(1000L + r);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    // Phase 1: every key once, then a full seal. The full seal
+                    // writes the .pc through the per-column map/unmap loop --
+                    // the step that used to poison the lazy read-map state.
+                    for (int k = 0; k < keyCount; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.setMaxValue(keyCount - 1);
+                    writer.commit();
+                    writer.seal();
+
+                    // Phase 2: one more row on key 260 (stride 1) -> sparse gen 1.
+                    // The next seal takes the incremental branch (stride 1 dirty,
+                    // stride 0 clean) and re-reads covered values for the WHOLE
+                    // dirty stride from the source column file.
+                    writer.add(260, keyCount);
+                    writer.setMaxValue(keyCount);
+                    writer.commit();
+                    writer.seal();
+                    assertTrue("second seal must take the incremental branch",
+                            writer.isLastSealIncrementalForTesting());
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
+                    // Dirty stride: key 260 holds the gen0 row and the new row.
+                    RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
+                    assertTrue(cursor instanceof CoveringRowCursor);
+                    CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(260, cc.next());
+                    assertEquals(1260L, cc.getCoveredLong(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(keyCount, cc.next());
+                    assertEquals(1000L + keyCount, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
+                    Misc.free(cursor);
+
+                    // Dirty stride: key 270 did not change but sits in the
+                    // re-encoded stride, so its covered value was rewritten too.
+                    cursor = reader.getCursor(270, 0, Long.MAX_VALUE, new int[]{0});
+                    cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(270, cc.next());
+                    assertEquals(1270L, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
+                    Misc.free(cursor);
+
+                    // Clean stride: copied verbatim from the full seal's sidecar.
+                    cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                    cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(0, cc.next());
+                    assertEquals(1000L, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
+                    Misc.free(cursor);
+                }
+            }
+        });
+    }
+
+    // Companion to testIncrementalSealAfterFullSealKeepsNameBasedCoveredValues
+    // pinning the SECOND consumer of the same poisoned state: a post-seal gen
+    // flush (commit -> flushAllPending -> writeSidecarGenData) with NO reseal
+    // afterwards. Readers serve covered values for unsealed generations
+    // straight from the appended gen sidecar blocks, so a NULL written there
+    // is user-visible even though no incremental seal ever ran. Guards
+    // against narrowing the fix to the incremental-seal path only.
+    @Test
+    public void testGenFlushAfterFullSealKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "gen_after_full_cover";
+            int keyCount = 300;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int r = 0; r <= keyCount; r++) {
+                        data.putLong(1000L + r);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    for (int k = 0; k < keyCount; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.setMaxValue(keyCount - 1);
+                    writer.commit();
+                    writer.seal(); // full seal: the poisoning step
+
+                    // Post-seal commit appends a sparse gen 1 whose sidecar
+                    // block is written NOW from the source column file. No
+                    // reseal follows; the reader must see this row's covered
+                    // value from the raw gen block.
+                    writer.add(260, keyCount);
+                    writer.setMaxValue(keyCount);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
+                    RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
+                    assertTrue(cursor instanceof CoveringRowCursor);
+                    CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    // Sealed gen 0 row: written by the full seal itself.
+                    assertTrue(cc.hasNext());
+                    assertEquals(260, cc.next());
+                    assertEquals(1260L, cc.getCoveredLong(0));
+                    // Unsealed gen 1 row: written by the post-seal gen flush.
+                    assertTrue(cc.hasNext());
+                    assertEquals(keyCount, cc.next());
+                    assertEquals(1000L + keyCount, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
+                    Misc.free(cursor);
                 }
             }
         });
