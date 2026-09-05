@@ -54,6 +54,8 @@ import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
@@ -235,6 +237,105 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanExpressionNestedInComparison() throws Exception {
+        // Two defects meet in this shape, both selecting wrong rows on a plain user query at the
+        // default JIT setting, and both found by QueryFuzzTest's differential oracle.
+        //
+        // avx2::cmp_eq spells a comparison result as an all-ones lane mask - vpcmpeqb writes
+        // 0x00 / 0xFF - while a BOOLEAN column reaches the backend as the raw byte QuestDB stores,
+        // 0x00 / 0x01. CompiledFilterIRSerializer#serializeColumn expands a BOOLEAN column that IS
+        // the whole predicate into "column = true", so the value the loop scatters row ids with is
+        // always a mask; it leaves a BOOLEAN OPERAND of a comparison raw. "(false != b0) = b0"
+        // therefore compared 0xFF against 0x01 and dropped every row where b0 is true.
+        //
+        // The scalar backend spells both as 0 / 1 and gets those shapes right, but int32_and /
+        // int32_or wrote their result back into the LEFT operand's register, which ColumnValueCache
+        // still hands out for the next read of that column in the same row. "(b0 AND b1) = b0"
+        // compiled to "cmp edx, edx" and selected every row. avx2_loop finishes every frame with
+        // scalar_tail, so that one moved the vectorized path too.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE b (b0 BOOLEAN, b1 BOOLEAN, k TIMESTAMP) TIMESTAMP(k)");
+            // 100 rows, deliberately not a multiple of 32. A one-byte lane runs the AVX2 loop 32
+            // rows at a time, so one frame of 100 is three vector iterations over rows 0-95 plus a
+            // four-row scalar tail - and the two defects sit on opposite sides of that boundary, so
+            // a row count that skipped either would have hidden one of them. b0 is true on one row
+            // in three and b1 on one in two, which keeps every shape below off both 0 and 100
+            // unless it is a genuine tautology or contradiction.
+            execute(
+                    """
+                            INSERT INTO b
+                            SELECT (x % 3) = 0, (x % 2) = 0, timestamp_sequence(0, 1)
+                            FROM long_sequence(100)"""
+            );
+
+            // A comparison nested in a comparison, both operand orders. The mask meets the raw
+            // boolean as a column, as a constant, and through NOT.
+            assertBooleanFilterInAllModes("(false != b0) = b0", 100);
+            assertBooleanFilterInAllModes("b0 = (false != b0)", 100);
+            assertBooleanFilterInAllModes("(b0 = b0) = b0", 33);
+            assertBooleanFilterInAllModes("b0 = (b0 = b0)", 33);
+            assertBooleanFilterInAllModes("(false != b0) = true", 33);
+            assertBooleanFilterInAllModes("true = (false != b0)", 33);
+            assertBooleanFilterInAllModes("(b0 = true) = b0", 100);
+            assertBooleanFilterInAllModes("(b0 = b1) = b0", 50);
+            assertBooleanFilterInAllModes("b0 = (b0 = b1)", 50);
+            assertBooleanFilterInAllModes("(b0 = b1) != b0", 50);
+            assertBooleanFilterInAllModes("(b0 = b1) = true", 49);
+            assertBooleanFilterInAllModes("(NOT b0) = b1", 51);
+            assertBooleanFilterInAllModes("b1 = (NOT b0)", 51);
+            assertBooleanFilterInAllModes("(NOT (b0 = b1)) = b0", 50);
+            // Three levels deep: the outer comparison's left operand is itself a mask-against-raw
+            // comparison, so the fix has to hold for a value it produced rather than only for one
+            // the serializer emitted.
+            assertBooleanFilterInAllModes("((b0 = b1) = b0) = b1", 100);
+
+            // NOT over a nested boolean comparison. mask_not is a bitwise complement, so it turns
+            // a raw 0x01 into 0xFE - which every "top bit set" test then reads as true. This is the
+            // hazard that rules out fixing the mismatch by making comparisons emit 0 / 1.
+            assertBooleanFilterInAllModes("NOT ((false != b0) = b0)", 0);
+            assertBooleanFilterInAllModes("NOT ((b0 = b1) = b0)", 50);
+            assertBooleanFilterInAllModes("NOT ((b0 = b1) OR b0)", 34);
+            assertBooleanFilterInAllModes("NOT ((b0 = b1) AND b0)", 84);
+
+            // AND / OR under a comparison. A bitwise OR of 0xFF and 0x01 is 0xFF and a bitwise AND
+            // of them is 0x01, so an unharmonised pair leaves a value that is neither spelling.
+            assertBooleanFilterInAllModes("(b0 AND b1) = b0", 83);
+            assertBooleanFilterInAllModes("(b0 OR b1) = b0", 66);
+            assertBooleanFilterInAllModes("((b0 = b1) OR b0) = b1", 16);
+            assertBooleanFilterInAllModes("b1 = ((b0 = b1) OR b0)", 16);
+            assertBooleanFilterInAllModes("((b0 = b1) AND b0) = b1", 66);
+            // The same shapes with the RAW boolean on the LEFT of the AND / OR. avx2::bin_and and
+            // bin_or take their result's spelling from the harmonised LEFT operand, so a raw left
+            // operand beside a mask right one is the pairing that decides which way harmonisation
+            // has to run. Without it the OR of a true raw lane (0x01) and a false mask lane (0x00)
+            // is 0x01 - neither spelling - and the enclosing comparison against 0x00 then reads it
+            // as false, dropping every such row. The right-operand orders above never produce that
+            // lane, so dropping bin_or's harmonise_booleans call alone left them all green.
+            assertBooleanFilterInAllModes("(b0 OR (b0 = b1)) = b1", 16);
+            assertBooleanFilterInAllModes("b1 = (b0 OR (b0 = b1))", 16);
+            assertBooleanFilterInAllModes("(b0 AND (b0 = b1)) = b1", 66);
+            // An AND / OR result compared against a second COMPARISON result rather than against a
+            // raw column: here the unharmonised 0x01 lane meets a 0xFF one instead of a 0x00 one,
+            // so it fails in the opposite direction and a different row set comes back.
+            assertBooleanFilterInAllModes("((b0 = b1) OR b0) = (b0 = b0)", 66);
+            assertBooleanFilterInAllModes("(b0 OR (b0 = b1)) = (b0 = b0)", 66);
+
+            // Shapes that are already correct. An over-broad fix announces itself here: the inner
+            // comparison is always false in the first, so the raw 0x00 and the mask 0x00 agree and
+            // it survived the defect; the last two never mix the two spellings at all.
+            assertBooleanFilterInAllModes("(b0 != b0) = b0", 67);
+            assertBooleanFilterInAllModes("b0", 33);
+            assertBooleanFilterInAllModes("NOT b0", 67);
+            assertBooleanFilterInAllModes("b0 = b1", 49);
+            assertBooleanFilterInAllModes("b0 != b1", 51);
+            assertBooleanFilterInAllModes("b0 AND b1", 16);
+            assertBooleanFilterInAllModes("b0 OR b1", 67);
+            assertBooleanFilterInAllModes("(b0 = b1) = (b0 = b1)", 100);
+            assertBooleanFilterInAllModes("(b0 = b1) = (b0 != b1)", 0);
+        });
+    }
+
+    @Test
     public void testBooleanOperators() throws Exception {
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
@@ -262,12 +363,216 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
 
     @Test
     public void testChar() throws Exception {
-        final String query = "x where ch > 'A' and ch < 'Z'";
         final String ddl = "create table x as " +
                 "(select timestamp_sequence(400_000_000_000, 500_000_000) as k," +
                 " rnd_char() ch" +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
-        assertQueryNotNull(query, ddl);
+        assertMemoryLeak(() -> {
+            execute(ddl);
+            // Equality still compiles: the IR compares the raw 16-bit lane, which
+            // matches EqCharCharFunctionFactory.
+            assertQueryNotNullNoLeakCheck("x where ch = 'A' or ch = 'Z'");
+            assertJitMatchesJava("x where ch > 'A' and ch < 'Z'", true);
+        });
+    }
+
+    @Test
+    public void testCharOrderingNestedInPredicateUsesCompiledFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7549
+        // A CHAR ordering comparison anywhere but at the predicate ROOT rewound the IR stream over
+        // bytes its siblings had already emitted, and nothing re-emitted them. The enclosing
+        // operator then reached the backend one operand short, which avx2::emit_bin_op answers with
+        // an out-of-bounds pop rather than a JIT decline - so these shapes aborted the JVM instead
+        // of returning rows. CompiledFilterIRSerializerTest#testCharOrderingNestedInPredicate pins
+        // the stream itself; this pins the rows both engines select from it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c CHAR, c2 CHAR, k TIMESTAMP) TIMESTAMP(k)");
+            // 35 rows. A CHAR lane is two bytes, so Function::compile sets step = 256 / (2 * 8) =
+            // 16 and avx2_loop iterates while input_index < rows_size - step + 1, i.e. while it is
+            // below 20 here: two full vector iterations over rows 0-31 and then a three-row scalar
+            // tail. The fixture used to hold 12 rows, which is below one vector width - stop came
+            // out negative, the loop jumped straight to the exit and scalar_tail handled every row,
+            // so the vectorized body this test claims to cover never executed once. The twelve
+            // original rows are kept first, inside the first vector iteration, and the rows added
+            // after them repeat the same value families - CHAR NULL on either or both sides, the
+            // 250 / 32_767 / 32_768 / 65_535 code points that straddle the signed-short boundary,
+            // equal pairs and both operand orderings - so the tail is not the only place a match
+            // can come from.
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            ('a', 'b', 0),
+                            (null, 'b', 1),
+                            ('a', null, 2),
+                            (null, null, 3),
+                            (250::CHAR, 250::CHAR, 4),
+                            (250::CHAR, 'b', 5),
+                            ('b', 250::CHAR, 6),
+                            (32_767::CHAR, 32_768::CHAR, 7),
+                            (32_768::CHAR, 32_767::CHAR, 8),
+                            (65_535::CHAR, 'b', 9),
+                            ('b', 'a', 10),
+                            ('q', 'q', 11),
+                            ('a', 'a', 12),
+                            ('z', 'a', 13),
+                            ('a', 'z', 14),
+                            (null, 'a', 15),
+                            ('z', null, 16),
+                            (250::CHAR, 'a', 17),
+                            ('a', 250::CHAR, 18),
+                            (32_767::CHAR, 'a', 19),
+                            ('a', 32_767::CHAR, 20),
+                            (32_768::CHAR, 'a', 21),
+                            ('a', 32_768::CHAR, 22),
+                            (65_535::CHAR, 65_535::CHAR, 23),
+                            (65_535::CHAR, 32_768::CHAR, 24),
+                            (32_768::CHAR, 65_535::CHAR, 25),
+                            (250::CHAR, 32_768::CHAR, 26),
+                            (32_768::CHAR, 250::CHAR, 27),
+                            (null, 32_768::CHAR, 28),
+                            (32_768::CHAR, null, 29),
+                            ('q', 'a', 30),
+                            ('a', 'q', 31),
+                            (32_767::CHAR, 32_768::CHAR, 32),
+                            (null, null, 33),
+                            ('b', 'b', 34)
+                            """
+            );
+
+            // (cmp) = (cmp) forms a SINGLE predicate context, so both ordering expansions share one
+            // IR stream - the shape the rewind used to truncate. Both operand orders: the traversal
+            // descends rhs first, so only an lhs-side ordering node rewound over emitted siblings.
+            assertJitMatchesJavaInAllModes("x WHERE (c < c2) = (c2 < c)");
+            assertJitMatchesJavaInAllModes("x WHERE (c2 < c) = (c < c2)");
+            assertJitMatchesJavaInAllModes("x WHERE (c <= c2) = (c2 <= c)");
+            assertJitMatchesJavaInAllModes("x WHERE (c > c2) = (c2 > c)");
+            assertJitMatchesJavaInAllModes("x WHERE (c >= c2) = (c2 >= c)");
+            assertJitMatchesJavaInAllModes("x WHERE (c < 'b') = (c2 < 'b')");
+            assertJitMatchesJavaInAllModes("x WHERE (c < c2) <> (c2 < c)");
+            // The ordering node on the RHS is traversed first, so this shape survived the bug. It
+            // has to stay CORRECT, not merely non-crashing.
+            assertJitMatchesJavaInAllModes("x WHERE (c = c2) = (c < c2)");
+            assertJitMatchesJavaInAllModes("x WHERE (c < c2) = (c = c2)");
+            // NOT keeps the ordering node one level below the predicate root; AND / OR give each
+            // conjunct its own predicate context.
+            assertJitMatchesJavaInAllModes("x WHERE NOT (c < c2)");
+            assertJitMatchesJavaInAllModes("x WHERE (c < c2) AND (c2 > c)");
+            assertJitMatchesJavaInAllModes("x WHERE (c < c2) OR (c2 < c)");
+            // An ordering node nested under a longer chain.
+            assertJitMatchesJavaInAllModes("x WHERE ((c < c2) = (c2 < c)) AND ((c >= c2) OR (c <= c2))");
+            assertJitMatchesJavaInAllModes("x WHERE NOT ((c < c2) = (c2 < c))");
+            // A sibling CONSTANT emits a deferred stub that only the backfill pass fills in, so the
+            // memory rewind and the backfill map have to move together. Pruning the map by offset
+            // keeps the sibling's entry, which the expansion's blanket clear() dropped.
+            assertJitMatchesJavaInAllModes("x WHERE (c < c2) = (c = 'a')");
+            assertJitMatchesJavaInAllModes("x WHERE (c = 'a') = (c < c2)");
+            // The bind variable list is rewound beside the IR, so an expansion re-traversing an
+            // operand several times must not renumber a sibling's variables.
+            bindVariableService.setChar("mid", 'b');
+            assertJitMatchesJavaInAllModes("x WHERE (c < :mid) = (c2 < :mid)");
+            assertJitMatchesJavaInAllModes("x WHERE (c < :mid) = (c2 = :mid)");
+
+            // A boolean CONSTANT beside the ordering node is stubbed before the expansion runs, and
+            // backfilling it against a CHAR predicate type declines JIT - the disposition this
+            // shape had before the CHAR ordering expansion existed. The blanket
+            // backfillNodes.clear() the expansion used to run threw that stub away with the rest.
+            assertJitMatchesJava("x WHERE (c < c2) = true", false);
+            assertJitMatchesJava("x WHERE (c < c2) = false", false);
+            assertJitMatchesJava("x WHERE true = (c < c2)", false);
+            assertJitMatchesJava("x WHERE false = (c < c2)", false);
+        });
+    }
+
+    @Test
+    public void testCharOrderingUsesCompiledFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7549
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (c CHAR, c2 CHAR, k TIMESTAMP) TIMESTAMP(k)");
+            execute(
+                    """
+                            INSERT INTO x VALUES
+                            ('a', 'b', 0),
+                            (null, 'b', 1),
+                            ('a', null, 2),
+                            (null, null, 3),
+                            (32_767::CHAR, 32_768::CHAR, 4),
+                            (32_768::CHAR, 32_767::CHAR, 5),
+                            (65_535::CHAR, 'b', 6),
+                            ('A', 'A', 7),
+                            ('z', 'A', 8),
+                            (1::CHAR, 2::CHAR, 9),
+                            ('b', 'a', 10),
+                            ('A', 'z', 11),
+                            (2::CHAR, 1::CHAR, 12),
+                            ('m', 'n', 13),
+                            ('n', 'm', 14),
+                            ('q', 'q', 15),
+                            (null, 'b', 16),
+                            ('a', null, 17),
+                            (null, null, 18),
+                            (32_767::CHAR, 32_768::CHAR, 19),
+                            (32_768::CHAR, 32_767::CHAR, 20),
+                            (65_535::CHAR, 'b', 21)
+                            """
+            );
+
+            assertJitMatchesJavaInAllModes("x WHERE c > c2");
+            assertJitMatchesJavaInAllModes("x WHERE c >= c2");
+            assertJitMatchesJavaInAllModes("x WHERE c < c2");
+            assertJitMatchesJavaInAllModes("x WHERE c <= c2");
+            assertJitMatchesJavaInAllModes("x WHERE c > 'A'");
+            assertJitMatchesJavaInAllModes("x WHERE c >= 'A'");
+            assertJitMatchesJavaInAllModes("x WHERE c < 'A'");
+            assertJitMatchesJavaInAllModes("x WHERE c <= 'A'");
+
+            assertJitMatchesJavaInAllModes("x WHERE c > '\u8000'");
+            assertJitMatchesJavaInAllModes("x WHERE c >= '\u8000'");
+            assertJitMatchesJavaInAllModes("x WHERE c < '\u8000'");
+            assertJitMatchesJavaInAllModes("x WHERE c <= '\u8000'");
+            assertJitMatchesJavaInAllModes("x WHERE '\u8000' > c");
+            assertJitMatchesJavaInAllModes("x WHERE '\u8000' >= c");
+            assertJitMatchesJavaInAllModes("x WHERE '\u8000' < c");
+            assertJitMatchesJavaInAllModes("x WHERE '\u8000' <= c");
+
+            // U+FFFF is the largest CHAR, so nothing sorts strictly above it in either operand
+            // order and those two legs answer no rows by construction. Their non-strict twins do
+            // return rows - the fixture carries 65_535::CHAR - which is what keeps the pair a
+            // boundary test rather than a pair of empty cursors.
+            assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE c > '\uffff'");
+            assertJitMatchesJavaInAllModes("x WHERE c >= '\uffff'");
+            assertJitMatchesJavaInAllModes("x WHERE c < '\uffff'");
+            assertJitMatchesJavaInAllModes("x WHERE c <= '\uffff'");
+            assertJitMatchesJavaInAllModes("x WHERE '\uffff' > c");
+            assertJitMatchesJavaInAllModes("x WHERE '\uffff' >= c");
+            assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE '\uffff' < c");
+            assertJitMatchesJavaInAllModes("x WHERE '\uffff' <= c");
+
+            bindVariableService.setChar("highChar", '\uffff');
+            assertJitMatchesJavaInAllModes("x WHERE c < :highChar");
+            // serializeBindVariable() memoizes the vars slot per bind variable node, so the four
+            // re-traversals the expansion makes emit ONE VAR index rather than four. The slot the
+            // memo names is the offset the backend reads out of the shared vars block, so the rows
+            // these select are what says the reuse points at the right value.
+            bindVariableService.setChar("lowChar", 'A');
+            assertJitMatchesJavaInAllModes("x WHERE c <= :lowChar");
+            assertJitMatchesJavaInAllModes("x WHERE c > :lowChar");
+            assertJitMatchesJavaInAllModes("x WHERE c >= :lowChar");
+            assertJitMatchesJavaInAllModes("x WHERE :lowChar < c");
+            // A sibling variable numbered BELOW the ordering node's rewind watermark keeps its own
+            // slot while the expansion renumbers its own, in both descent orders.
+            assertJitMatchesJavaInAllModes("x WHERE (c < :lowChar) = (c2 = :highChar)");
+            assertJitMatchesJavaInAllModes("x WHERE (c2 = :highChar) = (c < :lowChar)");
+            // Two ordering expansions over one textual name: the memo is per occurrence, and each
+            // expansion rewinds over its own watermark.
+            assertJitMatchesJavaInAllModes("x WHERE (c < :lowChar) = (c2 <= :lowChar)");
+
+            // Equality compares the raw lane and still matches Java, so it keeps compiling.
+            assertJitMatchesJava("x WHERE c = 'a'", true);
+            assertJitMatchesJava("x WHERE c != 'a'", true);
+            // Unrelated pre-existing fallback: serializeNull() has no CHAR arm,
+            // the 16-bit lane is only nullable for geohashes.
+            assertJitMatchesJava("x WHERE c = null", false);
+        });
     }
 
     @Test
@@ -580,6 +885,212 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 " rnd_double() f64 " +
                 " from long_sequence(" + N_SIMD_WITH_SCALAR_TAIL + ")) timestamp(k)";
         assertQueryNotNull(query, ddl);
+    }
+
+    @Test
+    public void testColumnFreeComparisonDeclinesCompiledFilter() throws Exception {
+        // A comparison whose operands reach NO column took its constants' types from
+        // predicateContext.columnType - the type of the columns the WHOLE predicate carries -
+        // while the Java filter types that same comparison from its own operands, i.e. from the
+        // literals themselves. The two disagree, and the compiled filter answered with the
+        // COMPLEMENT of the Java row set:
+        //   ('60.108.156.35' >= '249.79.14.15') = (ip > '128.0.0.0')
+        // orders two STRINGs in the Java filter ('6' > '2', so true) and two IPv4 addresses in the
+        // JIT (0x3C6C9C23 >= 0xF94F0E0F, so false). Both JIT backends were wrong the same way, so
+        // scalar-versus-vector parity does not catch it; only the Java oracle does.
+        //
+        // The mis-typing is not specific to IPv4, nor to ordering. SYMBOL reaches it through plain
+        // equality (two constants absent from the table both resolve to VALUE_NOT_FOUND, so the
+        // JIT calls them equal), UUID through a hex literal differing only in case, TIMESTAMP and
+        // DATE through two spellings of one instant, IN through its element pairing, and a STRING
+        // bind variable reaches it exactly as a constant does - serializeBindVariable defers it and
+        // resolves it against the predicate's symbol column. CHAR is the one type whose constants
+        // happen to order the same either way, so it returned the RIGHT rows - on a coincidence
+        // rather than on a decision, so it declines here too.
+        //
+        // The fixture holds 35 rows so that every CONTROL shape below - the column-carrying
+        // comparisons that have to keep compiling - runs full AVX2 vector iterations AND leaves a
+        // non-empty scalar tail. Function::compile picks step = 256 / (lane_bytes * 8) and
+        // avx2_loop runs while input_index < rows - step + 1, so the widest lane here decides the
+        // floor: CHAR is i16, step 16, which gives two whole iterations over rows 0-31 and a
+        // three-row tail. Every other lane in the fixture has a SMALLER step and therefore more
+        // iterations - 8 for IPv4 and SYMBOL (i32), 4 for TIMESTAMP and DATE (i64), 2 for UUID
+        // (i128) - and 35 is odd, so none of those divides it either and the tail is never empty.
+        // A 12-row fixture would put stop at -3 and run zero iterations, which is how the CHAR
+        // sibling of this test used to cover the vectorized body without ever entering it.
+        // Every expected count below is a proper non-empty subset of the 35 rows.
+        assertMemoryLeak(() -> {
+            execute(
+                    "CREATE TABLE x (ip IPv4, ip2 IPv4, c CHAR, c2 CHAR, s SYMBOL, u UUID," +
+                            " t2 TIMESTAMP, d DATE, k TIMESTAMP) TIMESTAMP(k) PARTITION BY DAY"
+            );
+            execute(
+                    """
+                            INSERT INTO x SELECT
+                                (CASE WHEN x % 2 = 0 THEN '10.0.0.1' ELSE '200.0.0.1' END)::IPv4,
+                                (CASE WHEN x % 3 = 0 THEN '255.255.255.255' ELSE '1.2.3.4' END)::IPv4,
+                                (CASE WHEN x % 3 = 0 THEN 'a' ELSE 'z' END)::CHAR,
+                                (CASE WHEN x % 4 = 0 THEN 'b' ELSE 'y' END)::CHAR,
+                                (CASE WHEN x % 5 = 0 THEN 'aa' ELSE 'bb' END)::SYMBOL,
+                                (CASE WHEN x % 4 = 0 THEN '11111111-1111-1111-1111-11111111111a'
+                                      ELSE '22222222-2222-2222-2222-222222222222' END)::UUID,
+                                (CASE WHEN x % 2 = 0 THEN '2020-01-01T00:00:00.000000Z'
+                                      ELSE '2021-01-01T00:00:00.000000Z' END)::TIMESTAMP,
+                                (CASE WHEN x % 2 = 0 THEN '2020-01-01T00:00:00.000Z'
+                                      ELSE '2021-01-01T00:00:00.000Z' END)::DATE,
+                                timestamp_sequence(0, 1_000_000)
+                            FROM long_sequence(35)
+                            """
+            );
+            bindVariableService.setStr("sv", "zz");
+            // 2020-06-01T00:00:00.000000Z and 2020-01-01T00:00:00.000000Z, for the guard conjuncts
+            // among the controls below.
+            bindVariableService.setTimestamp("tv", 1_590_969_600_000_000L);
+            bindVariableService.setTimestamp("tv2", 1_577_836_800_000_000L);
+            bindVariableService.setBoolean("flag", true);
+
+            // IPv4, ordering between two quoted literals - the shape the fuzzer found. Every
+            // operator, and both operand orders, so a fix that only moved '>=' cannot pass.
+            assertColumnFreeComparisonDeclines("('60.108.156.35' >= '249.79.14.15') = (ip > '128.0.0.0')", 18);
+            assertColumnFreeComparisonDeclines("('249.79.14.15' >= '60.108.156.35') = (ip > '128.0.0.0')", 17);
+            assertColumnFreeComparisonDeclines("('60.108.156.35' > '249.79.14.15') = (ip > '128.0.0.0')", 18);
+            assertColumnFreeComparisonDeclines("('60.108.156.35' < '249.79.14.15') = (ip > '128.0.0.0')", 17);
+            assertColumnFreeComparisonDeclines("('60.108.156.35' <= '249.79.14.15') = (ip > '128.0.0.0')", 17);
+            assertColumnFreeComparisonDeclines("NOT (('60.108.156.35' >= '249.79.14.15') = (ip > '128.0.0.0'))", 17);
+            // IPv4, EQUALITY between two quoted literals: '1.1.1.1' and '01.01.01.01' are two
+            // spellings of one address and two different strings. This half of the defect needs no
+            // ordering operator at all.
+            assertColumnFreeComparisonDeclines("('1.1.1.1' = '01.01.01.01') = (ip > '128.0.0.0')", 17);
+            assertColumnFreeComparisonDeclines("('1.1.1.1' != '01.01.01.01') = (ip > '128.0.0.0')", 18);
+            assertColumnFreeComparisonDeclines("('1.1.1.1' IN ('01.01.01.01')) = (ip > '128.0.0.0')", 17);
+            // IN pairs its element list against the left operand one element at a time, so the
+            // mis-typing rides on EVERY element, not only on a single-element list, and NOT IN
+            // reaches it through the same pairing under a NOT. Both flip the whole predicate: with
+            // the verdict removed the compiled filter reads these as IPv4 addresses, finds
+            // '1.1.1.1' in the list, and answers 18 rows where the Java filter - comparing STRINGS,
+            // which '01.01.01.01' is not one of - answers 17, and the complement again for NOT IN.
+            assertColumnFreeComparisonDeclines("('1.1.1.1' IN ('9.9.9.9', '01.01.01.01')) = (ip > '128.0.0.0')", 17);
+            assertColumnFreeComparisonDeclines("('1.1.1.1' NOT IN ('01.01.01.01')) = (ip > '128.0.0.0')", 18);
+            assertColumnFreeComparisonDeclines("('1.1.1.1' NOT IN ('9.9.9.9', '01.01.01.01')) = (ip > '128.0.0.0')", 18);
+            // IS [NOT] NULL against a constant parses to a comparison against null, so it lands in
+            // the same place: the JIT reads 'null' as the IPv4 null sentinel, the Java filter reads
+            // it as a four-character string.
+            assertColumnFreeComparisonDeclines("('null' IS NULL) = (ip > '128.0.0.0')", 17);
+            assertColumnFreeComparisonDeclines("('null' IS NOT NULL) = (ip > '128.0.0.0')", 18);
+            // SYMBOL: neither 'zz' nor 'yy' is in the column's symbol table, so the JIT resolved
+            // both to VALUE_NOT_FOUND and called them EQUAL.
+            assertColumnFreeComparisonDeclines("('zz' = 'yy') = (s = 'aa')", 28);
+            assertColumnFreeComparisonDeclines("('zz' != 'yy') = (s = 'aa')", 7);
+            // The SYMBOL route into IN / NOT IN, where the divergence is widest: the JIT resolved
+            // 'zz', 'yy' and 'xx' alike to VALUE_NOT_FOUND, so it found 'zz' in the list and
+            // selected the 7 rows the Java filter leaves out - and the 28 it selects, for NOT IN.
+            assertColumnFreeComparisonDeclines("('zz' IN ('yy', 'xx')) = (s = 'aa')", 28);
+            assertColumnFreeComparisonDeclines("('zz' NOT IN ('yy', 'xx')) = (s = 'aa')", 7);
+            // The same, with a STRING bind variable in place of the left constant.
+            assertColumnFreeComparisonDeclines("(:sv = 'yy') = (s = 'aa')", 28);
+            // A bind variable types the comparison the predicate holds beside it, which is what
+            // separates the guard conjuncts among the controls below from this shape: the
+            // right-hand pair is two STRINGs to the Java filter and two TIMESTAMPs here, and
+            // '2020-01-02T00:00:00-05:00' sorts above '2020-01-02T00:00:00Z' as a string and below
+            // it as an instant. Neither comparison reads a column, so the count of comparisons is
+            // the only thing that tells the two apart.
+            assertColumnFreeComparisonDeclines(
+                    "((:tv2 > '2019-01-01') = ('2020-01-02T00:00:00-05:00' >= '2020-01-02T00:00:00Z'))"
+                            + " != (t2 > '2020-06-01')",
+                    18
+            );
+            // UUID: one uuid, two hex spellings.
+            assertColumnFreeComparisonDeclines(
+                    "('11111111-1111-1111-1111-11111111111a' = '11111111-1111-1111-1111-11111111111A')"
+                            + " = (u = '11111111-1111-1111-1111-11111111111a')",
+                    27
+            );
+            // UUID ORDERING between two literals ABORTED THE JVM. rejectOrderingComparison names
+            // UUID, but it reads predicateContext.columnType at VISIT time, and
+            // PostOrderTreeTraversalAlgo descends node.rhs first: with the constants on the right
+            // the ordering node is visited before any column has typed anything, columnType is
+            // still UNDEFINED, the rejection does not fire, and the backfill then emits two 128-bit
+            // UUID immediates. The i128 lane has no ordering comparator - it falls through the
+            // dispatch's default: __builtin_unreachable() - and the native compiler died inside
+            // asmjit::BaseBuilder::_emit with SIGSEGV. The verdict here is taken when the predicate
+            // is LEFT, where columnType is settled, so it fires in both operand orders.
+            assertColumnFreeComparisonDeclines(
+                    "(u = '11111111-1111-1111-1111-11111111111a')"
+                            + " != ('05762904-b77a-6040-3d03-4223b4730027' > '889cf1b5-6879-a782-b394-7adab6e457b6')",
+                    8
+            );
+            assertColumnFreeComparisonDeclines(
+                    "(u = '11111111-1111-1111-1111-11111111111a')"
+                            + " = ('05762904-b77a-6040-3d03-4223b4730027' > '889cf1b5-6879-a782-b394-7adab6e457b6')",
+                    27
+            );
+            assertColumnFreeComparisonDeclines(
+                    "('05762904-b77a-6040-3d03-4223b4730027' > '889cf1b5-6879-a782-b394-7adab6e457b6')"
+                            + " = (u = '11111111-1111-1111-1111-11111111111a')",
+                    27
+            );
+            assertColumnFreeComparisonDeclines(
+                    "(u = '11111111-1111-1111-1111-11111111111a')"
+                            + " != ('05762904-b77a-6040-3d03-4223b4730027' < '889cf1b5-6879-a782-b394-7adab6e457b6')",
+                    27
+            );
+            // The IPv4 twin of that operand order: the constant comparison on the RIGHT is visited
+            // before the column on the left, so it is serialized while columnType is UNDEFINED and
+            // takes the plain GE opcode rather than serializeIPv4Ordering's expansion. Same
+            // mis-typing, different route into it.
+            assertColumnFreeComparisonDeclines("(ip > '128.0.0.0') = ('60.108.156.35' >= '249.79.14.15')", 18);
+            // TIMESTAMP and DATE: one instant, two spellings; and a zone offset that reverses the
+            // string order of two instants.
+            assertColumnFreeComparisonDeclines("('2020-01-02T00:00:00.000000Z' = '2020-01-02') = (t2 > '2020-06-01')", 17);
+            assertColumnFreeComparisonDeclines("('2020-01-02T00:00:00-05:00' >= '2020-01-02T00:00:00Z') = (t2 > '2020-06-01')", 17);
+            assertColumnFreeComparisonDeclines("('2020-01-02T00:00:00.000Z' = '2020-01-02') = (d > '2020-06-01')", 17);
+            // CHAR: these select the RIGHT rows either way, because a one-character literal orders
+            // the same as a CHAR. They decline all the same - the agreement is a property of the
+            // values, not of the typing, and nothing keeps it true for the next type added.
+            assertColumnFreeComparisonDeclines("('a' < 'b') = (c = 'a')", 11);
+            assertColumnFreeComparisonDeclines("('b' < 'a') = (c = 'a')", 24);
+            assertColumnFreeComparisonDeclines("('a' = 'b') = (c = 'a')", 24);
+
+            // CONTROLS. A comparison that reads a column is typed by that column in both engines,
+            // so `column op quoted-literal` - the shape the IPv4 and CHAR literal support exists
+            // for - keeps compiling, nested in another comparison as well as at the predicate root.
+            assertColumnComparisonCompiles("ip >= '128.0.0.0'", 18);
+            assertColumnComparisonCompiles("ip < '128.0.0.0'", 17);
+            assertColumnComparisonCompiles("'128.0.0.0' > ip", 17);
+            assertColumnComparisonCompiles("(ip > '128.0.0.0') = (ip2 = '255.255.255.255')", 18);
+            assertColumnComparisonCompiles("ip IN ('200.0.0.1')", 18);
+            // The verdict turns on the OPERANDS, not on the operator, so a multi-element IN and a
+            // NOT IN that read a column keep compiling on both engines.
+            assertColumnComparisonCompiles("ip NOT IN ('200.0.0.1')", 17);
+            assertColumnComparisonCompiles("ip2 IN ('255.255.255.255', '9.9.9.9')", 11);
+            assertColumnComparisonCompiles("s NOT IN ('aa')", 28);
+            assertColumnComparisonCompiles("c < 'b'", 11);
+            assertColumnComparisonCompiles("(c < 'b') = (c2 < 'y')", 20);
+            assertColumnComparisonCompiles("s = 'aa'", 7);
+            assertColumnComparisonCompiles("u = '11111111-1111-1111-1111-11111111111a'", 8);
+            assertColumnComparisonCompiles("t2 >= '2020-06-01'", 18);
+            assertColumnComparisonCompiles("d >= '2020-06-01'", 18);
+
+            // The parameter-only GUARD CONJUNCT - the shape a generated query appends beside the
+            // filter that does the work. It reads no column, so the verdict used to decline it, and
+            // AND is not a top-level operation: the guard is its own predicate, sitting beside the
+            // conjuncts that carry the columns, and visit() throws out of serialize(), so the
+            // WHOLE filter fell back to the Java one. The guard holds ONE comparison and types it
+            // from its own bind variable, which is where the Java filter types it from too, so
+            // there is nothing to diverge and it compiles again. Each assertion below pairs the
+            // guard with a non-numeric column conjunct, because a numeric one would have been
+            // exempt through isNumeric() either way.
+            assertColumnComparisonCompiles(":flag = true AND s = 'aa'", 7);
+            assertColumnComparisonCompiles(":tv > '2020-01-01' AND ip > '128.0.0.0'", 18);
+            assertColumnComparisonCompiles(":tv > :tv2 AND c < 'b'", 11);
+            assertColumnComparisonCompiles(":tv IN ('2020-06-01') AND u = '11111111-1111-1111-1111-11111111111a'", 8);
+            // NOT is a top-level operation, so it becomes the predicate root and everything under
+            // it belongs to that one predicate. One comparison is still one comparison.
+            assertColumnComparisonCompiles("NOT (:flag = false) AND d >= '2020-06-01'", 18);
+            // A guard that selects nothing takes the whole filter with it, on both engines. The
+            // count pins that the guard is actually evaluated rather than folded away.
+            assertJitCountQuery("SELECT count() FROM x WHERE :flag = false AND s = 'aa'", 0);
+        });
     }
 
     @Test
@@ -3777,9 +4288,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitMatchesJava("select k from s where sym not in ('a','c')", true);
             assertJitMatchesJava("select k from s where ch in ('x','z')", true);
             assertJitMatchesJava("select k from s where ch not in ('x','z')", true);
-            // IPv4 IN with string constants does not compile to the JIT (unsupported string constant),
-            // so it falls back to Java; the parity check still guards the fallback path.
-            assertJitMatchesJava("select k from s where ip in ('1.1.1.1','3.3.3.3')", false);
+            // IPv4 IN with string constants also compiles to the JIT: serializeConstant parses the
+            // dotted-quad literal into its I4 key. The IN key is IPv4, not BYTE/SHORT/INT, so
+            // isWidthSensitiveInKey leaves it alone for the same reason it leaves SYMBOL and CHAR
+            // alone, even though columnTypeCode collapses IPv4 onto I4 as well.
+            assertJitMatchesJava("select k from s where ip in ('1.1.1.1','3.3.3.3')", true);
 
             // Absolute oracle: the symbol/char keys select the expected rows.
             Assert.assertEquals("k\n1970-01-01T00:00:00.000001Z\n1970-01-01T00:00:00.000003Z\n",
@@ -5268,6 +5781,165 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIPv4OrderingNestedInPredicateUsesCompiledFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7547
+        // The IPv4 twin of testCharOrderingNestedInPredicateUsesCompiledFilter. The fixture holds
+        // IPv4 NULL (0), 128.0.0.0 (INT_MIN) and 255.255.255.255 (-1), so the unsigned-order repair
+        // the expansion performs is exercised on both sides of the sign boundary.
+        assertMemoryLeak(() -> {
+            createIPv4TestTable();
+
+            assertJitMatchesJavaInAllModes("x WHERE (ip < ip2) = (ip2 < ip)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip2 < ip) = (ip < ip2)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip <= ip2) = (ip2 <= ip)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip > ip2) = (ip2 > ip)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip >= ip2) = (ip2 >= ip)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip < '128.0.0.0') = (ip2 < '255.255.255.255')");
+            assertJitMatchesJavaInAllModes("x WHERE (ip < ip2) <> (ip2 < ip)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip = ip2) = (ip < ip2)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip < ip2) = (ip = ip2)");
+            assertJitMatchesJavaInAllModes("x WHERE NOT (ip < ip2)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip < ip2) AND (ip2 > ip)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip < ip2) OR (ip2 < ip)");
+            assertJitMatchesJavaInAllModes("x WHERE ((ip < ip2) = (ip2 < ip)) AND ((ip >= ip2) OR (ip <= ip2))");
+            assertJitMatchesJavaInAllModes("x WHERE NOT ((ip < ip2) = (ip2 < ip))");
+            assertJitMatchesJavaInAllModes("x WHERE (ip < ip2) = (ip = '128.0.0.0')");
+            assertJitMatchesJavaInAllModes("x WHERE (ip = '128.0.0.0') = (ip < ip2)");
+
+            assertJitMatchesJava("x WHERE (ip < ip2) = true", false);
+            assertJitMatchesJava("x WHERE (ip < ip2) = false", false);
+            assertJitMatchesJava("x WHERE true = (ip < ip2)", false);
+            assertJitMatchesJava("x WHERE false = (ip < ip2)", false);
+        });
+    }
+
+    @Test
+    public void testIPv4OrderingUsesCompiledFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7547
+        assertMemoryLeak(() -> {
+            createIPv4TestTable();
+
+            assertJitMatchesJavaInAllModes("x WHERE ip > ip2");
+            assertJitMatchesJavaInAllModes("x WHERE ip >= ip2");
+            assertJitMatchesJavaInAllModes("x WHERE ip < ip2");
+            assertJitMatchesJavaInAllModes("x WHERE ip <= ip2");
+            // A STRICT comparison against IPv4 NULL is false for every row, so those two legs
+            // answer no rows by construction. The non-strict twins select the NULL rows themselves
+            // and still return rows, which is what pins the sentinel handling.
+            assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE ip > null");
+            assertJitMatchesJavaInAllModes("x WHERE ip >= null");
+            assertJitMatchesJavaInAllModesOnEmptyResult("x WHERE ip < null");
+            assertJitMatchesJavaInAllModes("x WHERE ip <= null");
+            assertJitMatchesJavaInAllModes("x WHERE null <= ip");
+            for (String literal : new String[]{
+                    "'127.255.255.255'",
+                    "'128.0.0.0'",
+                    "'255.255.255.255'",
+                    "'0.0.0.0'",
+                    "'null'"
+            }) {
+                // Which of these 40 combinations answers "no rows" FOLLOWS from the semantics
+                // under test, so derive it here rather than keep a list of the empty legs that
+                // nothing forces anyone to update. '0.0.0.0' IS the IPv4 NULL sentinel and 'null'
+                // parses to it, and a STRICT comparison against NULL is false for every row on
+                // either side. 255.255.255.255 is the largest value in the unsigned order the
+                // expansion repairs, so nothing sorts strictly above it - which is what
+                // "ip > max" and "max < ip" both ask. Every other combination returns rows, and a
+                // lowering that moved either fact reddens the matching assertion instead of
+                // quietly turning that leg vacuous.
+                final boolean isNullLiteral = "'0.0.0.0'".equals(literal) || "'null'".equals(literal);
+                final boolean isMaxLiteral = "'255.255.255.255'".equals(literal);
+                for (String operator : new String[]{"<", "<=", ">", ">="}) {
+                    final boolean isStrict = "<".equals(operator) || ">".equals(operator);
+                    assertJitMatchesJavaInAllModes(
+                            "x WHERE ip " + operator + " " + literal,
+                            isStrict && (isNullLiteral || (isMaxLiteral && ">".equals(operator)))
+                    );
+                    assertJitMatchesJavaInAllModes(
+                            "x WHERE " + literal + " " + operator + " ip",
+                            isStrict && (isNullLiteral || (isMaxLiteral && "<".equals(operator)))
+                    );
+                }
+            }
+
+            // Equality agrees with the Java filter, so it keeps compiling.
+            assertJitMatchesJava("x WHERE ip = ip2", true);
+            assertJitMatchesJava("x WHERE ip != ip2", true);
+            assertJitMatchesJava("x WHERE ip = null", true);
+        });
+    }
+
+    @Test
+    public void testIPv4OrderingBindVariableUsesCompiledFilter() throws Exception {
+        // The IPv4 twin of the bind-variable block in testCharOrderingUsesCompiledFilter. This
+        // expansion re-traverses each operand five times (strict) or six (non-strict), so it is the
+        // widest slot duplication serializeBindVariable()'s memo removes. BindVariableService only
+        // exposes setIPv4 by position, hence $1 / $2.
+        assertMemoryLeak(() -> {
+            createIPv4TestTable();
+
+            bindVariableService.clear();
+            bindVariableService.setIPv4(0, "128.0.0.0");
+            bindVariableService.setIPv4(1, "127.255.255.255");
+
+            assertJitMatchesJavaInAllModes("x WHERE ip < $1");
+            assertJitMatchesJavaInAllModes("x WHERE ip <= $1");
+            assertJitMatchesJavaInAllModes("x WHERE ip > $1");
+            assertJitMatchesJavaInAllModes("x WHERE ip >= $1");
+            assertJitMatchesJavaInAllModes("x WHERE $1 < ip");
+            assertJitMatchesJavaInAllModes("x WHERE $1 >= ip");
+            // A sibling variable numbered BELOW the ordering node's rewind watermark keeps its own
+            // slot while the expansion renumbers its own, in both descent orders.
+            assertJitMatchesJavaInAllModes("x WHERE (ip < $1) = (ip2 = $2)");
+            assertJitMatchesJavaInAllModes("x WHERE (ip2 = $2) = (ip < $1)");
+            // Two ordering expansions over one textual name: the memo is per occurrence, and each
+            // expansion rewinds over its own watermark.
+            assertJitMatchesJavaInAllModes("x WHERE (ip < $1) = (ip2 <= $1)");
+        });
+    }
+
+    @Test
+    public void testIPv4QuotedLiteralPredicatesUseCompiledFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createIPv4TestTable();
+
+            for (String predicate : new String[]{
+                    "ip = '128.0.0.0'",
+                    "'128.0.0.0' = ip",
+                    "ip != '255.255.255.255'",
+                    "'255.255.255.255' != ip",
+                    "ip <> '127.255.255.255'",
+                    "'127.255.255.255' <> ip",
+                    "ip = 'NuLl'",
+                    "'NuLl' = ip",
+                    "ip IN ('128.0.0.0')",
+                    "ip NOT IN ('128.0.0.0')",
+                    "ip IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')",
+                    "ip NOT IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')",
+                    "k >= 0 AND ip IN ('NuLl')",
+                    "k >= 0 AND ip NOT IN ('128.0.0.0')",
+                    "k >= 0 AND ip IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')",
+                    "k >= 0 AND ip NOT IN ('127.255.255.255', '128.0.0.0', '255.255.255.255', 'NuLl')"
+            }) {
+                assertJitMatchesJavaInAllModes("x WHERE " + predicate);
+            }
+
+            for (int jitMode : new int[]{
+                    SqlJitMode.JIT_MODE_DISABLED,
+                    SqlJitMode.JIT_MODE_FORCE_SCALAR,
+                    SqlJitMode.JIT_MODE_ENABLED
+            }) {
+                sqlExecutionContext.setJitMode(jitMode);
+                assertExceptionNoLeakCheck(
+                        "x WHERE ip = '999.1.1.1'",
+                        0,
+                        "invalid IPv4 format: 999.1.1.1"
+                );
+            }
+        });
+    }
+
+    @Test
     public void testNarrowIntArithUnderLongWithFloat() throws Exception {
         // A narrow INT arithmetic subtree (c8 * -776_782) that overflows int32
         // and feeds a LONG-width multiply diverged between the JIT and the Java
@@ -5606,6 +6278,102 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRepeatedColumnReadsReuseOneLoad() throws Exception {
+        // Every backend now reuses one load per column per loop body, so a predicate reading the
+        // same operand several times reads memory once. The CHAR and IPv4 ordering expansions are
+        // what make that common: they re-traverse each operand four and five times respectively,
+        // to build the unsigned ordering out of signed comparisons. The vectorized backend had no
+        // value cache at all, and the scalar ones added an i128 value through addXmm but looked it
+        // up through find(), which answers only for a general-purpose register, so a UUID column
+        // was cached and never found.
+        //
+        // Sharing one register is sound only while no backend helper writes into an operand
+        // register, and four sites did. impl/avx2.h's cmp_eq folded its per-qword result into lhs
+        // for the i128 arm and mul did the same with muleven for the i8 one; impl/x86.h's
+        // int128_cmp folded pcmpeqb, which is the two-operand SSE form, into lhs, and x86.h's
+        // flag-based short-circuit arm carried a second copy of that same sequence. None could
+        // show before, because every read allocated a register of its own. Once the reads share
+        // one, the first comparison rewrites the very register the second one has to read.
+        //
+        // The OR chain below is what reaches the short-circuit arm: it emits Or_Sc, so the
+        // equality never materialises a boolean and compares on flags instead. It is a separate
+        // call site from cmp_eq, so a fix in int128_cmp alone leaves it wrong - the shape returned
+        // only the rows matching the FIRST constant.
+        //
+        // The i128 arms are the reachable half, in both backends: a UUID column is 16 bytes, so
+        // Function::compile picks step = 256 / (16 * 8) = 2 and the filter runs an AVX2 loop, and
+        // the scalar loop runs it in forced-scalar mode and in the tail. BYTE arithmetic never
+        // reaches an AVX2 loop at all, since visit() forces the scalar backend for it.
+        //
+        // 35 rows: odd, and above the widest step here, so every lane in the fixture runs full
+        // vector iterations AND leaves a non-empty scalar tail. assertJitMatchesJavaInAllModes
+        // covers forced-scalar too, which is what pins the scalar half.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (u UUID, ip IPv4, c CHAR, k TIMESTAMP) TIMESTAMP(k) PARTITION BY DAY");
+            execute(
+                    """
+                            INSERT INTO x SELECT
+                                (CASE WHEN x % 3 = 0 THEN '11111111-1111-1111-1111-11111111111a'
+                                      WHEN x % 3 = 1 THEN '22222222-2222-2222-2222-222222222222'
+                                      ELSE '33333333-3333-3333-3333-333333333333' END)::UUID,
+                                (CASE WHEN x % 3 = 0 THEN '10.0.0.1'
+                                      WHEN x % 3 = 1 THEN '200.0.0.1'
+                                      ELSE '128.0.0.0' END)::IPv4,
+                                (CASE WHEN x % 3 = 0 THEN 'a' WHEN x % 3 = 1 THEN 'm' ELSE 'z' END)::CHAR,
+                                timestamp_sequence(0, 1_000_000)
+                            FROM long_sequence(35)
+                            """
+            );
+            bindVariableService.setChar("lo", 'a');
+            bindVariableService.setChar("hi", 'z');
+            // BindVariableService declares setIPv4 by POSITION only - setIPv4(int, int),
+            // setIPv4(int, CharSequence) and setIPv4(int) all exist, and no named overload does -
+            // so an IPv4 parameter binds through $1 / $2. PGWire parameters arrive positionally
+            // anyway, so this is the shape the protocol actually produces.
+            bindVariableService.setIPv4(0, "10.0.0.0");
+            bindVariableService.setIPv4(1, "200.0.0.0");
+
+            // Two i128 comparisons over ONE column. Whichever is serialized first clobbered the
+            // shared register, so the second compared the first one's result against a UUID. Both
+            // backends' cmp_ne routes through their cmp_eq, so it carries the same arm. Both
+            // conjunct orders, because PostOrderTreeTraversalAlgo descends node.rhs first and only
+            // the second comparison to run reads the damaged register.
+            assertJitMatchesJavaInAllModes("x WHERE u = '11111111-1111-1111-1111-11111111111a'"
+                    + " OR u = '33333333-3333-3333-3333-333333333333'");
+            assertJitMatchesJavaInAllModes("x WHERE u = '33333333-3333-3333-3333-333333333333'"
+                    + " OR u = '11111111-1111-1111-1111-11111111111a'");
+            assertJitMatchesJavaInAllModes("x WHERE u <> '22222222-2222-2222-2222-222222222222'"
+                    + " AND u <> '33333333-3333-3333-3333-333333333333'");
+            assertJitMatchesJavaInAllModes("x WHERE u = '22222222-2222-2222-2222-222222222222'"
+                    + " AND u <> '33333333-3333-3333-3333-333333333333'");
+            assertJitCountQuery("SELECT count() FROM x WHERE u = '11111111-1111-1111-1111-11111111111a'"
+                    + " OR u = '33333333-3333-3333-3333-333333333333'", 23);
+            assertJitCountQuery("SELECT count() FROM x WHERE u <> '22222222-2222-2222-2222-222222222222'"
+                    + " AND u <> '33333333-3333-3333-3333-333333333333'", 11);
+
+            // The expansions themselves, which is what the cache is for: an IPv4 range reads each
+            // operand five times per body and a CHAR one four times.
+            assertJitMatchesJavaInAllModes("x WHERE ip > '10.0.0.0' AND ip < '200.0.0.0'");
+            assertJitMatchesJavaInAllModes("x WHERE c > 'a' AND c < 'z'");
+            assertJitCountQuery("SELECT count() FROM x WHERE ip > '10.0.0.0' AND ip < '200.0.0.0'", 23);
+            assertJitCountQuery("SELECT count() FROM x WHERE c > 'a' AND c < 'z'", 12);
+
+            // Same shape with bind variables, which the cache holds under a numbering of their
+            // own: read_vars_mem broadcasts each of these four (CHAR) or five (IPv4) times per
+            // body without it.
+            assertJitMatchesJavaInAllModes("x WHERE c > :lo AND c < :hi");
+            assertJitCountQuery("SELECT count() FROM x WHERE c > :lo AND c < :hi", 12);
+            // The IPv4 half is not merely CHAR's twin: its expansion re-traverses each operand
+            // five times rather than four, and it is the one that also emits IMM INT_MIN operands
+            // to keep 128.0.0.0 - which encodes as INT_MIN, the native i32 null sentinel - inside
+            // the range. The fixture holds 12 such rows, so a dropped or mis-signed repair term on
+            // the bind-variable side moves the answer here and nowhere else in this test.
+            assertJitMatchesJavaInAllModes("x WHERE ip > $1 AND ip < $2");
+            assertJitCountQuery("SELECT count() FROM x WHERE ip > $1 AND ip < $2", 23);
+        });
+    }
+
+    @Test
     public void testShortCircuitAndDeepChain() throws Exception {
         // Tests short-circuit AND with a deep chain of predicates
         final String query = "x where " +
@@ -5805,6 +6573,72 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSymbolNegativeNumericConstant() throws Exception {
+        // https://github.com/questdb/questdb/issues/7548
+        // The parser splits `-5` into a unary minus over the token "5", and the
+        // SYMBOL arm of the constant serializer used to drop the sign, resolving
+        // the key of '5' instead of '-5'.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('5', 0), ('-5', 1), (null, 2)");
+
+            assertJitMatchesJava("x WHERE sy = -5", true);
+            assertJitMatchesJava("x WHERE sy != -5", true);
+            assertJitMatchesJava("x WHERE sy = '-5'", true);
+            assertJitMatchesJava("x WHERE sy = 5", true);
+            // Deferred (not yet in the symbol table) negative constant. No row carries '-42', so
+            // the correct answer is the empty result.
+            assertJitMatchesJavaOnEmptyResult("x WHERE sy = -42", true);
+        });
+    }
+
+    @Test
+    public void testSymbolNegativeQuotedNumericConstantEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('-5', 0), ('5', 1), ('other', 2), (null, 3)");
+            execute("CREATE TABLE y (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO y VALUES ('-5', 0), ('other', 1), (null, 2)");
+
+            assertJitMatchesJavaInAllModes("x WHERE sy = -'5'");
+            assertJitMatchesJavaInAllModes("y WHERE sy = -'5'");
+        });
+    }
+
+    @Test
+    public void testSymbolNegativeQuotedNumericConstantNotEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('-5', 0), ('5', 1), ('other', 2), (null, 3)");
+            execute("CREATE TABLE y (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO y VALUES ('-5', 0), ('other', 1), (null, 2)");
+
+            assertJitMatchesJavaInAllModes("x WHERE sy != -'5'");
+            assertJitMatchesJavaInAllModes("y WHERE sy != -'5'");
+        });
+    }
+
+    @Test
+    public void testSymbolNumericNegativeZeroEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('0', 0), ('-0', 1), (null, 2)");
+
+            assertJitMatchesJavaInAllModes("x WHERE sy = -0");
+        });
+    }
+
+    @Test
+    public void testSymbolNumericNegativeZeroNotEquals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (sy SYMBOL, k TIMESTAMP) TIMESTAMP(k)");
+            execute("INSERT INTO x VALUES ('0', 0), ('-0', 1), (null, 2)");
+
+            assertJitMatchesJavaInAllModes("x WHERE sy != -0");
+        });
+    }
+
+    @Test
     public void testSymbolNull() throws Exception {
         final String query = "x where sym <> null";
         final String ddl = "create table x as " +
@@ -5921,6 +6755,41 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                 .withEqualityOperator()
                 .withAnyOf("null");
         assertGeneratedQueryNullable(ddl, gen);
+    }
+
+    @Test
+    public void testUuidOrderingFallsBackToJavaFilter() throws Exception {
+        // https://github.com/questdb/questdb/issues/7546
+        // An i128 lane reached the backends' ordering comparators, whose
+        // data_type_t switch ends in `default: __builtin_unreachable()`, and the
+        // resulting jump-table overrun killed the JVM with SIGSEGV at
+        // filter-compile time - no data needed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (uu UUID, u2 UUID, k TIMESTAMP) TIMESTAMP(k)");
+
+            // Empty table: the crash used to happen before a single row was read.
+            assertJitMatchesJava("SELECT count() FROM x WHERE uu > u2", false);
+
+            execute(
+                    "INSERT INTO x VALUES " +
+                            "('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222', 0), " +
+                            "('ffffffff-ffff-ffff-ffff-ffffffffffff', '22222222-2222-2222-2222-222222222222', 1), " +
+                            "(null, '22222222-2222-2222-2222-222222222222', 2), " +
+                            "('11111111-1111-1111-1111-111111111111', null, 3), " +
+                            "(null, null, 4)"
+            );
+
+            assertJitMatchesJava("x WHERE uu > u2", false);
+            assertJitMatchesJava("x WHERE uu >= u2", false);
+            assertJitMatchesJava("x WHERE uu < u2", false);
+            assertJitMatchesJava("x WHERE uu <= u2", false);
+            assertJitMatchesJava("x WHERE uu > '22222222-2222-2222-2222-222222222222'", false);
+
+            // Equality has a real i128 comparator in both backends, so it keeps compiling.
+            assertJitMatchesJava("x WHERE uu = u2", true);
+            assertJitMatchesJava("x WHERE uu != u2", true);
+            assertJitMatchesJava("x WHERE uu = '11111111-1111-1111-1111-111111111111'", true);
+        });
     }
 
     @Test
@@ -7885,6 +8754,202 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
         assertGeneratedQuery(ddl, gen, false);
     }
 
+    private void createIPv4TestTable() throws SqlException {
+        // ip spells its values as dotted quads because 128.0.0.0 is Integer.MIN_VALUE, which is
+        // also Numbers.INT_NULL: CastIntToIPv4FunctionFactory maps that to IPv4 NULL, so the
+        // -2_147_483_648::INT::IPv4 this column used to carry stored a NULL and the fixture never
+        // held the sign-boundary value the tests below name. ip2 keeps the numeric spelling; none
+        // of its values is INT_NULL.
+        execute("CREATE TABLE x (ip IPv4, ip2 IPv4, k TIMESTAMP) TIMESTAMP(k)");
+        execute(
+                """
+                        INSERT INTO x
+                        SELECT
+                            (CASE x % 8
+                                WHEN 0 THEN '0.0.0.0'
+                                WHEN 1 THEN '127.255.255.255'
+                                WHEN 2 THEN '128.0.0.0'
+                                WHEN 3 THEN '255.255.255.255'
+                                WHEN 4 THEN '10.0.0.1'
+                                WHEN 5 THEN '128.0.0.1'
+                                WHEN 6 THEN '0.0.0.1'
+                                ELSE '127.0.0.1'
+                            END)::IPv4,
+                            (CASE x % 8
+                                WHEN 0 THEN 2_147_483_647
+                                WHEN 1 THEN 2_147_483_647
+                                WHEN 2 THEN -1
+                                WHEN 3 THEN 0
+                                WHEN 4 THEN -2_147_483_647
+                                WHEN 5 THEN 167_772_161
+                                WHEN 6 THEN 2_130_706_433
+                                ELSE 1
+                            END)::INT::IPv4,
+                            timestamp_sequence(0, 1)
+                        FROM long_sequence(""" + N_SIMD_WITH_SCALAR_TAIL + ")"
+        );
+    }
+
+    /**
+     * Runs {@code whereExpr} over the {@code b} fixture built by
+     * {@link #testBooleanExpressionNestedInComparison()} in every execution mode the filter has -
+     * the Java filter, {@code JIT_MODE_FORCE_SCALAR}, {@code JIT_MODE_ENABLED}, and the serial
+     * (non-parallel) filter - and asserts they all select the same rows.
+     * <p>
+     * {@code expectedRows} is not redundant with the parity
+     * {@link #assertJitMatchesJavaInAllModes(CharSequence)} already checks. Parity is an oracle
+     * only for a defect that moves ONE path, and this shape family carries two defects that move
+     * different ones, so a count both paths got wrong the same way would pass on parity alone. It
+     * also states WHICH of these predicates are contradictions: several are, and the parity helper
+     * only demands that the count be zero or non-zero as {@code expectedRows} says, so it is the
+     * exact count here that keeps a fixture which stops discriminating from turning the battery
+     * vacuous.
+     * <p>
+     * The serial arm runs the JAVA filter whatever the JIT mode says -
+     * {@code SqlCodeGenerator#generateFilter} only reaches the JIT behind
+     * {@code executionContext.isParallelFilterEnabled()} - so it pins the oracle itself rather than
+     * a fourth backend, and asserts that no compiled filter is in play there.
+     */
+    private void assertBooleanFilterInAllModes(String whereExpr, long expectedRows) throws SqlException {
+        // expectedRows is this site's own declaration of the answer, so it also decides whether
+        // the predicate is one of the contradictions whose answer IS no rows.
+        assertJitMatchesJavaInAllModes("b WHERE " + whereExpr, expectedRows == 0);
+
+        final String countQuery = "SELECT count() FROM b WHERE " + whereExpr;
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+        assertBooleanFilterRowCount(countQuery, SqlJitMode.JIT_MODE_DISABLED, expectedRows);
+        // The two JIT modes go through assertJitCountQuery, which walks the same count cursor and
+        // additionally asserts usesCompiledFilter(). Without that the count() query's JIT usage
+        // sits unpinned: count() takes a different code path from the row-returning form
+        // assertJitMatchesJavaInAllModes covers, so a decline that only moved the count path would
+        // leave the whole battery green on parity and on the absolute counts alike.
+        assertJitCountQuery(countQuery, expectedRows);
+
+        sqlExecutionContext.setParallelFilterEnabled(false);
+        try {
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            try (RecordCursorFactory factory = select("b WHERE " + whereExpr)) {
+                Assert.assertFalse(
+                        "serial filter is expected to run the Java filter for: " + whereExpr,
+                        factory.usesCompiledFilter()
+                );
+            }
+            assertBooleanFilterRowCount(countQuery, SqlJitMode.JIT_MODE_ENABLED, expectedRows);
+        } finally {
+            sqlExecutionContext.setParallelFilterEnabled(true);
+        }
+    }
+
+    private void assertBooleanFilterRowCount(String countQuery, int jitMode, long expectedRows) throws SqlException {
+        try (RecordCursorFactory factory = select(countQuery)) {
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(countQuery, cursor.hasNext());
+                Assert.assertEquals(
+                        "row count mismatch at jitMode=" + jitMode + " for: " + countQuery,
+                        expectedRows,
+                        cursor.getRecord().getLong(0)
+                );
+            }
+        }
+    }
+
+    /**
+     * Runs a {@code predicate} whose comparison reads a column over the {@code x} fixture built by
+     * {@link #testColumnFreeComparisonDeclinesCompiledFilter()} and asserts that it still compiles
+     * a filter, in both JIT modes and on both the row and the count path.
+     * <p>
+     * {@code expectedRows} sharpens the guard {@link #assertJitMatchesJavaInAllModes(CharSequence)}
+     * carries: that helper only demands the shape return SOME rows, so the absolute count is what
+     * states which proper non-empty subset of the 35-row fixture the shape selects.
+     */
+    private void assertColumnComparisonCompiles(String predicate, long expectedRows) throws SqlException {
+        assertJitMatchesJavaInAllModes("x WHERE " + predicate);
+        assertJitCountQuery("SELECT count() FROM x WHERE " + predicate, expectedRows);
+    }
+
+    /**
+     * Runs a {@code predicate} whose comparison reads NO column over the {@code x} fixture built by
+     * {@link #testColumnFreeComparisonDeclinesCompiledFilter()} and asserts that the JIT declines
+     * it in every execution mode, and that the Java filter selects {@code expectedRows}.
+     * <p>
+     * The decline is the assertion the defect breaks: the serializer used to compile these shapes
+     * and, for every type but CHAR, answer with the COMPLEMENT of the Java row set. Parity alone
+     * cannot pin that once the shape declines - both runs are then the same Java filter - so
+     * {@code expectJit == false} is what keeps the site live, and {@code expectedRows} keeps it
+     * from going vacuous if the fixture ever stops discriminating. Every count passed here is a
+     * proper non-empty subset of the fixture's 35 rows.
+     */
+    private void assertColumnFreeComparisonDeclines(String predicate, long expectedRows) throws SqlException {
+        final String rowQuery = "x WHERE " + predicate;
+        final String countQuery = "SELECT count() FROM x WHERE " + predicate;
+        // JIT_MODE_DISABLED versus JIT_MODE_ENABLED, plus the non-empty guard.
+        assertJitMatchesJava(rowQuery, false);
+        // count() builds a different factory, so the decline has to hold there too - and this is
+        // where the absolute row count gets pinned.
+        assertJitMatchesJava(countQuery, false, "count\n" + expectedRows + "\n");
+        // JIT_MODE_FORCE_SCALAR is the third execution mode. Both backends must decline, not only
+        // the vectorized one: they were wrong in the same direction, which is why parity between
+        // them never flagged the shape.
+        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_FORCE_SCALAR);
+        try (RecordCursorFactory factory = select(rowQuery)) {
+            Assert.assertFalse("compiled filter is expected to decline for: " + rowQuery, factory.usesCompiledFilter());
+        }
+        try (RecordCursorFactory factory = select(countQuery)) {
+            Assert.assertFalse("compiled filter is expected to decline for: " + countQuery, factory.usesCompiledFilter());
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(countQuery, cursor.hasNext());
+                Assert.assertEquals(
+                        "[scalar mode] count mismatch for query: " + countQuery,
+                        expectedRows,
+                        cursor.getRecord().getLong(0)
+                );
+            }
+        }
+    }
+
+    /**
+     * Runs {@code query} with the Java filter, then in {@code JIT_MODE_FORCE_SCALAR}, then
+     * vectorized, and asserts all three select the same rows. It pins no absolute result: the
+     * shapes it serves run over fixtures whose full dump is too wide to spell out, so parity plus
+     * the non-empty guard is all it claims. A site that CAN name its rows says so through
+     * {@link #assertJitScalarAndVectorMatchJava(CharSequence, CharSequence)} instead.
+     * <p>
+     * It runs the sibling's walk by delegating to it rather than repeating it, and so inherits
+     * both of that walk's safety properties: the caller's JIT mode is restored on every exit, and
+     * a result that is empty in every mode fails instead of agreeing trivially.
+     */
+    private void assertJitMatchesJavaInAllModes(CharSequence query) throws SqlException {
+        assertJitMatchesJavaInAllModes(query, false);
+    }
+
+    /**
+     * Companion to {@link #assertJitMatchesJavaInAllModes(CharSequence)} for the shapes whose
+     * CORRECT answer is no rows - a strict comparison against a NULL sentinel, or against the
+     * largest value the type's order admits. Those cannot pass the non-empty guard, and forcing
+     * them through it would mean redesigning the fixture rather than fixing anything, so this
+     * DECLARES the empty answer instead and PINS it: a fixture that silently starts matching, or a
+     * defect that starts adding rows, still has to redden a test.
+     * <p>
+     * Unlike {@link #assertJitScalarAndVectorMatchJavaOnEmptyResult(CharSequence, CharSequence)}
+     * it takes no expected string, so it does not pin the columns the cursor prints - the whole
+     * {@code InAllModes} family asserts parity and row count only.
+     */
+    private void assertJitMatchesJavaInAllModesOnEmptyResult(CharSequence query) throws SqlException {
+        assertJitMatchesJavaInAllModes(query, true);
+    }
+
+    /**
+     * The form for a caller that COMPUTES whether the answer is empty rather than knowing it at
+     * the call site - a loop over operand combinations, or a wrapper that already carries the
+     * expected row count. A site that knows the answer statically says so by NAME, through
+     * {@link #assertJitMatchesJavaInAllModes(CharSequence)} or
+     * {@link #assertJitMatchesJavaInAllModesOnEmptyResult(CharSequence)}, rather than by passing a
+     * boolean literal here.
+     */
+    private void assertJitMatchesJavaInAllModes(CharSequence query, boolean isEmptyRequired) throws SqlException {
+        assertJitScalarAndVectorMatchJava(query, null, isEmptyRequired);
+    }
+
     /**
      * Runs {@code query} with JIT disabled and with JIT enabled and asserts the
      * two cursors produce identical output. {@code expectJit} pins whether the
@@ -8116,7 +9181,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
     // three engines agree on nothing at all, so the site would read as coverage while pinning
     // none. A site whose correct answer IS no rows says so through
     // assertJitScalarAndVectorMatchJavaOnEmptyResult.
-    private void assertJitScalarAndVectorMatchJava(CharSequence query, CharSequence expected) throws SqlException {
+    private void assertJitScalarAndVectorMatchJava(CharSequence query, @NotNull CharSequence expected) throws SqlException {
         assertJitScalarAndVectorMatchJava(query, expected, false);
     }
 
@@ -8132,13 +9197,25 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
      * {@code expected} stays mandatory and is still compared in full - it names the columns the
      * cursor prints, so a projection change fails here rather than passing on a shorter header.
      */
-    private void assertJitScalarAndVectorMatchJavaOnEmptyResult(CharSequence query, CharSequence expected) throws SqlException {
+    private void assertJitScalarAndVectorMatchJavaOnEmptyResult(CharSequence query, @NotNull CharSequence expected) throws SqlException {
         assertJitScalarAndVectorMatchJava(query, expected, true);
     }
 
+    /**
+     * The walk both families share: the Java oracle, the absolute-result and row-count checks over
+     * it, then the FORCE_SCALAR and vectorized runs compared against that oracle, with the
+     * caller's JIT mode restored on every exit.
+     * <p>
+     * {@code expected} stays MANDATORY on every entry point that exposes it -
+     * {@link #assertJitScalarAndVectorMatchJava(CharSequence, CharSequence)} and
+     * {@link #assertJitScalarAndVectorMatchJavaOnEmptyResult(CharSequence, CharSequence)} both
+     * declare it {@code @NotNull}. It is null only for the
+     * {@link #assertJitMatchesJavaInAllModes(CharSequence)} family, which claims parity and the
+     * row count and nothing about the projection.
+     */
     private void assertJitScalarAndVectorMatchJava(
             CharSequence query,
-            CharSequence expected,
+            @Nullable CharSequence expected,
             boolean isEmptyRequired
     ) throws SqlException {
         final int callerJitMode = sqlExecutionContext.getJitMode();
@@ -8151,7 +9228,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
                     CursorPrinter.println(cursor, factory.getMetadata(), javaSink);
                 }
             }
-            TestUtils.assertEquals("absolute result mismatch for query: " + query, expected, javaSink);
+            if (expected != null) {
+                TestUtils.assertEquals("absolute result mismatch for query: " + query, expected, javaSink);
+            }
             final int rows = countPrintedRows(javaSink);
             if (isEmptyRequired) {
                 Assert.assertEquals("query is expected to return no rows: " + query, 0, rows);

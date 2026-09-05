@@ -3407,12 +3407,22 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             int colType = sidecarColumnTypes.getQuick(includeIdx);
             int elemSize = ColumnType.sizeOf(colType);
-            int needed = count * elemSize;
+            // Widen: an int product wraps negative past 2^31 bytes, which fails the capacity test
+            // below, skips the realloc, and leaves the decode writing into the previous, smaller
+            // buffer. The writer refuses to seal a block this large, so reaching it means the
+            // sidecar is corrupt.
+            long needed = (long) count * elemSize;
+            if (needed > Integer.MAX_VALUE) {
+                throw CairoException.critical(0).put(INDEX_CORRUPT)
+                        .put(": sidecar block exceeds 2^31 bytes [valueCount=").put(count)
+                        .put(", columnType=").put(ColumnType.nameOf(colType))
+                        .put(']');
+            }
             if (needed > colCacheCapacities[includeIdx]) {
                 colCacheAddrs[includeIdx] = Unsafe.realloc(
                         colCacheAddrs[includeIdx], colCacheCapacities[includeIdx],
                         needed, MemoryTag.NATIVE_INDEX_READER);
-                colCacheCapacities[includeIdx] = needed;
+                colCacheCapacities[includeIdx] = (int) needed;
             }
             ensureDecodeWorkspaceCapacity(count);
             switch (ColumnType.tagOf(colType)) {

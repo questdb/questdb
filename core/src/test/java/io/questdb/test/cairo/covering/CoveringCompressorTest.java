@@ -103,6 +103,119 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllMaxByteStrideRoundTrip() throws Exception {
+        // Negative control for the MAX_VALUE sentinel collision. compressBytes
+        // seeds forBase with Long.MAX_VALUE but Unsafe.getByte can only hand it
+        // values in [-128, 127], so an all-Byte.MAX_VALUE stride never reaches
+        // the "no values seen" reset.
+        assertMemoryLeak(() -> {
+            assertBytesRoundTrip(new byte[]{Byte.MAX_VALUE});
+            assertBytesRoundTrip(new byte[]{Byte.MAX_VALUE, Byte.MAX_VALUE});
+            final byte[] wide = new byte[64];
+            Arrays.fill(wide, Byte.MAX_VALUE);
+            assertBytesRoundTrip(wide);
+        });
+    }
+
+    @Test
+    public void testAllMaxDoubleStrideRoundTrip() throws Exception {
+        // compressDoubles minimises over the ALP-ENCODED stride, and alpEncode
+        // returns Long.MAX_VALUE only as its "not encodable" sentinel, which
+        // compressDoubles diverts into the exception list instead of writing to
+        // encodedAddr. The encoded stride therefore cannot be all-Long.MAX_VALUE
+        // while count > 0. These strides pin that: Double.MAX_VALUE and
+        // Double.MIN_VALUE are both inencodable and travel as exceptions.
+        assertMemoryLeak(() -> {
+            assertDoublesRoundTrip(new double[]{Double.MAX_VALUE});
+            assertDoublesRoundTrip(new double[]{Double.MAX_VALUE, Double.MAX_VALUE});
+            assertDoublesRoundTrip(new double[]{Double.MIN_VALUE, Double.MIN_VALUE});
+            assertDoublesRoundTrip(new double[]{-Double.MAX_VALUE, -Double.MAX_VALUE});
+            final double[] wide = new double[64];
+            Arrays.fill(wide, Double.MAX_VALUE);
+            assertDoublesRoundTrip(wide);
+        });
+    }
+
+    @Test
+    public void testAllMaxFloatStrideRoundTrip() throws Exception {
+        // Same argument as testAllMaxDoubleStrideRoundTrip, one width down:
+        // alpEncodeFloat's sentinel is Integer.MAX_VALUE and every encoded slot
+        // holds a sign-extended int, so the long-typed forBase stays inside int
+        // range and the narrowing Unsafe.putInt of the base cannot truncate.
+        assertMemoryLeak(() -> {
+            assertFloatsRoundTrip(new float[]{Float.MAX_VALUE});
+            assertFloatsRoundTrip(new float[]{Float.MAX_VALUE, Float.MAX_VALUE});
+            assertFloatsRoundTrip(new float[]{Float.MIN_VALUE, Float.MIN_VALUE});
+            assertFloatsRoundTrip(new float[]{-Float.MAX_VALUE, -Float.MAX_VALUE});
+            final float[] wide = new float[64];
+            Arrays.fill(wide, Float.MAX_VALUE);
+            assertFloatsRoundTrip(wide);
+        });
+    }
+
+    @Test
+    public void testAllMaxIntStrideRoundTrip() throws Exception {
+        // A sealed sidecar block whose covered INT / IPv4 / GEOINT / SYMBOL /
+        // DECIMAL32 values are all Integer.MAX_VALUE. The FoR span is 0, so no
+        // packed payload is written and both readers reproduce the stored base
+        // verbatim -- which means the writer must store the real base and not
+        // confuse the running minimum with its "no values seen" sentinel.
+        assertMemoryLeak(() -> {
+            assertIntsRoundTrip(new int[]{Integer.MAX_VALUE});
+            assertIntsRoundTrip(new int[]{Integer.MAX_VALUE, Integer.MAX_VALUE});
+            assertIntsRoundTrip(new int[]{Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE});
+            final int[] wide = new int[64];
+            Arrays.fill(wide, Integer.MAX_VALUE);
+            assertIntsRoundTrip(wide);
+        });
+    }
+
+    @Test
+    public void testAllMaxLinearPredStrideRoundTrip() throws Exception {
+        // compressLongsLinearPred minimises over RESIDUALS, and residual[0] is
+        // always val[0] - firstValue == 0 because firstValue is read from the
+        // same slot; count <= 1 never reaches the loop at all (it delegates to
+        // compressLongs). resMin is therefore always <= 0 and can never equal
+        // the Long.MAX_VALUE sentinel. An all-Long.MAX_VALUE ascending stride
+        // pins the reasoning end to end.
+        assertMemoryLeak(() -> {
+            assertLinearPredRoundTrip(new long[]{Long.MAX_VALUE});
+            assertLinearPredRoundTrip(new long[]{Long.MAX_VALUE, Long.MAX_VALUE});
+            assertLinearPredRoundTrip(new long[]{Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE});
+            final long[] wide = new long[64];
+            Arrays.fill(wide, Long.MAX_VALUE);
+            assertLinearPredRoundTrip(wide);
+        });
+    }
+
+    @Test
+    public void testAllMaxLongStrideRoundTrip() throws Exception {
+        // The LONG / TIMESTAMP / DATE / GEOLONG / DECIMAL64 twin of
+        // testAllMaxIntStrideRoundTrip.
+        assertMemoryLeak(() -> {
+            assertLongsRoundTrip(new long[]{Long.MAX_VALUE});
+            assertLongsRoundTrip(new long[]{Long.MAX_VALUE, Long.MAX_VALUE});
+            assertLongsRoundTrip(new long[]{Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE});
+            final long[] wide = new long[64];
+            Arrays.fill(wide, Long.MAX_VALUE);
+            assertLongsRoundTrip(wide);
+        });
+    }
+
+    @Test
+    public void testAllMaxShortStrideRoundTrip() throws Exception {
+        // Negative control, as testAllMaxByteStrideRoundTrip: Unsafe.getShort
+        // bounds the running minimum to [-32768, 32767].
+        assertMemoryLeak(() -> {
+            assertShortsRoundTrip(new short[]{Short.MAX_VALUE});
+            assertShortsRoundTrip(new short[]{Short.MAX_VALUE, Short.MAX_VALUE});
+            final short[] wide = new short[64];
+            Arrays.fill(wide, Short.MAX_VALUE);
+            assertShortsRoundTrip(wide);
+        });
+    }
+
+    @Test
     public void testAlpEncodeDecode() throws Exception {
         assertMemoryLeak(() -> {
             double[] values = {10.5, 20.5, 11.5, 30.5, 21.5, 12.5};
@@ -135,6 +248,111 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 double dec = CoveringCompressor.alpDecode(enc, e, f);
                 Assert.assertEquals(Double.doubleToRawLongBits(val), Double.doubleToRawLongBits(dec));
             }
+        });
+    }
+
+    @Test
+    public void testBoundaryValuesBytes() throws Exception {
+        assertMemoryLeak(() -> {
+            final byte[] boundaries = {
+                    Byte.MIN_VALUE, (byte) (Byte.MIN_VALUE + 1), -1, 0, 1,
+                    (byte) (Byte.MAX_VALUE - 1), Byte.MAX_VALUE
+            };
+            for (byte v : boundaries) {
+                assertBytesRoundTrip(new byte[]{v});
+                assertBytesRoundTrip(new byte[]{v, v});
+                assertBytesRoundTrip(new byte[]{v, v, v, v, v, v, v, v, v});
+                for (byte w : boundaries) {
+                    assertBytesRoundTrip(new byte[]{v, w});
+                    assertBytesRoundTrip(new byte[]{w, v, w});
+                }
+            }
+            assertBytesRoundTrip(boundaries);
+        });
+    }
+
+    @Test
+    public void testBoundaryValuesInts() throws Exception {
+        assertMemoryLeak(() -> {
+            final int[] boundaries = {
+                    Integer.MIN_VALUE, Integer.MIN_VALUE + 1, -1, 0, 1,
+                    Integer.MAX_VALUE - 1, Integer.MAX_VALUE
+            };
+            for (int v : boundaries) {
+                assertIntsRoundTrip(new int[]{v});
+                assertIntsRoundTrip(new int[]{v, v});
+                assertIntsRoundTrip(new int[]{v, v, v, v, v, v, v, v, v});
+                for (int w : boundaries) {
+                    assertIntsRoundTrip(new int[]{v, w});
+                    assertIntsRoundTrip(new int[]{w, v, w});
+                }
+            }
+            assertIntsRoundTrip(boundaries);
+        });
+    }
+
+    @Test
+    public void testBoundaryValuesLinearPred() throws Exception {
+        // compressLongsLinearPred asserts its input is sorted ascending, so the
+        // mixed strides here only ever pair a value with one at or above it.
+        assertMemoryLeak(() -> {
+            final long[] boundaries = {
+                    Long.MIN_VALUE, Long.MIN_VALUE + 1, -1L, 0L, 1L,
+                    Long.MAX_VALUE - 1, Long.MAX_VALUE
+            };
+            for (long v : boundaries) {
+                assertLinearPredRoundTrip(new long[]{v});
+                assertLinearPredRoundTrip(new long[]{v, v});
+                assertLinearPredRoundTrip(new long[]{v, v, v, v, v, v, v, v, v});
+            }
+            for (int i = 0; i < boundaries.length; i++) {
+                for (int j = i; j < boundaries.length; j++) {
+                    assertLinearPredRoundTrip(new long[]{boundaries[i], boundaries[j]});
+                    assertLinearPredRoundTrip(new long[]{boundaries[i], boundaries[i], boundaries[j]});
+                    assertLinearPredRoundTrip(new long[]{boundaries[i], boundaries[j], boundaries[j]});
+                }
+            }
+            assertLinearPredRoundTrip(boundaries);
+        });
+    }
+
+    @Test
+    public void testBoundaryValuesLongs() throws Exception {
+        assertMemoryLeak(() -> {
+            final long[] boundaries = {
+                    Long.MIN_VALUE, Long.MIN_VALUE + 1, -1L, 0L, 1L,
+                    Long.MAX_VALUE - 1, Long.MAX_VALUE
+            };
+            for (long v : boundaries) {
+                assertLongsRoundTrip(new long[]{v});
+                assertLongsRoundTrip(new long[]{v, v});
+                assertLongsRoundTrip(new long[]{v, v, v, v, v, v, v, v, v});
+                for (long w : boundaries) {
+                    assertLongsRoundTrip(new long[]{v, w});
+                    assertLongsRoundTrip(new long[]{w, v, w});
+                }
+            }
+            assertLongsRoundTrip(boundaries);
+        });
+    }
+
+    @Test
+    public void testBoundaryValuesShorts() throws Exception {
+        assertMemoryLeak(() -> {
+            final short[] boundaries = {
+                    Short.MIN_VALUE, (short) (Short.MIN_VALUE + 1), -1, 0, 1,
+                    (short) (Short.MAX_VALUE - 1), Short.MAX_VALUE
+            };
+            for (short v : boundaries) {
+                assertShortsRoundTrip(new short[]{v});
+                assertShortsRoundTrip(new short[]{v, v});
+                assertShortsRoundTrip(new short[]{v, v, v, v, v, v, v, v, v});
+                for (short w : boundaries) {
+                    assertShortsRoundTrip(new short[]{v, w});
+                    assertShortsRoundTrip(new short[]{w, v, w});
+                }
+            }
+            assertShortsRoundTrip(boundaries);
         });
     }
 
@@ -724,7 +942,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                     1e-3f, 1e3f, 42.0f, 42.0f, 42.0f, Float.MIN_NORMAL
             };
             int count = input.length;
-            int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.FLOAT);
+            long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.FLOAT);
             long srcAddr = Unsafe.malloc((long) count * Float.BYTES, MemoryTag.NATIVE_DEFAULT);
             long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
             long encAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -789,7 +1007,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     @Test
     public void testEmptyBlockBwIsZero() throws Exception {
         assertMemoryLeak(() -> {
-            int destCap = CoveringCompressor.maxCompressedSize(1, ColumnType.LONG);
+            long destCap = CoveringCompressor.maxCompressedSize(1, ColumnType.LONG);
             long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
             try {
                 int sz = CoveringCompressor.compressLongs(0L, 0, destAddr);
@@ -803,11 +1021,54 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyBlockForBaseIsZero() throws Exception {
+        // The empty-block header is on-disk format. Separating "I saw no values"
+        // from "the minimum happens to be MAX_VALUE" must leave the count == 0
+        // header byte-for-byte identical: count 0, bit width 0, FoR base 0.
+        assertMemoryLeak(() -> {
+            final long destCap = CoveringCompressor.maxCompressedSize(1, ColumnType.LONG);
+            final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
+            try {
+                // LONG: count(4) + bitWidth(1) + forBase(8)
+                Unsafe.setMemory(destAddr, destCap, (byte) 0x5a);
+                Assert.assertEquals(CoveringCompressor.LONG_HEADER_SIZE,
+                        CoveringCompressor.compressLongs(0L, 0, destAddr));
+                Assert.assertEquals(0, Unsafe.getInt(destAddr));
+                Assert.assertEquals(0, Unsafe.getByte(destAddr + 4));
+                Assert.assertEquals(0L, Unsafe.getLong(destAddr + 5));
+
+                // INT: count(4) + bitWidth(1) + forBase(4)
+                Unsafe.setMemory(destAddr, destCap, (byte) 0x5a);
+                Assert.assertEquals(9, CoveringCompressor.compressInts(0L, 0, destAddr, 0L));
+                Assert.assertEquals(0, Unsafe.getInt(destAddr));
+                Assert.assertEquals(0, Unsafe.getByte(destAddr + 4));
+                Assert.assertEquals(0, Unsafe.getInt(destAddr + 5));
+
+                // SHORT: count(4) + bitWidth(1) + forBase(2)
+                Unsafe.setMemory(destAddr, destCap, (byte) 0x5a);
+                Assert.assertEquals(7, CoveringCompressor.compressShorts(0L, 0, destAddr, 0L));
+                Assert.assertEquals(0, Unsafe.getInt(destAddr));
+                Assert.assertEquals(0, Unsafe.getByte(destAddr + 4));
+                Assert.assertEquals(0, Unsafe.getShort(destAddr + 5));
+
+                // BYTE: count(4) + bitWidth(1) + forBase(1)
+                Unsafe.setMemory(destAddr, destCap, (byte) 0x5a);
+                Assert.assertEquals(6, CoveringCompressor.compressBytes(0L, 0, destAddr, 0L));
+                Assert.assertEquals(0, Unsafe.getInt(destAddr));
+                Assert.assertEquals(0, Unsafe.getByte(destAddr + 4));
+                Assert.assertEquals(0, Unsafe.getByte(destAddr + 5));
+            } finally {
+                Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testLinearPredFallbackOnBwOverflow() throws Exception {
         assertMemoryLeak(() -> {
             long[] input = {0L, Long.MIN_VALUE, Long.MAX_VALUE, 0L};
             int count = input.length;
-            int destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP);
+            long destCap = CoveringCompressor.maxCompressedSize(count, ColumnType.TIMESTAMP);
             long srcAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
             long workAddr = Unsafe.malloc((long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -831,6 +1092,43 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 Unsafe.free(srcAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         });
+    }
+
+    /**
+     * The worst-case block size must stay exact once the product passes 2^31. It used to be
+     * computed in {@code int} and wrapped negative, and both seal paths then read the negative as
+     * "nothing to allocate" and handed the encoder a null destination buffer.
+     */
+    @Test
+    public void testMaxCompressedSizeDoesNotOverflowInt() {
+        // DOUBLE is the widest worst case at ~20 bytes/value, so it crosses 2^31 first
+        Assert.assertEquals(
+                CoveringCompressor.DOUBLE_HEADER_SIZE + 200_000_000L * 8 + 200_000_000L * 12,
+                CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.DOUBLE)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_HEADER_SIZE + 300_000_000L * 8,
+                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.LONG)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_LINEAR_PRED_HEADER_SIZE + 300_000_000L * 8,
+                CoveringCompressor.maxCompressedSize(300_000_000, ColumnType.TIMESTAMP)
+        );
+        Assert.assertEquals(
+                4 + 200_000_000L * 16,
+                CoveringCompressor.maxCompressedSize(200_000_000, ColumnType.UUID)
+        );
+        // INT_HEADER_SIZE is package-private, so assert the packed payload is at least covered
+        Assert.assertTrue(CoveringCompressor.maxCompressedSize(600_000_000, ColumnType.INT) > 600_000_000L * 4);
+        // ordinary block sizes are unchanged
+        Assert.assertEquals(
+                CoveringCompressor.DOUBLE_HEADER_SIZE + 1_000L * 8 + 1_000L * 12,
+                CoveringCompressor.maxCompressedSize(1_000, ColumnType.DOUBLE)
+        );
+        Assert.assertEquals(
+                CoveringCompressor.LONG_HEADER_SIZE + 1_000L * 8,
+                CoveringCompressor.maxCompressedSize(1_000, ColumnType.LONG)
+        );
     }
 
     @Test
@@ -964,6 +1262,44 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertBytesRoundTrip(byte[] input) {
+        final int count = input.length;
+        withNarrowBlock(count, count, ColumnType.BYTE,
+                (srcAddr, destAddr, workspaceAddr) -> {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.putByte(srcAddr + i, input[i]);
+                    }
+                    return CoveringCompressor.compressBytes(srcAddr, count, destAddr, workspaceAddr);
+                },
+                (block, storedLength, outAddr, wsAddr) -> {
+                    CoveringCompressor.decompressBytesToAddr(block, outAddr, wsAddr);
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
+                                input[i], Unsafe.getByte(outAddr + i));
+                        Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                                input[i], CoveringCompressor.readByteAt(block, i));
+                    }
+                });
+    }
+
+    /**
+     * Round-trips {@code input} through the ALP double encoder on the guarded block
+     * {@link #withDoubleBlock(double[], BlockTest)} sets up, so a decode that writes past the
+     * declared element count trips {@link #assertGuardWords(long, int)}.
+     */
+    private static void assertDoublesRoundTrip(double[] input) {
+        withDoubleBlock(input, (block, storedLength, outAddr, wsAddr) -> {
+            for (int i = 0; i < input.length; i++) {
+                Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                        Double.doubleToRawLongBits(input[i]),
+                        Double.doubleToRawLongBits(CoveringCompressor.readDoubleAt(block, i)));
+            }
+            CoveringCompressor.decompressDoublesToAddr(block, outAddr, wsAddr);
+            assertExactDoubles(input, outAddr);
+            assertGuardWords(outAddr, input.length);
+        });
+    }
+
     private static void assertExactDoubles(double[] expected, long addr) {
         for (int i = 0; i < expected.length; i++) {
             Assert.assertEquals("value " + i + " (" + expected[i] + ")",
@@ -978,11 +1314,114 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertFloatsRoundTrip(float[] input) {
+        final int count = input.length;
+        withNarrowBlock(count, (long) count * Float.BYTES, ColumnType.FLOAT,
+                (srcAddr, destAddr, workspaceAddr) -> {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.putFloat(srcAddr + (long) i * Float.BYTES, input[i]);
+                    }
+                    return compressFloats(srcAddr, count, destAddr, workspaceAddr);
+                },
+                (block, storedLength, outAddr, wsAddr) -> {
+                    CoveringCompressor.decompressFloatsToAddr(block, outAddr, wsAddr);
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
+                                Float.floatToRawIntBits(input[i]),
+                                Float.floatToRawIntBits(Unsafe.getFloat(outAddr + (long) i * Float.BYTES)));
+                        Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                                Float.floatToRawIntBits(input[i]),
+                                Float.floatToRawIntBits(CoveringCompressor.readFloatAt(block, i)));
+                    }
+                });
+    }
+
     private static void assertGuardWords(long addr, int count) {
         for (int i = count; i < count + GUARD_WORDS; i++) {
             Assert.assertEquals("decode wrote past element " + count,
                     GUARD_WORD, Unsafe.getLong(addr + (long) i * Long.BYTES));
         }
+    }
+
+    /**
+     * Proves the decode wrote nothing past the {@code payloadSize} bytes it declared. The narrow
+     * widths need this instead of {@link #assertGuardWords(long, int)}, which strides in long
+     * words and so would leave every byte between a byte/short/int/float payload and the first
+     * guard word unwatched. Pairs with {@link #fillGuardWordsAfter(long, long)}.
+     */
+    private static void assertGuardWordsAfter(long addr, long payloadSize, int count) {
+        for (int i = 0; i < GUARD_WORDS; i++) {
+            Assert.assertEquals("decode wrote past element " + count,
+                    GUARD_WORD, Unsafe.getLong(addr + payloadSize + (long) i * Long.BYTES));
+        }
+    }
+
+    private static void assertIntsRoundTrip(int[] input) {
+        final int count = input.length;
+        withNarrowBlock(count, (long) count * Integer.BYTES, ColumnType.INT,
+                (srcAddr, destAddr, workspaceAddr) -> {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.putInt(srcAddr + (long) i * Integer.BYTES, input[i]);
+                    }
+                    return CoveringCompressor.compressInts(srcAddr, count, destAddr, workspaceAddr);
+                },
+                (block, storedLength, outAddr, wsAddr) -> {
+                    CoveringCompressor.decompressIntsToAddr(block, outAddr, wsAddr);
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
+                                input[i], Unsafe.getInt(outAddr + (long) i * Integer.BYTES));
+                        Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                                input[i], CoveringCompressor.readIntAt(block, i));
+                    }
+                });
+    }
+
+    /**
+     * The linear-prediction twin of {@link #assertLongsRoundTrip(long[])}.
+     */
+    private static void assertLinearPredRoundTrip(long[] input) {
+        assertLongBlockRoundTrip(input, true);
+    }
+
+    /**
+     * Round-trips {@code input} through the plain or linear-prediction FoR long encoder on the
+     * guarded block {@link #withLongBlock(long[], boolean, BlockTest)} sets up, so a decode that
+     * writes past the declared element count trips {@link #assertGuardWords(long, int)}.
+     */
+    private static void assertLongBlockRoundTrip(long[] input, boolean linearPred) {
+        withLongBlock(input, linearPred, (block, storedLength, outAddr, wsAddr) -> {
+            for (int i = 0; i < input.length; i++) {
+                Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                        input[i], CoveringCompressor.readLongAt(block, i));
+            }
+            CoveringCompressor.decompressLongsToAddr(block, outAddr, wsAddr);
+            assertExactLongs(input, outAddr);
+            assertGuardWords(outAddr, input.length);
+        });
+    }
+
+    private static void assertLongsRoundTrip(long[] input) {
+        assertLongBlockRoundTrip(input, false);
+    }
+
+    private static void assertShortsRoundTrip(short[] input) {
+        final int count = input.length;
+        withNarrowBlock(count, (long) count * Short.BYTES, ColumnType.SHORT,
+                (srcAddr, destAddr, workspaceAddr) -> {
+                    for (int i = 0; i < count; i++) {
+                        Unsafe.putShort(srcAddr + (long) i * Short.BYTES, input[i]);
+                    }
+                    return CoveringCompressor.compressShorts(srcAddr, count, destAddr, workspaceAddr);
+                },
+                (block, storedLength, outAddr, wsAddr) -> {
+                    CoveringCompressor.decompressShortsToAddr(block, outAddr, wsAddr);
+                    for (int i = 0; i < count; i++) {
+                        Assert.assertEquals("bulk decode " + Arrays.toString(input) + " at " + i,
+                                input[i], Unsafe.getShort(outAddr + (long) i * Short.BYTES));
+                        Assert.assertEquals("point read " + Arrays.toString(input) + " at " + i,
+                                input[i], CoveringCompressor.readShortAt(block, i));
+                    }
+                });
     }
 
     private static void assertUntouched(long addr, int count) {
@@ -1010,6 +1449,21 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(excAddr, count, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(encAddr, (long) count * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    /**
+     * Compresses {@code count} floats into {@code destAddr}. The wrapper owns the exception list the
+     * ALP float encoder needs and borrows {@code encodedAddr} -- {@code count * Long.BYTES} bytes --
+     * for the encoded stride, so a caller that already holds a workspace does not allocate a second.
+     */
+    private static int compressFloats(long srcAddr, int count, long destAddr, long encodedAddr) {
+        final long excSize = Math.max(1, count);
+        final long excAddr = Unsafe.malloc(excSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            return CoveringCompressor.compressFloats(srcAddr, count, destAddr, encodedAddr, excAddr);
+        } finally {
+            Unsafe.free(excAddr, excSize, MemoryTag.NATIVE_DEFAULT);
         }
     }
 
@@ -1073,6 +1527,14 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Lays {@link #GUARD_WORDS} sentinel words directly past a {@code payloadSize}-byte decode
+     * target. Size that target with {@link #guardedSize(long)}.
+     */
+    private static void fillGuardWordsAfter(long addr, long payloadSize) {
+        fillGuardWords(addr + payloadSize, 0);
+    }
+
     private static int findParams(double[] values) {
         long addr = Unsafe.malloc((long) values.length * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
         try {
@@ -1086,6 +1548,13 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     }
 
     /**
+     * The allocation a {@code payloadSize}-byte decode target needs to carry its guard words.
+     */
+    private static long guardedSize(long payloadSize) {
+        return payloadSize + (long) GUARD_WORDS * Long.BYTES;
+    }
+
+    /**
      * Compresses {@code input} into an ALP block and runs {@code body} against it
      * with a decode target and workspace that both carry {@link #GUARD_WORDS}
      * sentinel words past their declared capacity.
@@ -1096,7 +1565,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         final long encodedSize = Math.max(1, (long) count * Long.BYTES);
         final long exceptionSize = Math.max(1, count);
         final long guardedSize = (long) (count + GUARD_WORDS) * Long.BYTES;
-        final int destCapacity = CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE);
+        final long destCapacity = CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE);
         final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
         final long destAddr = Unsafe.malloc(destCapacity, MemoryTag.NATIVE_DEFAULT);
         final long encodedAddr = Unsafe.malloc(encodedSize, MemoryTag.NATIVE_DEFAULT);
@@ -1133,7 +1602,7 @@ public class CoveringCompressorTest extends AbstractCairoTest {
         final int count = input.length;
         final long srcSize = Math.max(1, (long) count * Long.BYTES);
         final long guardedSize = (long) (count + GUARD_WORDS) * Long.BYTES;
-        final int destCapacity = CoveringCompressor.maxCompressedSize(
+        final long destCapacity = CoveringCompressor.maxCompressedSize(
                 count, linearPred ? ColumnType.TIMESTAMP : ColumnType.LONG);
         final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
         final long destAddr = Unsafe.malloc(destCapacity, MemoryTag.NATIVE_DEFAULT);
@@ -1159,6 +1628,53 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             Unsafe.free(destAddr, destCapacity, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(srcAddr, srcSize, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    /**
+     * Compresses a narrow-width block -- BYTE, SHORT, INT or FLOAT -- and runs {@code body} against
+     * it. {@code encode} writes {@code count} elements into the source buffer and compresses them
+     * into the destination; it may use {@code workspaceAddr}, {@code count * Long.BYTES} bytes of
+     * scratch, for whatever the encoder needs. {@code body} then receives the block, a decode target
+     * sized by {@link #guardedSize(long)} and a decode workspace of the same width. Sentinel words
+     * sit directly past the {@code payloadSize} bytes of that target, so a decode that overruns the
+     * payload trips {@link #assertGuardWordsAfter(long, long, int)}. The wide types have
+     * {@link #withDoubleBlock(double[], BlockTest)} and
+     * {@link #withLongBlock(long[], boolean, BlockTest)}, which guard in whole long words instead.
+     */
+    private static void withNarrowBlock(
+            int count,
+            long payloadSize,
+            int columnType,
+            BlockEncoder encode,
+            BlockTest body
+    ) {
+        final long srcSize = Math.max(1, payloadSize);
+        final long wsSize = Math.max(1, (long) count * Long.BYTES);
+        final long outSize = guardedSize(payloadSize);
+        final long destCap = CoveringCompressor.maxCompressedSize(count, columnType);
+        final long srcAddr = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+        final long destAddr = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
+        final long workspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
+        final long outAddr = Unsafe.malloc(outSize, MemoryTag.NATIVE_DEFAULT);
+        final long decodeWorkspaceAddr = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            final int storedLength = encode.encode(srcAddr, destAddr, workspaceAddr);
+            Assert.assertTrue("compressed size must fit the destination",
+                    storedLength > 0 && storedLength <= destCap);
+            fillGuardWordsAfter(outAddr, payloadSize);
+            body.run(destAddr, storedLength, outAddr, decodeWorkspaceAddr);
+            assertGuardWordsAfter(outAddr, payloadSize, count);
+        } finally {
+            Unsafe.free(decodeWorkspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(outAddr, outSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(workspaceAddr, wsSize, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(destAddr, destCap, MemoryTag.NATIVE_DEFAULT);
+            Unsafe.free(srcAddr, srcSize, MemoryTag.NATIVE_DEFAULT);
+        }
+    }
+
+    private interface BlockEncoder {
+        int encode(long srcAddr, long destAddr, long workspaceAddr);
     }
 
     private interface BlockTest {
