@@ -419,7 +419,7 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
             execute("create table t (ts timestamp, v double) timestamp(ts)");
             assertQuery("select ts, lttb(ts, v, 5, '1M') over (order by ts) from t")
                     .noLeakCheck()
-                    .fails(27, "unsupported interval unit");
+                    .fails(28, "unsupported interval unit");
         });
     }
 

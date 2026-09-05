@@ -60,7 +60,7 @@ import io.questdb.griffin.engine.functions.catalogue.ShowTransactionIsolationLev
 import io.questdb.griffin.engine.functions.constants.CharConstant;
 import io.questdb.griffin.engine.functions.date.TimestampFloorFromOffsetUtcFunctionFactory;
 import io.questdb.griffin.engine.functions.date.ToUTCTimestampFunctionFactory;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
+import io.questdb.griffin.engine.functions.window.LttbFunctionFactory;
 import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.engine.table.ShowColumnsRecordCursorFactory;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
@@ -100,7 +100,6 @@ import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.Uuid;
 import io.questdb.std.datetime.CommonUtils;
-import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.FlyweightCharSequence;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -10550,7 +10549,7 @@ public class SqlOptimiser implements Mutable {
                         throw SqlException.$(subsample.position, "uniform() requires exactly 1 argument: target points");
                     }
                     if (timestamp == null) {
-                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                        throw subsampleTimestampMissing(subsamplePos, sourceTimestamp != null);
                     }
                     validatePositionTargetOrThrow(subsample.args.getQuick(0), false, sqlExecutionContext);
                     model = desugarUniformSubsample(model, nested, subsample, timestamp, windowTsToken);
@@ -10559,7 +10558,7 @@ public class SqlOptimiser implements Mutable {
                         throw SqlException.$(subsample.position, "cadence() requires 1 or 2 arguments: stride and optional seed");
                     }
                     if (timestamp == null) {
-                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                        throw subsampleTimestampMissing(subsamplePos, sourceTimestamp != null);
                     }
                     validatePositionTargetOrThrow(subsample.args.getQuick(0), true, sqlExecutionContext);
                     if (subsample.paramCount == 2) {
@@ -10569,8 +10568,8 @@ public class SqlOptimiser implements Mutable {
                 } else if (Chars.equalsIgnoreCase(subsample.token, "m4")
                         || Chars.equalsIgnoreCase(subsample.token, "minmax")) {
                     if (subsample.paramCount < 2) {
-                        throw SqlException.$(subsample.position, "SUBSAMPLE ")
-                                .put(subsample.token).put("() requires at least 2 arguments: column and target points");
+                        throw SqlException.$(subsample.position, subsample.token)
+                                .put("() requires at least 2 arguments: column and target points");
                     }
                     if (subsample.paramCount > 2) {
                         throw SqlException.$(subsample.args.getQuick(2).position, subsample.token)
@@ -10580,7 +10579,7 @@ public class SqlOptimiser implements Mutable {
                     // timestamp. Preserve that error precedence for combined-invalid queries.
                     final QueryColumn valueColumn = resolveVisibleSubsampleColumnOrThrow(model, subsample.args.getQuick(0));
                     if (timestamp == null) {
-                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                        throw subsampleTimestampMissing(subsamplePos, sourceTimestamp != null);
                     }
                     validateValueInspectingArgsOrThrow(model, valueColumn, subsample, sqlExecutionContext);
                     model = desugarValueInspectingSubsample(
@@ -10588,7 +10587,7 @@ public class SqlOptimiser implements Mutable {
                     );
                 } else if (Chars.equalsIgnoreCase(subsample.token, "lttb")) {
                     if (subsample.paramCount < 2) {
-                        throw SqlException.$(subsample.position, "SUBSAMPLE lttb() requires at least 2 arguments: column and target points");
+                        throw SqlException.$(subsample.position, "lttb() requires at least 2 arguments: column and target points");
                     }
                     if (subsample.paramCount > 3) {
                         throw SqlException.$(subsample.args.getQuick(3).position, "lttb() accepts at most 3 arguments: column, target points, and optional gap threshold");
@@ -10597,7 +10596,7 @@ public class SqlOptimiser implements Mutable {
                     // timestamp. Preserve that error precedence for combined-invalid queries.
                     final QueryColumn valueColumn = resolveVisibleSubsampleColumnOrThrow(model, subsample.args.getQuick(0));
                     if (timestamp == null) {
-                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
+                        throw subsampleTimestampMissing(subsamplePos, sourceTimestamp != null);
                     }
                     validateValueInspectingArgsOrThrow(model, valueColumn, subsample, sqlExecutionContext);
                     if (subsample.paramCount == 3) {
@@ -10632,16 +10631,9 @@ public class SqlOptimiser implements Mutable {
                         throw SqlException.$(subsample.position, "SUBSAMPLE sdt is not supported in an aggregation context");
                     }
                     if (timestamp == null) {
-                        throw SqlException.$(subsample.position, "SUBSAMPLE requires a designated timestamp column");
+                        throw subsampleTimestampMissing(subsample.position, sourceTimestamp != null);
                     }
-                    final ExpressionNode valueNode = subsample.args.getQuick(0);
-                    if (valueNode == null || valueNode.type != ExpressionNode.LITERAL) {
-                        throw SqlException.$(
-                                valueNode == null ? subsample.position : valueNode.position,
-                                "SUBSAMPLE sdt requires a plain column as its first argument"
-                        );
-                    }
-                    final QueryColumn valueColumn = resolveVisibleSubsampleColumnOrThrow(model, valueNode);
+                    final QueryColumn valueColumn = resolveVisibleSubsampleColumnOrThrow(model, subsample.args.getQuick(0));
                     final ExpressionNode compdevNode = subsample.args.getQuick(1);
                     if (!isConstantSdtCompdev(compdevNode, sqlExecutionContext)) {
                         throw SqlException.$(
@@ -10653,14 +10645,10 @@ public class SqlOptimiser implements Mutable {
                             model, nested, subsample, timestamp, windowTsToken, valueColumn.getAlias(), subsample.token
                     );
                 } else {
-                    // Timestamp resolution precedes method dispatch on the legacy codegen path.
-                    if (timestamp == null) {
-                        throw SqlException.$(subsamplePos, "SUBSAMPLE requires a designated timestamp column");
-                    }
-                    // Total catch-all: an unrecognised method name. Throw the cursor-identical error here
-                    // so the deleted-in-a-follow-up codegen dispatch is unreachable.
+                    // Total catch-all: an unrecognised method name. Report it before any timestamp check,
+                    // because no timestamp fix can make the query valid.
                     throw SqlException.$(subsample.position, "unknown subsample method: ").put(subsample.token)
-                            .put(". Supported methods: lttb, m4, minmax, uniform, cadence");
+                            .put(". Supported methods: lttb, m4, minmax, uniform, cadence, sdt");
                 }
             }
         }
@@ -10685,6 +10673,11 @@ public class SqlOptimiser implements Mutable {
      * {@code cadence} selects the stride wording (else the target-point-count wording).
      */
     private void validatePositionTargetOrThrow(ExpressionNode node, boolean cadence, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (node.type == ExpressionNode.LITERAL) {
+            // a column reference is never a constant; FunctionParser would otherwise report it as an unknown column
+            throw SqlException.$(node.position, cadence ? "stride" : "target point count")
+                    .put(" must be a constant or bind variable");
+        }
         Function func = null;
         try {
             func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
@@ -10694,6 +10687,9 @@ public class SqlOptimiser implements Mutable {
                         .put(" must be a constant or bind variable");
             }
             if (constant) {
+                if (ColumnType.isNull(func.getType())) {
+                    throw SqlException.$(node.position, cadence ? "stride must be set" : "target point count must be set");
+                }
                 final int tag = ColumnType.tagOf(func.getType());
                 if (tag != ColumnType.INT && tag != ColumnType.LONG && tag != ColumnType.SHORT && tag != ColumnType.BYTE) {
                     throw SqlException.$(node.position, cadence ? "integer expected for stride" : "integer expected for target point count");
@@ -10765,6 +10761,10 @@ public class SqlOptimiser implements Mutable {
      * NULL" - both cursor-identical at {@code node.position}.
      */
     private void validateCadenceSeedOrThrow(ExpressionNode node, SqlExecutionContext sqlExecutionContext) throws SqlException {
+        if (node.type == ExpressionNode.LITERAL) {
+            // a column reference is never a constant; FunctionParser would otherwise report it as an unknown column
+            throw SqlException.$(node.position, "seed must be a constant, bind variable, or NULL");
+        }
         Function func = null;
         try {
             func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
@@ -10794,7 +10794,16 @@ public class SqlOptimiser implements Mutable {
      */
     private QueryColumn resolveVisibleSubsampleColumnOrThrow(IQueryModel model, ExpressionNode valueNode) throws SqlException {
         if (valueNode.type != ExpressionNode.LITERAL) {
-            throw SqlException.$(valueNode.position, "column not found: ").put(valueNode.token);
+            if (valueNode.type == ExpressionNode.CONSTANT) {
+                throw SqlException.$(valueNode.position, "SUBSAMPLE value argument must be a column name, not a constant");
+            }
+            if (valueNode.type == ExpressionNode.BIND_VARIABLE) {
+                throw SqlException.$(valueNode.position, "SUBSAMPLE value argument must be a column name, not a bind variable");
+            }
+            throw SqlException.$(
+                    valueNode.position,
+                    "SUBSAMPLE value argument must be a column name; alias the expression in the SELECT list and reference the alias"
+            );
         }
 
         IQueryModel boundary = model;
@@ -10823,7 +10832,24 @@ public class SqlOptimiser implements Mutable {
             }
             boundary = boundary.getNestedModel();
         }
-        throw SqlException.$(valueNode.position, "column not found: ").put(valueNode.token);
+        if (Chars.indexOfLastUnquoted(valueNode.token, '.') > -1) {
+            throw SqlException.$(
+                    valueNode.position,
+                    "qualified column names are not supported in SUBSAMPLE arguments; use the unqualified SELECT list name"
+            );
+        }
+        throw SqlException.$(valueNode.position, "column not found in SELECT list: ").put(valueNode.token);
+    }
+
+    /**
+     * Distinguishes a query source without a designated timestamp from a projection that hides one, so the
+     * message tells the user which of the two to fix.
+     */
+    private static SqlException subsampleTimestampMissing(int position, boolean isTimestampHidden) {
+        final SqlException e = SqlException.$(position, "SUBSAMPLE requires a designated timestamp column; ");
+        return isTimestampHidden
+                ? e.put("the SELECT list must include it unchanged")
+                : e.put("the query source has no designated timestamp");
     }
 
     private static QueryColumn findQueryColumnByAlias(ObjList<QueryColumn> columns, CharSequence token) {
@@ -10958,10 +10984,10 @@ public class SqlOptimiser implements Mutable {
                     .put(ColumnType.nameOf(valueType));
         }
 
-        final ExpressionNode targetNode = subsample.args.getQuick(1);
-        if (!isConstantOrRuntimeConstant(targetNode, sqlExecutionContext)) {
-            throw SqlException.$(targetNode.position, "target point count must be a constant or bind variable");
-        }
+        // The same contract as uniform's target: a constant is type- and range-checked here, so an invalid
+        // constant reports "integer expected" or a range error instead of a failed overload resolution
+        // against the desugared window function; a bind variable migrates and is checked at runtime.
+        validatePositionTargetOrThrow(subsample.args.getQuick(1), false, sqlExecutionContext);
     }
 
     /**
@@ -10971,42 +10997,10 @@ public class SqlOptimiser implements Mutable {
      */
     private void validateLttbGapOrThrow(ExpressionNode gapNode) throws SqlException {
         final CharSequence gapStr = gapNode.token;
-        final CharSequence interval = Chars.isQuoted(gapStr)
-                ? Chars.toString(gapStr, 1, gapStr.length() - 1)
-                : gapStr;
-        final int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(
-                interval, gapNode.position, "gap threshold"
-        );
-        final long n = TimestampSamplerFactory.parsePositiveInterval(
-                interval, k, gapNode.position, "gap threshold", Numbers.INT_NULL, '?'
-        );
-        final long unitMicros = switch (interval.charAt(k)) {
-            case 's' -> Micros.SECOND_MICROS;
-            case 'm' -> Micros.MINUTE_MICROS;
-            case 'h' -> Micros.HOUR_MICROS;
-            case 'd' -> Micros.DAY_MICROS;
-            default -> throw SqlException.$(gapNode.position + k, "unsupported interval unit: ")
-                    .put(interval.charAt(k)).put(". Supported: s, m, h, d");
-        };
-        if (n > Long.MAX_VALUE / unitMicros) {
-            throw SqlException.$(gapNode.position, "gap threshold overflow");
+        if (gapNode.type != ExpressionNode.CONSTANT || !Chars.isQuoted(gapStr)) {
+            throw SqlException.$(gapNode.position, "gap threshold must be a string constant such as '1h'");
         }
-    }
-
-    /**
-     * True when {@code node} parses to a compile-time constant or a runtime constant (bind variable) -
-     * i.e. a target/stride the window factory accepts and range-validates itself. FunctionParser errors
-     * propagate unchanged, as they did on the legacy codegen path; only a successfully parsed non-constant
-     * expression returns false.
-     */
-    private boolean isConstantOrRuntimeConstant(ExpressionNode node, SqlExecutionContext sqlExecutionContext) throws SqlException {
-        Function func = null;
-        try {
-            func = functionParser.parseFunction(node, EmptyRecordMetadata.INSTANCE, sqlExecutionContext);
-            return func.isConstant() || func.isRuntimeConstant();
-        } finally {
-            Misc.free(func);
-        }
+        LttbFunctionFactory.parseGapThresholdMicros(Chars.toString(gapStr, 1, gapStr.length() - 1), gapNode.position);
     }
 
     /**

@@ -519,8 +519,8 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP)");
             assertException(
                     "SELECT price, ts FROM t SUBSAMPLE unknown_algo(price, 5)",
-                    24,
-                    "SUBSAMPLE requires a designated timestamp column"
+                    34,
+                    "unknown subsample method"
             );
         });
     }
@@ -532,17 +532,17 @@ public class SubsampleTest extends AbstractCairoTest {
             assertException(
                     "SELECT price, ts FROM t SUBSAMPLE lttb(nonexistent, 5)",
                     39,
-                    "column not found: nonexistent"
+                    "column not found in SELECT list: nonexistent"
             );
             assertException(
                     "SELECT * FROM t SUBSAMPLE m4(nonexistent, 5)",
                     29,
-                    "column not found: nonexistent"
+                    "column not found in SELECT list: nonexistent"
             );
             assertException(
                     "SELECT * FROM t SUBSAMPLE minmax(nonexistent, 5)",
                     33,
-                    "column not found: nonexistent"
+                    "column not found in SELECT list: nonexistent"
             );
         });
     }
@@ -553,10 +553,10 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP)");
             for (String method : new String[]{"lttb", "m4", "minmax"}) {
                 final String sql = "SELECT * FROM t SUBSAMPLE " + method + "(nonexistent, 5)";
-                assertException(sql, sql.indexOf("nonexistent"), "column not found: nonexistent");
+                assertException(sql, sql.indexOf("nonexistent"), "column not found in SELECT list: nonexistent");
             }
             final String expressionSql = "SELECT * FROM t SUBSAMPLE m4(price * 2, 5)";
-            assertException(expressionSql, expressionSql.lastIndexOf('*'), "column not found: *");
+            assertException(expressionSql, expressionSql.lastIndexOf('*'), "SUBSAMPLE value argument must be a column name; alias the expression in the SELECT list and reference the alias");
         });
     }
 
@@ -1252,7 +1252,7 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertException(
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5, '1M')",
-                    50,
+                    51,
                     "unsupported interval unit"
             );
         });
@@ -1265,12 +1265,12 @@ public class SubsampleTest extends AbstractCairoTest {
             assertException(
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5, concat('1', 'h'))",
                     49,
-                    "expected single letter qualifier"
+                    "gap threshold must be a string constant such as '1h'"
             );
             assertException(
                     "SELECT price, ts FROM t SUBSAMPLE lttb(price, 5, '1h'::string)",
                     53,
-                    "expected single letter qualifier"
+                    "gap threshold must be a string constant such as '1h'"
             );
         });
     }
@@ -1357,9 +1357,9 @@ public class SubsampleTest extends AbstractCairoTest {
             execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO rt VALUES (10.0, '2024-01-01'), (20.0, '2024-01-02'), (30.0, '2024-01-03')");
             final String hidden = "SELECT price x, ts FROM rt SUBSAMPLE lttb(price, 2)";
-            assertException(hidden, hidden.lastIndexOf("price"), "column not found: price");
+            assertException(hidden, hidden.lastIndexOf("price"), "column not found in SELECT list: price");
             final String qualified = "SELECT price x, ts FROM rt SUBSAMPLE lttb(rt.price, 2)";
-            assertException(qualified, qualified.lastIndexOf("rt.price"), "column not found: rt.price");
+            assertException(qualified, qualified.lastIndexOf("rt.price"), "qualified column names are not supported in SUBSAMPLE arguments; use the unqualified SELECT list name");
             assertQuery("SELECT price x, ts FROM rt SUBSAMPLE lttb(x, 2)")
                     .timestamp("ts")
                     .returns("x\tts\n10.0\t2024-01-01T00:00:00.000000Z\n30.0\t2024-01-03T00:00:00.000000Z\n");
@@ -4974,22 +4974,20 @@ public class SubsampleTest extends AbstractCairoTest {
     @Test
     public void testM4ExpressionValueArgRejected() throws Exception {
         // The value-inspecting gate migrates m4/minmax to the window path ONLY when the value arg
-        // (arg 0) is a bare column literal. The legacy cursor resolved the value arg BY NAME ONLY
-        // (columnNode.token), so an expression like v*2 looked up a column literally named "*" and
-        // failed with "column not found". The rewrite now throws that same error (message and
-        // position) directly for a non-literal value arg, so the window path never silently
-        // evaluates v*2 as a DOUBLE expression. Assert the cursor-identical error.
+        // (arg 0) is a bare column literal. The rewrite rejects a non-literal value arg with a message
+        // that tells the user to project the expression and reference its alias, so the window path
+        // never silently evaluates v*2 as a DOUBLE expression.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             assertException(
                     "SELECT ts, v FROM t SUBSAMPLE m4(v * 2, 4)",
                     35,
-                    "column not found: *"
+                    "SUBSAMPLE value argument must be a column name; alias the expression in the SELECT list and reference the alias"
             );
             assertException(
                     "SELECT ts, v FROM t SUBSAMPLE m4(abs(v), 4)",
                     33,
-                    "column not found: abs"
+                    "SUBSAMPLE value argument must be a column name; alias the expression in the SELECT list and reference the alias"
             );
         });
     }
@@ -5211,7 +5209,7 @@ public class SubsampleTest extends AbstractCairoTest {
             assertException(
                     "SELECT ts, price FROM x SUBSAMPLE sdt(price * 2, 0.5)",
                     44,
-                    "SUBSAMPLE sdt requires a plain column as its first argument"
+                    "SUBSAMPLE value argument must be a column name; alias the expression in the SELECT list and reference the alias"
             );
         });
     }

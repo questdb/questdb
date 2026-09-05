@@ -30,12 +30,12 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.groupby.TimestampSamplerFactory;
 import io.questdb.griffin.engine.table.LttbAlgorithm;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
 import org.jetbrains.annotations.Nullable;
@@ -163,10 +163,9 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         );
     }
 
-    // Preserves SUBSAMPLE's gap-threshold parsing contract: the same TimestampSamplerFactory calls,
-    // supported units, errors, and positions. The optimiser validates the raw (possibly quoted)
-    // SUBSAMPLE token; here the direct window function receives an already-compiled STRING constant
-    // (guaranteed by the lowercase 's' in "lttb(NDls)"), so getStrA() returns unquoted content.
+    // The direct window function receives an already-compiled STRING constant (guaranteed by the
+    // lowercase 's' in "lttb(NDls)"), so getStrA() returns unquoted content. The SUBSAMPLE clause
+    // validates its raw quoted token through the same parseGapThresholdMicros().
     //
     // The interval is parsed to micros and then scaled into the timestamp column's NATIVE unit.
     // LttbAlgorithm compares the threshold against raw column timestamps, so on a TIMESTAMP_NS
@@ -174,20 +173,49 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     // every 3.6 seconds, over-segmenting the series and blowing past target_points (gap mode uses
     // soft targets, so every extra segment adds rows).
     private static long parseGapThreshold(Function gapArg, int gapPosition, int timestampType) throws SqlException {
-        final CharSequence interval = gapArg.getStrA(null);
-        int k = TimestampSamplerFactory.findPositiveIntervalEndIndex(interval, gapPosition, "gap threshold");
-        long n = TimestampSamplerFactory.parsePositiveInterval(
-                interval, k, gapPosition, "gap threshold", Numbers.INT_NULL, '?'
-        );
-        final long micros = switch (interval.charAt(k)) {
-            case 's' -> safeMultiplyMicros(n, Micros.SECOND_MICROS, gapPosition);
-            case 'm' -> safeMultiplyMicros(n, Micros.MINUTE_MICROS, gapPosition);
-            case 'h' -> safeMultiplyMicros(n, Micros.HOUR_MICROS, gapPosition);
-            case 'd' -> safeMultiplyMicros(n, Micros.DAY_MICROS, gapPosition);
-            default -> throw SqlException.$(gapPosition + k, "unsupported interval unit: ").put(interval.charAt(k))
+        return toTimestampUnits(parseGapThresholdMicros(gapArg.getStrA(null), gapPosition), timestampType);
+    }
+
+    /**
+     * Parses a gap threshold such as '30s', '5m', '1h' or '1d' into microseconds. Both the SUBSAMPLE clause
+     * and the window-function form report through this method, so a malformed threshold gets the same
+     * diagnostic on either path. {@code position} is the position of the quoted SQL token; unit errors
+     * point at the offending character inside the quotes.
+     */
+    public static long parseGapThresholdMicros(@Nullable CharSequence interval, int position) throws SqlException {
+        if (interval == null) {
+            throw SqlException.$(position, "gap threshold must be a string constant such as '1h'");
+        }
+        final int len = interval.length();
+        int k = 0;
+        while (k < len && interval.charAt(k) >= '0' && interval.charAt(k) <= '9') {
+            k++;
+        }
+        if (k == 0 || k != len - 1) {
+            throw SqlException.$(position, "invalid gap threshold '").put(interval)
+                    .put("'; expected a number followed by a unit, such as '30s', '5m', '1h' or '1d'");
+        }
+        final long n;
+        try {
+            n = Numbers.parseLong(interval, 0, k);
+        } catch (NumericException e) {
+            throw SqlException.$(position, "gap threshold overflow");
+        }
+        if (n == 0) {
+            throw SqlException.$(position, "gap threshold must be greater than zero");
+        }
+        final long unitMicros = switch (interval.charAt(k)) {
+            case 's' -> Micros.SECOND_MICROS;
+            case 'm' -> Micros.MINUTE_MICROS;
+            case 'h' -> Micros.HOUR_MICROS;
+            case 'd' -> Micros.DAY_MICROS;
+            default -> throw SqlException.$(position + 1 + k, "unsupported interval unit: ").put(interval.charAt(k))
                     .put(". Supported: s, m, h, d");
         };
-        return toTimestampUnits(micros, timestampType);
+        if (n > Long.MAX_VALUE / unitMicros) {
+            throw SqlException.$(position, "gap threshold overflow");
+        }
+        return n * unitMicros;
     }
 
     // Scales a micros threshold into the timestamp column's native unit: identity for TIMESTAMP,
@@ -202,15 +230,6 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
             return micros;
         }
         return micros > Long.MAX_VALUE / unitsPerMicro ? Long.MAX_VALUE : micros * unitsPerMicro;
-    }
-
-    // Preserve the gap-threshold overflow contract: n * unitMicros can overflow long for large n
-    // (e.g. many days), so guard before multiplying.
-    private static long safeMultiplyMicros(long n, long unitMicros, int pos) throws SqlException {
-        if (n > Long.MAX_VALUE / unitMicros) {
-            throw SqlException.$(pos, "gap threshold overflow");
-        }
-        return n * unitMicros;
     }
 
     // lttb(ts, value, target[, gap]) over (order by xxx) - no partition by, no framing.
