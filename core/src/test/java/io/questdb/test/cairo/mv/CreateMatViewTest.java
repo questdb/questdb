@@ -718,6 +718,57 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewLimitNotSupported() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            // Non-aggregating (passthrough) view: incremental refresh would apply the limit to
+            // each refreshed timestamp slice, accumulating more rows than the defining query.
+            assertQuery("create materialized view test as (select * from " + TABLE1 + " limit 2) partition by day")
+                    .noLeakCheck()
+                    .fails(61, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // lo,hi (range) form
+            assertQuery("create materialized view test as (select * from " + TABLE1 + " limit 2, 5) partition by day")
+                    .noLeakCheck()
+                    .fails(61, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // aggregating SAMPLE BY view
+            assertQuery("create materialized view test as (select ts, avg(v) from " + TABLE1 + " sample by 30s limit 5) partition by day")
+                    .noLeakCheck()
+                    .fails(84, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // limit nested in a subquery over the base table
+            assertQuery("create materialized view test as (select * from (select * from " + TABLE1 + " limit 2)) partition by day")
+                    .noLeakCheck()
+                    .fails(76, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+
+            // limit on a self-UNION over the base table
+            assertQuery("create materialized view test as (select ts, v from " + TABLE1 + " union select ts, v from " + TABLE1 + " limit 2) partition by day")
+                    .noLeakCheck()
+                    .fails(96, "LIMIT on base table is not supported for materialized views: " + TABLE1);
+            assertNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
+    public void testCreateMatViewLimitOnOtherTableAllowed() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createTable(TABLE2);
+            // LIMIT is rejected only on the base table's query subtree; a limited subquery over
+            // another table is re-evaluated in full on every refresh, so it stays allowed.
+            execute("create materialized view test with base " + TABLE1 + " as (select t1.ts, avg(t1.v) from " + TABLE1 + " as t1 " +
+                    "join (select v from " + TABLE2 + " limit 3) as t2 on v sample by 30s) partition by day");
+            assertNotNull(getMatViewDefinition("test"));
+        });
+    }
+
+    @Test
     public void testCreateMatViewMultipleTables() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -819,10 +870,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
     public void testCreateMatViewNoSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
-            assertQuery("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day")
-                    .noLeakCheck()
-                    .fails(34, "TIMESTAMP column is not present in select list");
-            assertNull(getMatViewDefinition("test"));
+            // A non-aggregating projection (no SAMPLE BY / timestamp_floor) is now a valid
+            // "passthrough" materialized view: it copies matching base rows 1:1.
+            execute("create materialized view test as (select * from " + TABLE1 + " where v % 2 = 0) partition by day");
+            assertNotNull(getMatViewDefinition("test"));
         });
     }
 
@@ -961,8 +1012,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             assertMatViewDefinitionFile(MatViewDefinition.REFRESH_TYPE_IMMEDIATE, "test", query, TABLE1, 30, 's', null, null);
 
             assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag,walEnabled,directoryName,dedup,ttlValue,ttlUnit,table_type from tables()")
+                    .noRandomAccess()
+                    .expectSize()
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .returns("""
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
                             1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
                             2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
@@ -1009,8 +1062,10 @@ public class CreateMatViewTest extends AbstractCairoTest {
             }
 
             assertQuery("select id,table_name,designatedTimestamp,partitionBy,maxUncommittedRows,o3MaxLag,walEnabled,directoryName,dedup,ttlValue,ttlUnit,table_type from tables()")
+                    .noRandomAccess()
+                    .expectSize()
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .returns("""
                             id\ttable_name\tdesignatedTimestamp\tpartitionBy\tmaxUncommittedRows\to3MaxLag\twalEnabled\tdirectoryName\tdedup\tttlValue\tttlUnit\ttable_type
                             1\ttable1\tts\tDAY\t1000\t300000000\ttrue\ttable1~1\tfalse\t0\tHOUR\tT
                             2\ttest\tts\tWEEK\t1000\t-1\ttrue\ttest~2\tfalse\t0\tHOUR\tM
@@ -1272,6 +1327,39 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewWindowFunctionNestedInExpression() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // Window function whose AST root is an arithmetic operator ('+'), so the top-level
+            // QueryColumn is a plain column, not a WindowExpression. The error points at the
+            // nested window function, not the operator.
+            assertQuery("create materialized view test as (" +
+                    "select ts, row_number() over (order by ts) + 1 as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(45, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function nested under a cast.
+            assertQuery("create materialized view test as (" +
+                    "select ts, (row_number() over (order by ts))::long as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(46, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function as a single-argument function operand (stored in rhs).
+            assertQuery("create materialized view test as (" +
+                    "select ts, abs(row_number() over (order by ts)) as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(49, "window function on base table is not supported for materialized views: " + TABLE1);
+            // Window function inside a CASE expression (stored in the args list).
+            assertQuery("create materialized view test as (" +
+                    "select ts, case when v > 0 then row_number() over (order by ts) else 0 end as rn from " + TABLE1 +
+                    ") partition by day")
+                    .noLeakCheck()
+                    .fails(66, "window function on base table is not supported for materialized views: " + TABLE1);
+        });
+    }
+
+    @Test
     public void testCreateMatViewWindowFunctions() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
@@ -1364,6 +1452,26 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 assertFalse(metadata.isColumnIndexed(2));
 
                 assertEquals(0, metadata.getTtlHoursOrMonths());
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewWithIndexInheritedOncePerBaseColumn() throws Exception {
+        // A passthrough view inherits an indexed base SYMBOL column's index. When the view projects that
+        // base column more than once, the index goes to the first projection and the copies stay plain.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src (k SYMBOL INDEX CAPACITY 512, v DOUBLE, ts TIMESTAMP)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL""");
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT k, k AS k2, v, ts FROM src)");
+            drainWalAndMatViewQueues();
+
+            try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("mv"))) {
+                final int k = metadata.getColumnIndex("k");
+                assertTrue(metadata.isColumnIndexed(k));
+                assertEquals(512, metadata.getIndexValueBlockCapacity(k));
+                assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k2")));
             }
         });
     }
@@ -1897,7 +2005,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1924,7 +2033,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -1951,7 +2061,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                         0,
                         (char) 0,
                         0,
-                        (char) 0
+                        (char) 0,
+                        false
                 );
                 Assert.fail("exception expected");
             } catch (CairoException e) {
@@ -2088,7 +2199,8 @@ public class CreateMatViewTest extends AbstractCairoTest {
                             matViewDefinition.getPeriodDelay(),
                             matViewDefinition.getPeriodDelayUnit(),
                             matViewDefinition.getPeriodLength(),
-                            matViewDefinition.getPeriodLengthUnit()
+                            matViewDefinition.getPeriodLengthUnit(),
+                            false
                     );
                     AppendableBlock block = writer.append();
                     MatViewDefinition.append(unknownDefinition, block);

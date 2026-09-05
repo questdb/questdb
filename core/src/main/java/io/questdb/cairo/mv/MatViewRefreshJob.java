@@ -38,6 +38,7 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
@@ -53,6 +54,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
+import io.questdb.std.Chars;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
@@ -1395,6 +1397,14 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                             final CompiledQuery compiledQuery = compiler.compile(viewSql, refreshSqlExecutionContext);
                             assert compiledQuery.getType() == CompiledQuery.SELECT;
                             factory = compiledQuery.getRecordCursorFactory();
+                            // The view's schema is fixed at create time while its SQL is recompiled on
+                            // every cache miss, so the two can drift apart: `SELECT *` over a base table
+                            // that lost a column still compiles, it just projects fewer columns. The copier
+                            // maps cursor columns onto view columns by position, so such a query would copy
+                            // values into the wrong columns and leave the view full of garbage while
+                            // reporting itself valid. The check sits above the copier cache so it also
+                            // covers the run that reuses a copier built by an earlier refresh.
+                            validateViewSchema(viewTableToken, factory.getMetadata(), walWriter.getMetadata());
                             if (copier == null || walWriter.getMetadata().getMetadataVersion() != viewState.getRecordRowCopierMetadataVersion()) {
                                 copier = getRecordToRowCopier(walWriter, factory, compiler);
                             }
@@ -2820,6 +2830,42 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         }
 
         return null;
+    }
+
+    /**
+     * Verifies that the recompiled view query still projects the view's schema: the same number of
+     * columns, with the same name at every position. The record-to-row copier maps cursor columns
+     * onto view columns by position, so a query that quietly changes shape - a {@code SELECT *} view
+     * whose base table lost a column is the common case - would write each value into the neighbouring
+     * column. Refusing the refresh here leaves the view invalid, which is what an operator can see and
+     * act on; a copy by position produces a view that reports itself valid and holds garbage.
+     * <p>
+     * Column types are left to the copier, which converts between them.
+     *
+     * @throws CairoException if the query no longer matches the view schema
+     */
+    private static void validateViewSchema(TableToken viewToken, RecordMetadata queryMetadata, RecordMetadata viewMetadata) {
+        final int queryColumnCount = queryMetadata.getColumnCount();
+        final int viewColumnCount = viewMetadata.getColumnCount();
+        if (queryColumnCount != viewColumnCount) {
+            throw CairoException.nonCritical()
+                    .put("materialized view query does not match view schema [view=").put(viewToken.getTableName())
+                    .put(", queryColumnCount=").put(queryColumnCount)
+                    .put(", viewColumnCount=").put(viewColumnCount)
+                    .put(']');
+        }
+        for (int i = 0; i < viewColumnCount; i++) {
+            final CharSequence queryColumnName = queryMetadata.getColumnName(i);
+            final CharSequence viewColumnName = viewMetadata.getColumnName(i);
+            if (!Chars.equals(queryColumnName, viewColumnName)) {
+                throw CairoException.nonCritical()
+                        .put("materialized view query does not match view schema [view=").put(viewToken.getTableName())
+                        .put(", columnIndex=").put(i)
+                        .put(", queryColumn=").put(queryColumnName)
+                        .put(", viewColumn=").put(viewColumnName)
+                        .put(']');
+            }
+        }
     }
 
     private @Nullable TableToken verifyBaseTableToken(@NotNull MatViewDefinition viewDefinition, @NotNull MatViewState viewState, @NotNull WalWriter walWriter) {

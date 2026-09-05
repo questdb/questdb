@@ -190,6 +190,11 @@ public class WorkerPool implements Closeable {
         freeOnExit.add(job);
     }
 
+    @TestOnly
+    public int getAssignedJobCount() {
+        return assignedJobs.size();
+    }
+
     /**
      * Returns the {@link ContinuationSink} for this pool. Continuations constructed
      * with this sink will resume on workers of this pool. Non-null on non-legacy
@@ -200,6 +205,11 @@ public class WorkerPool implements Closeable {
             throw new IllegalStateException("legacy worker pool does not host continuations");
         }
         return continuationQueue;
+    }
+
+    @TestOnly
+    public int getFreeOnExitJobCount() {
+        return freeOnExit.size();
     }
 
     public String getPoolName() {

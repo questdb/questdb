@@ -330,6 +330,33 @@ public class SqlKeywords {
                 && (tok.charAt(6) | 32) == 'y';
     }
 
+    public static boolean isCleanupKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'c'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'e'
+                && (tok.charAt(3) | 32) == 'a'
+                && (tok.charAt(4) | 32) == 'n'
+                && (tok.charAt(5) | 32) == 'u'
+                && (tok.charAt(6) | 32) == 'p';
+    }
+
+    /**
+     * True for the name of a nullary wall-clock function: {@code now()}, {@code now_ns()},
+     * {@code sysdate()}, {@code systimestamp()} and {@code systimestamp_ns()}. EXPIRE ROWS recognises the
+     * clock by name in three places - the cleanup job's monotonicity proof, the "does this predicate read
+     * the clock" classification and the read filter's null-safe timestamp flip - and all three share this
+     * list, so a policy spelled with a nanosecond clock reclaims disk and prunes partitions exactly as its
+     * microsecond spelling does.
+     */
+    public static boolean isClockFunctionKeyword(CharSequence tok) {
+        return isNowKeyword(tok)
+                || isNowNsKeyword(tok)
+                || isSysdateKeyword(tok)
+                || isSystimestampKeyword(tok)
+                || isSystimestampNsKeyword(tok);
+    }
+
     public static boolean isColonColon(CharSequence tok) {
         return tok.length() == 2
                 && tok.charAt(0) == ':'
@@ -839,6 +866,16 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 's';
     }
 
+    public static boolean isExpireKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'e'
+                && (tok.charAt(1) | 32) == 'x'
+                && (tok.charAt(2) | 32) == 'p'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'r'
+                && (tok.charAt(5) | 32) == 'e';
+    }
+
     public static boolean isExplainKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'e'
@@ -1037,6 +1074,17 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'd'
                 && (tok.charAt(4) | 32) == 'e'
                 && (tok.charAt(5) | 32) == 'r';
+    }
+
+    public static boolean isHighestKeyword(CharSequence tok) {
+        return tok.length() == 7
+                && (tok.charAt(0) | 32) == 'h'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'g'
+                && (tok.charAt(3) | 32) == 'h'
+                && (tok.charAt(4) | 32) == 'e'
+                && (tok.charAt(5) | 32) == 's'
+                && (tok.charAt(6) | 32) == 't';
     }
 
     public static boolean isHorizonKeyword(CharSequence tok) {
@@ -1354,6 +1402,16 @@ public class SqlKeywords {
                 && (tok.charAt(3) | 32) == 'k';
     }
 
+    public static boolean isLowestKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'w'
+                && (tok.charAt(3) | 32) == 'e'
+                && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 't';
+    }
+
     public static boolean isManualKeyword(CharSequence tok) {
         return tok.length() == 6
                 && (tok.charAt(0) | 32) == 'm'
@@ -1649,6 +1707,16 @@ public class SqlKeywords {
                 && (tok.charAt(0) | 32) == 'n'
                 && (tok.charAt(1) | 32) == 'o'
                 && (tok.charAt(2) | 32) == 'w';
+    }
+
+    public static boolean isNowNsKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'n'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'w'
+                && tok.charAt(3) == '_'
+                && (tok.charAt(4) | 32) == 'n'
+                && (tok.charAt(5) | 32) == 's';
     }
 
     public static boolean isNullKeyword(CharSequence tok) {
@@ -2324,6 +2392,25 @@ public class SqlKeywords {
                 && (tok.charAt(11) | 32) == 'p';
     }
 
+    public static boolean isSystimestampNsKeyword(CharSequence tok) {
+        return tok.length() == 15
+                && (tok.charAt(0) | 32) == 's'
+                && (tok.charAt(1) | 32) == 'y'
+                && (tok.charAt(2) | 32) == 's'
+                && (tok.charAt(3) | 32) == 't'
+                && (tok.charAt(4) | 32) == 'i'
+                && (tok.charAt(5) | 32) == 'm'
+                && (tok.charAt(6) | 32) == 'e'
+                && (tok.charAt(7) | 32) == 's'
+                && (tok.charAt(8) | 32) == 't'
+                && (tok.charAt(9) | 32) == 'a'
+                && (tok.charAt(10) | 32) == 'm'
+                && (tok.charAt(11) | 32) == 'p'
+                && tok.charAt(12) == '_'
+                && (tok.charAt(13) | 32) == 'n'
+                && (tok.charAt(14) | 32) == 's';
+    }
+
     public static boolean isTableKeyword(CharSequence tok) {
         return tok.length() == 5
                 && (tok.charAt(0) | 32) == 't'
@@ -2570,6 +2657,16 @@ public class SqlKeywords {
                 && (tok.charAt(1) | 32) == 'i'
                 && (tok.charAt(2) | 32) == 'e'
                 && (tok.charAt(3) | 32) == 'w';
+    }
+
+    public static boolean isVolumeKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'v'
+                && (tok.charAt(1) | 32) == 'o'
+                && (tok.charAt(2) | 32) == 'l'
+                && (tok.charAt(3) | 32) == 'u'
+                && (tok.charAt(4) | 32) == 'm'
+                && (tok.charAt(5) | 32) == 'e';
     }
 
     public static boolean isWalKeyword(CharSequence tok) {

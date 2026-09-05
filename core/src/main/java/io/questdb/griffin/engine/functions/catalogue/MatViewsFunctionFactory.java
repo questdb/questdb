@@ -27,8 +27,11 @@ package io.questdb.griffin.engine.functions.catalogue;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.CairoTable;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
+import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.RowExpiryUtil;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -43,8 +46,11 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -120,6 +126,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS = COLUMN_REFRESH_AVG_COMMIT_NANOS + 1;
         private static final int COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_SAMPLE_NANOS + 1;
         private static final int COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS = COLUMN_REFRESH_AVG_SCAN_RANGE_TS_UNITS + 1;
+        private static final int COLUMN_EXPIRE_CLAUSE = COLUMN_REFRESH_GAP_THRESHOLD_TS_UNITS + 1;
+        private static final int COLUMN_EXPIRE_CLEANUP_EVERY = COLUMN_EXPIRE_CLAUSE + 1;
+        private static final int COLUMN_EXPIRE_ENFORCEMENT = COLUMN_EXPIRE_CLEANUP_EVERY + 1;
         private static final RecordMetadata METADATA;
         private final ViewsListCursor cursor;
 
@@ -136,6 +145,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
+            // The expire_enforcement column classifies a scalar policy through the compiler, which binds the
+            // predicate against the view's columns; that needs an execution context.
+            cursor.executionContext = executionContext;
             cursor.toTop();
             return cursor;
         }
@@ -163,6 +175,7 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             private final MatViewStateReader viewStateReader = new MatViewStateReader();
             private final ObjList<TableToken> viewTokens = new ObjList<>();
             private SqlExecutionCircuitBreaker circuitBreaker;
+            private SqlExecutionContext executionContext;
             private int viewIndex = 0;
 
             public ViewsListCursor(CairoEngine engine) {
@@ -252,6 +265,23 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         // deferred after a transient "table busy" or out-of-memory error.
                         final boolean retrying = state != null && state.getRefreshRetryAfterMicros() != Numbers.LONG_NULL;
 
+                        // The row-expiry policy lives in the view's table metadata (_meta), not the
+                        // mat-view definition. The graph is populated synchronously at startup while the
+                        // metadata cache is hydrated asynchronously, so hydrate this view before reading it.
+                        CharSequence expirePredicate = null;
+                        long expireCleanupMicros = 0;
+                        engine.getMetadataCache().hydrateTableOnDemand(viewToken);
+                        try (MetadataCacheReader metadataRO = engine.getMetadataCache().readLock()) {
+                            final CairoTable viewTable = metadataRO.getTable(viewToken);
+                            if (viewTable != null) {
+                                expirePredicate = viewTable.getExpiryPredicate();
+                                expireCleanupMicros = viewTable.getExpiryCleanupIntervalMicros();
+                            }
+                        }
+                        final String expireEnforcement = expirePredicate != null
+                                ? expireEnforcement(viewToken, expirePredicate)
+                                : null;
+
                         record.of(
                                 viewDefinition,
                                 lastRefreshStartTimestamp,
@@ -273,7 +303,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                                 avgScanSampleNanos,
                                 avgScanRangeTsUnits,
                                 commitGapThresholdTsUnits,
-                                retrying
+                                retrying,
+                                expirePredicate,
+                                expireCleanupMicros,
+                                expireEnforcement
                         );
                         viewIndex++;
                         return true;
@@ -299,12 +332,52 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                 viewIndex = 0;
             }
 
+            /**
+             * Whether the cleanup job frees disk space for this view's policy, in the same terms the job
+             * itself uses: {@link RowExpiryUtil#isReclaimingPolicy}. A structural policy answers from its
+             * encoding alone; a scalar one needs the predicate bound against the view's columns, so it
+             * borrows a compiler and the view's metadata. A view that went away under the snapshot reports
+             * FILTER_ONLY, the same verdict the cleanup job gives a policy it cannot classify. This method
+             * lets any other borrow failure travel on, so the column reports only a verdict it reached.
+             */
+            private String expireEnforcement(TableToken viewToken, CharSequence predicate) {
+                if (RowExpiryUtil.isStructuralPolicy(predicate)) {
+                    return RowExpiryUtil.ENFORCEMENT_FILTER_ONLY;
+                }
+                try (
+                        TableMetadata viewMetadata = engine.getTableMetadata(viewToken);
+                        SqlCompiler compiler = engine.getSqlCompiler()
+                ) {
+                    return compiler.isExpiryCleanupReclaiming(executionContext, viewMetadata, predicate)
+                            ? RowExpiryUtil.ENFORCEMENT_FILTER_AND_RECLAIM
+                            : RowExpiryUtil.ENFORCEMENT_FILTER_ONLY;
+                } catch (CairoException e) {
+                    // A borrow that fails because the metadata entry is locked or the compiler pool is
+                    // exhausted says nothing about the policy, so it travels on as the error it is. The view
+                    // itself can be dropped, renamed or recreated between the token snapshot and this
+                    // lookup; it holds no policy any more, so report what cleanup does with a policy it
+                    // cannot classify and let the catalogue query finish.
+                    if (!e.isTableDoesNotExist() && !e.isTableDropped()) {
+                        throw e;
+                    }
+                    return RowExpiryUtil.ENFORCEMENT_FILTER_ONLY;
+                } catch (TableReferenceOutOfDateException e) {
+                    // Stale token: the view was recreated under the same name since the snapshot.
+                    return RowExpiryUtil.ENFORCEMENT_FILTER_ONLY;
+                }
+            }
+
             private static class MatViewsRecord implements Record {
+                private final StringSink expireCleanupEverySink = new StringSink();
+                private final StringSink expirePredicateSink = new StringSink();
+                private String expireEnforcement;
                 private final StringSink invalidationReason = new StringSink();
                 private long avgCommitNanos;
                 private long avgScanRangeTsUnits;
                 private long avgScanSampleNanos;
                 private long commitGapThresholdTsUnits;
+                private boolean hasExpireCleanupEvery;
+                private boolean hasExpirePredicate;
                 private boolean invalid;
                 private long lastAppliedBaseTxn;
                 private long lastPeriodHi;
@@ -375,6 +448,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_TIMER_TIME_ZONE -> viewDefinition.getTimerTimeZone();
                         case COLUMN_PERIOD_LENGTH_UNIT -> getIntervalUnit(periodLengthUnit);
                         case COLUMN_PERIOD_DELAY_UNIT -> getIntervalUnit(periodDelayUnit);
+                        case COLUMN_EXPIRE_CLAUSE -> hasExpirePredicate ? expirePredicateSink : null;
+                        case COLUMN_EXPIRE_CLEANUP_EVERY -> hasExpireCleanupEvery ? expireCleanupEverySink : null;
+                        case COLUMN_EXPIRE_ENFORCEMENT -> expireEnforcement;
                         default -> null;
                     };
                 }
@@ -410,7 +486,10 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                         long avgScanSampleNanos,
                         long avgScanRangeTsUnits,
                         long commitGapThresholdTsUnits,
-                        boolean retrying
+                        boolean retrying,
+                        CharSequence expirePredicate,
+                        long expireCleanupMicros,
+                        String expireEnforcement
                 ) {
                     this.viewDefinition = viewDefinition;
                     this.lastRefreshStartTimestamp = lastRefreshStartTimestamp;
@@ -434,6 +513,17 @@ public class MatViewsFunctionFactory implements FunctionFactory {
                     this.avgScanRangeTsUnits = avgScanRangeTsUnits;
                     this.commitGapThresholdTsUnits = commitGapThresholdTsUnits;
                     this.retrying = retrying;
+                    expirePredicateSink.clear();
+                    hasExpirePredicate = expirePredicate != null;
+                    if (hasExpirePredicate) {
+                        RowExpiryUtil.appendDisplayPredicate(expirePredicateSink, expirePredicate);
+                    }
+                    this.expireEnforcement = expireEnforcement;
+                    expireCleanupEverySink.clear();
+                    hasExpireCleanupEvery = expireCleanupMicros > 0;
+                    if (hasExpireCleanupEvery) {
+                        RowExpiryUtil.appendCleanupEvery(expireCleanupEverySink, expireCleanupMicros);
+                    }
                 }
 
                 private CharSequence getViewStatus() {
@@ -478,6 +568,9 @@ public class MatViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("refresh_avg_scan_sample_nanos", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_avg_scan_range_ts_units", ColumnType.LONG));
             metadata.add(new TableColumnMetadata("refresh_gap_threshold_ts_units", ColumnType.LONG));
+            metadata.add(new TableColumnMetadata("expire_clause", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("expire_cleanup_every", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("expire_enforcement", ColumnType.STRING));
             METADATA = metadata;
         }
     }

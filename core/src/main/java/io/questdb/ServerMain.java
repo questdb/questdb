@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DataID;
 import io.questdb.cairo.FlushQueryCacheJob;
+import io.questdb.cairo.RowExpiryCleanupJob;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshJob;
@@ -641,6 +642,14 @@ public class ServerMain implements Closeable {
                             sharedPoolWrite.assign(walPurgeJob);
                             sharedPoolWrite.freeOnExit(walPurgeJob);
 
+                            // best-effort background row-expiry cleanup for EXPIRE ROWS mat-views (WAL-only).
+                            // Registered at boot regardless of role: the job answers to isReadOnlyMode() on
+                            // every sweep and fences every destructive commit against a role flip, so it
+                            // no-ops on a replica and starts reclaiming on a promote without a restart. Boot
+                            // role must not decide registration - a role flip starts and stops no worker
+                            // threads, so a boot-time skip would leave a promoted ex-replica never reclaiming.
+                            setupRowExpiryCleanupJob(sharedPoolWrite, engine);
+
                             // wal apply job in the shared pool when there is no dedicated pool
                             if (walApplyEnabled && !config.getWalApplyPoolConfiguration().isEnabled()) {
                                 setupWalApplyJob(sharedPoolWrite, engine, sharedPoolQuery.getWorkerCount());
@@ -907,6 +916,10 @@ public class ServerMain implements Closeable {
         mvWorkerPool.assign(new MatViewRefreshJob(engine, sharedQueryWorkerCount));
         final MatViewTimerJob matViewTimerJob = new MatViewTimerJob(engine);
         mvWorkerPool.assign(matViewTimerJob);
+    }
+
+    protected void setupRowExpiryCleanupJob(WorkerPool sharedPoolWrite, CairoEngine engine) {
+        RowExpiryCleanupJob.assignToPool(sharedPoolWrite, engine);
     }
 
     protected void setupViewJobs(WorkerPool vWorkerPool, CairoEngine engine, int sharedQueryWorkerCount) {

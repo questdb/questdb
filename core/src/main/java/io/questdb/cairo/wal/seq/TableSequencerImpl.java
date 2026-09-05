@@ -412,14 +412,40 @@ public class TableSequencerImpl implements TableSequencer {
             long txnMaxTimestamp,
             long txnRowCount
     ) {
-        // Writing to TableSequencer can happen from multiple threads, so we need to protect against concurrent writes.
+        return nextTxnIfLastTxn(
+                Long.MAX_VALUE,
+                expectedStructureVersion,
+                walId,
+                segmentId,
+                segmentTxn,
+                txnMinTimestamp,
+                txnMaxTimestamp,
+                txnRowCount
+        );
+    }
+
+    @Override
+    public long nextTxnIfLastTxn(
+            long expectedLastTxn,
+            long expectedStructureVersion,
+            int walId,
+            int segmentId,
+            int segmentTxn,
+            long txnMinTimestamp,
+            long txnMaxTimestamp,
+            long txnRowCount
+    ) {
+        // TableSequencerAPI holds the sequencer write lock across this check and transaction-log append.
         assert !closed;
         checkDropped();
         checkHardSuspended();
+        if (expectedLastTxn != Long.MAX_VALUE && lastTxn() != expectedLastTxn) {
+            return FENCE_REJECTED;
+        }
         long txn;
         final long timestamp = microClock.getTicks();
         try {
-            // From sequencer perspective metadata version is the same as column structure version
+            // From sequencer perspective metadata version is the same as column structure version.
             if (metadata.getMetadataVersion() == expectedStructureVersion) {
                 txn = nextTxn(walId, segmentId, segmentTxn, timestamp, txnMinTimestamp, txnMaxTimestamp, txnRowCount);
             } else {

@@ -1027,6 +1027,248 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCopyParquetOnMatViewWithRowExpiry() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('AAA', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('BBB', 5.0, '2024-01-05T01:00:00.000000Z'),
+                    ('CCC', 0.5, '2024-01-05T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW mv AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            // The policy hides the two expired rows from every read of the view.
+            assertQuery("SELECT sym, v FROM mv")
+                    .noLeakCheck()
+                    .returns("""
+                            sym\tv
+                            BBB\t5.0
+                            """);
+
+            // The bare-table spelling of COPY must export the same rows the view returns.
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy mv to 'mv_expiry' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("status\nfinished\n");
+                        assertQuery("select sym, v from read_parquet('" + exportRoot + File.separator + "mv_expiry.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        sym\tv
+                                        BBB\t5.0
+                                        """);
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetOnMatViewWithRowExpiryHyphenatedName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_hyphen (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base_hyphen VALUES
+                    ('AAA', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('BBB', 5.0, '2024-01-05T01:00:00.000000Z'),
+                    ('CCC', 0.5, '2024-01-05T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW \"orders-daily\" AS (SELECT * FROM base_hyphen) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            // The hyphen makes this name an expression when it reaches the compiler unquoted, so the
+            // policy route has to serialize it as one identifier.
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy \"orders-daily\" to 'orders_daily' with format parquet", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("status\nfinished\n");
+                        assertQuery("select sym, v from read_parquet('" + exportRoot + File.separator + "orders_daily.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        sym\tv
+                                        BBB\t5.0
+                                        """);
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetOnMatViewWithRowExpiryNameCollision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_collision (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base_collision VALUES
+                    ('AAA', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('BBB', 5.0, '2024-01-05T01:00:00.000000Z'),
+                    ('CCC', 0.5, '2024-01-05T02:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW \"my view\" AS (SELECT * FROM base_collision) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            // A table named after the first word of the view. Unquoted, "my view" is a valid query that
+            // reads this table under the alias "view", so a lost pair of quotes exports the wrong rows
+            // and still reports success.
+            execute("CREATE TABLE my (decoy SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO my VALUES ('DECOY', '2024-01-05T00:00:00.000000Z')");
+            drainWalQueue();
+
+            // COPY takes the source in three quoting forms and hands the factory the same semantic name
+            // for each, so every spelling must reach the view.
+            assertMyViewExportKeepsIdentity("'my view'", "my_view_single");
+            assertMyViewExportKeepsIdentity("\"my view\"", "my_view_double");
+            assertMyViewExportKeepsIdentity("`my view`", "my_view_backtick");
+        });
+    }
+
+    @Test
+    public void testCopyParquetRepartitionKeepsQuotedTableName() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE \"repart table\" (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO "repart table" VALUES
+                    ('2023-01-01T10:00:00.000000Z', 1),
+                    ('2023-02-01T10:00:00.000000Z', 2)
+                    """);
+
+            // Re-partitioning routes through the compiler as well, so it shares the serialization site.
+            CopyExportRunnable stmt = () ->
+                    runAndFetchCopyExportID("copy 'repart table' to 'repart_out' with format parquet partition_by MONTH", sqlExecutionContext);
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("status\nfinished\n");
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "repart_out" + File.separator + "2023-01.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tx
+                                        2023-01-01T10:00:00.000000Z\t1
+                                        """);
+                        assertQuery("select * from read_parquet('" + exportRoot + File.separator + "repart_out" + File.separator + "2023-02.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns("""
+                                        ts\tx
+                                        2023-02-01T10:00:00.000000Z\t2
+                                        """);
+                    });
+
+            testCopyExport(stmt, test);
+        });
+    }
+
+    @Test
+    public void testCopyParquetReusedFactoryOnMatViewWithRowExpiry() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_reuse (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base_reuse VALUES
+                    ('AAA', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('BBB', 5.0, '2024-01-05T01:00:00.000000Z')
+                    """);
+            drainWalQueue();
+            execute("CREATE MATERIALIZED VIEW \"reuse view\" AS (SELECT * FROM base_reuse) EXPIRE ROWS WHEN v < 2.0");
+            drainWalAndMatViewQueues();
+
+            // One factory, two executions: the second one must resolve the view again rather than the
+            // staging table the first one generated.
+            CopyExportRunnable stmt = () -> {
+                try (RecordCursorFactory factory = select("copy 'reuse view' to 'reuse_out' with format parquet")) {
+                    fetchCopyExportID(factory);
+                    awaitExportsDrained();
+                    fetchCopyExportID(factory);
+                }
+            };
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" WHERE status = 'finished' AND phase = 'success'")
+                                .noLeakCheck()
+                                .returns("""
+                                        status
+                                        finished
+                                        finished
+                                        """);
+                        assertQuery("select sym, v from read_parquet('" + exportRoot + File.separator + "reuse_out.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        sym\tv
+                                        BBB\t5.0
+                                        """);
+                    });
+
+            testCopyExport(stmt, test, true, 2);
+        });
+    }
+
+    @Test
+    public void testCopyParquetReusedFactoryOnQuerySource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base_reuse_query (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base_reuse_query VALUES
+                    ('AAA', 1.0, '2024-01-05T00:00:00.000000Z'),
+                    ('BBB', 5.0, '2024-01-05T01:00:00.000000Z')
+                    """);
+            drainWalQueue();
+
+            // The query source carries the same hazard: the staging name must not take the place of the
+            // COPY source between executions.
+            CopyExportRunnable stmt = () -> {
+                try (RecordCursorFactory factory = select("copy (select sym, v from base_reuse_query where v > 2.0) to 'reuse_query_out' with format parquet")) {
+                    fetchCopyExportID(factory);
+                    awaitExportsDrained();
+                    fetchCopyExportID(factory);
+                }
+            };
+
+            CopyExportRunnable test = () ->
+                    assertEventually(() -> {
+                        assertQuery("SELECT status FROM \"sys.copy_export_log\" WHERE status = 'finished' AND phase = 'success'")
+                                .noLeakCheck()
+                                .returns("""
+                                        status
+                                        finished
+                                        finished
+                                        """);
+                        assertQuery("select sym, v from read_parquet('" + exportRoot + File.separator + "reuse_query_out.parquet')")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        sym\tv
+                                        BBB\t5.0
+                                        """);
+                    });
+
+            testCopyExport(stmt, test, true, 2);
+        });
+    }
+
+    @Test
     public void testCopyParquetSyntaxErrorInvalidCompressionLevel() throws Exception {
         assertQuery("copy test_table to 'output' with format parquet compression_level 'invalid'")
                 .fails(66, "found [tok=''invalid'', len=9] bad integer");
@@ -4108,6 +4350,19 @@ public class CopyExportTest extends AbstractCairoTest {
     }
 
     // Helper methods for copy export operations
+    private static void awaitExportsDrained() {
+        while (engine.getCopyExportContext().getActiveExportId() != -1) {
+            Os.pause();
+        }
+    }
+
+    private static void fetchCopyExportID(RecordCursorFactory factory) throws SqlException {
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.hasNext());
+            Assert.assertNotNull(cursor.getRecord().getStrA(0));
+        }
+    }
+
     private static void runAndFetchCopyExportID(String copySql, SqlExecutionContext sqlExecutionContext) throws SqlException {
         try (
                 RecordCursorFactory factory = select(copySql);
@@ -4162,6 +4417,30 @@ public class CopyExportTest extends AbstractCairoTest {
 
     private void assertEventually(TestUtils.EventualCode assertion) throws Exception {
         TestUtils.assertEventually(assertion, 5, exceptionTypesToCatch);
+    }
+
+    private void assertMyViewExportKeepsIdentity(String source, String fileName) throws Exception {
+        CopyExportRunnable stmt = () ->
+                runAndFetchCopyExportID("copy " + source + " to '" + fileName + "' with format parquet", sqlExecutionContext);
+
+        CopyExportRunnable test = () ->
+                assertEventually(() -> {
+                    assertQuery("SELECT status FROM \"sys.copy_export_log\" LIMIT -1")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("status\nfinished\n");
+                    // sym belongs to the view; the decoy table has a "decoy" column instead, so exporting
+                    // it fails this read outright.
+                    assertQuery("select sym, v from read_parquet('" + exportRoot + File.separator + fileName + ".parquet')")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    sym\tv
+                                    BBB\t5.0
+                                    """);
+                });
+
+        testCopyExport(stmt, test);
     }
 
     private void assertParquetExportOfConvertedColumn(String srcType, String srcValueExpr, String dstType, String expectedReadback) throws Exception {

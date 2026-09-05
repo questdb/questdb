@@ -645,6 +645,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getMatViewRowExpiryCleanupMinExpiredFraction() {
+        return getDelegate().getMatViewRowExpiryCleanupMinExpiredFraction();
+    }
+
+    @Override
     public long getMatViewRowsPerQueryEstimate() {
         return getDelegate().getMatViewRowsPerQueryEstimate();
     }
@@ -1735,6 +1740,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isMatViewRowExpiryCleanupEnabled() {
+        return getDelegate().isMatViewRowExpiryCleanupEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return getDelegate().isMultiKeyDedupEnabled();
     }
@@ -1792,6 +1802,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     @Override
     public boolean isSqlDistinctGroupByRewriteEnabled() {
         return getDelegate().isSqlDistinctGroupByRewriteEnabled();
+    }
+
+    @Override
+    public boolean isSqlLatestOnHoistEnabled() {
+        return getDelegate().isSqlLatestOnHoistEnabled();
     }
 
     @Override
