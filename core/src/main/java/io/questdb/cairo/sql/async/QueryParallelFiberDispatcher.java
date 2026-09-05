@@ -246,8 +246,8 @@ public final class QueryParallelFiberDispatcher implements FiberRuntimeConfigura
         );
         return switch (reason) {
             case FiberWaitCoordinator.REASON_CANCEL,
-                    FiberWaitCoordinator.REASON_PROGRESS,
-                    FiberWaitCoordinator.REASON_TIMER -> true;
+                 FiberWaitCoordinator.REASON_PROGRESS,
+                 FiberWaitCoordinator.REASON_TIMER -> true;
             case FiberWaitCoordinator.REASON_NONE, FiberWaitCoordinator.REASON_SHUTDOWN -> false;
             default -> throw new IllegalStateException(
                     "unexpected query parallel drain wait reason [reason=" + reason + ']'
