@@ -530,6 +530,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             } else {
                 sink.val(targetArg);
             }
+            toPlanAdditionalArgs(sink);
             sink.val(')');
             if (orderBy != null) {
                 sink.val(" over (");
@@ -554,6 +555,9 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             selIdx = 0;
             selected.clear();
             nullBits.clear();
+        }
+
+        protected void toPlanAdditionalArgs(PlanSink sink) {
         }
 
         private void ensureCapacity() {

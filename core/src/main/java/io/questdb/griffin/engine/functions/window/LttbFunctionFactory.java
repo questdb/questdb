@@ -28,10 +28,12 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.LttbAlgorithm;
 import io.questdb.griffin.engine.window.WindowContext;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Numbers;
@@ -146,8 +148,11 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
                 targetArg, targetPosition, sqlExecutionContext);
 
         long gapThreshold = 0;
+        String gapInterval = null;
         if (hasGap) {
-            gapThreshold = parseGapThreshold(args.getQuick(3), argPositions.getQuick(3), tsArg.getType());
+            final CharSequence interval = args.getQuick(3).getStrA(null);
+            gapThreshold = parseGapThreshold(interval, argPositions.getQuick(3), tsArg.getType());
+            gapInterval = Chars.toString(interval);
         }
 
         return new LttbBucketSelectWindowFunction(
@@ -157,6 +162,7 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
                 targetPosition,
                 resolvedTarget,
                 new LttbAlgorithm(gapThreshold),
+                gapInterval,
                 NAME,
                 configuration.getSubsampleMaxRows(),
                 position
@@ -172,8 +178,8 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     // column an unscaled micros threshold would be 1000x too small - '1h' would split segments
     // every 3.6 seconds, over-segmenting the series and blowing past target_points (gap mode uses
     // soft targets, so every extra segment adds rows).
-    private static long parseGapThreshold(Function gapArg, int gapPosition, int timestampType) throws SqlException {
-        return toTimestampUnits(parseGapThresholdMicros(gapArg.getStrA(null), gapPosition), timestampType);
+    private static long parseGapThreshold(CharSequence interval, int gapPosition, int timestampType) throws SqlException {
+        return toTimestampUnits(parseGapThresholdMicros(interval, gapPosition), timestampType);
     }
 
     /**
@@ -233,14 +239,15 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
 
     // lttb(ts, value, target[, gap]) over (order by xxx) - no partition by, no framing.
     //
-    // Thin subclass of the shared M4FunctionFactory.BucketSelectWindowFunction purely to release
-    // LttbAlgorithm's native scratch lists on close(). M4Algorithm and MinMaxAlgorithm are stateless
+    // Thin subclass of the shared M4FunctionFactory.BucketSelectWindowFunction to render the optional
+    // gap and release LttbAlgorithm's native scratch lists on close(). M4Algorithm and MinMaxAlgorithm are stateless
     // singletons, so the shared base's close() has nothing algorithm-specific to free - but LttbAlgorithm
     // owns native DirectLongList scratch fields (segment/target bookkeeping, lazily allocated in gap
     // mode, plus the MinMaxLTTB preselection candidate list, lazily allocated for large inputs; see
     // LttbAlgorithm.selectGapPreserving and LttbAlgorithm.preselectMinMax) and must be tracker-bound
     // and closed explicitly.
     static class LttbBucketSelectWindowFunction extends M4FunctionFactory.BucketSelectWindowFunction {
+        private final String gapInterval;
         private final LttbAlgorithm lttbAlgorithm;
 
         LttbBucketSelectWindowFunction(
@@ -250,11 +257,13 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
                 int targetPosition,
                 long resolvedTarget,
                 LttbAlgorithm algorithm,
+                @Nullable String gapInterval,
                 String name,
                 long maxRows,
                 int functionPosition
         ) {
             super(tsArg, valueArg, targetArg, targetPosition, resolvedTarget, algorithm, name, maxRows, functionPosition);
+            this.gapInterval = gapInterval;
             this.lttbAlgorithm = algorithm;
         }
 
@@ -274,6 +283,13 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         public void setMemoryTracker(@Nullable MemoryTracker tracker) {
             super.setMemoryTracker(tracker);
             lttbAlgorithm.setMemoryTracker(tracker);
+        }
+
+        @Override
+        protected void toPlanAdditionalArgs(PlanSink sink) {
+            if (gapInterval != null) {
+                sink.val(",'").val(gapInterval).val('\'');
+            }
         }
     }
 }

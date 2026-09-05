@@ -440,18 +440,41 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testExplainPlanWithGap() throws Exception {
+    public void testExplainPlanWithBindVariableAndGap() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table t (ts timestamp, v double) timestamp(ts)");
-            assertQuery("select ts, lttb(ts, v, 8, '1h') over (order by ts) from t")
+            execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
+            bindVariableService.setLong(0, 8);
+            assertQuery("SELECT ts, lttb(ts, v, $1, '1h') OVER (ORDER BY ts) FROM t")
                     .noLeakCheck()
                     .assertsPlan("CachedWindowLight\n" +
                             """
-                                      unorderedFunctions: [lttb(ts,v,8) over (order by [ts])]
+                                      unorderedFunctions: [lttb(ts,v,$0::long,'1h') over (order by [ts])]
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: t
                                     """);
+        });
+    }
+
+    @Test
+    public void testExplainPlanWithGap() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v double) timestamp(ts)");
+            final ObjList<String> gaps = new ObjList<>();
+            gaps.add("1h");
+            gaps.add("30s");
+            for (int i = 0; i < gaps.size(); i++) {
+                final String gap = gaps.getQuick(i);
+                assertQuery("SELECT ts, lttb(ts, v, 8, '" + gap + "') OVER (ORDER BY ts) FROM t")
+                        .noLeakCheck()
+                        .assertsPlan("CachedWindowLight\n" +
+                                "  unorderedFunctions: [lttb(ts,v,8,'" + gap + "') over (order by [ts])]\n" +
+                                """
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        """);
+            }
         });
     }
 }

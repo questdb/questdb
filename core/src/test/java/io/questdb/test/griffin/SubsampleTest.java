@@ -4429,14 +4429,12 @@ public class SubsampleTest extends AbstractCairoTest {
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n");
-            // 3-arg lttb (gap) also migrates -> 4-arg (ts, value, target, gap) window overload. The
-            // shared BucketSelectWindowFunction.toPlan only surfaces (ts,value,target), so the gap does
-            // not appear in the plan text; its runtime effect is verified byte-identically by the
-            // testLttbGapPreserving* oracle cases.
+            // 3-arg lttb (gap) migrates -> 4-arg (ts, value, target, gap) window overload,
+            // including the gap threshold in the plan.
             assertQuery("SELECT ts, v FROM t SUBSAMPLE lttb(v, 3, '1h')")
                     .assertsPlan("SelectedRecord\n" +
                             "    CachedWindowLightSelect\n" +
-                            "      unorderedFunctions: [lttb(ts,v,3) over (order by [ts])]\n" +
+                            "      unorderedFunctions: [lttb(ts,v,3,'1h') over (order by [ts])]\n" +
                             "        PageFrame\n" +
                             "            Row forward scan\n" +
                             "            Frame forward scan on: t\n");
