@@ -86,9 +86,10 @@ public class LogCapture {
      */
     public void drain() {
         final String sentinel = "log-capture-drain-" + SENTINEL_SEQ.incrementAndGet();
-        LOG.advisory().$(sentinel).$();
-        // a full ring silently drops the sentinel, and a backed-up writer is what
-        // fills it -- give up rather than fail on the symptom
+        // advisoryW() spins until it owns a ring slot, so neither a full ring nor a lost
+        // CAS against another producer can drop the sentinel. The deadline only bounds
+        // the wait on a writer that stopped consuming
+        LOG.advisoryW().$(sentinel).$();
         final long deadline = System.currentTimeMillis() + DRAIN_TIMEOUT_MS;
         while (sink.indexOf(sentinel) == -1 && System.currentTimeMillis() < deadline) {
             Os.sleep(1);

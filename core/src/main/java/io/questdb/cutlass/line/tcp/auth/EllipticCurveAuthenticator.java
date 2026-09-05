@@ -42,7 +42,9 @@ import org.jetbrains.annotations.NotNull;
 import java.security.SecureRandom;
 
 public class EllipticCurveAuthenticator implements SocketAuthenticator {
-    private static final Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
+    // this field is modified via reflection from tests, via LogFactory.enableGuaranteedLogging
+    @SuppressWarnings("FieldMayBeFinal")
+    private static Log LOG = LogFactory.getLog(EllipticCurveAuthenticator.class);
 
     private static final CarrierLocal<SecureRandom> tlSrand = new CarrierLocal<>(SecureRandom::new);
     private final ChallengeResponseMatcher challengeResponseMatcher;
