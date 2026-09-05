@@ -5680,6 +5680,126 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalKeepsRebaseSourceMarkerThroughDropCleanup() throws Exception {
+        // REBASE WAL drops the old dir through the ordinary WAL drop path, so ApplyWal2TableJob's
+        // cleanDroppedTableDirectory sweeps its files. That sweep must NOT delete the `_rebase_source`
+        // marker: the Enterprise replication uploader stats it to record the dir in index.msgpack as a
+        // rebase SOURCE (high bit on last_txn, deleted_at null) instead of a plain drop, which is what
+        // keeps the object-store baseline for the rebased table. Deleting it turns the source into a
+        // drop that wipes the replica.
+        //
+        // The sweep only reaches the dir when the rebase could not tombstone it itself - its
+        // `removeQuiet(_txn/_meta)` is best-effort and loses to open handles on Windows, where the drop
+        // is then applied on the NEXT boot, a whole restart before the uploader gets to the marker. This
+        // test reproduces that by refusing those two removals, so WalPurgeJob still sees a live-looking
+        // table and pings ApplyWal2TableJob to clean the files.
+        //
+        // The sweep must still tombstone the dir (`_txn`/`_meta` removed): WalPurgeJob only reclaims a
+        // dropped dir once it no longer looks like a table, otherwise it just pings ApplyWal2TableJob and
+        // the two ping-pong forever, leaking the dir. Hence "skip the marker", not "skip the sweep".
+        final AtomicReference<String> oldDirName = new AtomicReference<>();
+        final AtomicBoolean denyTombstone = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (denyTombstone.get()) {
+                    final String dir = oldDirName.get();
+                    if (Utf8s.endsWithAscii(name, dir + Files.SEPARATOR + TableUtils.TXN_FILE_NAME)
+                            || Utf8s.endsWithAscii(name, dir + Files.SEPARATOR + TableUtils.META_FILE_NAME)) {
+                        return false;
+                    }
+                }
+                return super.removeQuiet(name);
+            }
+        };
+
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(ff, () -> {
+            execute("create table t (ts timestamp, x int) timestamp(ts) partition by day wal");
+            execute("insert into t values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            final TableToken oldToken = engine.verifyTableName("t");
+            oldDirName.set(oldToken.getDirName());
+
+            execute("alter table t suspend wal");
+            denyTombstone.set(true);
+            try {
+                execute("alter table t rebase wal");
+            } finally {
+                denyTombstone.set(false);
+            }
+            Assert.assertNotEquals(oldToken.getDirName(), engine.verifyTableName("t").getDirName());
+
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(oldToken.getDirName());
+                final int len = p.size();
+                // Precondition: the rebase could not tombstone the dir, so it still looks like a table
+                // and the drop-file sweep is the one that will clean it.
+                Assert.assertTrue(ff.exists(p.concat(TableUtils.TXN_FILE_NAME).$()));
+                Assert.assertTrue(ff.exists(p.trimTo(len).concat(TableUtils.META_FILE_NAME).$()));
+            }
+
+            // Stand in for the restart: the rebase leaves the old token hard-suspended (REBASE requires
+            // SUSPEND WAL first) and ApplyWal2TableJob skips suspended tokens, so the sweep only reaches
+            // the dir on the next boot - which is exactly when the real failure happens, a whole restart
+            // before the replication uploader gets to read the marker. Hard-suspension lives on the
+            // SeqTxnTracker and a fresh process rebuilds it unsuspended.
+            engine.getTableSequencerAPI().getTxnTracker(oldToken).setHardSuspended(false);
+
+            // WalPurgeJob now sees a live-looking dropped table and pings ApplyWal2TableJob, whose sweep
+            // runs on the next drain.
+            engine.releaseInactive();
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    configuration.getFilesFacade(),
+                    configuration.getMicrosecondClock())
+            ) {
+                //noinspection StatementWithEmptyBody
+                while (job.run()) {
+                }
+            }
+            drainWalQueue();
+
+            try (Path p = new Path()) {
+                p.of(configuration.getDbRoot()).concat(oldToken.getDirName());
+                final int len = p.size();
+                Assert.assertTrue(
+                        "the drop sweep must keep the _rebase_source marker for the replication uploader",
+                        ff.exists(p.concat(WalUtils.REBASE_SOURCE_FILE_NAME).$())
+                );
+                // ... while still tombstoning the dir, so WalPurgeJob can reclaim it below.
+                Assert.assertFalse(
+                        "_txn must be removed so the dir stops looking like a live table",
+                        ff.exists(p.trimTo(len).concat(TableUtils.TXN_FILE_NAME).$())
+                );
+                Assert.assertFalse(
+                        "_meta must be removed so the dir stops looking like a live table",
+                        ff.exists(p.trimTo(len).concat(TableUtils.META_FILE_NAME).$())
+                );
+            }
+
+            // Keeping the marker must not strand the dir: WalPurgeJob still reclaims the lot.
+            engine.releaseInactive();
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    configuration.getFilesFacade(),
+                    configuration.getMicrosecondClock())
+            ) {
+                //noinspection StatementWithEmptyBody
+                while (job.run()) {
+                }
+            }
+            try (Path p = new Path()) {
+                Assert.assertFalse(
+                        "the old table dir must still be reclaimed by WalPurgeJob",
+                        ff.exists(p.of(configuration.getDbRoot()).concat(oldToken.getDirName()).$())
+                );
+            }
+        });
+    }
+
+    @Test
     public void testRebaseWalReclaimsOldTableDirAfterPurge() throws Exception {
         // Regression test for M1 [OSS]: REBASE WAL must NOT leak the old table dir. The teardown leaves the
         // old dir's reverse-map entry in the dropped state rebaseSwap set (it does not purgeToken it), so

@@ -280,7 +280,21 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         tempPath.trimTo(rootLen);
                         tempPath.concat(pUtf8NameZ);
 
-                        if (CairoKeywords.isTxn(pUtf8NameZ) || CairoKeywords.isMeta(pUtf8NameZ) || matchesWalLock(tempPath)) {
+                        // `_rebase_new` / `_rebase_source` must survive this sweep. The replication
+                        // uploader stats `_rebase_source` on the OLD dir of an ALTER TABLE ... REBASE WAL
+                        // to record it in the index as a rebase SOURCE (high bit on last_txn) rather than
+                        // a plain drop, which is what keeps the object-store baseline for the rebased
+                        // table. This sweep can get there first: the drop is applied a whole boot later
+                        // whenever the rebase itself could not tombstone the dir (its
+                        // `removeQuiet(_txn/_meta)` is best-effort and loses to open handles on Windows),
+                        // and deleting the marker turns the source into a drop that wipes the replica.
+                        // Skipping the entry (rather than bailing out of the sweep) keeps `allClean`
+                        // true, so `_txn`/`_meta` are still removed below - WalPurgeJob reclaims the dir,
+                        // markers included, only once the table no longer looks like it exists.
+                        if (CairoKeywords.isTxn(pUtf8NameZ)
+                                || CairoKeywords.isMeta(pUtf8NameZ)
+                                || CairoKeywords.isRebaseMarker(pUtf8NameZ)
+                                || matchesWalLock(tempPath)) {
                             continue;
                         }
 
