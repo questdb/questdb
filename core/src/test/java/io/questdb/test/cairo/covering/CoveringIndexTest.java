@@ -12461,6 +12461,70 @@ public class CoveringIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testGenFlushAfterStreamingRollbackKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "gen_after_streaming_rollback_cover";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int row = 0; row < 600; row++) {
+                        data.putLong(1000L + row);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    for (int row = 0; row < 600; row++) {
+                        writer.add(row % 300, row);
+                    }
+                    writer.setMaxValue(599);
+                    writer.commit();
+                    writer.rollbackValues(299);
+                    assertTrue("rollback must take the streaming branch", writer.isLastRollbackStreamingForTesting());
+
+                    // The same writer must re-map covered values after streaming rollback, without resealing or reconfiguration.
+                    writer.add(260, 300);
+                    writer.setMaxValue(300);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0);
+                     RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                    assertTrue(cursor instanceof CoveringRowCursor);
+                    CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(260, cc.next());
+                    assertEquals(1260L, cc.getCoveredLong(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(300, cc.next());
+                    assertEquals("appended covered LONG after streaming rollback", 1300L, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
+                }
+            }
+        });
+    }
+
     // Regression: sealIncremental sized the shared dirty-stride sidecar
     // scratch at Long.BYTES per merged value, but
     // writeSidecarFixedStrideForColumn assembles one key's raw values into it
