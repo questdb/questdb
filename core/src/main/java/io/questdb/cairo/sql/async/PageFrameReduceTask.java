@@ -247,12 +247,12 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         // or it belongs to top K. Top K uses its own frame memory pool.
         if (!sameQueryExecution && taskType != TYPE_TOP_K) {
             frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
-        }  
+        }
         frameMemory = null;
         // Enforce off-heap buffer management when rebound to a different query
         if (!sameQueryExecution) {
             filteredRows.resetCapacity();
-            dataAddresses.resetCapacity();  
+            dataAddresses.resetCapacity();
             auxAddresses.resetCapacity();
         } else {
             filteredRows.clear();
