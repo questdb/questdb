@@ -362,16 +362,16 @@ class AsyncGroupByRecordCursor implements RecordCursor {
                     } else if (isOwnerParkable) {
                         final boolean isProgressObserved = isOwnerTripped
                                 ? dispatcher.awaitProgressWhileDraining(
-                                        progressState,
-                                        observedProgress,
-                                        observedGlobalProgress
-                                )
+                                progressState,
+                                observedProgress,
+                                observedGlobalProgress
+                        )
                                 : dispatcher.awaitProgressWhileDraining(
-                                        progressState,
-                                        observedProgress,
-                                        observedGlobalProgress,
-                                        circuitBreaker
-                                );
+                                progressState,
+                                observedProgress,
+                                observedGlobalProgress,
+                                circuitBreaker
+                        );
                         if (!isProgressObserved) {
                             Os.pause();
                         }
