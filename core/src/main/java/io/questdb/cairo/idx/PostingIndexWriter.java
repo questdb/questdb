@@ -7816,16 +7816,28 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    try {
+                        mapCoveredColumn(p, c);
+                        writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
+                    } finally {
+                        unmapCoveredColumn(c);
+                    }
                 }
-                try {
-                    mapCoveredColumn(p, c);
-                    writeSidecarForColumn(c, sc, siSize, totalCountsAddr, strideValsAddr, globalMaxKeyCount);
-                } finally {
-                    unmapCoveredColumn(c);
-                }
+            } finally {
+                // The per-column map/unmap loop above leaves the covered
+                // read-map arrays allocated with every entry unmapped (0).
+                // ensureCoveredColumnReadMaps() early-returns on non-null
+                // arrays, so keeping them would make every later covered
+                // read -- post-seal gen flushes (writeSidecarGenData) and
+                // incremental seals (writeSidecarStrideData) -- resolve to
+                // addr 0 and silently write NULL covered values. Null the
+                // arrays so the next covered read lazily re-maps.
+                unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
             // O3 addr-based path: all addresses provided by caller, no per-column mapping needed
@@ -7859,16 +7871,23 @@ public class PostingIndexWriter implements IndexWriter {
 
         if (coveredColumnNames.size() > 0 && coveredPartitionPath.size() > 0) {
             Path p = Path.getThreadLocal(coveredPartitionPath);
-            for (int c = 0; c < coverCount; c++) {
-                if (coveredColumnIndices.getQuick(c) < 0) {
-                    continue;
+            try {
+                for (int c = 0; c < coverCount; c++) {
+                    if (coveredColumnIndices.getQuick(c) < 0) {
+                        continue;
+                    }
+                    try {
+                        mapCoveredColumn(p, c);
+                        writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
+                    } finally {
+                        unmapCoveredColumn(c);
+                    }
                 }
-                try {
-                    mapCoveredColumn(p, c);
-                    writeSidecarForColumnStreaming(c, sc, siSize, totalCountsAddr, keyBuffer, maxKeyCount, keyCounts);
-                } finally {
-                    unmapCoveredColumn(c);
-                }
+            } finally {
+                // See writeSidecarsPerColumn: reset the lazy-mapping state so
+                // ensureCoveredColumnReadMaps() re-maps on the next covered
+                // read instead of early-returning on stale all-zero arrays.
+                unmapCoveredColumnReads();
             }
         } else if (coveredColumnAddrs.size() > 0) {
             ensureCoveredColumnReadMaps();
