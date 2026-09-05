@@ -2951,6 +2951,51 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(50, configuration.getWalMaxSegmentFileDescriptorsCache());
     }
 
+    @Test
+    public void testSubsampleMaxRowsDefaultAndOverride() throws Exception {
+        Properties properties = new Properties();
+        Assert.assertEquals(100_000_000L, newPropServerConfiguration(properties).getCairoConfiguration().getSubsampleMaxRows());
+
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "42");
+        Assert.assertEquals(42L, newPropServerConfiguration(properties).getCairoConfiguration().getSubsampleMaxRows());
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsAboveIntMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "2147483648");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
     private PropServerConfiguration.ValidationResult validate(Properties properties) {
         return new PropServerConfiguration.PropertyValidator().validate(properties);
     }

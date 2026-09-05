@@ -3512,54 +3512,60 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             // along!=8))" - two single-width predicates. serialize() below is the entry point that
             // skips that rewrite, which is what made the assert reachable from this harness and
             // only from it.
-            String expr = "along > anint and not (anint = 7 and along = 8)";
-            int options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+            // Keep the buffer's first native allocation and close inside the leak-check scope,
+            // even when this test runs before any test that writes to the shared irMemory.
+            try (MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT)) {
+                String expr = "along > anint and not (anint = 7 and along = 8)";
+                int options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            // The OR spelling of the same NOT, and the conjunct order reversed - the walk reads the
-            // stream, so where in it the SX_I64 falls must not matter.
-            expr = "along > anint and not (anint > 7 or along = 8)";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(>)(||)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                // The OR spelling of the same NOT, and the conjunct order reversed - the walk reads the
+                // stream, so where in it the SX_I64 falls must not matter.
+                expr = "along > anint and not (anint > 7 or along = 8)";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(>)(||)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            expr = "not (anint = 7 and along = 8) and along > anint";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i32 anint)(sx_i64)(i64 along)(>)(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                expr = "not (anint = 7 and along = 8) and along > anint";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i32 anint)(sx_i64)(i64 along)(>)(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            // The narrow side as an arithmetic RESULT rather than a bare column read. `anint + 1`
-            // runs at INT width on both sides - AddIntFunction on the Java one, int32_add on the
-            // four-lane loop - and convert() sign-extends the i32 result for the comparison exactly
-            // as it would the column it came from.
-            expr = "along > anint and not (anint + 1 = 7 and along = 8)";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 1L)(i32 anint)(+)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                // The narrow side as an arithmetic RESULT rather than a bare column read. `anint + 1`
+                // runs at INT width on both sides - AddIntFunction on the Java one, int32_add on the
+                // four-lane loop - and convert() sign-extends the i32 result for the comparison exactly
+                // as it would the column it came from.
+                expr = "along > anint and not (anint + 1 = 7 and along = 8)";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 1L)(i32 anint)(+)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            // Control: an out-of-INT-range bound makes the comparison a genuinely 64-bit one, and
-            // the frontend answers with an SX_I64 of its own rather than leaving the width to the
-            // backend. The shape the assert never had to report, beside the ones it used to.
-            expr = "along > anint and not (anint = 5_000_000_000 and along = 8)";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                // Control: an out-of-INT-range bound makes the comparison a genuinely 64-bit one, and
+                // the frontend answers with an SX_I64 of its own rather than leaving the width to the
+                // backend. The shape the assert never had to report, beside the ones it used to.
+                expr = "along > anint and not (anint = 5_000_000_000 and along = 8)";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            // Control on the other side: without the NOT each conjunct is its own predicate, the
-            // local observer sees INT alone, and serializeUntypedNumber keeps the constant at I4.
-            // Same columns, same comparisons, no widened immediate - this is what every SQL
-            // spelling of the filter above actually serializes to.
-            expr = "along > anint and (anint = 7 and along = 8)";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i32 7L)(i32 anint)(=)(&&)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                // Control on the other side: without the NOT each conjunct is its own predicate, the
+                // local observer sees INT alone, and serializeUntypedNumber keeps the constant at I4.
+                // Same columns, same comparisons, no widened immediate - this is what every SQL
+                // spelling of the filter above actually serializes to.
+                expr = "along > anint and (anint = 7 and along = 8)";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i32 7L)(i32 anint)(=)(&&)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+            } finally {
+                serializer.clear();
+            }
         });
     }
 
@@ -3654,6 +3660,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     private void assertIR(String message, String expectedIR) {
+        assertIR(irMemory, message, expectedIR);
+    }
+
+    private void assertIR(MemoryCARW irMemory, String message, String expectedIR) {
         TestIRSerializer ser = new TestIRSerializer(irMemory, metadata);
         String actualIR = ser.serialize();
         Assert.assertEquals(message, expectedIR, actualIR);
@@ -3687,7 +3697,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         Assert.assertEquals(msg, expectedSize, size);
     }
 
-    private int serialize(CharSequence seq, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
+    private int serialize(CharSequence seq, boolean isScalar, boolean isDebug, boolean hasNullChecks) throws SqlException {
+        return serialize(irMemory, seq, isScalar, isDebug, hasNullChecks);
+    }
+
+    private int serialize(MemoryCARW irMemory, CharSequence seq, boolean isScalar, boolean isDebug, boolean hasNullChecks) throws SqlException {
         irMemory.truncate();
         serializer.clear();
         bindVarFunctions.clear();
@@ -3695,7 +3709,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         ExpressionNode node = expr(seq);
         try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
             return serializer.of(irMemory, sqlExecutionContext, metadata, cursor, bindVarFunctions)
-                    .serialize(node, scalar, debug, nullChecks);
+                    .serialize(node, isScalar, isDebug, hasNullChecks);
         }
     }
 

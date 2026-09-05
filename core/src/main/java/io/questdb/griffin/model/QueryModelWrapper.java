@@ -657,6 +657,16 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public ExpressionNode getSubsample() {
+        return delegate.getSubsample();
+    }
+
+    @Override
+    public int getSubsamplePosition() {
+        return delegate.getSubsamplePosition();
+    }
+
+    @Override
     public int getTableId() {
         return delegate.getTableId();
     }
@@ -954,6 +964,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void moveLimitFrom(IQueryModel baseModel) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void moveSubsampleFrom(IQueryModel baseModel) {
         throw new UnsupportedOperationException();
     }
 
@@ -1284,6 +1299,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setShowKind(int showKind) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setSubsample(ExpressionNode subsample, int position) {
         throw new UnsupportedOperationException();
     }
 

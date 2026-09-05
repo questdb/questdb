@@ -93,6 +93,13 @@ public final class WindowExpression extends QueryColumn {
     private char rowsLoExprTimeUnit;
     private int rowsLoKind = PRECEDING;
     private int rowsLoKindPos = 0;
+    // Set ONLY by SqlOptimiser.desugarSubsample on the internal __keep_subsample keep-flag column.
+    // Marks this window column as the desugared SUBSAMPLE keep flag, which the outer projection above
+    // the WHERE filter is guaranteed to drop (its boolean never surfaces in output). The keep-flag
+    // filter fusion in code generation fuses ONLY a function carrying this marker; a hand-written
+    // window query that projects a row-selecting keep boolean must NOT fuse, because the fused cursor
+    // skips writing the boolean and a projected copy would read false for every kept row.
+    private boolean subsampleKeepFlag = false;
     // For OVER window_name syntax - stores the referenced window name
     private CharSequence windowName;
     private int windowNamePosition;
@@ -160,6 +167,7 @@ public final class WindowExpression extends QueryColumn {
         exclusionKindPos = 0;
         ignoreNulls = false;
         nullsDescPos = 0;
+        subsampleKeepFlag = false;
         windowName = null;
         windowNamePosition = 0;
         resolvedWindowName = null;
@@ -371,6 +379,15 @@ public final class WindowExpression extends QueryColumn {
         return resolvedWindowAnchored;
     }
 
+    /**
+     * @return {@code true} iff this window column is the internal {@code __keep_subsample} keep flag
+     * created by {@link io.questdb.griffin.SqlOptimiser#desugarSubsample}. Only such columns may be
+     * fused by the keep-flag filter fusion in code generation.
+     */
+    public boolean isSubsampleKeepFlag() {
+        return subsampleKeepFlag;
+    }
+
     @Override
     public boolean isWindowExpression() {
         return true;
@@ -414,6 +431,14 @@ public final class WindowExpression extends QueryColumn {
 
     public void setNullsDescPos(int nullsDescPos) {
         this.nullsDescPos = nullsDescPos;
+    }
+
+    /**
+     * Marks this window column as the internal {@code __keep_subsample} keep flag. Called ONLY by
+     * {@link io.questdb.griffin.SqlOptimiser#desugarSubsample}; see {@link #isSubsampleKeepFlag()}.
+     */
+    public void setSubsampleKeepFlag(boolean subsampleKeepFlag) {
+        this.subsampleKeepFlag = subsampleKeepFlag;
     }
 
     public void setRowsHi(long rowsHi) {

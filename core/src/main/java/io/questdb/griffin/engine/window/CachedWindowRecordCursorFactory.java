@@ -309,6 +309,16 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
+    // Symmetric with the streaming WindowRecordCursor, whose AbstractVirtualFunctionRecordCursor
+    // base notifies every function on cursor close. Window function args cache cursor-scoped
+    // native state (e.g. json_extract's UTF-8 sink); cursorClosed() releases it and the next
+    // execution's init() re-inflates it.
+    private void cursorClosedFunctions() {
+        for (int i = 0, n = allFunctions.size(); i < n; i++) {
+            allFunctions.getQuick(i).cursorClosed();
+        }
+    }
+
     private void resetFunctions() {
         for (int i = 0, n = allFunctions.size(); i < n; i++) {
             allFunctions.getQuick(i).reset();
@@ -375,6 +385,7 @@ public class CachedWindowRecordCursorFactory extends AbstractRecordCursorFactory
                     Misc.free(sortBuffers.getQuick(i));
                 }
                 resetFunctions();
+                cursorClosedFunctions();
                 // Symmetric with the reopen in of(): each group hands its map backing back to
                 // the tracker that was bound when it was allocated. Reached on a failed open
                 // too, where a group that never got as far as reopen() frees a closed map.

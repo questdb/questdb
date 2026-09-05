@@ -3707,6 +3707,9 @@ public class SqlParser {
                 if (prevModel.getNestedModel().getLimitPosition() > 0) {
                     throw SqlException.$(prevModel.getNestedModel().getLimitPosition(), "unexpected token 'limit'");
                 }
+                if (prevModel.getNestedModel().getSubsamplePosition() > 0) {
+                    throw SqlException.$(prevModel.getNestedModel().getSubsamplePosition(), "unexpected token 'subsample'");
+                }
             }
 
             if (isUnionKeyword(tok)) {
@@ -4138,6 +4141,10 @@ public class SqlParser {
                                     && target.getNestedModel() == null
                                     && target.getSampleBy() == null
                                     && target.getGroupBy().size() == 0
+                                    // SUBSAMPLE lives on the sub-query model; collapsing would discard it
+                                    // silently, so the shorthand "(t SUBSAMPLE ...)" must keep its sub-query
+                                    && target.getSubsample() == null
+                                    && proposedNested.getSubsample() == null
                                     && proposedNested.getLimitLo() == null
                                     && proposedNested.getLimitHi() == null
                                     && target.getPivotForColumns().size() == 0
@@ -4468,6 +4475,64 @@ public class SqlParser {
         // Fail fast here rather than waiting for the optimizer.
         validateNamedWindowReferences(masterModel);
 
+        // expect [subsample]
+        // Syntax: SUBSAMPLE methodName(arg1, arg2, ...)
+        // Parsed manually because the method name is not a registered SQL function.
+        if (tok != null && isSubsampleKeyword(tok)) {
+            int subsamplePos = lexer.lastTokenPosition();
+            tok = tok(lexer, "subsample method name");
+            int methodPos = lexer.lastTokenPosition();
+            if (!Character.isLetter(tok.charAt(0))) {
+                // punctuation or a quoted string is never a method name; report the name as missing
+                throw SqlException.$(methodPos, "subsample method name expected");
+            }
+            CharSequence methodName = GenericLexer.immutableOf(tok);
+
+            tok = optTok(lexer);
+            if (tok == null || !Chars.equals(tok, '(')) {
+                throw SqlException.$(tok == null ? lexer.getPosition() : lexer.lastTokenPosition(), "'(' expected after subsample method name");
+            }
+
+            // Build a FUNCTION ExpressionNode: methodName(arg1, arg2, ...)
+            ExpressionNode methodNode = expressionNodePool.next().of(
+                    ExpressionNode.FUNCTION,
+                    methodName,
+                    0,
+                    methodPos
+            );
+
+            int argCount = 0;
+            int savedSubQueryMode = subQueryMode ? 1 : 0;
+            subQueryMode = false; // Prevent expr() from consuming ')' as subquery close
+            try {
+                while (true) {
+                    final int argStart = lexer.lastTokenPosition();
+                    ExpressionNode argExpr = expr(lexer, model, sqlParserCallback, model.getDecls());
+                    if (argExpr == null) {
+                        // when the input ends here expr() read nothing, so point at the end of the statement
+                        // instead of at the '(' or ',' that precedes the missing argument
+                        final int pos = lexer.lastTokenPosition() == argStart ? lexer.getPosition() : lexer.lastTokenPosition();
+                        throw SqlException.$(pos, "expression expected");
+                    }
+                    methodNode.args.add(argExpr);
+                    argCount++;
+
+                    tok = tok(lexer, "',' or ')'");
+                    if (Chars.equals(tok, ')')) {
+                        break;
+                    }
+                    if (!Chars.equals(tok, ',')) {
+                        throw SqlException.$(lexer.lastTokenPosition(), "',' or ')' expected");
+                    }
+                }
+            } finally {
+                subQueryMode = savedSubQueryMode != 0;
+            }
+            methodNode.paramCount = argCount;
+            model.setSubsample(methodNode, subsamplePos);
+            tok = optTok(lexer);
+        }
+
         // expect [order by]
 
         if (tok != null && isOrderKeyword(tok)) {
@@ -4516,9 +4581,11 @@ public class SqlParser {
             tok = optTok(lexer);
             if (tok != null && Chars.equals(tok, ',')) {
                 hi = expr(lexer, model, sqlParserCallback, model.getDecls());
-            } else {
-                lexer.unparseLast();
+                // expr() pushed back the token that ended the upper bound; read it so the
+                // clause-order check below sees the first unconsumed token
+                tok = optTok(lexer);
             }
+            lexer.unparseLast();
             // questdb accepts open-ended limits like 'LIMIT 5,' and 'LIMIT ,5'.
             // so reject only when neither side of the LIMIT clause parsed.
             if (lo == null && hi == null) {
@@ -4528,7 +4595,33 @@ public class SqlParser {
         } else {
             lexer.unparseLast();
         }
+        assertSubsampleClauseOrder(lexer, model, tok);
         return model;
+    }
+
+    /**
+     * Names the required clause order when a SUBSAMPLE clause sits where the SELECT grammar cannot accept
+     * it, instead of the generic "unexpected token" the compiler reports for trailing input. {@code tok} is
+     * the first token the SELECT parser did not consume; it has already been pushed back into the lexer.
+     */
+    private static void assertSubsampleClauseOrder(GenericLexer lexer, IQueryModel model, CharSequence tok) throws SqlException {
+        if (tok == null) {
+            return;
+        }
+        if (isSubsampleKeyword(tok)) {
+            if (model.getSubsample() != null) {
+                throw SqlException.$(lexer.lastTokenPosition(), "duplicate SUBSAMPLE clause");
+            }
+            throw SqlException.$(lexer.lastTokenPosition(), "SUBSAMPLE must be placed before ORDER BY and LIMIT");
+        }
+        if (model.getSubsample() != null
+                && (isWhereKeyword(tok) || isLatestKeyword(tok) || isSampleKeyword(tok) || isGroupKeyword(tok) || isWindowKeyword(tok))) {
+            throw SqlException.unexpectedToken(
+                    lexer.lastTokenPosition(),
+                    tok,
+                    "SUBSAMPLE must be placed after the WHERE, LATEST ON, SAMPLE BY, GROUP BY and WINDOW clauses"
+            );
+        }
     }
 
     private void parseFromTable(GenericLexer lexer, IQueryModel model) throws SqlException {
@@ -6693,6 +6786,13 @@ public class SqlParser {
                             .put("FILL on base table is not supported for materialized views: ").put(baseTableName);
                 }
 
+                if (m.getSubsample() != null) {
+                    // SUBSAMPLE selects rows from the whole query result. Incremental refresh evaluates
+                    // the query once per refresh interval, so it cannot reproduce that selection.
+                    throw SqlException.position(m.getSubsamplePosition())
+                            .put("SUBSAMPLE on base table is not supported for materialized views: ").put(baseTableName);
+                }
+
                 ObjList<QueryColumn> columns = m.getColumns();
                 QueryColumn windowFuncColumn = null;
                 for (int i = 0, n = columns.size(); i < n; i++) {
@@ -7060,6 +7160,7 @@ public class SqlParser {
         tableAliasStop.add("range");
         tableAliasStop.add("window");
         tableAliasStop.add("horizon");
+        tableAliasStop.add("subsample");
         tableAliasStop.add("unnest");
         //
         columnAliasStop.add("from");
