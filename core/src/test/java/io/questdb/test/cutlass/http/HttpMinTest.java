@@ -49,6 +49,27 @@ public class HttpMinTest extends AbstractBootstrapTest {
         dbPath.parent().$();
     }
 
+    /**
+     * Characterization test for the min server's endpoint authorization hook. In open source the
+     * security context factory yields an allow-all context, so authorizeMetrics() and
+     * authorizeHealthCheck() are no-ops and both endpoints must keep answering 200.
+     */
+    @Test
+    public void testMinServerEndpointsRemainOpenInOss() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (final TestServerMain serverMain = startWithEnvVariables(
+                    PropertyKey.METRICS_ENABLED.getEnvVarName(), "true",
+                    PropertyKey.HTTP_ENABLED.getEnvVarName(), "false"
+            )) {
+                serverMain.start();
+                int httpMinPort = serverMain.getConfiguration().getHttpMinServerConfiguration().getBindPort();
+                try (HttpClient httpClient = HttpClientFactory.newPlainTextInstance(new DefaultHttpClientConfiguration())) {
+                    checkResponse(httpClient, "/status", "Status: Healthy", httpMinPort);
+                    checkResponse(httpClient, "/metrics", "questdb_", httpMinPort);
+                }
+            }
+        });
+    }
 
     @Test
     public void testResponsiveOnMemoryPressure() throws Exception {

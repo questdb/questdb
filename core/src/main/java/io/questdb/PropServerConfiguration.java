@@ -37,6 +37,7 @@ import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.security.SecurityContextFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
 import io.questdb.cutlass.auth.AuthUtils;
 import io.questdb.cutlass.http.HttpContextConfiguration;
@@ -5841,6 +5842,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public byte getRequiredAuthType() {
             return httpHealthCheckAuthType;
+        }
+
+        @Override
+        public byte getSecurityContextInterfaceId() {
+            return SecurityContextFactory.HTTP_MIN;
         }
 
         @Override

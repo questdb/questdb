@@ -644,7 +644,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
             // auth successful, create security context from auth info
             final SecurityContextFactory scf = configuration.getFactoryProvider().getSecurityContextFactory();
-            securityContext = scf.getInstance(principalContext, SecurityContextFactory.HTTP);
+            securityContext = scf.getInstance(principalContext, configuration.getSecurityContextInterfaceId());
 
             if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
                 // the client can request a session by sending 'session=true',
@@ -1081,6 +1081,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
 
                     try {
                         securityContext.checkEntityEnabled();
+                    } catch (CairoException e) {
+                        processor = rejectProcessor.reject(HTTP_FORBIDDEN, e.getFlyweightMessage());
+                    }
+
+                    // Endpoint-level authorization. Both guards are load-bearing:
+                    // - requiresAuthentication(): with the listener's auth type NONE,
+                    //   configureSecurityContext() never ran and securityContext is still
+                    //   DenyAllSecurityContext, so authorizing would reject every anonymous request.
+                    // - isRequestBeingRejected(): do not overwrite an already-issued 401 with a 403.
+                    // This cannot live in the processor's onRequestComplete: a CairoException thrown
+                    // there is caught as an internal error and the connection is dropped with no
+                    // response at all.
+                    try {
+                        if (processor.requiresAuthentication() && !rejectProcessor.isRequestBeingRejected()) {
+                            processor.authorize(securityContext);
+                        }
                     } catch (CairoException e) {
                         processor = rejectProcessor.reject(HTTP_FORBIDDEN, e.getFlyweightMessage());
                     }

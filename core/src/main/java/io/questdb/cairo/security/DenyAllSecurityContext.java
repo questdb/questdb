@@ -38,12 +38,22 @@ public class DenyAllSecurityContext extends ReadOnlySecurityContext {
     }
 
     @Override
+    public void authorizeHealthCheck() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
     public void authorizeHttp() {
         throw CairoException.nonCritical().put("permission denied");
     }
 
     @Override
     public void authorizeLineTcp() {
+        throw CairoException.nonCritical().put("permission denied");
+    }
+
+    @Override
+    public void authorizeMetrics() {
         throw CairoException.nonCritical().put("permission denied");
     }
 
