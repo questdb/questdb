@@ -966,11 +966,16 @@ namespace questdb::aarch64 {
                dt == data_type_t::f32 || dt == data_type_t::f64;
     }
 
+    inline bool is_integer(data_type_t dt) {
+        return dt == data_type_t::i8 || dt == data_type_t::i16 ||
+               dt == data_type_t::i32 || dt == data_type_t::i64;
+    }
+
     inline bool is_imm_int_zero(const jit_value_t &v) {
         if (!v.op().is_imm()) {
             return false;
         }
-        if (!is_number(v.dtype())) {
+        if (!is_integer(v.dtype())) {
             return false;
         }
         return v.op().as<Imm>().value_as<int64_t>() == 0;
