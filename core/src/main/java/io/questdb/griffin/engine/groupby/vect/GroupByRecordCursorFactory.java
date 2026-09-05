@@ -334,7 +334,8 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             if (doneLatch.done(queuedCount)) {
                 break;
             }
-            if (circuitBreaker.checkIfTripped()) {
+            final boolean isOwnerTripped = circuitBreaker.checkIfTripped();
+            if (isOwnerTripped) {
                 sharedCB.cancel();
             }
 
@@ -362,7 +363,19 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                     Os.pause();
                 }
             } else if (isOwnerParkable) {
-                if (!dispatcher.awaitProgressWhileDraining(progressState, observedProgress, observedGlobalProgress)) {
+                final boolean isProgressObserved = isOwnerTripped
+                        ? dispatcher.awaitProgressWhileDraining(
+                                progressState,
+                                observedProgress,
+                                observedGlobalProgress
+                        )
+                        : dispatcher.awaitProgressWhileDraining(
+                                progressState,
+                                observedProgress,
+                                observedGlobalProgress,
+                                circuitBreaker
+                        );
+                if (!isProgressObserved) {
                     Os.pause();
                 }
             } else {
@@ -597,6 +610,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             final Worker worker = Worker.current();
             final int workerId = worker != null ? worker.getWorkerId() % workerCount : -1;
+            final boolean isFiberOwner = dispatcher != null
+                    && !publicationPermit
+                    && QueryParallelFiberDispatcher.isFiberOwner();
+            long lastOwnerYieldNanos = QueryParallelFiberDispatcher.OWNER_YIELD_UNSET;
 
             try {
                 PageFrame frame;
@@ -624,6 +641,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
                         if (dispatcher != null && !publicationPermit) {
                             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                            if (isFiberOwner) {
+                                lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
+                            }
                             VectorAggregateEntry.aggregateUnsafe(
                                     workerId,
                                     oomCounter,
@@ -654,7 +674,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
                             if (cursor < 0) {
                                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
 
-                                if (!isOwnerParkable && workStealingStrategy.shouldSteal(mergedCount)) {
+                                if (workStealingStrategy.shouldSteal(mergedCount)) {
+                                    if (isOwnerParkable) {
+                                        lastOwnerYieldNanos = dispatcher.cooperateFiberOwner(lastOwnerYieldNanos);
+                                    }
                                     VectorAggregateEntry.aggregateUnsafe(
                                             workerId,
                                             oomCounter,

@@ -39,6 +39,7 @@ import java.util.concurrent.atomic.LongAdder;
 public final class FiberRuntime {
     private static final long ADMISSION_OPEN = Long.MIN_VALUE;
     private static final long ADMISSION_PERMIT_MASK = Long.MAX_VALUE;
+    private static final long DRAIN_TIME_BUDGET_NANOS = 2_000_000L;
     private static final Log LOG = LogFactory.getLog(FiberRuntime.class);
     private static final int PROCESS_OWNED = 2;
     private static final int PROCESS_RELEASED = 1;
@@ -268,15 +269,25 @@ public final class FiberRuntime {
             return 0;
         }
         int attempts = 0;
+        long drainStartNanos = 0;
         while (attempts < attemptBudget) {
             final Fiber fiber = runQueue.tryDequeue();
             if (fiber == null) {
                 break;
             }
+            if (attempts == 0) {
+                drainStartNanos = System.nanoTime();
+            }
             attempts++;
             final int processResult = process(fiber, false);
+            // Capture the yield reason before finalization can republish the fiber to another carrier.
+            final boolean isCooperativeYield = processResult == PROCESS_OWNED
+                    && fiber.getYieldReason() == Fiber.YIELD_COOPERATIVE;
             if (processResult != PROCESS_TERMINATED) {
                 finishProcessingAfterUnmount(fiber, processResult == PROCESS_OWNED);
+            }
+            if (isCooperativeYield && System.nanoTime() - drainStartNanos >= DRAIN_TIME_BUDGET_NANOS) {
+                break;
             }
         }
         if (attempts == attemptBudget && runQueue.hasAvailable()) {
@@ -966,6 +977,8 @@ public final class FiberRuntime {
                 finishFiberRetirement(fiber);
                 hasFiberOwnership = false;
                 finalizeOutcome(outcome);
+            } else if (fiber.getYieldReason() == Fiber.YIELD_COOPERATIVE) {
+                fiber.publishCooperativeYield();
             } else if (fiber.getYieldReason() == Fiber.YIELD_WAIT) {
                 fiber.publishWaiting();
             } else {

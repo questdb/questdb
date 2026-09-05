@@ -37,6 +37,7 @@ import java.util.concurrent.locks.Lock;
 
 public final class Fiber implements FiberWaitCoordinator.Target {
     public static final long TOKEN_REFUSED = 0;
+    public static final int YIELD_COOPERATIVE = 2;
     public static final int YIELD_FREE = 0;
     public static final int YIELD_WAIT = 1;
     static final int EXECUTION_DONE = 6;
@@ -112,6 +113,48 @@ public final class Fiber implements FiberWaitCoordinator.Target {
 
     public static boolean isMounted() {
         return Continuation.getCurrentContinuation(SCOPE) != null;
+    }
+
+    /**
+     * Cooperatively unmounts the current Fiber and reschedules it through its runtime. A false
+     * return means the continuation was pinned and the method restored the mounted state before
+     * returning.
+     */
+    public static boolean yieldCooperatively() {
+        final SuspensionScope.CarrierScope scope = SuspensionScope.scope();
+        final Fiber fiber = scope.fiber;
+        if (fiber == null || scope.mode != SuspensionScope.Mode.FIBER) {
+            throw new IllegalStateException("cooperative yield requires a mounted Fiber scope");
+        }
+        if (!Unsafe.cas(
+                fiber,
+                EXECUTION_STATE_OFFSET,
+                packExecutionState(0, EXECUTION_MOUNTED),
+                packExecutionState(0, EXECUTION_PARKING)
+        )) {
+            throw new IllegalStateException("cooperative yield requires mounted execution");
+        }
+        final int previousYieldReason = fiber.yieldReason;
+        fiber.yieldReason = YIELD_COOPERATIVE;
+        boolean isSuspended = false;
+        boolean isRolledBack = false;
+        try {
+            isSuspended = suspend();
+            if (!isSuspended) {
+                fiber.rollbackCooperativeYield();
+                isRolledBack = true;
+            } else if (fiber.executionState != packExecutionState(0, EXECUTION_MOUNTED)) {
+                throw new IllegalStateException("cooperative yield resumed without a mount");
+            }
+            return isSuspended;
+        } catch (Throwable th) {
+            if (!isSuspended && !isRolledBack) {
+                fiber.rollbackCooperativeYield();
+            }
+            throw th;
+        } finally {
+            fiber.yieldReason = previousYieldReason;
+        }
     }
 
     static void verifyRuntimeAccess() {
@@ -404,6 +447,25 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         }
     }
 
+    private void rollbackCooperativeYield() {
+        while (true) {
+            final long current = executionState;
+            if (executionToken(current) != 0) {
+                throw new IllegalStateException("cooperative yield changed the execution token");
+            }
+            final int state = executionState(current);
+            if (state == EXECUTION_MOUNTED) {
+                return;
+            }
+            if (state != EXECUTION_PARKING && state != EXECUTION_RESUME_PENDING) {
+                throw new IllegalStateException("cooperative yield cannot restore execution [state=" + state + ']');
+            }
+            if (Unsafe.cas(this, EXECUTION_STATE_OFFSET, current, packExecutionState(0, EXECUTION_MOUNTED))) {
+                return;
+            }
+        }
+    }
+
     private void rollbackUnpublished(FiberTask task, long reservationEpoch) {
         if (assignedTask != task
                 || executionState != packExecutionState(0, EXECUTION_RUNNABLE)
@@ -665,6 +727,18 @@ public final class Fiber implements FiberWaitCoordinator.Target {
         if (transitionFreeToRunnable()) {
             requestRun();
         }
+    }
+
+    void publishCooperativeYield() {
+        if (!Unsafe.cas(
+                this,
+                EXECUTION_STATE_OFFSET,
+                packExecutionState(0, EXECUTION_PARKING),
+                packExecutionState(0, EXECUTION_RUNNABLE)
+        )) {
+            throw new IllegalStateException("Fiber cooperative yield is not parking");
+        }
+        requestRun();
     }
 
     void publishWaiting() {

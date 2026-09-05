@@ -40,6 +40,7 @@ import io.questdb.mp.continuation.SourceRegistrationResult;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.ObjList;
 import io.questdb.test.tools.TestUtils;
+import jdk.internal.vm.Continuation;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -56,6 +57,7 @@ import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class FiberRuntimeTest {
+    private static final long EXCEEDED_DRAIN_TIME_BUDGET_NANOS = TimeUnit.MILLISECONDS.toNanos(10);
 
     @Test
     public void testAwaitCapacityReportsAlreadyCancelledSignal() throws Exception {
@@ -305,6 +307,66 @@ public class FiberRuntimeTest {
                         threads.getQuick(i).join();
                     }
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testCooperativeYieldReschedulesFiber() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CooperativeYieldTask task = new CooperativeYieldTask(runtime);
+            final OneShotTask competingTask = new OneShotTask();
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertFalse(task.isResumed);
+                Assert.assertFalse(task.isDone());
+                Assert.assertEquals(1, runtime.getMountCount());
+                Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertEquals(1, runtime.getQueuedCount());
+                Assert.assertEquals(LaunchResult.SATURATED, runtime.launch(competingTask));
+
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(task.isResumed);
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(1, task.doneCount);
+                Assert.assertEquals(2, runtime.getMountCount());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertEquals(0, runtime.getQueuedCount());
+            }
+        });
+    }
+
+    @Test
+    public void testCooperativeYieldReturnsAfterDrainTimeBudget() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CooperativeYieldTask task = new CooperativeYieldTask(runtime);
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                exhaustDrainTimeBudgetAfterProcess(runtime);
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(64));
+                Assert.assertNull(task.error);
+                Assert.assertFalse(task.isResumed);
+                Assert.assertFalse(task.isDone());
+                Assert.assertEquals(1, runtime.getMountCount());
+                Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertEquals(1, runtime.getQueuedCount());
+                Assert.assertEquals(LaunchResult.SATURATED, runtime.launch(new OneShotTask()));
+
+                Assert.assertEquals(1, runtime.drain(64));
+                Assert.assertNull(task.error);
+                Assert.assertTrue(task.isResumed);
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(1, task.doneCount);
+                Assert.assertEquals(2, runtime.getMountCount());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertEquals(0, runtime.getQueuedCount());
             }
         });
     }
@@ -626,6 +688,39 @@ public class FiberRuntimeTest {
     }
 
     @Test
+    public void testDrainTimeBudgetDoesNotLimitWaitingOrCompletedTasks() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(3);
+            final FiberWalWaitQueue waitQueue = new FiberWalWaitQueue();
+            final PooledWaitTask waitingTask = new PooledWaitTask(waitQueue);
+            final OneShotTask firstTask = new OneShotTask();
+            final OneShotTask secondTask = new OneShotTask();
+            try (RuntimeGuard ignored = new RuntimeGuard(runtime)) {
+                exhaustDrainTimeBudgetAfterProcess(runtime);
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(waitingTask));
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(firstTask));
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(secondTask));
+                Assert.assertEquals(3, runtime.drain(64));
+                Assert.assertNull(waitingTask.error);
+                Assert.assertFalse(waitingTask.isDone());
+                Assert.assertTrue(firstTask.isDone());
+                Assert.assertTrue(secondTask.isDone());
+                Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(1, runtime.getParkedFiberCount());
+                Assert.assertEquals(0, runtime.getQueuedCount());
+
+                waitQueue.fire(1, false);
+                Assert.assertEquals(1, runtime.drain(64));
+                Assert.assertNull(waitingTask.error);
+                Assert.assertTrue(waitingTask.isDone());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertEquals(0, runtime.getQueuedCount());
+            }
+        });
+    }
+
+    @Test
     public void testDriverFailureUnwindsSuspendedTask() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             final FiberRuntime runtime = new FiberRuntime(1);
@@ -811,6 +906,40 @@ public class FiberRuntimeTest {
             Assert.assertEquals(1, runtime.getCreatedFiberCount());
 
             close(runtime);
+        });
+    }
+
+    @Test
+    public void testPinnedCooperativeYieldRestoresMountedState() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final FiberRuntime runtime = new FiberRuntime(1);
+            final CooperativePinnedYieldTask task = new CooperativePinnedYieldTask(runtime);
+            final OneShotTask competingTask = new OneShotTask();
+            try {
+                Assert.assertEquals(LaunchResult.LAUNCHED, runtime.launch(task));
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertTrue(task.isRefusalObserved);
+                Assert.assertFalse(task.isResumedAfterSuccessfulYield);
+                Assert.assertFalse(task.isDone());
+                Assert.assertEquals(0, task.doneCount);
+                Assert.assertEquals(1, runtime.getMountCount());
+                Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertEquals(1, runtime.getQueuedCount());
+                Assert.assertEquals(LaunchResult.SATURATED, runtime.launch(competingTask));
+
+                Assert.assertEquals(1, runtime.drain(1));
+                Assert.assertNull(task.error);
+                Assert.assertTrue(task.isResumedAfterSuccessfulYield);
+                Assert.assertTrue(task.isDone());
+                Assert.assertEquals(1, task.doneCount);
+                Assert.assertEquals(2, runtime.getMountCount());
+                Assert.assertEquals(0, runtime.getOutstandingTaskCount());
+                Assert.assertEquals(0, runtime.getParkedFiberCount());
+                Assert.assertEquals(0, runtime.getQueuedCount());
+            } finally {
+                close(runtime, 1);
+            }
         });
     }
 
@@ -1275,14 +1404,29 @@ public class FiberRuntimeTest {
     }
 
     private static void close(FiberRuntime runtime) {
+        close(runtime, 0);
+    }
+
+    private static void close(FiberRuntime runtime, long expectedInlineSuspendViolationCount) {
         runtime.beginQuiesce();
         final long deadline = System.nanoTime() + 5_000_000_000L;
         while (runtime.state() != FiberRuntimeState.CLOSED && System.nanoTime() < deadline) {
             runtime.drain(64);
         }
         Assert.assertTrue(runtime.awaitClosed(deadline));
-        Assert.assertEquals(0, runtime.getInlineSuspendViolationCount());
+        Assert.assertEquals(expectedInlineSuspendViolationCount, runtime.getInlineSuspendViolationCount());
         runtime.closeAfterDrained();
+    }
+
+    private static void exhaustDrainTimeBudgetAfterProcess(FiberRuntime runtime) {
+        runtime.setAfterProcessForTesting(() -> {
+            runtime.setAfterProcessForTesting(null);
+            // Establish elapsed time before notification publication without assuming an upper bound.
+            final long startNanos = System.nanoTime();
+            while (System.nanoTime() - startNanos < EXCEEDED_DRAIN_TIME_BUDGET_NANOS) {
+                Thread.onSpinWait();
+            }
+        });
     }
 
     private static void fillRunQueueForTesting(FiberRuntime runtime) {
@@ -1570,6 +1714,81 @@ public class FiberRuntimeTest {
             }
             hasReservedAfterWake = true;
             runtime.releaseReservedFiber(fiber, fiber.getReservationEpoch());
+            return true;
+        }
+    }
+
+    private static class CooperativePinnedYieldTask extends FiberTask {
+        private int doneCount;
+        private Throwable error;
+        private boolean isRefusalObserved;
+        private boolean isResumedAfterSuccessfulYield;
+        private final FiberRuntime runtime;
+
+        private CooperativePinnedYieldTask(FiberRuntime runtime) {
+            this.runtime = runtime;
+        }
+
+        @Override
+        protected void onDone() {
+            doneCount++;
+        }
+
+        @Override
+        protected void onError(Throwable th) {
+            error = th;
+        }
+
+        @Override
+        protected boolean runStep() {
+            final Fiber fiber = Fiber.current();
+            Assert.assertNotNull(fiber);
+            Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+            Continuation.pin();
+            try {
+                Assert.assertFalse(Fiber.yieldCooperatively());
+                isRefusalObserved = true;
+                Assert.assertSame(fiber, Fiber.current());
+                Assert.assertTrue(Fiber.isMounted());
+                Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+            } finally {
+                Continuation.unpin();
+            }
+            Assert.assertTrue(Fiber.yieldCooperatively());
+            isResumedAfterSuccessfulYield = true;
+            Assert.assertSame(fiber, Fiber.current());
+            Assert.assertTrue(Fiber.isMounted());
+            Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+            return true;
+        }
+    }
+
+    private static class CooperativeYieldTask extends FiberTask {
+        private int doneCount;
+        private Throwable error;
+        private boolean isResumed;
+        private final FiberRuntime runtime;
+
+        private CooperativeYieldTask(FiberRuntime runtime) {
+            this.runtime = runtime;
+        }
+
+        @Override
+        protected void onDone() {
+            doneCount++;
+        }
+
+        @Override
+        protected void onError(Throwable th) {
+            error = th;
+        }
+
+        @Override
+        protected boolean runStep() {
+            Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+            Assert.assertTrue(Fiber.yieldCooperatively());
+            Assert.assertEquals(1, runtime.getOutstandingTaskCount());
+            isResumed = true;
             return true;
         }
     }
