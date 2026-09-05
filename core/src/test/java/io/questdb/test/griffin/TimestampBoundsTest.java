@@ -117,4 +117,64 @@ public class TimestampBoundsTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testDesignatedTimestampBoundsNonPartitionedNanos() throws Exception {
+        Assume.assumeFalse(walEnabled);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            assertQuery("INSERT INTO tango VALUES (NULL)")
+                    .fails(26, "designated timestamp column cannot be NULL");
+            assertQuery("INSERT INTO tango VALUES (" + -1L + ")")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            assertQuery("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            assertQuery("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+        });
+    }
+
+    @Test
+    public void testDesignatedTimestampBoundsPartitionedNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY HOUR "
+                    + (walEnabled ? "" : "BYPASS ") + "WAL");
+            assertQuery("INSERT INTO tango VALUES (NULL)")
+                    .fails(26, "designated timestamp column cannot be NULL");
+            assertQuery("INSERT INTO tango VALUES (" + -1L + ")")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            assertQuery("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            assertQuery("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+        });
+    }
+
+    @Test
+    public void testDesignatedTimestampBoundsWithSwitchPartitionNanos() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY HOUR "
+                    + (walEnabled ? "" : "BYPASS ") + "WAL");
+            execute("INSERT INTO tango VALUES (" + 1L + ")");
+            assertQuery("INSERT INTO tango VALUES (NULL)")
+                    .fails(26, "designated timestamp column cannot be NULL");
+            assertQuery("INSERT INTO tango VALUES (" + -1L + ")")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            assertQuery("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+            assertQuery("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")")
+                    .fails(26, "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
+        });
+    }
+
+    @Test
+    public void testTimestampBoundsNotDesignatedNanos() throws Exception {
+        Assume.assumeFalse(walEnabled);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS)");
+            execute("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")");
+            execute("INSERT INTO tango VALUES (" + -1L + ")");
+            execute("INSERT INTO tango VALUES ('1969-12-31T23:59:59.900Z')");
+        });
+    }
+
 }
