@@ -61,6 +61,7 @@ import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.NanosecondClock;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,6 +78,13 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
     private final ObjList<TableReader> readers = new ObjList<>();
     private final QueryRegistry registry;
     private long beginNanos;
+    // Nanosecond clock cached at cursor open; used by the timer methods,
+    // which may run after executionContext is nulled.
+    private NanosecondClock clock;
+    private long firstRowNanos;
+    private long clientWaitAccumNanos;
+    // -1 when the timer is running (not suspended); doubles as the flag.
+    private long clientWaitStartNanos;
     private SqlExecutionContext executionContext;
     private long sqlId;
 
@@ -137,6 +145,10 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
                     .$("`, ").$(executionContext)
                     .$(", jit=").$(isJit)
                     .$(", time=").$(durationNanos);
+            if (queryTrace != null) {
+                log.$(", client_wait=").$(queryTrace.clientWaitNanos)
+                        .$(", ttfr=").$(queryTrace.firstRowNanos);
+            }
 
             appendLeakedReaderNames(leakedReaders, leakedReadersCount, log);
         } catch (Throwable e) {
@@ -284,11 +296,18 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (pageFrameCursor.isOpen) {
+            throw CairoException.nonCritical().put("cannot open record cursor while page-frame cursor is open");
+        }
         if (!cursor.isOpen) {
             this.executionContext = executionContext;
             CharSequence sqlText = queryTrace.queryText;
             sqlId = registry.register(sqlText, executionContext);
-            beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
+            clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
+            beginNanos = clock.getTicks();
+            clientWaitAccumNanos = 0;
+            clientWaitStartNanos = -1;
+            firstRowNanos = -1;
             logStart(sqlId, sqlText, executionContext, jit);
             final ExecutionState executionState = executionContext.getExecutionState();
             if (executionState != null) {
@@ -323,22 +342,34 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        if (!base.supportsPageFrameCursor()) {
+        return getPageFrameCursorFrom(base, executionContext, order);
+    }
+
+    /**
+     * Opens a page-frame cursor from a factory below this query's immediate base while retaining
+     * this query's registration, timing, and cursor ownership lifecycle. Parquet export uses this
+     * for virtual projections whose base factory supplies the physical page frames.
+     */
+    public PageFrameCursor getPageFrameCursorFrom(
+            RecordCursorFactory pageFrameCursorFactory,
+            SqlExecutionContext executionContext,
+            int order
+    ) throws SqlException {
+        if (!pageFrameCursorFactory.supportsPageFrameCursor()) {
             return null;
         }
-        // IMPORTANT: getPageFrameCursor() and getCursor() are mutually exclusive in QueryProgress because it is TOP RecordCursorFactory.
-        // For streaming parquet exports, the caller may directly call getPageFrameCursor()
-        // instead of getCursor() to obtain PageFrame-based access to the data.
-        // Since these two methods are never called together in the same query execution,
-        // we must ensure that query registration (registry.register) and logging (logStart)
-        // are performed here as well, not just in getCursor().
-        // This ensures proper query tracking, cancellation support, and resource leak detection
-        // for both cursor-based and PageFrame-based data access paths.
+        if (cursor.isOpen) {
+            throw CairoException.nonCritical().put("cannot open page-frame cursor while record cursor is open");
+        }
         if (!pageFrameCursor.isOpen) {
             this.executionContext = executionContext;
             CharSequence sqlText = queryTrace.queryText;
             sqlId = registry.register(sqlText, executionContext);
-            beginNanos = executionContext.getCairoEngine().getConfiguration().getNanosecondClock().getTicks();
+            clock = executionContext.getCairoEngine().getConfiguration().getNanosecondClock();
+            beginNanos = clock.getTicks();
+            clientWaitAccumNanos = 0;
+            clientWaitStartNanos = -1;
+            firstRowNanos = -1;
             logStart(sqlId, sqlText, executionContext, jit);
             final ExecutionState executionState = executionContext.getExecutionState();
             if (executionState != null) {
@@ -349,7 +380,7 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
             final ResourcePoolSupervisor<TableReader> prevSupervisor = executionContext.getReaderPoolSupervisor();
             executionContext.setReaderPoolSupervisor(this);
             try {
-                final PageFrameCursor baseCursor = base.getPageFrameCursor(executionContext, order);
+                final PageFrameCursor baseCursor = pageFrameCursorFactory.getPageFrameCursor(executionContext, order);
                 pageFrameCursor.of(baseCursor);
             } catch (Throwable th) {
                 pageFrameCursor.close0(th);
@@ -452,12 +483,30 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
     }
 
+    private void onConsumerResume() {
+        if (clientWaitStartNanos != -1) {
+            clientWaitAccumNanos += clock.getTicks() - clientWaitStartNanos;
+            clientWaitStartNanos = -1;
+        }
+    }
+
+    private void onConsumerSuspend() {
+        if (clientWaitStartNanos == -1 && executionContext != null) {
+            clientWaitStartNanos = clock.getTicks();
+        }
+    }
+
     private void unregisterAndCleanup(@Nullable Throwable th) {
         // When execution context is null, the cursor has never been opened.
         // Otherwise, cursor open attempt has been made, but may not have fully succeeded.
         // In this case we must be certain that we still track the reader leak
         if (executionContext != null) {
             try {
+                // A close during suspension (client disconnect, abandoned portal) ends
+                // the terminal wait interval here so it is counted.
+                onConsumerResume();
+                queryTrace.clientWaitNanos = clientWaitAccumNanos;
+                queryTrace.firstRowNanos = firstRowNanos;
                 String sqlText = queryTrace.queryText;
                 if (th == null) {
                     logEnd(sqlId, sqlText, executionContext, beginNanos, readers, queryTrace);
@@ -554,7 +603,16 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
 
         @Override
         public @Nullable PageFrame next(long skipTarget) {
-            return baseCursor.next(skipTarget);
+            try {
+                final PageFrame frame = baseCursor.next(skipTarget);
+                if (frame != null && firstRowNanos == -1) {
+                    firstRowNanos = clock.getTicks() - beginNanos;
+                }
+                return frame;
+            } catch (Throwable th) {
+                close0(th);
+                throw th;
+            }
         }
 
         public void of(PageFrameCursor baseCursor) {
@@ -567,6 +625,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public void releaseOpenPartitions() {
             baseCursor.releaseOpenPartitions();
+        }
+
+        @Override
+        public void resumeTimer() {
+            onConsumerResume();
         }
 
         // Qodana false positive
@@ -584,6 +647,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public boolean supportsSizeCalculation() {
             return baseCursor.supportsSizeCalculation();
+        }
+
+        @Override
+        public void suspendTimer() {
+            onConsumerSuspend();
         }
 
         @Override
@@ -643,7 +711,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public boolean hasNext() {
             try {
-                return base.hasNext();
+                final boolean hasNext = base.hasNext();
+                if (hasNext && firstRowNanos == -1) {
+                    firstRowNanos = clock.getTicks() - beginNanos;
+                }
+                return hasNext;
             } catch (Throwable th) {
                 close0(th);
                 throw th;
@@ -676,6 +748,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public void resumeTimer() {
+            onConsumerResume();
+        }
+
+        @Override
         public void setParentUsedColumns(@Nullable IntHashSet columnIndexes) {
             base.setParentUsedColumns(columnIndexes);
         }
@@ -693,6 +770,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         @Override
         public long size() {
             return base.size();
+        }
+
+        @Override
+        public void suspendTimer() {
+            onConsumerSuspend();
         }
 
         @Override

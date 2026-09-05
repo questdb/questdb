@@ -410,6 +410,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
 
         flushRemainingBuffer();
         if (resumeCallback != null) {
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.resumeCursorTimer();
+            }
             resumeCallback.resume();
         }
 
@@ -539,6 +542,9 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
         if (remaining > 0) {
             bufferRemainingOffset = offset;
             bufferRemainingSize = remaining;
+            if (pipelineCurrentEntry != null) {
+                pipelineCurrentEntry.suspendCursorTimer();
+            }
             throw PeerIsSlowToReadException.INSTANCE;
         }
     }
@@ -1462,18 +1468,21 @@ public class PGConnectionContext extends IOContext<PGConnectionContext> implemen
             // "cacheIfPossible" has side effects on the entry.
 
             PGPipelineEntry nextEntry = pipeline.poll();
-            if (nextEntry != null || isExec || isError || isClosed) {
+            // A resumed sync re-enters after clearState() has reset stateExec. Keep
+            // retained portals suspended even when this entry is otherwise not consumed.
+            if (pipelineCurrentEntry.isSuspended()
+                    && nextEntry == null
+                    && !isClosed
+                    && !isError) {
                 if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
                     bindingServiceConfiguredFor = null;
                 }
-                // check suspension before cacheIfPossible(), which frees the cursor
-                if (pipelineCurrentEntry.isSuspended()
-                        && nextEntry == null
-                        && !isClosed
-                        && !isError) {
-                    // portal is suspended with more rows to send, retain the entry
-                    // so the next Execute can resume the cursor
-                    break;
+                pipelineCurrentEntry.suspendCursorTimer();
+                break;
+            }
+            if (nextEntry != null || isExec || isError || isClosed) {
+                if (bindingServiceConfiguredFor == pipelineCurrentEntry) {
+                    bindingServiceConfiguredFor = null;
                 }
                 if (pipelineCurrentEntry.isSuspended()) {
                     // cursor is suspended but we cannot retain (closed, error,

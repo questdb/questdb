@@ -69,11 +69,21 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
      */
     public void clearExportResources() {
         exportMode = null;
-        fullCursor = Misc.free(fullCursor);
-        streamingPfc = Misc.free(streamingPfc);
+        final RecordCursor fullCursor = this.fullCursor;
+        this.fullCursor = null;
+        final PageFrameCursor streamingPfc = this.streamingPfc;
+        this.streamingPfc = null;
         materializer = null;
         materializerColumnData = null;
-        clearMemoryTracker();
+
+        Throwable cleanupFailure = Misc.freeBestEffort(null, fullCursor);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPfc);
+        try {
+            clearMemoryTracker();
+        } catch (Throwable th) {
+            cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+        }
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     public CopyExportRequestTask.Phase process() throws Exception {
@@ -187,6 +197,30 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         return phase;
     }
 
+    public void resumeCursorTimer() {
+        if (exportMode == null) {
+            return;
+        }
+        switch (exportMode) {
+            case CURSOR_BASED -> {
+                if (fullCursor != null) {
+                    fullCursor.resumeTimer();
+                }
+            }
+            case PAGE_FRAME_BACKED -> {
+                if (streamingPfc != null) {
+                    streamingPfc.resumeTimer();
+                }
+            }
+            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> {
+                final PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
+                if (taskPageFrameCursor != null) {
+                    taskPageFrameCursor.resumeTimer();
+                }
+            }
+        }
+    }
+
     public void setExportMode(ParquetExportMode exportMode) {
         this.exportMode = exportMode;
     }
@@ -201,6 +235,30 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         this.streamingPfc = pfc;
         this.materializer = materializer;
         this.materializerColumnData = materializerColumnData;
+    }
+
+    public void suspendCursorTimer() {
+        if (exportMode == null) {
+            return;
+        }
+        switch (exportMode) {
+            case CURSOR_BASED -> {
+                if (fullCursor != null) {
+                    fullCursor.suspendTimer();
+                }
+            }
+            case PAGE_FRAME_BACKED -> {
+                if (streamingPfc != null) {
+                    streamingPfc.suspendTimer();
+                }
+            }
+            case DIRECT_PAGE_FRAME, TABLE_READER, TEMP_TABLE -> {
+                final PageFrameCursor taskPageFrameCursor = task != null ? task.getPageFrameCursor() : null;
+                if (taskPageFrameCursor != null) {
+                    taskPageFrameCursor.suspendTimer();
+                }
+            }
+        }
     }
 
     private void processHybridStreamExport() throws Exception {
@@ -219,14 +277,13 @@ public class HTTPSerialParquetExporter extends BaseParquetExporter {
         }
 
         long batchSize = task.getRowGroupSize() > 0 ? task.getRowGroupSize() : 100_000;
-        drainHybridFrames(
+        final long totalRows = drainHybridFrames(
                 exporter, materializer, materializerColumnData,
                 isPageFrameBacked ? streamingPfc : null,
                 isPageFrameBacked ? null : fullCursor,
                 batchSize, CopyExportRequestTask.Phase.STREAM_SENDING_DATA
         );
 
-        long totalRows = exporter.getTotalRows();
         copyExportContext.updateStatus(CopyExportRequestTask.Phase.STREAM_SENDING_DATA, CopyExportRequestTask.Status.FINISHED, null, Numbers.INT_NULL, null, 0, task.getTableName(), task.getCopyID());
         LOG.info().$("hybrid stream export completed [id=").$hexPadded(task.getCopyID())
                 .$(", totalRows=").$(totalRows)

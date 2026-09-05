@@ -31,26 +31,35 @@ public class QueryTrace implements ValueHolder<QueryTrace> {
     public static final ObjectFactory<QueryTrace> ITEM_FACTORY = QueryTrace::new;
 
     public long executionNanos;
+    // Elapsed nanos from cursor open to the first row; -1 when the query
+    // produced no rows. -1 (not 0) is the sentinel because 0 is a legitimate
+    // measurement under a coarse test clock.
+    public long firstRowNanos = -1;
     public boolean isJit;
     public String principal;
     public String queryText;
     public long timestamp;
+    public long clientWaitNanos;
 
     @Override
     public void clear() {
         executionNanos = 0;
+        firstRowNanos = -1;
         isJit = false;
         principal = null;
         queryText = null;
         timestamp = 0;
+        clientWaitNanos = 0;
     }
 
     @Override
     public void copyTo(QueryTrace dest) {
         dest.executionNanos = executionNanos;
+        dest.firstRowNanos = firstRowNanos;
         dest.isJit = isJit;
         dest.principal = principal;
         dest.queryText = queryText;
         dest.timestamp = timestamp;
+        dest.clientWaitNanos = clientWaitNanos;
     }
 }

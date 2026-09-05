@@ -553,6 +553,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 .$(", streaming=").$(state != null && state.isStreamingActive())
                 .I$();
         context.resumeResponseSend();
+        // A deferred flush can re-park above. Only a completed flush may resume
+        // the retained query cursor; streamResults below will immediately suspend
+        // it again if credit remains exhausted.
+        if (state != null && state.isStreamingActive()) {
+            state.resumeStreamingTimer();
+        }
 
         // 2. If a CLOSE frame (echo or fatal diagnostic) was parked mid-write
         //    by handleClose / sendFatalClose, the flush above finishes it.
@@ -586,6 +592,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         } catch (PeerDisconnectedException e) {
             throw e;
         } catch (PeerIsSlowToReadException e) {
+            state.suspendStreamingTimer();
             LOG.debug().$("Egress resumeSend re-parked [fd=").$(context.getFd())
                     .$(", requestId=").$(state.getStreamingRequestId())
                     .$(", batchSeq=").$(state.getStreamingBatchSeq())
@@ -1077,9 +1084,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     .$(", added=").$(additional)
                     .$(", remaining=").$(state.getStreamingCreditRemaining()).I$();
             state.clearStreamingCreditSuspended();
+            state.resumeStreamingTimer();
             try {
                 streamResults(context, state);
-            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            } catch (PeerDisconnectedException e) {
+                throw e;
+            } catch (PeerIsSlowToReadException e) {
+                state.suspendStreamingTimer();
                 throw e;
             } catch (Throwable t) {
                 LOG.error().$("Egress CREDIT resume failed [fd=").$(context.getFd())
@@ -1316,6 +1327,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             throw e;
         } catch (PeerIsSlowToReadException e) {
             // Streaming parked. State retains the cursor for resumeSend to continue.
+            state.suspendStreamingTimer();
             LOG.debug().$("Egress streaming parked (slow peer) [fd=").$(context.getFd())
                     .$(", requestId=").$(requestId)
                     .$(", batchSeq=").$(state.getStreamingBatchSeq())
@@ -1913,6 +1925,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         .$(", batchSeq=").$(state.getStreamingBatchSeq())
                         .I$();
                 state.markStreamingCreditSuspended();
+                state.suspendStreamingTimer();
                 metrics.markStreamingCreditSuspended();
                 return;
             }

@@ -71,7 +71,7 @@ public abstract class BaseParquetExporter {
         sqlExecutionContext.setMemoryTracker(null);
     }
 
-    protected void drainHybridFrames(
+    protected long drainHybridFrames(
             CopyExportRequestTask.StreamPartitionParquetExporter exporter,
             HybridColumnMaterializer mat,
             DirectLongList columnData,
@@ -111,7 +111,9 @@ public abstract class BaseParquetExporter {
                 previousRowsWritten = currentRowsWritten;
             }
         }
+        final long totalRows = exporter.getTotalRows();
         exporter.finishExport();
+        return totalRows;
     }
 
     protected void dropTempTable(
