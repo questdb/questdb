@@ -285,10 +285,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
         if (postAggregationCircuitBreaker.hasError()) {
             throw postAggregationCircuitBreaker.buildError();
         }
-        if (frameSequence.getCancelReason() == SqlExecutionCircuitBreaker.STATE_CANCELLED) {
-            throw CairoException.queryCancelled();
-        }
-        throw CairoException.queryTimedOut();
+        throw frameSequence.buildInterruptionException();
     }
 
     void of(UnorderedPageFrameSequence<AsyncMultiHorizonJoinAtom> frameSequence, SqlExecutionContext executionContext) throws SqlException {

@@ -35,7 +35,9 @@ import io.questdb.cairo.O3OpenColumnJob;
 import io.questdb.cairo.O3PartitionJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.PostingSealPurgeJob;
+import io.questdb.cairo.sql.async.PageFrameReduceDispatcher;
 import io.questdb.cairo.sql.async.PageFrameReduceJob;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.groupby.GroupByLongTopKJob;
@@ -44,6 +46,7 @@ import io.questdb.griffin.engine.groupby.vect.GroupByVectorAggregateJob;
 import io.questdb.griffin.engine.table.LatestByAllIndexedJob;
 import io.questdb.std.AsyncMunmapJob;
 import io.questdb.std.Files;
+import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.Clock;
@@ -66,8 +69,36 @@ public class WorkerPoolUtils {
             WorkerPool sharedPoolQuery,
             CairoEngine cairoEngine
     ) {
+        setupQueryJobs(sharedPoolQuery, cairoEngine, false);
+    }
+
+    /**
+     * @param isFiberDispatcherAllowed pass true only when {@code sharedPoolQuery} is dedicated to
+     *                                 query work. A pool that also hosts protocol fibers must not own
+     *                                 a query dispatcher because same-runtime fan-out is refused.
+     */
+    public static void setupQueryJobs(
+            WorkerPool sharedPoolQuery,
+            CairoEngine cairoEngine,
+            boolean isFiberDispatcherAllowed
+    ) {
         final CairoConfiguration configuration = cairoEngine.getConfiguration();
         final MessageBus messageBus = cairoEngine.getMessageBus();
+
+        if (isFiberDispatcherAllowed && sharedPoolQuery.isFiberHost()) {
+            final QueryParallelFiberDispatcher dispatcher = new QueryParallelFiberDispatcher(
+                    cairoEngine,
+                    messageBus,
+                    sharedPoolQuery.getFiberRuntime()
+            );
+            try {
+                messageBus.setQueryParallelFiberDispatcher(dispatcher);
+                sharedPoolQuery.freeResourceOnExit(dispatcher);
+            } catch (Throwable th) {
+                Misc.free(dispatcher, th);
+                throw th;
+            }
+        }
 
         sharedPoolQuery.assign(new LatestByAllIndexedJob(messageBus));
 
@@ -78,12 +109,22 @@ public class WorkerPoolUtils {
         }
 
         if (configuration.isSqlParallelFilterEnabled() || configuration.isSqlParallelGroupByEnabled()) {
+            if (isFiberDispatcherAllowed && sharedPoolQuery.isFiberHost()) {
+                final PageFrameReduceDispatcher dispatcher = new PageFrameReduceDispatcher(
+                        cairoEngine,
+                        messageBus,
+                        sharedPoolQuery.getFiberRuntime()
+                );
+                try {
+                    messageBus.setPageFrameReduceDispatcher(dispatcher);
+                    sharedPoolQuery.freeResourceOnExit(dispatcher);
+                } catch (Throwable th) {
+                    Misc.free(dispatcher, th);
+                    throw th;
+                }
+            }
             final io.questdb.std.datetime.Clock microsecondClock = messageBus.getConfiguration().getMicrosecondClock();
             final Clock nanosecondClock = messageBus.getConfiguration().getNanosecondClock();
-            // assign(Job) calls cloneInstance() once per worker; each clone is
-            // a fresh PageFrameReduceJob with its own shuffled shard order.
-            // The blueprint passed here is consumed only as a cloneInstance()
-            // target. WorkerPool.halt() frees Closeable clones from workerJobs.
             sharedPoolQuery.assign(new PageFrameReduceJob(
                     cairoEngine,
                     messageBus,
@@ -95,8 +136,6 @@ public class WorkerPoolUtils {
 
     public static void setupWriterJobs(WorkerPool sharedPoolWrite, CairoEngine cairoEngine) throws SqlException {
         final MessageBus messageBus = cairoEngine.getMessageBus();
-        // assign(Job) clones once per worker via O3PartitionPurgeJob.cloneInstance();
-        // WorkerPool.halt() frees the Closeable clones from workerJobs.
         sharedPoolWrite.assign(new O3PartitionPurgeJob(cairoEngine));
 
         // ColumnPurgeJob has expensive init (it creates a table), disable it in some tests.

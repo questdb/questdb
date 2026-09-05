@@ -24,6 +24,24 @@
 
 package io.questdb.cutlass.http;
 
-class RetryHolder {
+import io.questdb.std.Mutable;
+
+class RetryHolder implements Mutable {
+    public long nextRunTimestamp;
     public Retry retry;
+    public long taskIncarnation;
+    RetryHolder nextFree;
+
+    @Override
+    public void clear() {
+        nextRunTimestamp = 0;
+        retry = null;
+        taskIncarnation = 0;
+    }
+
+    public void of(Retry retry, long taskIncarnation, long nextRunTimestamp) {
+        this.nextRunTimestamp = nextRunTimestamp;
+        this.retry = retry;
+        this.taskIncarnation = taskIncarnation;
+    }
 }

@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.geo;
 
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -280,7 +281,7 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
                 "  -74.0 + (rnd_double() * 0.2 - 0.1) lon " +
                 "from long_sequence(1000000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {
@@ -323,7 +324,7 @@ public class GeoWithinRadiusLatLonFunctionFactoryTest extends AbstractCairoTest 
                 "  case when x % 7 = 0 then null else -74.0 + (rnd_double() * 0.2 - 0.1) end lon " +
                 "from long_sequence(1000000))");
 
-        try (WorkerPool pool = new WorkerPool(() -> 4)) {
+        try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
             TestUtils.execute(
                     pool,
                     (engine, _, sqlExecutionContext) -> {

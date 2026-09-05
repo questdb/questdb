@@ -51,6 +51,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.griffin.CustomisableRunnable;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
@@ -798,7 +799,7 @@ public class QueryExecutionTimeoutTest extends AbstractCairoTest {
                     }
                 };
 
-                WorkerPool pool = new WorkerPool(new WorkerPoolConfiguration() {
+                WorkerPool pool = TestWorkerPool.createWithRandomMode(TestUtils.generateRandom(LOG), new WorkerPoolConfiguration() {
                     @Override
                     public long getSleepTimeout() {
                         return 1;

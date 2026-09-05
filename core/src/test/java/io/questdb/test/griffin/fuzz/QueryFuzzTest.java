@@ -42,6 +42,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
 import io.questdb.test.griffin.fuzz.expr.BindContext;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -577,7 +578,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
             // SqlExecutionContext advertises the real pool width to the planner (the
             // default test context reports getSharedQueryWorkerCount()=1).
             final int workerCount = Integer.getInteger("questdb.fuzz.workers", 4);
-            final WorkerPool queryPool = new WorkerPool(new WorkerPoolConfiguration() {
+            final Rnd modeRnd = TestUtils.generateRandom(LOG);
+            final WorkerPool queryPool = TestWorkerPool.createWithRandomMode(modeRnd, new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
                     return QUERY_POOL_NAME;
@@ -588,8 +590,8 @@ public class QueryFuzzTest extends AbstractCairoTest {
                     return workerCount;
                 }
             });
-            WorkerPoolUtils.setupQueryJobs(queryPool, engine);
-            final WorkerPool writerPool = new WorkerPool(new WorkerPoolConfiguration() {
+            WorkerPoolUtils.setupQueryJobs(queryPool, engine, true);
+            final WorkerPool writerPool = TestWorkerPool.createWithRandomMode(modeRnd, new WorkerPoolConfiguration() {
                 @Override
                 public String getPoolName() {
                     return "fuzzWriter";

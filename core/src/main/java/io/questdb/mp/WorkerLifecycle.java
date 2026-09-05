@@ -25,5 +25,5 @@
 package io.questdb.mp;
 
 public enum WorkerLifecycle {
-    BORN, RUNNING, HALTED
+    BORN, RUNNING, HALTING, HALTED
 }

@@ -42,6 +42,7 @@ public final class Kqueue implements Closeable {
     private final long eventList;
     private final long kq;
     private final KqueueFacade kqf;
+    private boolean closed = false;
     private long readAddress;
     private long writeAddress;
 
@@ -64,9 +65,13 @@ public final class Kqueue implements Closeable {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
         kqf.getNetworkFacade().close(kq, LOG);
         Unsafe.free(this.changeList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
         Unsafe.free(this.eventList, bufferSize, MemoryTag.NATIVE_IO_DISPATCHER_RSS);
+        closed = true;
     }
 
     public long getData() {

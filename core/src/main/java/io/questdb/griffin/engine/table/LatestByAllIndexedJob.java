@@ -25,20 +25,34 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.MessageBus;
+import io.questdb.cairo.sql.async.QueryParallelFiberDispatcher;
 import io.questdb.mp.AbstractQueueConsumerJob;
 import io.questdb.tasks.LatestByTask;
+import org.jetbrains.annotations.NotNull;
 
 public class LatestByAllIndexedJob extends AbstractQueueConsumerJob<LatestByTask> {
+    private final MessageBus messageBus;
 
     public LatestByAllIndexedJob(MessageBus messageBus) {
         super(messageBus.getLatestByQueue(), messageBus.getLatestBySubSeq());
+        this.messageBus = messageBus;
+    }
+
+    @Override
+    public boolean run(@NotNull WorkerContext workerContext) {
+        final QueryParallelFiberDispatcher dispatcher = messageBus.getQueryParallelFiberDispatcher();
+        return dispatcher != null
+                ? !dispatcher.consumeLatestBy(workerContext.carrierId())
+                : super.run(workerContext);
     }
 
     @Override
     protected boolean doRun(long cursor, WorkerContext workerContext) {
         final LatestByTask task = queue.get(cursor);
-        final boolean result = task.run();
-        subSeq.done(cursor);
-        return result;
+        try {
+            return task.run();
+        } finally {
+            subSeq.done(cursor);
+        }
     }
 }

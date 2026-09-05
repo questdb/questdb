@@ -61,6 +61,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.fuzz.FailureFileFacade;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -1879,7 +1880,7 @@ public class TimeFrameCursorTest extends AbstractCairoTest {
                     return 1000;
                 }
             };
-            WorkerPool pool = new WorkerPool(() -> 2);
+            WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, runnable, configuration, LOG);
         });
     }
