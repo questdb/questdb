@@ -238,17 +238,28 @@ public class CoveringIndexFastPathDifferentialFuzzTest extends AbstractFuzzTest 
             // Prove the two modes actually differed on the BLOCK-apply path.
             // (COVERING_FASTPATH_DISABLED only forces BLOCK applies through O3; the
             // pre-existing single-txn fast-lag path is unaffected, so o3FastLag is
-            // not necessarily 0. The block-path difference shows up as: the o3 run
-            // full-reseals its blocks, while the fast run fast-lags them instead --
-            // strictly MORE fast-lag commits and strictly FEWER full reseals.)
-            Assert.assertTrue("o3 run must full-reseal blocks (fast path forced off), o3Reseals=" + o3Reseals,
-                    o3Reseals > 0);
-            Assert.assertTrue("fast run must fast-lag block-applies the o3 run resealed"
+            // not necessarily 0.) The direct measure is the fast-lag count: the
+            // fast run fast-lags block applies that the o3 run does not.
+            //
+            // The reseal count is NO LONGER a discriminator. It used to be, because
+            // an O3 block apply full-resealed the partition; now a pure append
+            // maintains the covering index incrementally on the O3 route too, so
+            // both runs reseal only for the stream's genuine merges, and the two
+            // counts converge. Asserting fastReseals < o3Reseals here would be
+            // asserting that O3 is still slow.
+            Assert.assertTrue("fast run must fast-lag block-applies the o3 run did not"
                             + " (fastFastLag=" + fastFastLag + ", o3FastLag=" + o3FastLag + ")",
                     fastFastLag > o3FastLag);
-            Assert.assertTrue("fast run must avoid reseals via the fast path"
+            Assert.assertTrue("neither run may reseal more than the stream's merges require"
                             + " (fastReseals=" + fastReseals + ", o3Reseals=" + o3Reseals + ")",
-                    fastReseals < o3Reseals);
+                    fastReseals <= o3Reseals);
+            // The stream's out-of-order dips are genuine merges, so SOME reseal must
+            // still happen in at least one arm. Without this, both counts being zero
+            // - a covered append wrongly taken on a commit that needed a rebuild -
+            // would satisfy the comparison above.
+            Assert.assertTrue("the stream's merges must still reseal somewhere"
+                            + " (fastReseals=" + fastReseals + ", o3Reseals=" + o3Reseals + ")",
+                    o3Reseals > 0 || fastReseals > 0);
         });
     }
 }
