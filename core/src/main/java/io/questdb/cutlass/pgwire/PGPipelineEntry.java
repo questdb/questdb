@@ -58,6 +58,7 @@ import io.questdb.griffin.engine.ops.UpdateOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.network.NoSpaceLeftInResponseBufferException;
 import io.questdb.std.AssociativeCache;
 import io.questdb.std.BinarySequence;
@@ -74,6 +75,7 @@ import io.questdb.std.Long128;
 import io.questdb.std.Long256;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -152,6 +154,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final CairoEngine engine;
     private final StringSink errorMessageSink = new StringSink();
     private final int maxRecompileAttempts;
+    private final PGMessageProcessingException messageProcessingException;
     private final BitSet msgBindParameterFormatCodes = new BitSet();
     // stores result format codes (0=Text,1=Binary) from the latest bind message
     // we need it in case cursor gets invalidated and bind used non-default binary format for some column(s)
@@ -174,6 +177,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     private final ObjList<String> pgResultSetColumnNames;
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
+    private final CancellationBinding queryCancellation = new CancellationBinding();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     boolean isCopy;
@@ -204,6 +208,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // not to be confused with prepared statements that come on the
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
+    private MemoryTracker queryMemoryTracker;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -240,6 +245,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.isCopy = false;
         this.engine = engine;
         this.maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+        this.messageProcessingException = new PGMessageProcessingException(this, errorMessageSink);
         this.msgParseParameterTypeOIDs = new IntList();
         this.outParameterTypeDescriptionTypes = new LongList();
         this.pgResultSetColumnTypes = new IntList();
@@ -273,6 +279,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         if (tas != null) {
             // close cursor in case it is open
             cursor = Misc.free(cursor);
+            queryCancellation.clear();
+            queryMemoryTracker = null;
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
@@ -353,6 +361,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         namedPortal = null;
         namedStatement = null;
         preparedStatementNameToDeallocate = null;
+        queryCancellation.clear();
+        queryMemoryTracker = null;
         sqlAffectedRowCount = 0;
         sqlReturnRowCount = 0;
         sqlReturnRowCountLimit = 0;
@@ -379,6 +389,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
 
     public void closeSuspendedCursor() {
         cursor = Misc.free(cursor);
+        queryCancellation.clear();
+        queryMemoryTracker = null;
         stateSuspended = false;
     }
 
@@ -936,6 +948,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             switch (stateSync) {
                 case SYNC_DATA_EXHAUSTED:
                     cursor = Misc.free(cursor);
+                    queryCancellation.clear();
+                    queryMemoryTracker = null;
                     stateSuspended = false;
                     outCommandComplete(utf8Sink, sqlReturnRowCount);
                     break;
@@ -1014,7 +1028,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         // Calling a compiler while being called from a compiler is a bad idea.
         sqlExecutionContext.setCacheHit(cacheHit);
         sqlExecutionContext.getCircuitBreaker().resetTimer();
-        cursor = factory.getCursor(sqlExecutionContext);
+        openCursor(sqlExecutionContext);
         copyPgResultSetColumnTypesAndNames();
         setStateExec(true);
     }
@@ -1496,24 +1510,29 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         }
         long affectedRowCount = 0;
         engine.getMetrics().pgWireMetrics().markStart();
-        final Lock lock = engine.getRoleSwitchReadLock();
-        lock.lock();
         try {
-            // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
-            // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
-            // cannot interleave (its write acquire waits), while other commits share the read side.
-            if (engine.isReadOnlyMode()
-                    && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
-                throw CairoException.readOnlyAccess();
+            final Lock lock = engine.getRoleSwitchReadLock();
+            final OperationFuture future;
+            lock.lock();
+            try {
+                // Authoritative in-lock re-check against the role flip, which holds the WRITE side of this
+                // lock around the REPLICA flag publish. The execute runs inside the read hold so the flip
+                // cannot interleave (its write acquire waits), while other commits share the read side.
+                if (engine.isReadOnlyMode()
+                        && ReadOnlyStatementGate.isRefusedOnReadOnly(sqlType, operation, engine.getConfiguration())) {
+                    throw CairoException.readOnlyAccess();
+                }
+                future = operation.execute(sqlExecutionContext, tempSequence);
+            } finally {
+                lock.unlock();
             }
-            try (OperationFuture fut = operation.execute(sqlExecutionContext, tempSequence)) {
-                fut.await();
+            try (future) {
+                future.await();
                 if (reportAffectedRows) {
-                    affectedRowCount = fut.getAffectedRowsCount();
+                    affectedRowCount = future.getAffectedRowsCount();
                 }
             }
         } finally {
-            lock.unlock();
             engine.getMetrics().pgWireMetrics().markComplete();
         }
         return affectedRowCount;
@@ -1709,7 +1728,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     // The goal would be to just recompile from text.
                     if (factory != null) {
                         try {
-                            cursor = factory.getCursor(sqlExecutionContext);
+                            openCursor(sqlExecutionContext);
                             // when factory is not null, and we can obtain cursor without issues
                             // we would exit early
                             break;
@@ -1853,6 +1872,14 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         for (int i = 0, n = msgParseParameterTypeOIDs.size(); i < n; i++) {
             defineBindVariableType(bindVariableService, i);
         }
+    }
+
+    // outCursor() re-installs queryCancellation and queryMemoryTracker on the context before every
+    // row batch, so every site that opens a cursor must capture them here.
+    private void openCursor(SqlExecutionContext sqlExecutionContext) throws SqlException {
+        cursor = factory.getCursor(sqlExecutionContext);
+        sqlExecutionContext.getCircuitBreaker().copyCancelledFlagTo(queryCancellation);
+        queryMemoryTracker = sqlExecutionContext.getMemoryTracker();
     }
 
     private void outColBinArr(PGResponseSink utf8Sink, Record record, int columnIndex, int columnType)
@@ -2402,6 +2429,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     }
 
     private void outCursor(SqlExecutionContext sqlExecutionContext, PGResponseSink utf8Sink, int columnCount) {
+        sqlExecutionContext.setCancelledFlag(queryCancellation);
+        sqlExecutionContext.setMemoryTracker(queryMemoryTracker);
         if (!sqlExecutionContext.getCircuitBreaker().isTimerSet()) {
             sqlExecutionContext.getCircuitBreaker().resetTimer();
         }
@@ -3628,6 +3657,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         stateDesc = that.stateDesc;
         stateExec = that.stateExec;
         stateClosed = that.stateClosed;
+    }
+
+    PGMessageProcessingException getMessageProcessingException() {
+        getErrorMessageSink();
+        return messageProcessingException;
     }
 
     boolean isDirty() {

@@ -26,6 +26,7 @@ package io.questdb.cairo.sql;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.network.NetworkFacade;
 import io.questdb.std.Mutable;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -35,6 +36,7 @@ import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBreaker, Closeable, Mutable {
+    private final CancellationBinding cancellationBinding = new CancellationBinding();
     private final MillisecondClock clock;
     private final SqlExecutionCircuitBreakerConfiguration configuration;
     private final long connectionCheckThrottle;
@@ -42,7 +44,6 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     private final CairoEngine engine;
     private final NetworkFacade nf;
     private final int throttle;
-    private volatile AtomicBoolean cancelledFlag;
     private long fd = -1;
     private boolean isClosed;
     // Wall-clock time (millis) of the last heavy connection probe; gates the throttled probes in
@@ -75,13 +76,24 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void cancel() {
+    public synchronized void cancel() {
         powerUpTime = Long.MIN_VALUE;
-        // This call can be concurrent with the call to setCancelledFlag
-        AtomicBoolean cf = cancelledFlag;
-        if (cf != null) {
-            cf.set(true);
-        }
+        cancellationBinding.cancel();
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected) {
+        cancellationBinding.clear(expected);
+    }
+
+    @Override
+    public synchronized void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        cancellationBinding.clear(expected, expectedGeneration);
+    }
+
+    @Override
+    public void copyCancelledFlagTo(CancellationBinding target) {
+        cancellationBinding.copyTo(target);
     }
 
     @Override
@@ -95,7 +107,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (now - timeout > millis) {
             return true;
         }
-        if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
+        if (cancellationBinding.isCancelled() || engine.isClosing()) {
             return true;
         }
         return testConnectionTimeThrottled(now, fd);
@@ -107,7 +119,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (now - timeout > powerUpTime) {
             return true;
         }
-        if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
+        if (cancellationBinding.isCancelled() || engine.isClosing()) {
             return true;
         }
         lastConnectionCheckTime = now;
@@ -139,7 +151,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
 
     @Override
     public AtomicBoolean getCancelledFlag() {
-        return cancelledFlag;
+        return cancellationBinding.getFlag();
     }
 
     @Override
@@ -177,7 +189,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         if (now - timeout > millis) {
             return STATE_TIMEOUT;
         }
-        if ((cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
+        if (cancellationBinding.isCancelled() || engine.isClosing()) {
             return STATE_CANCELLED;
         }
         if (testConnectionTimeThrottled(now, fd)) {
@@ -236,8 +248,18 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
     }
 
     @Override
-    public void setCancelledFlag(AtomicBoolean cancelledFlag) {
-        this.cancelledFlag = cancelledFlag;
+    public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag) {
+        cancellationBinding.set(cancelledFlag);
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(CancellationBinding source) {
+        source.copyTo(cancellationBinding);
+    }
+
+    @Override
+    public synchronized void setCancelledFlag(AtomicBoolean cancelledFlag, long generation) {
+        cancellationBinding.set(cancelledFlag, generation);
     }
 
     @Override
@@ -273,7 +295,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         testCancelled();
         lastConnectionCheckTime = now;
         if (testConnection(fd)) {
-            throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
+            throw CairoException.queryDisconnected(fd);
         }
     }
 
@@ -289,7 +311,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         // query, so the probe fires at most once per window for the whole query - a big CROSS JOIN small
         // that re-scans the slave once per master row can no longer turn into one syscall per master row.
         if (testConnectionTimeThrottled(now, fd)) {
-            throw CairoException.nonCritical().put("remote disconnected, query aborted [fd=").put(fd).put(']').setInterruption(true);
+            throw CairoException.queryDisconnected(fd);
         }
     }
 
@@ -308,7 +330,7 @@ public class NetworkSqlExecutionCircuitBreaker implements SqlExecutionCircuitBre
         // that races QueryRegistry.register() before it binds the per-query flag leaves only the
         // sentinel, and testTimeout()'s now - MIN_VALUE arithmetic overflows without tripping, so this
         // is the single place that reliably turns such a cancel into a thrown queryCancelled().
-        if (isCancelled() || (cancelledFlag != null && cancelledFlag.get()) || engine.isClosing()) {
+        if (isCancelled() || cancellationBinding.isCancelled() || engine.isClosing()) {
             throw CairoException.queryCancelled(fd);
         }
     }

@@ -65,10 +65,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         try {
             this.engine = engine;
             this.configuration = engine.getMessageBus().getConfiguration();
-            // Single-instance per-iteration scratch. Under continuation rotation
-            // the framework mints a fresh instance per snapshot via
-            // cloneInstance(); concurrent access to this instance's scratch
-            // is therefore impossible.
             this.fileNameSink = new Utf8StringSink();
             this.partitionList = new DirectLongList(
                     configuration.getPartitionPurgeListCapacity() * 2L,
@@ -81,11 +77,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
         }
     }
 
-    /**
-     * Legacy constructor kept for callers that still pass a workerCount
-     * (pool-sizing hint). The hint is ignored; per-iteration scratch is
-     * single-instance now.
-     */
     public O3PartitionPurgeJob(CairoEngine engine, int workerCount) {
         this(engine);
     }
@@ -105,9 +96,6 @@ public class O3PartitionPurgeJob extends AbstractQueueConsumerJob<O3PartitionPur
 
     @Override
     public void closeInstance() {
-        // cloneInstance() mints a fresh job per generation, so the pool frees
-        // each instance's native scratch through this hook at halt. The halted
-        // CAS in close() keeps the call idempotent.
         close();
     }
 

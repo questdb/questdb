@@ -43,6 +43,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -159,10 +160,25 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
 
     @Override
     public TransactionLogCursor getCursor(long txnLo, @Transient Path path) {
-        TransactionLogCursorImpl cursor = tlTransactionLogCursor.get();
+        return getCursor(txnLo, path, null);
+    }
+
+    @Override
+    public TransactionLogCursor getCursor(
+            long txnLo,
+            @Transient Path path,
+            @Nullable TableSequencerCursorPool cursorPool
+    ) {
+        TransactionLogCursorImpl cursor = cursorPool != null
+                ? (TransactionLogCursorImpl) cursorPool.getTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V1)
+                : tlTransactionLogCursor.get();
         if (cursor == null) {
             cursor = new TransactionLogCursorImpl(configuration, txnLo, path);
-            tlTransactionLogCursor.set(cursor);
+            if (cursorPool != null) {
+                cursorPool.registerTransactionLogCursor(WAL_SEQUENCER_FORMAT_VERSION_V1, cursor);
+            } else {
+                tlTransactionLogCursor.set(cursor);
+            }
             return cursor;
         }
         try {

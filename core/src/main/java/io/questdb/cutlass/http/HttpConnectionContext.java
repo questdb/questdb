@@ -42,8 +42,11 @@ import io.questdb.cutlass.http.processors.RejectProcessor;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.mp.continuation.FiberTask;
+import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.network.HeartBeatException;
 import io.questdb.network.IOContext;
+import io.questdb.network.IODispatcher;
 import io.questdb.network.IOOperation;
 import io.questdb.network.Net;
 import io.questdb.network.NetworkFacade;
@@ -113,6 +116,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private long authenticationNanos = 0L;
     private boolean connectionCounted;
     private int currentHandlerId = HttpRequestProcessorSelector.REJECT_PROCESSOR_ID;
+    private volatile HttpConnectionFiberTask fiberTask;
     private boolean forceDisconnectOnComplete;
     private NetworkSqlExecutionCircuitBreaker httpCircuitBreaker;
     private SqlExecutionContextImpl httpSqlExecutionContext;
@@ -216,6 +220,26 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
+    public void abandonRetry() {
+        pendingRetry = false;
+        receivedBytes = 0;
+    }
+
+    @Override
+    public boolean claimRetryClose(long taskIncarnation) {
+        if (taskIncarnation == 0) {
+            return true;
+        }
+        final HttpConnectionFiberTask task = fiberTask;
+        if (task == null) {
+            return false;
+        }
+        if (task.signalAxisA(taskIncarnation, FiberTask.SIGNAL_DISCONNECT)) {
+            return false;
+        }
+        return task.tryCancelIdle(taskIncarnation);
+    }
+
     // called when returning the context back to a pool (=connection closed)
     @Override
     public void clear() {
@@ -312,6 +336,22 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return cookieHandler;
     }
 
+    /**
+     * Lazily creates the per-connection fiber task. The task follows this context's
+     * pooled lifecycle: recycled together, reopened by the dispatch job when a new
+     * connection incarnation finds its gate terminal.
+     */
+    public HttpConnectionFiberTask getFiberTask(
+            IODispatcher<HttpConnectionContext> dispatcher,
+            HttpServer.HttpRequestProcessorSelectorFactory selectorFactory,
+            WaitProcessor rescheduleContext
+    ) {
+        if (fiberTask == null) {
+            fiberTask = new HttpConnectionFiberTask(this, dispatcher, selectorFactory, rescheduleContext);
+        }
+        return fiberTask;
+    }
+
     public long getLastRequestBytesSent() {
         return responseSink.getTotalBytesSent();
     }
@@ -335,6 +375,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     engine,
                     engine.getConfiguration().getCircuitBreakerConfiguration()
             );
+        }
+        if (SuspensionScope.isFiberMode()) {
+            SuspensionScope.enterTimerShards(engine.getTimerShards());
+            SuspensionScope.enterCancellationSource(httpCircuitBreaker);
         }
         return httpCircuitBreaker;
     }
@@ -439,6 +483,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         return pendingRetry || receivedBytes > 0 || this.socket == null;
     }
 
+    @Override
+    public boolean isRetryCurrent(long taskIncarnation) {
+        if (taskIncarnation == 0) {
+            return true;
+        }
+        final HttpConnectionFiberTask task = fiberTask;
+        return task != null && task.isActive(taskIncarnation);
+    }
+
     // called between requests on the same connections
     public void reset() {
         LOG.debug().$("reset [fd=").$(getFd()).$(']').$();
@@ -495,6 +548,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         } catch (RetryFailedOperationException e) {
             failProcessor(processor, e, DISCONNECT_REASON_RETRY_FAILED);
         }
+    }
+
+    @TestOnly
+    public void setFiberTaskForTesting(HttpConnectionFiberTask fiberTask) {
+        if (this.fiberTask != null && this.fiberTask != fiberTask) {
+            throw new IllegalStateException("HTTP context already has a fiber task");
+        }
+        this.fiberTask = fiberTask;
     }
 
     public HttpResponseSink.SimpleResponseImpl simpleResponse() {
@@ -555,6 +616,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             }
         }
         return true;
+    }
+
+    boolean hasPendingRetry() {
+        return pendingRetry;
     }
 
     @SuppressWarnings("StatementWithEmptyBody")

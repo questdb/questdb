@@ -130,33 +130,38 @@ public class Services {
                 httpServerConfiguration.getFactoryProvider().getHttpSocketFactory(),
                 acceptOpen
         );
-        HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
-                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
-                cairoEngine,
-                sharedQueryWorkerCount
-        );
+        try {
+            HttpServer.HttpRequestHandlerBuilder jsonQueryProcessorBuilder = () -> new JsonQueryProcessor(
+                    httpServerConfiguration.getJsonQueryProcessorConfiguration(),
+                    cairoEngine,
+                    sharedQueryWorkerCount
+            );
 
-        HttpServer.HttpRequestHandlerBuilder sqlValidationProcessorBuilder = () -> new SqlValidationProcessor(
-                httpServerConfiguration.getJsonQueryProcessorConfiguration(),
-                cairoEngine,
-                sharedQueryWorkerCount
-        );
+            HttpServer.HttpRequestHandlerBuilder sqlValidationProcessorBuilder = () -> new SqlValidationProcessor(
+                    httpServerConfiguration.getJsonQueryProcessorConfiguration(),
+                    cairoEngine,
+                    sharedQueryWorkerCount
+            );
 
-        HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
-                cairoEngine,
-                httpServerConfiguration
-        );
+            HttpServer.HttpRequestHandlerBuilder ilpV2WriteProcessorBuilder = () -> new LineHttpProcessorImpl(
+                    cairoEngine,
+                    httpServerConfiguration
+            );
 
-        HttpServer.addDefaultEndpoints(
-                server,
-                serverConfiguration,
-                cairoEngine,
-                sharedQueryWorkerCount,
-                jsonQueryProcessorBuilder,
-                ilpV2WriteProcessorBuilder,
-                sqlValidationProcessorBuilder
-        );
-        return server;
+            HttpServer.addDefaultEndpoints(
+                    server,
+                    serverConfiguration,
+                    cairoEngine,
+                    sharedQueryWorkerCount,
+                    jsonQueryProcessorBuilder,
+                    ilpV2WriteProcessorBuilder,
+                    sqlValidationProcessorBuilder
+            );
+            return server;
+        } catch (Throwable t) {
+            Misc.free(server, t);
+            throw t;
+        }
     }
 
     @Nullable
@@ -179,99 +184,15 @@ public class Services {
             return null;
         }
 
-        // ILP TCP IO and Writer Jobs key per-worker state by the workerId they
-        // are constructed with, so they require legacy worker pools (no
-        // continuation wrapping, assign(int worker, Job) permitted). Wrap the
-        // user-supplied configurations to force isLegacy=true and ensure
-        // dedicated pools are always created (getWorkerCount() >= 1), since
-        // the shared pools host continuations and would reject the per-worker
-        // assignments.
         final WorkerPool sharedPoolNetwork = workerPoolManager.getSharedPoolNetwork(
-                asLegacy(config.getNetworkWorkerPoolConfiguration(), "line-tcp-io"),
+                config.getNetworkWorkerPoolConfiguration(),
                 Requester.LINE_TCP_IO
         );
         final WorkerPool sharedPoolWrite = workerPoolManager.getSharedPoolWrite(
-                asLegacy(config.getWriterWorkerPoolConfiguration(), "line-tcp-writer"),
+                config.getWriterWorkerPoolConfiguration(),
                 Requester.LINE_TCP_WRITER
         );
         return new LineTcpReceiver(config, cairoEngine, sharedPoolNetwork, sharedPoolWrite, acceptOpen);
-    }
-
-    private static io.questdb.mp.WorkerPoolConfiguration asLegacy(
-            io.questdb.mp.WorkerPoolConfiguration delegate,
-            String defaultPoolName
-    ) {
-        return new io.questdb.mp.WorkerPoolConfiguration() {
-            @Override
-            public io.questdb.Metrics getMetrics() {
-                return delegate.getMetrics();
-            }
-
-            @Override
-            public long getNapThreshold() {
-                return delegate.getNapThreshold();
-            }
-
-            @Override
-            public String getPoolName() {
-                String n = delegate.getPoolName();
-                return n != null && !n.isEmpty() ? n : defaultPoolName;
-            }
-
-            @Override
-            public long getSleepThreshold() {
-                return delegate.getSleepThreshold();
-            }
-
-            @Override
-            public long getSleepTimeout() {
-                return delegate.getSleepTimeout();
-            }
-
-            @Override
-            public int[] getWorkerAffinity() {
-                return delegate.getWorkerAffinity();
-            }
-
-            @Override
-            public int getWorkerCount() {
-                // Force a dedicated pool: WorkerPoolManager falls back to the
-                // shared (non-legacy) pool when workerCount < 1, which would
-                // reject ILP's per-worker assign() calls.
-                int n = delegate.getWorkerCount();
-                return n > 0 ? n : 2;
-            }
-
-            @Override
-            public long getYieldThreshold() {
-                return delegate.getYieldThreshold();
-            }
-
-            @Override
-            public boolean haltOnError() {
-                return delegate.haltOnError();
-            }
-
-            @Override
-            public boolean isDaemonPool() {
-                return delegate.isDaemonPool();
-            }
-
-            @Override
-            public boolean isEnabled() {
-                return delegate.isEnabled();
-            }
-
-            @Override
-            public boolean isLegacy() {
-                return true;
-            }
-
-            @Override
-            public int workerPoolPriority() {
-                return delegate.workerPoolPriority();
-            }
-        };
     }
 
     @Nullable
@@ -294,11 +215,19 @@ public class Services {
             return null;
         }
 
-        // The pool is always the SHARED pool
+        final AbstractLineProtoUdpReceiver receiver;
         if (Os.isLinux()) {
-            return new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork(), acceptOpen);
+            receiver = new LinuxMMLineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork(), acceptOpen);
+        } else {
+            receiver = new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork(), acceptOpen);
         }
-        return new LineUdpReceiver(config, cairoEngine, workerPoolManager.getSharedPoolNetwork(), acceptOpen);
+        try {
+            receiver.start();
+            return receiver;
+        } catch (Throwable th) {
+            Misc.free(receiver);
+            throw th;
+        }
     }
 
     @Nullable
@@ -326,7 +255,7 @@ public class Services {
             return null;
         }
 
-        final HttpServer server = new HttpServer(
+        final HttpServer server = HttpServer.createMinHttpServer(
                 configuration,
                 workerPool,
                 configuration.getFactoryProvider().getHttpMinSocketFactory()
@@ -349,7 +278,7 @@ public class Services {
 
         if (metrics.isEnabled()) {
             final PrometheusMetricsProcessor.RequestStatePool pool = new PrometheusMetricsProcessor.RequestStatePool(
-                    configuration.getWorkerCount()
+                    workerPool.getWorkerCount()
             );
             server.registerClosable(pool);
             server.bind(

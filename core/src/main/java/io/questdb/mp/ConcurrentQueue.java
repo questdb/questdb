@@ -25,6 +25,7 @@
 package io.questdb.mp;
 
 import io.questdb.std.ObjectFactory;
+import org.jetbrains.annotations.TestOnly;
 
 // This is stripped down version taken from the .NET Core source code at
 // https://github.com/dotnet/runtime/blob/main/src/libraries/System.Private.CoreLib/src/System/Collections/Concurrent/ConcurrentQueue.cs
@@ -60,6 +61,21 @@ public class ConcurrentQueue<T> implements Queue<T> {
     // but if we do exceed it, the segment becomes garbage.
     private static final int MAX_SEGMENT_LENGTH = 1024 * 1024;
 
+    @SuppressWarnings("rawtypes")
+    private static final ConcurrentSegmentManipulator REFERENCE_MANIPULATOR = new ConcurrentSegmentManipulator() {
+        @Override
+        public Object dequeue(ConcurrentQueueSegment.Slot[] slots, int slotsIndex, Object unused) {
+            final Object value = slots[slotsIndex].item;
+            slots[slotsIndex].item = null;
+            return value;
+        }
+
+        @Override
+        public void enqueue(Object item, ConcurrentQueueSegment.Slot[] slots, int slotsIndex) {
+            slots[slotsIndex].item = item;
+        }
+    };
+
     // Lock used to protect cross-segment operations, including any updates to "tail" or "head"
     // and any operations that need to get a consistent view of them.
     private final Object crossSegmentLock = new Object();
@@ -92,6 +108,14 @@ public class ConcurrentQueue<T> implements Queue<T> {
         this.factory = factory;
         tail = head = new ConcurrentQueueSegment<>(factory, queueManipulator, size);
         this.queueManipulator = queueManipulator;
+    }
+
+    /**
+     * Creates a queue that retains and returns the supplied object references.
+     */
+    @SuppressWarnings("unchecked")
+    public static <T> ConcurrentQueue<T> createConcurrentObjectQueue(int initialCapacity) {
+        return new ConcurrentQueue<>(() -> null, REFERENCE_MANIPULATOR, initialCapacity);
     }
 
     /**
@@ -136,6 +160,49 @@ public class ConcurrentQueue<T> implements Queue<T> {
             // try to add a new tail segment.
             enqueueSlow(item);
         }
+    }
+
+    /**
+     * Returns an approximate item count without updating shared queue state.
+     */
+    public int getApproximateCount() {
+        long count = 0;
+        ConcurrentQueueSegment<T> segment = head;
+        final ConcurrentQueueSegment<T> observedTail = tail;
+        while (true) {
+            count += segment.getApproximateCount();
+            if (count >= Integer.MAX_VALUE) {
+                return Integer.MAX_VALUE;
+            }
+            if (segment == observedTail) {
+                return (int) count;
+            }
+            segment = segment.nextSegment;
+            if (segment == null) {
+                return (int) count;
+            }
+        }
+    }
+
+    /**
+     * Returns whether a dequeue may make progress without updating shared queue state.
+     */
+    public boolean hasAvailable() {
+        final ConcurrentQueueSegment<T> currentHead = head;
+        return currentHead.hasAvailable() || currentHead != tail;
+    }
+
+    @TestOnly
+    public void setCurrentSegmentSequenceForTesting(
+            long headSequence,
+            long tailSequence,
+            boolean isFrozen
+    ) {
+        final ConcurrentQueueSegment<T> currentHead = head;
+        if (currentHead != tail) {
+            throw new IllegalStateException("concurrent queue has multiple segments");
+        }
+        currentHead.setSequenceForTesting(headSequence, tailSequence, isFrozen);
     }
 
     /**

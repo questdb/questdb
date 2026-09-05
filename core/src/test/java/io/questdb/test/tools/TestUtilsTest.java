@@ -27,6 +27,8 @@ package io.questdb.test.tools;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
+import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.Rnd;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -120,6 +122,33 @@ public final class TestUtilsTest extends AbstractCairoTest {
 
             Assert.assertNotEquals(mapX, mapY);
         });
+    }
+
+    @Test
+    public void testWorkerPoolModeSeededSelectionIsStable() {
+        final Rnd expected = new Rnd(123, 456);
+        final Rnd actual = new Rnd(123, 456);
+        for (int i = 0; i < 100; i++) {
+            Assert.assertSame(
+                    expected.nextBoolean() ? WorkerPoolMode.FIBER_HOST : WorkerPoolMode.LEGACY,
+                    TestUtils.getWorkerPoolMode(actual)
+            );
+        }
+    }
+
+    @Test
+    public void testWorkerPoolModeSelectsBothModes() {
+        final Rnd rnd = new Rnd(123, 456);
+        boolean hasFiberHost = false;
+        boolean hasLegacy = false;
+        for (int i = 0; i < 100 && !(hasFiberHost && hasLegacy); i++) {
+            switch (TestUtils.getWorkerPoolMode(rnd)) {
+                case FIBER_HOST -> hasFiberHost = true;
+                case LEGACY -> hasLegacy = true;
+            }
+        }
+        Assert.assertTrue(hasFiberHost);
+        Assert.assertTrue(hasLegacy);
     }
 
     @Test

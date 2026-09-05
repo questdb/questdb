@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.griffin.CustomisableRunnable;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -81,7 +82,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumDecimal128AllOverflown() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 2);
+            final WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             engine.execute(
                     "create table x as (" +
                             "select " +
@@ -125,7 +126,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumDecimal128SomeOverflown() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             engine.execute(
                     "create table x as (" +
                             "select case " +
@@ -172,7 +173,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumDecimal64AllOverflown() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 2);
+            final WorkerPool pool = new TestWorkerPool(2, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             engine.execute(
                     "create table x as (" +
                             "select " +
@@ -201,7 +202,7 @@ public class SumDecimalGroupByFunctionFactoryTest extends AbstractCairoTest {
     @Test
     public void testSumDecimal64SomeOverflown() throws Exception {
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             engine.execute(
                     "create table x as (" +
                             "select case " +

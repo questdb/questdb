@@ -166,6 +166,9 @@ public class FdCache {
                 sink.put(',');
             }
             sink.put(key);
+            if (value != null && value.path != null) {
+                sink.put('=').put(value.path);
+            }
         });
         return sink.toString();
     }

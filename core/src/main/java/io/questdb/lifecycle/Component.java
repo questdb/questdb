@@ -49,9 +49,12 @@ public interface Component {
     }
 
     /**
-     * Requests cooperative cancellation before shutdown waits begin. Implementations must make
-     * this method non-blocking and idempotent. Resource teardown remains the responsibility of
-     * {@link #stop()} or {@link #stop(long)}.
+     * Requests current or subsequently published cancellable lifecycle work to stop promptly.
+     * Implementations must make this method non-blocking, idempotent, and safe to call concurrently
+     * with {@link #start(LifecycleContext)} or a role switch. The request must remain visible to work
+     * that publishes its cancellable resource after this method returns. This method only signals
+     * cancellation; {@link #stop()} or {@link #stop(long)} retains responsibility for waiting and
+     * releasing resources.
      */
     default void requestStop() {
     }
@@ -67,6 +70,9 @@ public interface Component {
      * returning normally implies {@code ctx.publish(State.READY)} (or
      * {@code DEGRADED} if explicitly published); throwing implies
      * {@code ctx.publish(State.FAILED, reason=throwable.toString())}.
+     * If {@link #requestStop()} causes an in-flight start to abort, the implementation must throw
+     * {@link java.util.concurrent.CancellationException} directly. The orchestrator treats no other
+     * exception as cancellation, even when shutdown races the failure.
      * <p>
      * Implementations MUST tolerate being called after {@link #stop()} on the
      * same instance.
@@ -74,8 +80,9 @@ public interface Component {
     void start(LifecycleContext ctx);
 
     /**
-     * Reverse-topological shutdown / FAILED cleanup. Idempotent. Safe to call
-     * on a component that never reached READY.
+     * Reverse-topological shutdown / FAILED cleanup. This method must wait for owned work to stop
+     * and release every owned resource before it returns. It must be idempotent and safe to call on
+     * a component that never reached READY.
      */
     void stop();
 

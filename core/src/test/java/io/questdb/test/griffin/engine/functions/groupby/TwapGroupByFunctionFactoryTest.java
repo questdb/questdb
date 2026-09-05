@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -135,7 +136,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(100_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     assertQuery(sql)
@@ -168,7 +169,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(2_000_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -189,7 +190,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(500_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, compiler, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     // constant price => twap = 42.0 for all groups
@@ -223,7 +224,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(2_000_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -246,7 +247,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(1_000_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -266,7 +267,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(1_000_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT twap(price, ts) FROM tbl";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -288,7 +289,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(1_000_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -310,7 +311,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(10)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -332,7 +333,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(1_000_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);
@@ -354,7 +355,7 @@ public class TwapGroupByFunctionFactoryTest extends AbstractCairoTest {
                         FROM long_sequence(1_000_000)
                     ) TIMESTAMP(ts)
                     """);
-            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+            try (WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)))) {
                 TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
                     String sql = "SELECT sym, twap(price, ts) FROM tbl GROUP BY sym ORDER BY sym";
                     TestUtils.assertSqlCursors(engine, sqlExecutionContext, sql, sql, LOG);

@@ -26,6 +26,7 @@ package io.questdb.test.tools;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreakerConfiguration;
+import io.questdb.mp.continuation.CancellationBinding;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -75,6 +76,21 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
     public boolean checkIfTrippedNoThrottle() {
         checkCount.incrementAndGet();
         return delegate.checkIfTrippedNoThrottle();
+    }
+
+    @Override
+    public void clearCancelledFlag(AtomicBoolean expected) {
+        delegate.clearCancelledFlag(expected);
+    }
+
+    @Override
+    public void clearCancelledFlag(AtomicBoolean expected, long expectedGeneration) {
+        delegate.clearCancelledFlag(expected, expectedGeneration);
+    }
+
+    @Override
+    public void copyCancelledFlagTo(CancellationBinding target) {
+        delegate.copyCancelledFlagTo(target);
     }
 
     @Override
@@ -138,6 +154,16 @@ public class CountingSqlExecutionCircuitBreaker implements SqlExecutionCircuitBr
     @Override
     public void setCancelledFlag(AtomicBoolean cancelledFlag) {
         delegate.setCancelledFlag(cancelledFlag);
+    }
+
+    @Override
+    public void setCancelledFlag(CancellationBinding source) {
+        delegate.setCancelledFlag(source);
+    }
+
+    @Override
+    public void setCancelledFlag(AtomicBoolean cancelledFlag, long generation) {
+        delegate.setCancelledFlag(cancelledFlag, generation);
     }
 
     @Override

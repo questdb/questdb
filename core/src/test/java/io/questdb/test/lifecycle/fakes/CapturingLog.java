@@ -27,8 +27,14 @@ public final class CapturingLog implements Log {
 
     public final CapturingRecord record;
     public final StringSink sink;
+    private final boolean isThrowing;
 
     public CapturingLog() {
+        this(false);
+    }
+
+    public CapturingLog(boolean isThrowing) {
+        this.isThrowing = isThrowing;
         this.sink = new StringSink();
         this.record = new CapturingRecord(sink);
     }
@@ -60,6 +66,9 @@ public final class CapturingLog implements Log {
 
     @Override
     public LogRecord error() {
+        if (isThrowing) {
+            throw new IllegalStateException("log failure");
+        }
         return record;
     }
 
@@ -70,6 +79,9 @@ public final class CapturingLog implements Log {
 
     @Override
     public LogRecord info() {
+        if (isThrowing) {
+            throw new IllegalStateException("log failure");
+        }
         return record;
     }
 

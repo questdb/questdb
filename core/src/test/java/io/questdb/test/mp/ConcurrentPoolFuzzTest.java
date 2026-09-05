@@ -55,6 +55,66 @@ public class ConcurrentPoolFuzzTest {
         runFuzz(-3, -3);
     }
 
+    @Test
+    public void testTryPushRejectsAtMaxSize() {
+        final ConcurrentPool<Integer> pool = new ConcurrentPool<>();
+        final int maxSize = 4;
+        for (int i = 0; i < maxSize; i++) {
+            Assert.assertTrue(pool.tryPush(i, maxSize));
+        }
+        Assert.assertFalse(pool.tryPush(maxSize, maxSize));
+        Assert.assertEquals(maxSize, pool.count());
+
+        Assert.assertEquals(Integer.valueOf(0), pool.pop());
+        Assert.assertTrue(pool.tryPush(maxSize, maxSize));
+        Assert.assertFalse(pool.tryPush(maxSize + 1, maxSize));
+        Assert.assertEquals(maxSize, pool.count());
+
+        for (int i = 1; i < maxSize; i++) {
+            Assert.assertEquals(Integer.valueOf(i), pool.pop());
+        }
+        Assert.assertEquals(Integer.valueOf(maxSize), pool.pop());
+        Assert.assertNull(pool.pop());
+        Assert.assertEquals(0, pool.count());
+    }
+
+    @Test
+    public void testTryPushRollsBackCountAfterEnqueueFailure() {
+        final AtomicBoolean failSegmentAllocation = new AtomicBoolean();
+        final OutOfMemoryError expected = new OutOfMemoryError("test");
+        final ConcurrentPool<Integer> pool = ConcurrentPool.createForTesting(() -> {
+            if (failSegmentAllocation.get()) {
+                throw expected;
+            }
+            return null;
+        });
+        final int initialCapacity = pool.capacity();
+        final int maxSize = initialCapacity + 1;
+
+        for (int i = 0; i < initialCapacity; i++) {
+            Assert.assertTrue(pool.tryPush(i, maxSize));
+        }
+
+        failSegmentAllocation.set(true);
+        Assert.assertSame(
+                expected,
+                Assert.assertThrows(
+                        OutOfMemoryError.class,
+                        () -> pool.tryPush(initialCapacity, maxSize)
+                )
+        );
+        Assert.assertEquals(initialCapacity, pool.count());
+
+        failSegmentAllocation.set(false);
+        Assert.assertTrue(pool.tryPush(initialCapacity, maxSize));
+        Assert.assertEquals(maxSize, pool.count());
+        for (int i = 0; i < maxSize; i++) {
+            Assert.assertEquals(Integer.valueOf(i), pool.pop());
+        }
+        Assert.assertNull(pool.pop());
+        Assert.assertEquals(0, pool.count());
+    }
+
     private static void runFuzz(int producerMultiplier, int consumerMultiplier) throws InterruptedException {
         Rnd rnd = TestUtils.generateRandom(null);
 

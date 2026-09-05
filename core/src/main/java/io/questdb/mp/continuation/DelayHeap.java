@@ -24,7 +24,9 @@
 
 package io.questdb.mp.continuation;
 
-import java.util.PriorityQueue;
+import io.questdb.std.ObjList;
+import org.jetbrains.annotations.TestOnly;
+
 import java.util.concurrent.Delayed;
 
 import static java.util.concurrent.TimeUnit.NANOSECONDS;
@@ -32,7 +34,7 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
 /**
  * Raw-{@link jdk.internal.vm.Continuation}-safe analogue of
  * {@link java.util.concurrent.DelayQueue}. The JDK class guards its internal
- * {@link PriorityQueue} with a {@link java.util.concurrent.locks.ReentrantLock} that
+ * priority queue with a {@link java.util.concurrent.locks.ReentrantLock} that
  * tracks ownership via {@code Thread.currentThread()}. When a cont yields between lock
  * acquisition and release - or when C2 hoists the identity read inconsistently across
  * inlined call sites - the unlock's owner check fails with
@@ -48,49 +50,185 @@ import static java.util.concurrent.TimeUnit.NANOSECONDS;
  * a constraint that holds trivially because no method here invokes anything that could
  * yield (the body is heap ops plus a single {@link Object#notify}).
  *
+ * <p>The heap is intrusive: each {@link Entry} stores its own heap slot, so an entry
+ * can be linked into at most one heap at a time.
+ *
  * <p>API is the subset {@link TimerShards} actually uses: {@link #offer},
- * {@link #take}, {@link #toArray}, {@link #clear}, {@link #size}. Single-consumer is
- * assumed (one shard daemon per instance) - {@link #notify} not {@code notifyAll} is
- * used to wake waiters.
+ * {@link #poll}, {@link #remove}, {@link #take}, {@link #size}. Single-consumer is
+ * assumed (one shard daemon per instance) - {@link #notify} not {@code notifyAll}
+ * is used to wake waiters.
  */
-public class DelayHeap<E extends Delayed> {
+public class DelayHeap<E extends DelayHeap.Entry> {
+    private static final int INITIAL_CAPACITY = 16;
+    private final ObjList<E> heap = new ObjList<>(INITIAL_CAPACITY);
+    private int size;
 
-    private final PriorityQueue<E> q = new PriorityQueue<>();
+    public DelayHeap() {
+        heap.setPos(INITIAL_CAPACITY);
+    }
 
     public synchronized void clear() {
-        q.clear();
+        for (int i = 0; i < size; i++) {
+            heap.getQuick(i).setHeapIndex(-1);
+            heap.setQuick(i, null);
+        }
+        size = 0;
     }
 
     public synchronized boolean offer(E e) {
-        q.offer(e);
-        if (q.peek() == e) {
+        assert e.getHeapIndex() < 0 : "entry is already in a heap";
+        if (size == heap.size()) {
+            heap.extendPos(heap.size() << 1);
+        }
+        final int index = size;
+        final int target = findSiftUpTarget(index, e);
+        siftUpTo(index, target, e);
+        size = index + 1;
+        if (heap.getQuick(0) == e) {
+            notify();
+        }
+        return true;
+    }
+
+    public synchronized E poll() {
+        return size == 0 ? null : removeAt(0);
+    }
+
+    public synchronized boolean remove(E e) {
+        final int index = e.getHeapIndex();
+        if (index < 0 || index >= size || heap.getQuick(index) != e) {
+            return false;
+        }
+        final boolean isHead = index == 0;
+        removeAt(index);
+        if (isHead) {
             notify();
         }
         return true;
     }
 
     public synchronized int size() {
-        return q.size();
+        return size;
     }
 
     public synchronized E take() throws InterruptedException {
         for (; ; ) {
-            E first = q.peek();
-            if (first == null) {
+            if (size == 0) {
                 wait();
             } else {
-                long delay = first.getDelay(NANOSECONDS);
+                final E first = heap.getQuick(0);
+                final long delay = first.getDelay(NANOSECONDS);
                 if (delay <= 0L) {
-                    return q.poll();
+                    return removeAt(0);
                 }
-                long millis = delay / 1_000_000L;
-                int nanos = (int) (delay % 1_000_000L);
+                final long millis = delay / 1_000_000L;
+                final int nanos = (int) (delay % 1_000_000L);
                 wait(millis, nanos);
             }
         }
     }
 
-    public synchronized Object[] toArray() {
-        return q.toArray();
+    @TestOnly
+    public synchronized ObjList<E> toList() {
+        final ObjList<E> copy = new ObjList<>(size);
+        for (int i = 0; i < size; i++) {
+            copy.add(heap.getQuick(i));
+        }
+        return copy;
+    }
+
+    private int findSiftDownTarget(int index, E e, int heapSize) {
+        final int half = heapSize >>> 1;
+        while (index < half) {
+            int child = (index << 1) + 1;
+            E c = heap.getQuick(child);
+            final int right = child + 1;
+            if (right < heapSize && c.compareTo(heap.getQuick(right)) > 0) {
+                child = right;
+                c = heap.getQuick(child);
+            }
+            if (e.compareTo(c) <= 0) {
+                break;
+            }
+            index = child;
+        }
+        return index;
+    }
+
+    private int findSiftUpTarget(int index, E e) {
+        while (index > 0) {
+            final int parent = (index - 1) >>> 1;
+            if (e.compareTo(heap.getQuick(parent)) >= 0) {
+                break;
+            }
+            index = parent;
+        }
+        return index;
+    }
+
+    private E removeAt(int index) {
+        final E removed = heap.getQuick(index);
+        final int last = size - 1;
+        if (index == last) {
+            removed.setHeapIndex(-1);
+            heap.setQuick(last, null);
+            size = last;
+            return removed;
+        }
+
+        final E moved = heap.getQuick(last);
+        final int target;
+        if (index > 0 && moved.compareTo(heap.getQuick((index - 1) >>> 1)) < 0) {
+            target = findSiftUpTarget(index, moved);
+        } else {
+            target = findSiftDownTarget(index, moved, last);
+        }
+
+        removed.setHeapIndex(-1);
+        heap.setQuick(last, null);
+        size = last;
+        if (target < index) {
+            siftUpTo(index, target, moved);
+        } else if (target > index) {
+            siftDownTo(index, target, moved);
+        } else {
+            heap.setQuick(index, moved);
+            moved.setHeapIndex(index);
+        }
+        return removed;
+    }
+
+    private void siftDownTo(int index, int target, E e) {
+        final long targetPath = (long) target + 1;
+        final int targetDepth = 63 - Long.numberOfLeadingZeros(targetPath);
+        int currentDepth = 63 - Long.numberOfLeadingZeros((long) index + 1);
+        while (index != target) {
+            final int child = (int) (targetPath >>> (targetDepth - currentDepth - 1)) - 1;
+            final E c = heap.getQuick(child);
+            heap.setQuick(index, c);
+            c.setHeapIndex(index);
+            index = child;
+            currentDepth++;
+        }
+        heap.setQuick(target, e);
+        e.setHeapIndex(target);
+    }
+
+    private void siftUpTo(int index, int target, E e) {
+        while (index != target) {
+            final int parent = (index - 1) >>> 1;
+            final E p = heap.getQuick(parent);
+            heap.setQuick(index, p);
+            p.setHeapIndex(index);
+            index = parent;
+        }
+        heap.setQuick(target, e);
+        e.setHeapIndex(target);
+    }
+
+    public interface Entry extends Delayed {
+        int getHeapIndex();
+
+        void setHeapIndex(int heapIndex);
     }
 }

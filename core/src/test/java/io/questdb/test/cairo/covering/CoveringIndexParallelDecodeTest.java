@@ -62,6 +62,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
@@ -237,7 +238,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // leaked covered buffer / detached cursor from the aborted query also fails.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -676,7 +677,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
 
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -874,7 +875,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // equals its non-indexed twin under parallel workers.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -1092,7 +1093,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // the rnd-generated values match exactly.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, compiler, ctx) -> {
                 final String cols =
                         "  a_long LONG, a_int INT, a_short SHORT, a_byte BYTE, a_bool BOOLEAN," +
@@ -1150,7 +1151,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // query (scalar + var-size covered columns) must match a non-indexed twin.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, compiler, ctx) -> {
                 engine.execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px, tag), " +
                         "px DOUBLE, tag STRING) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
@@ -1189,7 +1190,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // supports it) against a non-indexed twin. rnd seeds match because ref is INSERT...SELECT *.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, compiler, ctx) -> {
                 final String cols =
                         "  g_b GEOHASH(1c), g_s GEOHASH(3c), g_i GEOHASH(6c), g_l GEOHASH(12c)," +
@@ -1245,7 +1246,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // table locks the other branch.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, compiler, ctx) -> {
                 engine.execute("CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (px), px DOUBLE) " +
                         "TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL", ctx);
@@ -1302,7 +1303,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
 
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -1450,7 +1451,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // test; here we additionally project a_bin across many frames as a belt-and-suspenders.)
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 128);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(pool, (engine, compiler, ctx) -> {
                 engine.execute(
                         "CREATE TABLE cov (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (a_arr, a_bin)," +
@@ -1498,7 +1499,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // the covered columns survive the projection and decode on the workers.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -1671,7 +1672,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // worker record arm is correct against a non-indexed twin.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -1742,7 +1743,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // across many frames so a stale cross-frame record binding would surface.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -1816,7 +1817,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // close() -> await() -> reset() -> unfreeze teardown.)
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -1900,7 +1901,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // assertMemoryLeak -- so unfreeze-at-teardown and leak-freedom are proven.
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -2050,7 +2051,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         // correctly, and by the posting-reader freeze test referenced above.)
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 200);
         assertMemoryLeak(() -> {
-            final WorkerPool pool = new WorkerPool(() -> 4);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             TestUtils.execute(
                     pool,
                     (engine, compiler, sqlExecutionContext) -> {
@@ -2638,7 +2639,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         final WorkerPool pool;
 
         PerfNode(CairoConfiguration configuration, int workerCount) {
-            this.pool = new WorkerPool(() -> workerCount);
+            this.pool = new TestWorkerPool(workerCount, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
             this.engine = new CairoEngine(configuration);
             boolean ok = false;
             try {

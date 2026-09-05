@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -45,7 +46,7 @@ public class QueryTracingTest extends AbstractCairoTest {
 
     @Test
     public void testQueryTracing() throws Exception {
-        try (WorkerPool workerPool = new WorkerPool(() -> 1);
+        try (WorkerPool workerPool = new TestWorkerPool(1);
              QueryTracingJob job = new QueryTracingJob(engine)
         ) {
             workerPool.assign(job);

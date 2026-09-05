@@ -91,11 +91,9 @@ public class QwpEgressLatencyBenchmark {
     private static final String HOST = "localhost";
     private static final int HTTP_PORT = 9000;
     private static final int PG_PORT = 8812;
-    private static final String TABLE = "latency_bench";
     private static final boolean SKIP_POPULATE = Boolean.parseBoolean(System.getProperty("skip.populate", "false"));
     private static final String SQL = System.getProperty("sql", "SELECT 1");
-
-    private QwpQueryClient client;
+    private static final String TABLE = "latency_bench";
     private final QwpColumnBatchHandler handler = new QwpColumnBatchHandler() {
         @Override
         public void onBatch(QwpColumnBatch batch) {
@@ -115,6 +113,7 @@ public class QwpEgressLatencyBenchmark {
             throw new RuntimeException("query error [status=" + status + "]: " + message);
         }
     };
+    private QwpQueryClient client;
 
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
