@@ -334,10 +334,10 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     root.of(checkpointsDir, latest.rootRef);
                     Assert.assertEquals(latest.checkpointId, root.getCheckpointId());
                     Assert.assertEquals(latest.maxTimestamp, root.getMaxTimestamp());
-                    final LiveViewCheckpointPageRef anchorRootRef = new LiveViewCheckpointPageRef();
-                    root.getAnchorRootRef(anchorRootRef);
-                    Assert.assertFalse(anchorRootRef.isNull());
-                    anchorRoot.of(checkpointsDir, anchorRootRef);
+                    final LiveViewCheckpointPageRef stateRootRef = new LiveViewCheckpointPageRef();
+                    root.getStateRootRef(stateRootRef);
+                    Assert.assertFalse(stateRootRef.isNull());
+                    anchorRoot.of(checkpointsDir, stateRootRef);
                     Assert.assertEquals(ColumnType.TIMESTAMP_MICRO, anchorRoot.getAnchorValueType());
                     final LiveViewCheckpointPageRef anchorMapRootRef = new LiveViewCheckpointPageRef();
                     anchorRoot.getPartitionMapRootRef(anchorMapRootRef);
@@ -678,6 +678,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                                 new LiveViewCheckpointTimelineStoreReader(configuration)
                 ) {
                     reader.of(checkpointsDir);
+                    final int visitorIdentity = reader.getVisitorShellIdentityForTest();
                     reader.restore(
                             ts("2026-01-01T00:00:20.000000Z"),
                             1,
@@ -686,6 +687,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             anchorWindow
                     );
                     assertRuntimeSnapshot(dayOne, functions, anchorWindow);
+                    Assert.assertEquals(visitorIdentity, reader.getVisitorShellIdentityForTest());
+                    Assert.assertTrue(reader.isVisitorShellStateClearForTest());
 
                     reader.restore(
                             ts("2026-01-02T00:00:10.000000Z"),
@@ -695,6 +698,8 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             anchorWindow
                     );
                     assertRuntimeSnapshot(dayTwo, functions, anchorWindow);
+                    Assert.assertEquals(visitorIdentity, reader.getVisitorShellIdentityForTest());
+                    Assert.assertTrue(reader.isVisitorShellStateClearForTest());
                 }
                 assertNoRefreshFaults("lv");
             }
@@ -811,6 +816,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             Assert.assertEquals(CairoException.LV_CHECKPOINT_TIMELINE_INVALID, e.getErrno());
                             TestUtils.assertContains(e.getFlyweightMessage(), "data segment file length mismatch");
                         }
+                        Assert.assertTrue(reader.isVisitorShellStateClearForTest());
                     }
                 }
                 assertRuntimeSnapshot(before, functions, null);

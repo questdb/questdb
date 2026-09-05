@@ -24,9 +24,9 @@
 
 package io.questdb.cairo.lv;
 
+import io.questdb.std.IntObjHashMap;
 import org.jetbrains.annotations.NotNull;
-
-import java.util.Arrays;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Value stored in a persistent checkpoint partition map. The encoded key is
@@ -41,9 +41,13 @@ public final class LiveViewCheckpointPartitionMapEntry {
 
     private static final byte[] EMPTY_BYTES = new byte[0];
     private static final LiveViewCheckpointStatePageRef[] EMPTY_REFS = new LiveViewCheckpointStatePageRef[0];
+    private final IntObjHashMap<byte[]> keyBuffers = new IntObjHashMap<>();
+    private final IntObjHashMap<LiveViewCheckpointStatePageRef[]> refBuffers = new IntObjHashMap<>();
+    private final IntObjHashMap<byte[]> scalarBuffers = new IntObjHashMap<>();
     private byte[] key = EMPTY_BYTES;
     private byte[] scalarState = EMPTY_BYTES;
     private LiveViewCheckpointStatePageRef[] statePageRefs = EMPTY_REFS;
+    private int widthLookupCountForTest;
 
     public LiveViewCheckpointPartitionMapEntry clear() {
         key = EMPTY_BYTES;
@@ -64,8 +68,18 @@ public final class LiveViewCheckpointPartitionMapEntry {
         return statePageRefs.length;
     }
 
+    @TestOnly
+    public int getWidthLookupCountForTest() {
+        return widthLookupCountForTest;
+    }
+
     public LiveViewCheckpointStatePageRef getStatePageRef(int index) {
         return statePageRefs[index];
+    }
+
+    @TestOnly
+    public void resetWidthLookupCountForTest() {
+        widthLookupCountForTest = 0;
     }
 
     public LiveViewCheckpointPartitionMapEntry of(
@@ -73,16 +87,16 @@ public final class LiveViewCheckpointPartitionMapEntry {
             @NotNull byte[] scalarState,
             @NotNull LiveViewCheckpointStatePageRef[] statePageRefs
     ) {
-        this.key = Arrays.copyOf(key, key.length);
-        this.scalarState = Arrays.copyOf(scalarState, scalarState.length);
-        this.statePageRefs = copyRefs(statePageRefs);
+        this.key = copyBytes(key, keyBuffers);
+        this.scalarState = copyBytes(scalarState, scalarBuffers);
+        this.statePageRefs = copyRefsPooled(statePageRefs);
         return this;
     }
 
     void copyFrom(@NotNull LiveViewCheckpointPartitionMapEntry other) {
-        key = Arrays.copyOf(other.key, other.key.length);
-        scalarState = Arrays.copyOf(other.scalarState, other.scalarState.length);
-        statePageRefs = copyRefs(other.statePageRefs);
+        if (other != this) {
+            of(other.key, other.scalarState, other.statePageRefs);
+        }
     }
 
     void ofDecoded(byte[] key, byte[] scalarState, LiveViewCheckpointStatePageRef[] statePageRefs) {
@@ -98,15 +112,46 @@ public final class LiveViewCheckpointPartitionMapEntry {
         );
     }
 
-    static LiveViewCheckpointStatePageRef[] copyRefs(LiveViewCheckpointStatePageRef[] source) {
+    private byte[] copyBytes(byte[] source, IntObjHashMap<byte[]> buffers) {
+        if (source.length == 0) {
+            return EMPTY_BYTES;
+        }
+        assert isWidthLookupRecordedForTest();
+        byte[] target = buffers.get(source.length);
+        if (target == null) {
+            target = new byte[source.length];
+            buffers.put(source.length, target);
+        }
+        System.arraycopy(source, 0, target, 0, source.length);
+        return target;
+    }
+
+    private LiveViewCheckpointStatePageRef[] copyRefsPooled(LiveViewCheckpointStatePageRef[] source) {
         if (source.length == 0) {
             return EMPTY_REFS;
         }
-        final LiveViewCheckpointStatePageRef[] copy = new LiveViewCheckpointStatePageRef[source.length];
-        for (int i = 0; i < source.length; i++) {
-            copy[i] = copyRef(source[i]);
+        assert isWidthLookupRecordedForTest();
+        LiveViewCheckpointStatePageRef[] target = refBuffers.get(source.length);
+        if (target == null) {
+            target = new LiveViewCheckpointStatePageRef[source.length];
+            for (int i = 0; i < target.length; i++) {
+                target[i] = new LiveViewCheckpointStatePageRef();
+            }
+            refBuffers.put(source.length, target);
         }
-        return copy;
+        for (int i = 0; i < source.length; i++) {
+            final LiveViewCheckpointStatePageRef from = source[i];
+            target[i].of(
+                    from.getSegmentId(), from.getOffset(), from.getStoredLength(), from.getDecodedLength(),
+                    from.getPageKind(), from.getCodec(), from.getRowCount(), from.getFlags()
+            );
+        }
+        return target;
+    }
+
+    private boolean isWidthLookupRecordedForTest() {
+        widthLookupCountForTest++;
+        return true;
     }
 
     static boolean refsEqual(LiveViewCheckpointStatePageRef[] left, LiveViewCheckpointStatePageRef[] right) {

@@ -51,6 +51,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.lv.LiveViewCheckpointKeyProjector;
 import io.questdb.cairo.lv.LiveViewCheckpointRowsPlan;
 import io.questdb.cairo.map.RecordValueSink;
 import io.questdb.cairo.map.RecordValueSinkFactory;
@@ -10577,6 +10578,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final ObjList<WindowMapSpec> windowMapSpecs = executionContext.isLiveViewCompile() ? null : new ObjList<>();
         ObjList<WindowFunction> naturalOrderFunctions = null;
         ObjList<Function> partitionByFunctions = null;
+        LiveViewCheckpointKeyProjector checkpointKeyProjector = null;
         LiveViewCheckpointRowsPlan checkpointRowsPlan = null;
         // The bound window Map groups own a map each, so they are built into a local the
         // outer catch can free: the factory takes ownership only once its constructor has
@@ -10713,12 +10715,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // may share one partition map, which is what the shadow plan built
                         // after this loop works out.
                         //
-                        // Not for a live-view compile. A live-view function keeps its
-                        // accumulator in its own private partition map, which
-                        // LiveViewWindow.processRow resets on an anchor cross and the
-                        // checkpoint framework freezes and restores. Binding that function
-                        // into a group leaves the private map closed, so both would then
-                        // drive state nothing maintains.
+                        // Not for a live-view compile. A compatible live-view function is
+                        // already owned by LiveViewWindow, through the plan built a few
+                        // lines below this loop, and binding it to a second generic owner
+                        // would create two sources of truth for one accumulator. Unifying
+                        // the two owners is a later refactor, not an implicit side effect
+                        // of compiling a second plan beside the first.
                         if (windowMapSpecs != null) {
                             windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
                                     executionContext.getWindowContext(),
@@ -10851,10 +10853,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // into a local the outer catch can free: the factory only takes ownership
                 // once its constructor has returned.
                 if (lvCompile) {
+                    // The identity every checkpoint-capable function shares, compiled once
+                    // and handed to everything that has to name a key. The ROWS plan takes
+                    // it when its own functions partition that way, which is every view
+                    // that has one identity at all.
+                    checkpointKeyProjector = LiveViewCheckpointFunctionCompiler.sharedKeyProjector(
+                            functions,
+                            columns,
+                            baseMetadata,
+                            configuration,
+                            asm,
+                            functionParser,
+                            executionContext
+                    );
                     checkpointRowsPlan = LiveViewCheckpointFunctionCompiler.rowsPlan(
                             functions,
                             columns,
                             baseMetadata,
+                            checkpointKeyProjector,
                             configuration,
                             asm,
                             functionParser,
@@ -10876,11 +10892,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         factoryMetadata,
                         functions,
                         anchorableWindowFunctions,
+                        checkpointKeyProjector,
                         lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null,
                         checkpointRowsPlan,
+                        // The fused window-state plan holds only non-owning references into
+                        // `functions`, so unlike the ROWS plan it needs no local the outer
+                        // catch has to free.
+                        lvCompile
+                                ? LiveViewCheckpointFunctionCompiler.windowStatePlan(
+                                functions,
+                                anchorableWindowFunctions,
+                                baseMetadata
+                        )
+                                : null,
                         windowAccumulatorPlans,
                         windowMapStates
                 );
+                checkpointKeyProjector = null;
                 checkpointRowsPlan = null;
                 windowMapStates = null;
                 return windowFactory;
@@ -10969,11 +10997,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // compiler does not admit. The pair is what CachedWindowMapGroups reads to find
             // the spec of a function a sort group collected.
             //
-            // Not for a live-view compile. The guard is defensive - validateLiveViewFactory
-            // rejects at CREATE every shape that compiles to a cached factory - and it holds
-            // for the same reason the streaming path skips the capture: binding a live-view
-            // function into a group leaves closed the private partition map that
-            // LiveViewWindow and the checkpoint framework drive.
+            // Not for a live-view compile, for the same reason the streaming path skips it: a
+            // compatible live-view function is already owned by LiveViewWindow, and one
+            // accumulator may have one owner. The guard is also defensive -
+            // validateLiveViewFactory rejects at CREATE every shape that compiles to a cached
+            // factory.
             final boolean isGroupingCachedWindows = !executionContext.isLiveViewCompile();
             final ObjList<WindowFunction> cachedWindowSpecFunctions = isGroupingCachedWindows ? new ObjList<>() : null;
             final ObjList<WindowMapSpec> cachedWindowMapSpecs = isGroupingCachedWindows ? new ObjList<>() : null;
@@ -11287,6 +11315,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             Misc.free(base);
             Misc.free(checkpointRowsPlan);
+            Misc.free(checkpointKeyProjector);
             Misc.freeObjList(windowMapStates);
             Misc.free(cachedWindowMapGroups);
             Misc.freeObjList(functions);
@@ -12527,9 +12556,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
             // serial: it supports neither page frames, filter stealing nor time frames, so no parallel
             // operator (async filter, parallel GROUP BY) ever clones or snapshots this projection.
-            // Enforce the invariant unconditionally rather than with an assert: -ea strips asserts in
-            // production, and a future page-frame-capable union must fail loudly here instead of shipping
-            // a stale, empty dictionary snapshot to a worker.
+            // Enforce the invariant unconditionally rather than with an assert. QuestDB's Docker,
+            // shell-script and AMI launchers pass -ea, so an assert would fire for them, but the
+            // Windows service wrapper passes none and an embedding is free to disable assertions -
+            // and a future page-frame-capable union must fail loudly for those too, instead of
+            // shipping a stale, empty dictionary snapshot to a worker.
             if (unionFactory.supportsPageFrameCursor()
                     || unionFactory.supportsFilterStealing()
                     || unionFactory.supportsTimeFrameCursor()) {

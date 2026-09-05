@@ -658,12 +658,21 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.latestby.queue.capacity\tQDB_CAIRO_LATESTBY_QUEUE_CAPACITY\t32\tdefault\tfalse\tfalse\n" +
                                     "cairo.legacy.string.column.type.default\tQDB_CAIRO_LEGACY_STRING_COLUMN_TYPE_DEFAULT\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.lexer.pool.capacity\tQDB_CAIRO_LEXER_POOL_CAPACITY\t2048\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.adaptive.cadence.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.compaction.interval\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_COMPACTION_INTERVAL\t0\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.max.duration.micros\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS\t300000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.purge.interval\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL\t1\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.isolated.runtime.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_ISOLATED_RUNTIME_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.keyed.replay.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_REPLAY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.keyed.scan.index.open.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS\t256\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.max.chained.boundaries\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES\t256\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.open.segment.keyed.replay.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_OPEN_SEGMENT_KEYED_REPLAY_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.per.segment.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_PER_SEGMENT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.replay.max.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.scan.max.keys\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_KEYS\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.repair.scan.max.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SCAN_MAX_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.segment.yield.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SEGMENT_YIELD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.checkpoint.repair.sparse.publication.enabled\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.checkpoint.rows\tQDB_CAIRO_LIVE_VIEW_CHECKPOINT_ROWS\t1000000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.enabled\tQDB_CAIRO_LIVE_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.flush.retry.max\tQDB_CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX\t5\tdefault\tfalse\tfalse\n" +
@@ -671,6 +680,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.live.view.in.memory.buffer.growth.bytes\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_GROWTH_BYTES\t16777216\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.in.memory.buffer.initial.bytes\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_BUFFER_INITIAL_BYTES\t65536\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.in.memory.max\tQDB_CAIRO_LIVE_VIEW_IN_MEMORY_MAX\t3600000000\tdefault\tfalse\tfalse\n" +
+                                    "cairo.live.view.partition.compact.stale.percent\tQDB_CAIRO_LIVE_VIEW_PARTITION_COMPACT_STALE_PERCENT\t50\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.partition.compact.threshold\tQDB_CAIRO_LIVE_VIEW_PARTITION_COMPACT_THRESHOLD\t100000\tdefault\tfalse\tfalse\n" +
                                     "cairo.live.view.refresh.memory.limit.bytes\tQDB_CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES\t0\tdefault\tfalse\ttrue\n" +
                                     "cairo.live.view.refresh.turn.max.commits\tQDB_CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS\t64\tdefault\tfalse\tfalse\n" +

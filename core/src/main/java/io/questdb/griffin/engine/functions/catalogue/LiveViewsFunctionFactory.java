@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.Record;
@@ -80,6 +81,33 @@ import io.questdb.std.ObjList;
  * {@code o3_replay_scan_rows} counts base rows the O3 replay paths scanned, which
  * equals the emit counters without a WHERE filter and exceeds them with one. All
  * three are in-memory counters that reset on restart.
+ * <p>
+ * {@code o3_open_segment_keyed_resume_count} and
+ * {@code o3_open_segment_cold_keyed_replay_count} expose the two keyed
+ * open-segment executors per view. The first is the healthy steady-state path:
+ * a preserved checkpoint root sits below the correction. The second starts
+ * cold at the active anchor segment's origin because no usable root exists.
+ * Both reset on restart; in steady state the resume count should grow while the
+ * cold count stays flat.
+ * <p>
+ * {@code checkpoint_effective_duration_micros},
+ * {@code checkpoint_last_correction_depth_micros}, and
+ * {@code checkpoint_correction_depth_sample_count} describe adaptive checkpoint
+ * cadence. Before the first out-of-order correction the effective duration is
+ * the configured ceiling and the depth is NULL. Once samples arrive, the
+ * effective duration may tighten below that ceiling to keep a checkpoint below
+ * similarly late future rows. All learned state resets on restart.
+ * <p>
+ * Those three carry per-field freshness only, never a coherent tuple. Each group
+ * below states for itself what its own columns guarantee jointly, which is more
+ * often a disjoint split or a trend to read across rows than a tuple to read
+ * within one. The refresh worker keeps these three in independent volatile fields
+ * rather than in one published word or array, it bumps the sample count between
+ * the depth store and the duration store, and it relaxes the duration on its own
+ * at a seal that no correction preceded. A row can therefore pair one sample's
+ * depth with the neighbouring sample's count, or either of them with a duration a
+ * later seal already relaxed. Read each of the three on its own, and compare a
+ * trend across rows rather than a ratio within one.
  * <p>
  * The {@code checkpoint_*} group describes the versioned checkpoint timeline, and
  * splits four ways.
@@ -136,7 +164,34 @@ import io.questdb.std.ObjList;
  *     a repair; the denial stays NULL for a repair that read exactly its localized
  *     interval. So a view reporting a {@code rows} plan beside a
  *     {@code boundary rebuild} / {@code dedup} pair is one whose SQL admits a bound
- *     that its base denies at every refresh.</li>
+ *     that its base denies at every refresh. Both arrive with the {@code o3_*} rows the
+ *     repair they name replayed, never ahead of them, so the route and its cost are
+ *     always readable together; a repair still in flight - a localized one can park
+ *     across refresh turns - reports the previous repair's pair, and
+ *     {@code checkpoint_repair_in_progress} flags that staleness only once the new
+ *     repair has parked: suspension is the one in-flight state this view publishes, so
+ *     a repair that finishes inside its turn never raises the flag.</li>
+ *     <li>Scoped repair of closed anchor segments - {@code checkpoint_segment_repair_gate}
+ *     and {@code checkpoint_keyed_scan_gate}. Both describe the view's SQL rather
+ *     than any repair. The first reads {@code available} when a correction landing in a
+ *     closed anchor segment can be repaired over that segment alone, and otherwise names
+ *     the gate standing in the way - most commonly {@code bounded frame}, a ROWS or
+ *     RANGE window declared beside the anchored one whose frame keeps sliding across the
+ *     segment boundary. The second reads {@code available} when such a repair's replay
+ *     could follow the affected keys' rows through the base's posting index rather than
+ *     reading every row of the segment, and otherwise names why not - {@code key not
+ *     indexed} and {@code expression key} being the two an operator can act on. A
+ *     rejected key is not a denial: the segment falls back to a whole-segment replay,
+ *     which costs the same write and only a larger read. Both are NULL until the view
+ *     compiles its SELECT.</li>
+ *     <li>Whether the view's own bookkeeping still describes its output -
+ *     {@code checkpoint_row_count_mismatches}. Every timeline root carries the rows the
+ *     view has emitted as its cumulative row position, so a seal compares that count
+ *     against the rows the view's table actually holds before it stamps one. Zero is the
+ *     only healthy value: a bump means the two disagreed, that the seal declined rather
+ *     than writing a ladder no reader could detect, and that the timeline was retired -
+ *     so the view keeps serving while a restart or an out-of-order correction rebuilds
+ *     the recovery state from the base.</li>
  * </ul>
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
@@ -199,8 +254,11 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_APPLIED_WATERMARK = 17;
         private static final int COLUMN_BASE_TABLE_NAME = 2;
         private static final int COLUMN_BELOW_LOWER_BOUND_COUNT = 13;
+        private static final int COLUMN_CHECKPOINT_CORRECTION_DEPTH_SAMPLE_COUNT = 60;
         private static final int COLUMN_CHECKPOINT_DATA_SEGMENT_COUNT = 33;
+        private static final int COLUMN_CHECKPOINT_EFFECTIVE_DURATION_MICROS = 58;
         private static final int COLUMN_CHECKPOINT_GC_LAG_GENERATIONS = 36;
+        private static final int COLUMN_CHECKPOINT_LAST_CORRECTION_DEPTH_MICROS = 59;
         private static final int COLUMN_CHECKPOINT_LAST_LOOKUP_DEPTH = 40;
         private static final int COLUMN_CHECKPOINT_LAST_RESTORE_MICROS = 38;
         private static final int COLUMN_CHECKPOINT_LAST_WRITE_MICROS = 37;
@@ -218,6 +276,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_CHECKPOINT_REPAIR_PLAN = 49;
         private static final int COLUMN_CHECKPOINT_REPAIR_RESUMES = 47;
         private static final int COLUMN_CHECKPOINT_REPAIR_ROOTS_VERSIONED = 45;
+        private static final int COLUMN_CHECKPOINT_ROW_COUNT_MISMATCHES = 55;
         private static final int COLUMN_CHECKPOINT_SEAL_FAILURES = 52;
         private static final int COLUMN_CHECKPOINT_TIMELINE_ENTRIES = 26;
         private static final int COLUMN_CHECKPOINT_TIMELINE_GENERATION = 25;
@@ -234,15 +293,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
         private static final int COLUMN_IN_MEMORY_INTERVAL_UNIT = 9;
         private static final int COLUMN_IN_MEM_BYTES = 10;
         private static final int COLUMN_IN_MEM_ROWS = 11;
+        private static final int COLUMN_KEYED_SCAN_GATE = 54;
         private static final int COLUMN_LAG_MICROS = 15;
         private static final int COLUMN_LAG_SEQTXN = 14;
         private static final int COLUMN_LAST_PROCESSED_SEQTXN = 16;
         private static final int COLUMN_LV_CONSUMED_SEQTXN = 18;
         private static final int COLUMN_O3_BOUNDARY_REPLAY_ROWS = 23;
+        private static final int COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT = 57;
+        private static final int COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT = 56;
         private static final int COLUMN_O3_REJECTED_COUNT = 12;
         private static final int COLUMN_O3_REPLAY_SCAN_ROWS = 24;
         private static final int COLUMN_O3_RESUME_REPLAY_ROWS = 22;
         private static final int COLUMN_SEED_TARGET_SEQTXN = 21;
+        private static final int COLUMN_SEGMENT_REPAIR_GATE = 53;
         private static final int COLUMN_VIEW_LOWER_BOUND_TIMESTAMP = 19;
         private static final int COLUMN_VIEW_NAME = 0;
         private static final int COLUMN_VIEW_SQL = 3;
@@ -340,17 +403,25 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
             private static class LiveViewsRecord implements Record {
                 private long[] checkpointRepair;
+                private long checkpointRepairOutcome;
                 private long[] checkpointTimeline;
                 private LiveViewDefinition definition;
                 private CairoEngine engine;
                 private LiveViewInstance instance;
+                private long o3BoundaryReplayRows;
+                private long o3ReplayScanRows;
+                private long o3ResumeReplayRows;
 
                 public void clear() {
                     checkpointRepair = null;
+                    checkpointRepairOutcome = 0;
                     checkpointTimeline = null;
                     definition = null;
                     engine = null;
                     instance = null;
+                    o3BoundaryReplayRows = 0;
+                    o3ReplayScanRows = 0;
+                    o3ResumeReplayRows = 0;
                 }
 
                 @Override
@@ -547,7 +618,49 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // Base rows the O3 replay paths scanned (>= the emit counters
                         // above; a WHERE filter makes scan exceed emit). In-memory
                         // counter, resets on restart.
-                        case COLUMN_O3_REPLAY_SCAN_ROWS -> instance.getO3ReplayScanRows();
+                        case COLUMN_O3_REPLAY_SCAN_ROWS -> o3ReplayScanRows;
+                        // Executions of the two keyed open-segment O3 paths. The
+                        // resume restores a root below the correction; the cold
+                        // replay starts from the active anchor segment's origin
+                        // because no such root exists. In-memory counters, reset
+                        // on restart.
+                        case COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT -> instance.getO3OpenSegmentKeyedResumeCount();
+                        case COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT ->
+                                instance.getO3OpenSegmentColdKeyedReplayCount();
+                        // Adaptive duration cadence learned from O3 correction
+                        // depth. The feature switch changes execution, so when
+                        // disabled the effective value is the configured fixed
+                        // cadence even if a future caller retains learned state.
+                        // Each of the three reads one independent volatile field,
+                        // and of() deliberately does not snapshot them the way it
+                        // pairs the o3_* tuple below. The refresh worker publishes
+                        // no word, array or version stamp spanning the three - it
+                        // bumps the sample count between the depth store and the
+                        // duration store, and relaxes the duration alone at a seal
+                        // - so a reader-side snapshot would move the same three
+                        // loads earlier without pairing anything, while reading
+                        // like the of() pairings, which are real. The class
+                        // javadoc scopes these columns to per-field freshness.
+                        case COLUMN_CHECKPOINT_EFFECTIVE_DURATION_MICROS -> {
+                            final long configured =
+                                    engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
+                            yield engine.getConfiguration().isLiveViewCheckpointAdaptiveCadenceEnabled()
+                                    ? instance.getEffectiveCheckpointDurationMicros(configured)
+                                    : configured;
+                        }
+                        case COLUMN_CHECKPOINT_LAST_CORRECTION_DEPTH_MICROS ->
+                                instance.getAdaptiveCheckpointLastCorrectionDepthMicros();
+                        case COLUMN_CHECKPOINT_CORRECTION_DEPTH_SAMPLE_COUNT ->
+                                instance.getAdaptiveCheckpointCorrectionCount();
+                        // Seals refused because the rows the view emitted and the rows
+                        // its table holds disagreed. Zero is the only healthy value:
+                        // any bump means rows never reached the table (or reached it
+                        // without being emitted), that the seal declined to stamp the
+                        // drifted count into a root, and that the timeline was retired
+                        // rather than extended over it. The view keeps serving, and a
+                        // restart or an O3 correction rebuilds from the base.
+                        // In-memory counter, resets on restart.
+                        case COLUMN_CHECKPOINT_ROW_COUNT_MISMATCHES -> instance.getCheckpointRowCountMismatches();
                         // START FROM BEGINNING has no lower bound and persists
                         // LONG_NULL, which passes through as NULL.
                         case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> toMicros(definition.getViewLowerBoundTimestamp());
@@ -580,12 +693,12 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // "the win": each replay stays bounded to the tail above the
                         // logical boundary it resumed from rather than recomputing the
                         // whole view. In-memory counter, resets on restart.
-                        case COLUMN_O3_RESUME_REPLAY_ROWS -> instance.getO3ResumeReplayRows();
+                        case COLUMN_O3_RESUME_REPLAY_ROWS -> o3ResumeReplayRows;
                         // Rows re-emitted by boundary-rebuild O3 replays - the residual
                         // O(view age) fallback taken when the timeline holds no boundary
                         // below the late row. In-memory counter, resets on restart.
                         // Disjoint from o3_resume_replay_rows.
-                        case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> instance.getO3BoundaryReplayRows();
+                        case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> o3BoundaryReplayRows;
                         // Every numeric column the metadata declares has an arm above.
                         // A column added without one reads as NULL rather than as 0,
                         // which for the TIMESTAMP columns would render 1970-01-01.
@@ -624,12 +737,22 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         // stays NULL for a repair that read exactly its localized
                         // interval.
                         case COLUMN_CHECKPOINT_REPAIR_LAST_DISPOSITION -> LiveViewCheckpointRepairPlan.dispositionName(
-                                instance.getCheckpointRepairLastDisposition(),
-                                instance.getCheckpointRepairLastDenialReason()
+                                LiveViewInstance.repairDispositionOf(checkpointRepairOutcome),
+                                LiveViewInstance.repairDenialReasonOf(checkpointRepairOutcome)
                         );
                         case COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL -> LiveViewCheckpointRepairPlan.denialReasonName(
-                                instance.getCheckpointRepairLastDenialReason()
+                                LiveViewInstance.repairDenialReasonOf(checkpointRepairOutcome)
                         );
+                        // Whether the view's SQL admits deferring a correction that lands
+                        // in a closed anchor segment, and whether such a repair's replay
+                        // could follow the affected keys' rows rather than the whole
+                        // segment. Both describe the definition rather than any repair,
+                        // and neither changes what a repair does today. NULL until the
+                        // view compiles one.
+                        case COLUMN_SEGMENT_REPAIR_GATE ->
+                                LiveViewSegmentRepairEnvelope.gateName(instance.getSegmentScopeGate());
+                        case COLUMN_KEYED_SCAN_GATE ->
+                                LiveViewSegmentRepairEnvelope.gateName(instance.getKeyedScanGate());
                         default -> null;
                     };
                 }
@@ -655,6 +778,22 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     // totals, which is what the column comments promise it cannot.
                     this.checkpointRepair = instance.getCheckpointRepair();
                     this.checkpointTimeline = instance.getCheckpointTimeline();
+                    // The last repair's outcome and the rows it replayed, in that order
+                    // and no other. The refresh worker bumps the o3_* counters and only
+                    // then publishes the outcome word, so an outcome read here was
+                    // published after the counters read below - and this row's
+                    // disposition therefore names a repair whose rows those counters
+                    // carry. Reading the counters first would let a projection that
+                    // lists them before the disposition pair one repair's route with
+                    // the previous repair's cost. The writer half of this pairing is
+                    // asserted in LiveViewInstance.publishCheckpointRepairOutcome(); this
+                    // read half is load-bearing but unasserted - a single-threaded observer
+                    // cannot tell the two orders apart, so reversing the four lines below
+                    // leaves every test green.
+                    this.checkpointRepairOutcome = instance.getCheckpointRepairLastOutcome();
+                    this.o3ResumeReplayRows = instance.getO3ResumeReplayRows();
+                    this.o3BoundaryReplayRows = instance.getO3BoundaryReplayRows();
+                    this.o3ReplayScanRows = instance.getO3ReplayScanRows();
                 }
 
                 /**
@@ -727,6 +866,14 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_disposition", ColumnType.STRING)); // 50
             metadata.add(new TableColumnMetadata("checkpoint_repair_last_denial", ColumnType.STRING));      // 51
             metadata.add(new TableColumnMetadata("checkpoint_seal_failures", ColumnType.LONG));            // 52
+            metadata.add(new TableColumnMetadata("checkpoint_segment_repair_gate", ColumnType.STRING));          // 53
+            metadata.add(new TableColumnMetadata("checkpoint_keyed_scan_gate", ColumnType.STRING));      // 54
+            metadata.add(new TableColumnMetadata("checkpoint_row_count_mismatches", ColumnType.LONG));    // 55
+            metadata.add(new TableColumnMetadata("o3_open_segment_keyed_resume_count", ColumnType.LONG)); // 56
+            metadata.add(new TableColumnMetadata("o3_open_segment_cold_keyed_replay_count", ColumnType.LONG)); // 57
+            metadata.add(new TableColumnMetadata("checkpoint_effective_duration_micros", ColumnType.LONG)); // 58
+            metadata.add(new TableColumnMetadata("checkpoint_last_correction_depth_micros", ColumnType.LONG)); // 59
+            metadata.add(new TableColumnMetadata("checkpoint_correction_depth_sample_count", ColumnType.LONG)); // 60
             METADATA = metadata;
         }
     }

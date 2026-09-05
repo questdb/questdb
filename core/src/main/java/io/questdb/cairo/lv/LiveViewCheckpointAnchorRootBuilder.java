@@ -27,15 +27,16 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.HashSet;
 
 /**
  * Builds one immutable anchor root and its changed anchor-map paths in the same
@@ -56,13 +57,13 @@ import java.util.HashSet;
 public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
 
     private static final long NO_SEGMENT = -1;
-    private static final LiveViewCheckpointStatePageRef[] NO_STATE_PAGES = new LiveViewCheckpointStatePageRef[0];
     private final Path checkpointsDir = new Path();
+    private final LiveViewCheckpointMutationArena mutations;
+    private final MissingPartitionVisitor missingPartitionVisitor = new MissingPartitionVisitor();
     private final LiveViewCheckpointAnchorRoot oldAnchorRoot;
     private final LiveViewCheckpointPageRef oldPartitionMapRoot = new LiveViewCheckpointPageRef();
     private final LiveViewCheckpointPartitionMapReader partitionMapReader;
     private final LiveViewCheckpointPartitionMapWriter partitionMapWriter;
-    private final HashSet<ByteBuffer> putKeys = new HashSet<>();
     private final LiveViewCheckpointAnchorRoot resultAnchorRoot;
     private final LongList segmentUseCounts = new LongList();
     private final LiveViewCheckpointMetaSegmentWriter segmentWriter;
@@ -71,8 +72,6 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
     private boolean isInitialized;
     private byte[] keySchema = new byte[0];
     private long lastSegmentBytes;
-    private int mutationCount;
-    private LiveViewCheckpointPartitionMapWriter.Mutation[] mutations = new LiveViewCheckpointPartitionMapWriter.Mutation[8];
     /**
      * Metadata segment holding the anchor-root page this build supersedes, or
      * {@link #NO_SEGMENT} for the first anchor root of a timeline.
@@ -81,30 +80,71 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
     private byte[] windowName = new byte[0];
 
     public LiveViewCheckpointAnchorRootBuilder(@NotNull CairoConfiguration configuration) {
+        this(configuration, null);
+    }
+
+    public LiveViewCheckpointAnchorRootBuilder(
+            @NotNull CairoConfiguration configuration,
+            MemoryTracker memoryTracker
+    ) {
+        this(configuration, memoryTracker, new LiveViewCheckpointPartitionMapObjectPool());
+    }
+
+    LiveViewCheckpointAnchorRootBuilder(
+            @NotNull CairoConfiguration configuration,
+            MemoryTracker memoryTracker,
+            @NotNull LiveViewCheckpointPartitionMapObjectPool objectPool
+    ) {
+        mutations = new LiveViewCheckpointMutationArena(memoryTracker);
         oldAnchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
         partitionMapReader = new LiveViewCheckpointPartitionMapReader(configuration);
-        partitionMapWriter = new LiveViewCheckpointPartitionMapWriter(configuration);
+        partitionMapWriter = new LiveViewCheckpointPartitionMapWriter(configuration, objectPool);
         resultAnchorRoot = new LiveViewCheckpointAnchorRoot(configuration);
         segmentWriter = new LiveViewCheckpointMetaSegmentWriter(configuration);
     }
 
     public void build(long metadataSegmentId, @NotNull LiveViewCheckpointPageRef out) {
+        try {
+            segmentWriter.of(checkpointsDir, metadataSegmentId);
+            buildIntoOpenSegment(metadataSegmentId, segmentWriter, out);
+            lastSegmentBytes = segmentWriter.commit();
+        } finally {
+            clearBorrowedCompiled();
+        }
+    }
+
+    /**
+     * Writes this root into an aggregate metadata segment owned by the caller.
+     * The caller commits the segment after all roots in the pass have been
+     * appended.
+     */
+    public void buildIntoOpenSegment(
+            long metadataSegmentId,
+            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
+            @NotNull LiveViewCheckpointPageRef out
+    ) {
+        try {
+            buildIntoOpenSegment0(metadataSegmentId, writer, out);
+        } finally {
+            clearBorrowedCompiled();
+        }
+    }
+
+    private void buildIntoOpenSegment0(long metadataSegmentId, @NotNull LiveViewCheckpointMetaSegmentWriter writer, @NotNull LiveViewCheckpointPageRef out) {
         ensureInitialized();
+        if (writer.getSegmentId() != metadataSegmentId) {
+            throw CairoException.critical(0).put("live view checkpoint aggregate segment id mismatch");
+        }
         if (isCompleteSnapshot) {
-            partitionMapReader.iterateAll(oldPartitionMapRoot, entry -> {
-                if (!putKeys.contains(ByteBuffer.wrap(entry.getKey()))) {
-                    mutationAt(mutationCount++).remove(entry.getKey());
-                }
-            });
+            mutations.sortAndValidate();
+            partitionMapReader.iterateAll(oldPartitionMapRoot, missingPartitionVisitor);
         }
 
-        segmentWriter.of(checkpointsDir, metadataSegmentId);
         final LiveViewCheckpointPageRef partitionMapRoot = new LiveViewCheckpointPageRef();
         partitionMapWriter.applyToOpenSegment(
                 oldPartitionMapRoot,
                 mutations,
-                mutationCount,
-                segmentWriter,
+                writer,
                 partitionMapRoot
         );
         final LongList releasedSegmentIds = partitionMapWriter.getLastReleasedSegmentIds();
@@ -116,21 +156,29 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         }
         LiveViewCheckpointMetadata.adjustSegmentUseCount(segmentUseCounts, metadataSegmentId, partitionMapWriter.getLastSegmentPageCount() + 1);
         resultAnchorRoot.ofBuilder(windowName, anchorValueType, keySchema, partitionMapRoot, segmentUseCounts);
-        resultAnchorRoot.writeTo(segmentWriter, out);
-        lastSegmentBytes = segmentWriter.commit();
+        resultAnchorRoot.writeTo(writer, out);
         oldPartitionMapRoot.of(
                 partitionMapRoot.getSegmentId(),
                 partitionMapRoot.getOffset(),
                 partitionMapRoot.getLength()
         );
         oldRootPageSegmentId = metadataSegmentId;
-        mutationCount = 0;
-        putKeys.clear();
+    }
+
+    /**
+     * Binds {@code memoryTracker} to the staging arena for the next build, after
+     * freeing what the previous binding charged. The builder is shared across the
+     * views one refresh worker seals, so retained native capacity must never
+     * migrate from one view's tracker to another's.
+     */
+    public void bindMemoryTracker(@Nullable MemoryTracker memoryTracker) {
+        mutations.bind(memoryTracker);
     }
 
     @Override
     public void close() {
         Misc.free(oldAnchorRoot);
+        Misc.free(mutations);
         Misc.free(partitionMapReader);
         Misc.free(partitionMapWriter);
         Misc.free(resultAnchorRoot);
@@ -138,8 +186,37 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         Misc.free(checkpointsDir);
     }
 
+    /**
+     * Frees the staging arena against the tracker that acquired it and detaches
+     * that tracker, leaving the builder reusable by the next view.
+     */
+    public void releaseMemoryTracker() {
+        mutations.release();
+    }
+
+    /**
+     * Releases every mapping this build read and discards any in-flight segment,
+     * keeping the reader, writer and staging shells for the next build. The
+     * staging arena keeps its capacity, which belongs to the tracker bound by
+     * {@link #bindMemoryTracker}; {@link #releaseMemoryTracker} frees it.
+     */
+    public void detach() {
+        oldAnchorRoot.detach();
+        partitionMapReader.detach();
+        partitionMapWriter.detach();
+        resultAnchorRoot.detach();
+        segmentWriter.discard();
+        mutations.clear();
+        segmentUseCounts.clear();
+    }
+
     public long getLastSegmentBytes() {
         return lastSegmentBytes;
+    }
+
+    @TestOnly
+    boolean isBorrowingCompiledForTest(byte[] windowName, byte[] keySchema) {
+        return this.windowName == windowName && this.keySchema == keySchema;
     }
 
     public void of(
@@ -160,7 +237,35 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
             @NotNull byte[] keySchema,
             boolean isCompleteSnapshot
     ) {
+        of0(checkpointsDir, oldAnchorRootRef, windowName, anchorValueType, keySchema, isCompleteSnapshot, false);
+    }
+
+    /**
+     * Borrows compiler-owned arrays through the synchronous {@link #build} call.
+     * The caller must keep them immutable and alive until build returns.
+     */
+    void ofBorrowedCompiled(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointPageRef oldAnchorRootRef,
+            @NotNull byte[] windowName,
+            int anchorValueType,
+            @NotNull byte[] keySchema,
+            boolean isCompleteSnapshot
+    ) {
+        of0(checkpointsDir, oldAnchorRootRef, windowName, anchorValueType, keySchema, isCompleteSnapshot, true);
+    }
+
+    private void of0(
+            @Transient @NotNull Path checkpointsDir,
+            @NotNull LiveViewCheckpointPageRef oldAnchorRootRef,
+            @NotNull byte[] windowName,
+            int anchorValueType,
+            @NotNull byte[] keySchema,
+            boolean isCompleteSnapshot,
+            boolean isBorrowed
+    ) {
         isInitialized = false;
+        clearBorrowedCompiled();
         if (windowName.length == 0 || keySchema.length < Integer.BYTES) {
             throw CairoException.critical(0).put("live view checkpoint anchor window name or key schema invalid");
         }
@@ -169,46 +274,54 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         this.checkpointsDir.of(checkpointsDir);
         partitionMapReader.of(checkpointsDir);
         partitionMapWriter.of(checkpointsDir);
-        this.windowName = Arrays.copyOf(windowName, windowName.length);
+        this.windowName = isBorrowed ? windowName : windowName.clone();
         this.anchorValueType = anchorValueType;
-        this.keySchema = Arrays.copyOf(keySchema, keySchema.length);
+        this.keySchema = isBorrowed ? keySchema : keySchema.clone();
         this.isCompleteSnapshot = isCompleteSnapshot;
-        mutationCount = 0;
-        putKeys.clear();
+        mutations.clear();
         segmentUseCounts.clear();
-        oldRootPageSegmentId = oldAnchorRootRef.isNull() ? NO_SEGMENT : oldAnchorRootRef.getSegmentId();
-        if (oldAnchorRootRef.isNull()) {
-            oldPartitionMapRoot.clear();
-        } else {
-            oldAnchorRoot.of(checkpointsDir, oldAnchorRootRef);
-            if (!Arrays.equals(windowName, oldAnchorRoot.getWindowName())
-                    || !Arrays.equals(keySchema, oldAnchorRoot.getKeySchema())
-                    || anchorValueType != oldAnchorRoot.getAnchorValueType()) {
-                throw CairoException.critical(0).put("live view checkpoint anchor root identity or schema mismatch");
+        boolean isInitializationComplete = false;
+        try {
+            // A predecessor that is not an anchor root at all is the fused window root, and
+            // this build is the conversion away from it: nothing of it can be shared, so the
+            // tree starts empty and every live key is imaged, exactly as the first anchor
+            // root of a timeline does. Its pages are not this root's to release either -
+            // they retire with the boundary that still names them.
+            final boolean hasAnchorPredecessor = !oldAnchorRootRef.isNull()
+                    && oldAnchorRoot.ofIfAnchorRoot(checkpointsDir, oldAnchorRootRef);
+            oldRootPageSegmentId = hasAnchorPredecessor ? oldAnchorRootRef.getSegmentId() : NO_SEGMENT;
+            if (!hasAnchorPredecessor) {
+                oldPartitionMapRoot.clear();
+            } else {
+                if (!Arrays.equals(windowName, oldAnchorRoot.getWindowName())
+                        || !Arrays.equals(keySchema, oldAnchorRoot.getKeySchema())
+                        || anchorValueType != oldAnchorRoot.getAnchorValueType()) {
+                    throw CairoException.critical(0).put("live view checkpoint anchor root identity or schema mismatch");
+                }
+                oldAnchorRoot.getPartitionMapRootRef(oldPartitionMapRoot);
+                for (int i = 0, n = oldAnchorRoot.getSegmentUseCountSize(); i < n; i++) {
+                    segmentUseCounts.add(oldAnchorRoot.getSegmentId(i), oldAnchorRoot.getSegmentUseCount(i));
+                }
             }
-            oldAnchorRoot.getPartitionMapRootRef(oldPartitionMapRoot);
-            for (int i = 0, n = oldAnchorRoot.getSegmentUseCountSize(); i < n; i++) {
-                segmentUseCounts.add(oldAnchorRoot.getSegmentId(i), oldAnchorRoot.getSegmentUseCount(i));
+            isInitialized = true;
+            isInitializationComplete = true;
+        } finally {
+            if (!isInitializationComplete) {
+                clearBorrowedCompiled();
             }
         }
-        isInitialized = true;
+    }
+
+    private void clearBorrowedCompiled() {
+        resultAnchorRoot.clearBorrowedCompiled();
+        isInitialized = false;
+        windowName = null;
+        keySchema = null;
     }
 
     public void putPartition(@NotNull byte[] key, long anchorValue) {
         ensureInitialized();
-        if (isCompleteSnapshot) {
-            // Only a complete snapshot needs the put domain, and only to name the
-            // entries it must remove. A forward freeze pays neither the key copy nor
-            // the set insert: duplicates still raise, one layer down, where
-            // LiveViewCheckpointPartitionMapWriter sorts the mutations and rejects
-            // two that name the same key.
-            putKeys.add(ByteBuffer.wrap(Arrays.copyOf(key, key.length)));
-        }
-        mutationAt(mutationCount++).put(
-                key,
-                LiveViewCheckpointAnchorRoot.encodeAnchorValue(anchorValue),
-                NO_STATE_PAGES
-        );
+        mutations.putAnchor(key, anchorValue);
     }
 
     /**
@@ -224,7 +337,7 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
      */
     public void removePartition(@NotNull byte[] key) {
         ensureInitialized();
-        mutationAt(mutationCount++).remove(key);
+        mutations.remove(key);
     }
 
     private void ensureInitialized() {
@@ -233,13 +346,13 @@ public class LiveViewCheckpointAnchorRootBuilder implements Closeable {
         }
     }
 
-    private LiveViewCheckpointPartitionMapWriter.Mutation mutationAt(int index) {
-        if (index >= mutations.length) {
-            mutations = Arrays.copyOf(mutations, mutations.length * 2);
+    private final class MissingPartitionVisitor implements LiveViewCheckpointPartitionMapReader.Visitor {
+        @Override
+        public void onEntry(@NotNull LiveViewCheckpointPartitionMapEntry entry) {
+            if (!mutations.containsSortedKey(entry.getKey())) {
+                mutations.remove(entry.getKey());
+            }
         }
-        if (mutations[index] == null) {
-            mutations[index] = new LiveViewCheckpointPartitionMapWriter.Mutation();
-        }
-        return mutations[index];
     }
+
 }

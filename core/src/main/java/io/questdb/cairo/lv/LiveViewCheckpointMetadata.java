@@ -28,12 +28,12 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.LongList;
+import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.Nullable;
-
-import java.nio.ByteBuffer;
 
 final class LiveViewCheckpointMetadata {
 
+    static final byte[] EMPTY_KEY_SCHEMA = {0, 0, 0, 0};
     static final int MAX_BYTE_ARRAY_LENGTH = 1 << 20;
     static final int MAX_ENTRY_COUNT = 1 << 20;
     static final int MAX_STATE_PAGE_REFS = 1 << 16;
@@ -109,12 +109,15 @@ final class LiveViewCheckpointMetadata {
      */
     static byte[] encodeKeySchema(@Nullable ColumnTypes keyTypes) {
         final int count = keyTypes == null ? 0 : keyTypes.getColumnCount();
-        final ByteBuffer buffer = ByteBuffer.allocate(Integer.BYTES + count * Integer.BYTES);
-        buffer.putInt(count);
-        for (int i = 0; i < count; i++) {
-            buffer.putInt(keyTypes.getColumnType(i));
+        if (count == 0) {
+            return EMPTY_KEY_SCHEMA;
         }
-        return buffer.array();
+        final byte[] encoded = new byte[Integer.BYTES + count * Integer.BYTES];
+        int offset = putInt(encoded, 0, count);
+        for (int i = 0; i < count; i++) {
+            offset = putInt(encoded, offset, keyTypes.getColumnType(i));
+        }
+        return encoded;
     }
 
     static CairoException invalid(CharSequence reason) {
@@ -128,6 +131,57 @@ final class LiveViewCheckpointMetadata {
         }
     }
 
+    static byte[] encodeUtf8(CharSequence value) {
+        final byte[] bytes = new byte[utf8Bytes(value)];
+        putUtf8(bytes, 0, value);
+        return bytes;
+    }
+
+    static int putBytes(byte[] sink, int offset, byte[] bytes) {
+        System.arraycopy(bytes, 0, sink, offset, bytes.length);
+        return offset + bytes.length;
+    }
+
+    static int putInt(byte[] sink, int offset, int value) {
+        sink[offset] = (byte) (value >>> 24);
+        sink[offset + 1] = (byte) (value >>> 16);
+        sink[offset + 2] = (byte) (value >>> 8);
+        sink[offset + 3] = (byte) value;
+        return offset + Integer.BYTES;
+    }
+
+    static int putUtf8(byte[] sink, int offset, CharSequence value) {
+        for (int i = 0, n = value.length(); i < n; i++) {
+            final char ch = value.charAt(i);
+            if (ch < 0x80) {
+                sink[offset++] = (byte) ch;
+            } else if (ch < 0x800) {
+                sink[offset++] = (byte) (0xc0 | ch >> 6);
+                sink[offset++] = (byte) (0x80 | ch & 0x3f);
+            } else if (Character.isHighSurrogate(ch)
+                    && i + 1 < n
+                    && Character.isLowSurrogate(value.charAt(i + 1))) {
+                final int codePoint = Character.toCodePoint(ch, value.charAt(++i));
+                sink[offset++] = (byte) (0xf0 | codePoint >> 18);
+                sink[offset++] = (byte) (0x80 | codePoint >> 12 & 0x3f);
+                sink[offset++] = (byte) (0x80 | codePoint >> 6 & 0x3f);
+                sink[offset++] = (byte) (0x80 | codePoint & 0x3f);
+            } else if (Character.isSurrogate(ch)) {
+                // Matches StandardCharsets.UTF_8's replacement for malformed UTF-16.
+                sink[offset++] = '?';
+            } else {
+                sink[offset++] = (byte) (0xe0 | ch >> 12);
+                sink[offset++] = (byte) (0x80 | ch >> 6 & 0x3f);
+                sink[offset++] = (byte) (0x80 | ch & 0x3f);
+            }
+        }
+        return offset;
+    }
+
+    static int utf8Bytes(CharSequence value) {
+        return Utf8s.utf8Bytes(value);
+    }
+
     static void putMetaRef(MemoryA mem, LiveViewCheckpointPageRef ref) {
         mem.putLong(ref.getSegmentId());
         mem.putLong(ref.getOffset());
@@ -136,6 +190,24 @@ final class LiveViewCheckpointMetadata {
 
     static byte[] readBytes(LiveViewCheckpointMetaSegmentReader reader, long offset, int length) {
         final byte[] bytes = new byte[length];
+        for (int i = 0; i < length; i++) {
+            bytes[i] = reader.getByte(offset + i);
+        }
+        return bytes;
+    }
+
+    /**
+     * Reads {@code length} bytes into an array {@code pool} lends for the caller's
+     * current epoch, so a re-read of the same shape reuses the image the previous
+     * one filled instead of allocating another.
+     */
+    static byte[] readBytes(
+            LiveViewCheckpointMetaSegmentReader reader,
+            long offset,
+            int length,
+            LiveViewCheckpointByteArrayPool pool
+    ) {
+        final byte[] bytes = pool.next(length);
         for (int i = 0; i < length; i++) {
             bytes[i] = reader.getByte(offset + i);
         }

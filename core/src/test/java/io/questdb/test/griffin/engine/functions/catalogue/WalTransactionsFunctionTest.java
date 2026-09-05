@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
@@ -34,6 +35,53 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class WalTransactionsFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testCachedFactoryAfterTableRecreated() throws Exception {
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 10);
+            execute("CREATE TABLE x (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('2020-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+
+            try (RecordCursorFactory factory = select("SELECT sequencerTxn, minTimestamp FROM wal_transactions('x')")) {
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .returns("""
+                                sequencerTxn\tminTimestamp
+                                1\t2020-01-01T00:00:00.000000Z
+                                """);
+
+                execute("DROP TABLE x");
+                execute("CREATE TABLE x (ts TIMESTAMP_NS, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("""
+                        INSERT INTO x VALUES
+                            ('2020-02-01T00:00:00.123456789Z', 2),
+                            ('2020-02-02T00:00:00.987654321Z', 3)
+                        """);
+                drainWalQueue();
+
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .noRandomAccess()
+                        .returns("""
+                                sequencerTxn\tminTimestamp
+                                1\t2020-02-01T00:00:00.123456Z
+                                """);
+
+                execute("DROP TABLE x");
+                execute("CREATE TABLE x (ts TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+
+                try (RecordCursor ignore = factory.getCursor(sqlExecutionContext)) {
+                    Assert.fail();
+                } catch (SqlException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table is not a WAL table: x");
+                    Assert.assertEquals("SELECT sequencerTxn, minTimestamp FROM wal_transactions(".length(), e.getPosition());
+                }
+            }
+        });
+    }
 
     @Test
     public void testNonWal() throws Exception {

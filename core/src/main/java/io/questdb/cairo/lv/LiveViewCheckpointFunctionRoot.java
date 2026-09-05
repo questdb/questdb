@@ -31,9 +31,9 @@ import io.questdb.std.Misc;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
-import java.util.Arrays;
 
 /**
  * Checksummed metadata root for one compiler-identified window function. The
@@ -47,11 +47,18 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
             + LiveViewCheckpointStatePageRef.BYTES + LiveViewCheckpointPageRef.BYTES;
     private static final int FORMAT_VERSION = 1;
     private final LiveViewCheckpointMetaSegmentReader reader;
+    /**
+     * Identity and key-schema images of the open root, borrowed from
+     * {@link #decodedBytes} on the decode path and from the caller's compiled plan
+     * on the builder path. A seal opens a function root four times per function,
+     * so decoding fresh arrays would charge the identity to each of them.
+     */
     private byte[] functionIdentity = new byte[0];
+    private final LiveViewCheckpointByteArrayPool decodedBytes = new LiveViewCheckpointByteArrayPool();
     private byte[] keySchema = new byte[0];
     private final LiveViewCheckpointPageRef partitionMapRootRef = new LiveViewCheckpointPageRef();
-    private long[] segmentIds = new long[0];
-    private long[] segmentUseCounts = new long[0];
+    private final LongList segmentIds = new LongList();
+    private final LongList segmentUseCounts = new LongList();
     private final LiveViewCheckpointStatePageRef scalarStateRef = new LiveViewCheckpointStatePageRef();
     private int stateFormatVersion;
 
@@ -86,15 +93,15 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
     }
 
     public long getSegmentId(int index) {
-        return segmentIds[index];
+        return segmentIds.getQuick(index);
     }
 
     public long getSegmentUseCount(int index) {
-        return segmentUseCounts[index];
+        return segmentUseCounts.getQuick(index);
     }
 
     public int getSegmentUseCountSize() {
-        return segmentIds.length;
+        return segmentIds.size();
     }
 
     public void getScalarStateRef(@NotNull LiveViewCheckpointStatePageRef out) {
@@ -150,12 +157,13 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
                     .put(" [expected=").put(expectedLength).put(", actual=").put(payloadLength).put(']');
         }
         long offset = FIXED_SIZE;
-        functionIdentity = LiveViewCheckpointMetadata.readBytes(reader, offset, identityLength);
+        decodedBytes.reset();
+        functionIdentity = LiveViewCheckpointMetadata.readBytes(reader, offset, identityLength, decodedBytes);
         offset += identityLength;
-        keySchema = LiveViewCheckpointMetadata.readBytes(reader, offset, keySchemaLength);
+        keySchema = LiveViewCheckpointMetadata.readBytes(reader, offset, keySchemaLength, decodedBytes);
         offset += keySchemaLength;
-        segmentIds = new long[segmentCount];
-        segmentUseCounts = new long[segmentCount];
+        segmentIds.clear();
+        segmentUseCounts.clear();
         long previous = -1;
         boolean scalarFound = scalarStateRef.isNull();
         for (int i = 0; i < segmentCount; i++) {
@@ -166,8 +174,8 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
                         .put(" [segmentId=").put(segmentId).put(", previous=").put(previous)
                         .put(", useCount=").put(useCount).put(']');
             }
-            segmentIds[i] = segmentId;
-            segmentUseCounts[i] = useCount;
+            segmentIds.add(segmentId);
+            segmentUseCounts.add(useCount);
             scalarFound |= segmentId == scalarStateRef.getSegmentId();
             previous = segmentId;
             offset += 2L * Long.BYTES;
@@ -178,6 +186,16 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
         }
     }
 
+    void clearBorrowedCompiled() {
+        functionIdentity = null;
+        keySchema = null;
+    }
+
+    @TestOnly
+    boolean isBorrowingCompiledForTest(byte[] functionIdentity, byte[] keySchema) {
+        return this.functionIdentity == functionIdentity && this.keySchema == keySchema;
+    }
+
     void ofBuilder(
             byte[] functionIdentity,
             int stateFormatVersion,
@@ -186,19 +204,19 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
             LiveViewCheckpointPageRef partitionMapRootRef,
             LongList segmentUseCounts
     ) {
-        this.functionIdentity = Arrays.copyOf(functionIdentity, functionIdentity.length);
+        this.functionIdentity = functionIdentity;
         this.stateFormatVersion = stateFormatVersion;
-        this.keySchema = Arrays.copyOf(keySchema, keySchema.length);
+        this.keySchema = keySchema;
         this.scalarStateRef.of(scalarStateRef.getSegmentId(), scalarStateRef.getOffset(), scalarStateRef.getStoredLength(),
                 scalarStateRef.getDecodedLength(), scalarStateRef.getPageKind(), scalarStateRef.getCodec(),
                 scalarStateRef.getRowCount(), scalarStateRef.getFlags());
         this.partitionMapRootRef.of(partitionMapRootRef.getSegmentId(), partitionMapRootRef.getOffset(), partitionMapRootRef.getLength());
         final int count = segmentUseCounts.size() / 2;
-        segmentIds = new long[count];
-        this.segmentUseCounts = new long[count];
+        segmentIds.clear();
+        this.segmentUseCounts.clear();
         for (int i = 0; i < count; i++) {
-            segmentIds[i] = segmentUseCounts.getQuick(i * 2);
-            this.segmentUseCounts[i] = segmentUseCounts.getQuick(i * 2 + 1);
+            segmentIds.add(segmentUseCounts.getQuick(i * 2));
+            this.segmentUseCounts.add(segmentUseCounts.getQuick(i * 2 + 1));
         }
     }
 
@@ -208,14 +226,14 @@ public class LiveViewCheckpointFunctionRoot implements Closeable {
         mem.putInt(stateFormatVersion);
         mem.putInt(functionIdentity.length);
         mem.putInt(keySchema.length);
-        mem.putInt(segmentIds.length);
+        mem.putInt(segmentIds.size());
         scalarStateRef.writeTo(mem);
         LiveViewCheckpointMetadata.putMetaRef(mem, partitionMapRootRef);
         LiveViewCheckpointMetadata.putBytes(mem, functionIdentity);
         LiveViewCheckpointMetadata.putBytes(mem, keySchema);
-        for (int i = 0; i < segmentIds.length; i++) {
-            mem.putLong(segmentIds[i]);
-            mem.putLong(segmentUseCounts[i]);
+        for (int i = 0, n = segmentIds.size(); i < n; i++) {
+            mem.putLong(segmentIds.getQuick(i));
+            mem.putLong(segmentUseCounts.getQuick(i));
         }
         writer.endPage(out);
     }

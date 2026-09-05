@@ -50,6 +50,9 @@ import org.junit.Before;
 import org.junit.Test;
 
 import java.io.Closeable;
+import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
 
 public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
 
@@ -191,6 +194,159 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeRebuildsWhenTheRetirementQueueNamesAnOlderGeneration() throws Exception {
+        // purge() stamps the queue file with the generation it pinned. A
+        // publication that lands afterwards without persisting a queue of its own
+        // leaves that file naming an older generation, and everything the newer
+        // catalogue retired is missing from it. The stale-generation half of
+        // purge()'s queue test is what turns such a file into a rebuild. The
+        // catalogue recheck further down cannot stand in for it: the recheck only
+        // drops queue entries the selected catalogue contradicts, so it can never
+        // add back the entry a stale file never carried.
+        assertMemoryLeak(() -> {
+            final DataSegment live = writeDataSegment(10, 111);
+            final DataSegment retiredEarly = writeDataSegment(20, 222);
+            final DataSegment retiredLate = writeDataSegment(30, 333);
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointMetaStore metaStore = openMetaStore();
+                 LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
+                directory.addSegment(10, live.fileLength, 1);
+                directory.addSegment(20, retiredEarly.fileLength, 1);
+                directory.addSegment(30, retiredLate.fileLength, 1);
+                directory.publish(metaStore, 1, 101);
+                directory.retire(20, 2);
+                directory.publish(metaStore, 2, 102);
+                directory.publish(metaStore, 3, 103);
+
+                // Cold start: no queue file exists yet, so this rebuilds from the
+                // catalogue, purges segment 20 and writes the first durable queue,
+                // stamped generation 3.
+                final LiveViewCheckpointDataStore.PurgeResult coldStart = dataStore.purge();
+                Assert.assertTrue(coldStart.requiresPhysicalOrphanScan());
+                Assert.assertEquals(1, coldStart.getPurgedSegmentCount());
+                Assert.assertTrue(
+                        "purge() must durably write a retirement queue file",
+                        retirementQueueFile().exists()
+                );
+
+                // Control: nothing has published since, so the file still names the
+                // pinned generation and purge() must take the queue path. Without
+                // this half, a change that made every purge rebuild would still
+                // satisfy the stale assertions below.
+                final LiveViewCheckpointDataStore.PurgeResult current = dataStore.purge();
+                Assert.assertFalse(
+                        "a queue naming the pinned generation must not force a rebuild",
+                        current.requiresPhysicalOrphanScan()
+                );
+                Assert.assertEquals(0, current.getCatalogueEntriesVisited());
+                Assert.assertEquals(2, current.getLiveSegmentCount());
+
+                // Generation 4 retires segment 30 and generation 5 overwrites the
+                // last slot that still named it, neither of them writing a queue.
+                // The file now names generation 3 and lists segment 20 alone.
+                directory.retire(30, 4);
+                directory.publish(metaStore, 4, 104);
+                directory.publish(metaStore, 5, 105);
+
+                final LiveViewCheckpointDataStore.PurgeResult stale = dataStore.purge();
+                Assert.assertTrue(
+                        "a queue naming an older generation must force a catalogue rebuild",
+                        stale.requiresPhysicalOrphanScan()
+                );
+                // Trusting the stale image instead would visit no catalogue entry,
+                // carry its stale live count of 2 through, and work off the single
+                // segment it names rather than the two the generation-5 catalogue
+                // shows as zero-reference.
+                Assert.assertEquals(3, stale.getCatalogueEntriesVisited());
+                Assert.assertEquals(1, stale.getLiveSegmentCount());
+                Assert.assertEquals(2, stale.getQueueEntriesVisited());
+                // The rebuild is what discovers segment 30 at all, so the unlink is
+                // the behaviour the generation test buys, not merely the flag.
+                Assert.assertEquals(1, stale.getPurgedSegmentCount());
+                Assert.assertEquals(retiredLate.fileLength, stale.getPurgedBytes());
+                Assert.assertFalse(dataFileExists(30));
+                Assert.assertTrue("a still-referenced segment must survive the rebuild", dataFileExists(10));
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRecoversFromCorruptRetirementQueue() throws Exception {
+        // On-disk layout of the private LiveViewCheckpointRetirementQueue file
+        // format (documented in its own source, not exposed to tests): an
+        // 8-byte magic, a 4-byte format version at offset 8, a 4-byte count, an
+        // 8-byte generation, an 8-byte liveDataSegmentCount -- 32 bytes of
+        // header in total -- followed by one 32-byte (4-long) entry per
+        // retirement and a trailing 4-byte CRC32 over everything before it. A
+        // test cannot reach the private constants, but it can corrupt the file
+        // by raw byte offset, which is what a real disk corruption or torn
+        // write would do too.
+        final int headerSize = 32;
+        final int formatVersionOffset = 8;
+
+        assertMemoryLeak(() -> {
+            final DataSegment liveSource = writeDataSegment(10, 111);
+            final DataSegment retiredSource = writeDataSegment(20, 222);
+            try (Catalogue directory = new Catalogue();
+                 LiveViewCheckpointMetaStore metaStore = openMetaStore();
+                 LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
+                directory.addSegment(10, liveSource.fileLength, 1);
+                directory.addSegment(20, retiredSource.fileLength, 1);
+                directory.publish(metaStore, 1, 101);
+                directory.retire(20, 2);
+                directory.publish(metaStore, 2, 102);
+                directory.publish(metaStore, 3, 103); // overwrites generation 1 fallback
+
+                // Cold start: no `_retirements` file exists yet, so this call
+                // rebuilds the work set from the catalogue and physically
+                // purges segment 20. This also writes the first valid queue
+                // file, which the rest of the test corrupts.
+                final LiveViewCheckpointDataStore.PurgeResult coldStart = dataStore.purge();
+                Assert.assertTrue(coldStart.requiresPhysicalOrphanScan());
+                Assert.assertEquals(1, coldStart.getPurgedSegmentCount());
+                Assert.assertFalse(dataFileExists(20));
+                Assert.assertTrue(dataFileExists(10));
+
+                final File retirementsFile = retirementQueueFile();
+                Assert.assertTrue("purge() must durably write a retirement queue file", retirementsFile.exists());
+
+                // Control (clean path): re-running purge() against the untouched,
+                // just-written, current-generation queue file must take the
+                // valid-read path and must NOT report needing a rebuild. This is
+                // the "clean" half of the corrupt-vs-clean contrast: without it, a
+                // future change that made read() always fail (i.e. always
+                // "corrupt") would still pass the corrupted-path assertions below.
+                final LiveViewCheckpointDataStore.PurgeResult clean = dataStore.purge();
+                Assert.assertFalse(
+                        "a valid, current-generation queue file must not force a rebuild",
+                        clean.requiresPhysicalOrphanScan()
+                );
+                Assert.assertEquals(0, clean.getCatalogueEntriesVisited());
+                Assert.assertTrue(dataFileExists(10));
+
+                // Bad CRC: flip a bit inside the sole retirement entry, past the
+                // header, so magic/format/count/generation all stay intact and
+                // only the checksum can catch it.
+                flipByte(retirementsFile, headerSize);
+                assertCorruptionRecoveryEngages(dataStore);
+
+                // Truncated tail: shorter than header + trailing CRC, caught by
+                // the "size < HEADER_SIZE + Integer.BYTES" guard before anything
+                // else is even read. Each corruption-recovery purge() above
+                // rewrites a fresh, valid queue file, so this starts from a
+                // known-good file again.
+                truncateFile(retirementsFile, 10);
+                assertCorruptionRecoveryEngages(dataStore);
+
+                // Stale/garbled format version: caught by the magic-or-format
+                // check, before the checksum is even computed.
+                flipByte(retirementsFile, formatVersionOffset);
+                assertCorruptionRecoveryEngages(dataStore);
+            }
+        });
+    }
+
+    @Test
     public void testPurgeRetriesFailedUnlink() throws Exception {
         final boolean[] failNextRemove = {true};
         final TestFilesFacadeImpl failingFacade = new TestFilesFacadeImpl() {
@@ -208,6 +364,7 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
             try (Catalogue directory = new Catalogue();
                  LiveViewCheckpointMetaStore metaStore = openMetaStore();
                  LiveViewCheckpointDataStore dataStore = openDataStore(metaStore)) {
+                final int purgeVisitorIdentity = dataStore.getPurgeVisitorShellIdentityForTest();
                 directory.addSegment(1, source.fileLength, 1);
                 directory.publish(metaStore, 1, 101);
                 directory.retire(1, 2);
@@ -217,13 +374,20 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
                 final LiveViewCheckpointDataStore.PurgeResult failed = dataStore.purge();
                 Assert.assertEquals(0, failed.getPurgedSegmentCount());
                 Assert.assertEquals(1, failed.getFailedSegmentCount());
+                Assert.assertTrue(failed.getCatalogueEntriesVisited() > 0);
                 Assert.assertTrue(dataFileExists(1));
+                Assert.assertEquals(purgeVisitorIdentity, dataStore.getPurgeVisitorShellIdentityForTest());
+                Assert.assertTrue(dataStore.isPurgeVisitorShellStateClearForTest());
 
                 final LiveViewCheckpointDataStore.PurgeResult retried = dataStore.purge();
                 Assert.assertEquals(1, retried.getPurgedSegmentCount());
                 Assert.assertEquals(0, retried.getFailedSegmentCount());
+                Assert.assertEquals(0, retried.getCatalogueEntriesVisited());
+                Assert.assertEquals(1, retried.getQueueEntriesVisited());
                 Assert.assertEquals(source.fileLength, retried.getPurgedBytes());
                 Assert.assertFalse(dataFileExists(1));
+                Assert.assertEquals(purgeVisitorIdentity, dataStore.getPurgeVisitorShellIdentityForTest());
+                Assert.assertTrue(dataStore.isPurgeVisitorShellStateClearForTest());
             }
         });
     }
@@ -328,10 +492,39 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
         });
     }
 
+    private void assertCorruptionRecoveryEngages(LiveViewCheckpointDataStore dataStore) {
+        final LiveViewCheckpointDataStore.PurgeResult corrupted = dataStore.purge();
+        Assert.assertTrue("a corrupted queue file must force a catalogue rebuild", corrupted.requiresPhysicalOrphanScan());
+        Assert.assertEquals(2, corrupted.getCatalogueEntriesVisited());
+        Assert.assertEquals(0, corrupted.getPurgedSegmentCount());
+        // The safety net the review credits: the rebuild trusts nothing from the
+        // corrupted file and can only ever propose a segment the *current*
+        // catalogue itself shows as zero-reference, so a still-referenced
+        // segment (id 10, reference count 1, never retired) survives every
+        // corruption shape untouched.
+        Assert.assertTrue(dataFileExists(10));
+    }
+
     private static void assertNoPurge(LiveViewCheckpointDataStore.PurgeResult result) {
         Assert.assertEquals(0, result.getPurgedSegmentCount());
         Assert.assertEquals(0, result.getFailedSegmentCount());
         Assert.assertEquals(0, result.getPurgedBytes());
+    }
+
+    private static void flipByte(File file, long offset) throws IOException {
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+            raf.seek(offset);
+            final int value = raf.read();
+            Assert.assertTrue("corruption offset must be inside the file", value >= 0);
+            raf.seek(offset);
+            raf.write(value ^ 0xFF);
+        }
+    }
+
+    private static void truncateFile(File file, long newLength) throws IOException {
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
+            raf.setLength(newLength);
+        }
     }
 
     private static void assertSamePhysicalPage(
@@ -350,6 +543,12 @@ public class LiveViewCheckpointDataStoreTest extends AbstractCairoTest {
     private static String metaSegmentPath(long segmentId) {
         try (Path path = new Path(); Path dir = new Path()) {
             return LiveViewCheckpointLayout.metaSegmentPath(path, checkpointsDir(dir), segmentId).toString();
+        }
+    }
+
+    private static File retirementQueueFile() {
+        try (Path path = new Path(); Path dir = new Path()) {
+            return new File(LiveViewCheckpointLayout.retirementQueuePath(path, checkpointsDir(dir)).toString());
         }
     }
 
