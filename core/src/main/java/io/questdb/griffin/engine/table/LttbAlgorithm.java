@@ -38,7 +38,7 @@ import org.jetbrains.annotations.Nullable;
  * bucket that forms the largest triangle with the previously selected point
  * and the average of the next bucket. First and last points are always kept.
  * <p>
- * Supports gap-preserving mode: when gapThreshold > 0, the data is
+ * Supports gap-preserving mode: when gapThreshold != 0, the data is
  * split into contiguous segments where consecutive timestamps are within
  * the threshold, and each segment is downsampled independently.
  * <p>
@@ -47,7 +47,8 @@ import org.jetbrains.annotations.Nullable;
  * parsed interval into the column's native unit before constructing this
  * algorithm. It is deliberately not named "...Micros": treating it as micros
  * while comparing against nanosecond timestamps makes every threshold 1000x
- * too small.
+ * too small. The duration uses an unsigned long: 0 disables gap detection and
+ * -1L denotes saturation at unsigned MAX, which no timestamp delta can exceed.
  * <p>
  * <b>Gap-preserving mode uses soft target semantics:</b> target_points is a
  * goal, not a hard maximum. Each segment receives at least
@@ -132,7 +133,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     public void select(long buffer, int bufferSize, int targetPoints,
                        DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         selectedIndices.clear();
-        if (gapThreshold > 0) {
+        if (gapThreshold != 0 && gapThreshold != -1L) {
             selectGapPreserving(buffer, bufferSize, targetPoints, selectedIndices, circuitBreaker);
         } else {
             selectOnRange(buffer, 0, bufferSize, targetPoints, selectedIndices, circuitBreaker);
@@ -146,6 +147,17 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      */
     private static long at(@Nullable DirectLongList candidates, int pos) {
         return candidates == null ? pos : candidates.get(pos);
+    }
+
+    /**
+     * Converts the unsigned duration between ascending signed timestamps to double.
+     * Subtract before conversion to retain small nanosecond differences at any epoch.
+     */
+    private static double timestampDelta(long later, long earlier) {
+        assert later >= earlier;
+        final long delta = later - earlier;
+        // Keep a sticky low bit when halving so round-to-nearest handles ties correctly.
+        return delta >= 0 ? (double) delta : 2.0 * (double) ((delta >>> 1) | (delta & 1));
     }
 
     /**
@@ -182,16 +194,8 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             if (i < n) {
                 long prevTs = Unsafe.getUnsafe().getLong(buffer + (long) (i - 1) * ENTRY_SIZE);
                 long currTs = Unsafe.getUnsafe().getLong(buffer + (long) i * ENTRY_SIZE);
-                // Overflow-safe gap detection: currTs - prevTs can overflow on
-                // extreme timestamp ranges. Use currTs > prevTs + threshold
-                // when the addition does not overflow. If it overflows, the
-                // gap threshold exceeds the representable range past prevTs,
-                // so currTs (bounded by Long.MAX_VALUE) cannot exceed it.
-                if (prevTs > Long.MAX_VALUE - gapThreshold) {
-                    isGap = false;
-                } else {
-                    isGap = currTs > prevTs + gapThreshold;
-                }
+                // Ascending signed timestamps yield an exact unsigned duration.
+                isGap = Long.compareUnsigned(currTs - prevTs, gapThreshold) > 0;
             }
             if (isGap || i == n) {
                 circuitBreaker.statefulThrowExceptionIfTripped();
@@ -422,7 +426,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             final double ay = SubsampleAlgorithm.getValue(buffer, at(candidates, prevSelected));
 
             // Mean of the next bucket with x measured relative to point A. The
-            // long subtraction is exact at any epoch; converting the absolute
+            // unsigned delta is exact at any epoch; converting the absolute
             // epoch itself to double quantizes nanosecond timestamps to 256ns
             // steps (double ulp near 1.7e18) and cancels the area terms below.
             double avgDx = 0;
@@ -432,7 +436,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 if ((j & 0xFFF) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                 }
-                avgDx += (double) (SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)) - axTs);
+                avgDx += timestampDelta(SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)), axTs);
                 avgY += SubsampleAlgorithm.getValue(buffer, at(candidates, j));
             }
             if (nextBucketLen > 0) {
@@ -451,7 +455,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 // the absolute-coordinate determinant, but free of the
                 // epoch-magnitude products whose rounding error swamps small
                 // time differences.
-                double dbx = (double) (SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)) - axTs);
+                double dbx = timestampDelta(SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)), axTs);
                 double by = SubsampleAlgorithm.getValue(buffer, at(candidates, j));
                 double area = Math.abs(dbx * (avgY - ay) - avgDx * (by - ay));
                 if (area > maxArea) {

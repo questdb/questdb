@@ -58,18 +58,21 @@ public class M4Algorithm implements SubsampleAlgorithm {
 
         long minTs = SubsampleAlgorithm.getTimestamp(buffer, 0);
         long maxTs = SubsampleAlgorithm.getTimestamp(buffer, bufferSize - 1);
+        // Ascending signed timestamps can span an unsigned 64-bit duration.
         final long span = maxTs - minTs;
-        if (span <= 0) {
-            // A single bucket handles matching timestamps and maxTs - minTs overflow.
+        if (span == 0) {
+            // A single bucket handles matching timestamps.
             numBuckets = 1;
         }
+        final long bucketWidth = Long.divideUnsigned(span, numBuckets);
+        final long bucketRemainder = Long.remainderUnsigned(span, numBuckets);
 
         int dataIdx = 0;
         for (int bucket = 0; bucket < numBuckets; bucket++) {
             circuitBreaker.statefulThrowExceptionIfTripped();
 
-            long bucketStartTs = minTs + SubsampleAlgorithm.bucketOffset(span, bucket, numBuckets);
-            long bucketEndTs = (bucket < numBuckets - 1) ? minTs + SubsampleAlgorithm.bucketOffset(span, bucket + 1, numBuckets) : Long.MAX_VALUE;
+            long bucketStartTs = minTs + SubsampleAlgorithm.bucketOffset(bucketWidth, bucketRemainder, bucket, numBuckets);
+            long bucketEndTs = (bucket < numBuckets - 1) ? minTs + SubsampleAlgorithm.bucketOffset(bucketWidth, bucketRemainder, bucket + 1, numBuckets) : Long.MAX_VALUE;
 
             int firstIdx = -1;
             int lastIdx = -1;

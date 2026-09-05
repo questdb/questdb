@@ -219,17 +219,16 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
     }
 
     // Scales a micros threshold into the timestamp column's native unit: identity for TIMESTAMP,
-    // x1000 for TIMESTAMP_NS. Saturates rather than wrapping - a threshold beyond the column's
-    // representable span can never be exceeded by a real gap, which is exactly how LttbAlgorithm
-    // already reads a saturated threshold (its `prevTs > Long.MAX_VALUE - gapThreshold` guard
-    // reports "no gap"). Saturating here also keeps the "gap threshold overflow" compile error
-    // attached to the micros computation above, so the micros-column contract is unchanged.
+    // x1000 for TIMESTAMP_NS. The result is an unsigned duration; only thresholds beyond
+    // unsigned MAX saturate to -1L, which no timestamp delta can exceed. Zero remains reserved
+    // for disabled gap detection. The "gap threshold overflow" compile error stays attached
+    // to the micros computation above, so the micros-column contract is unchanged.
     private static long toTimestampUnits(long micros, int timestampType) {
         final long unitsPerMicro = ColumnType.getTimestampDriver(timestampType).fromMicros(1);
         if (unitsPerMicro <= 1) {
             return micros;
         }
-        return micros > Long.MAX_VALUE / unitsPerMicro ? Long.MAX_VALUE : micros * unitsPerMicro;
+        return micros > Long.divideUnsigned(-1L, unitsPerMicro) ? -1L : micros * unitsPerMicro;
     }
 
     // lttb(ts, value, target[, gap]) over (order by xxx) - no partition by, no framing.
