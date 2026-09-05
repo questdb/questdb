@@ -1587,11 +1587,19 @@ public class PostingIndexWriter implements IndexWriter {
         if (COVERING_COUNTERS_ENABLED) {
             COVERING_FULL_RESEAL_COUNT.incrementAndGet();
         }
+        // This is the dominant term of an O3 reseal on a covering index: it
+        // regathers the covered columns for the WHOLE partition, and
+        // TableWriter reaches it on both the rebuild and the canSkipRebuild
+        // path. Capture coverCount before the rebuild -- a reconfigure can
+        // reset it -- so the record reports what was actually rebuilt.
+        final long rebuildStartMicros = configuration.getMicrosecondClock().getTicks();
+        final int coverCountAtEntry = coverCount;
         closeSidecarMems();
         long gen0DirOffset = resolveHeadGenDirOffset(0);
         int gen0KeyCount = keyMem.getInt(gen0DirOffset + PostingIndexUtils.GEN_DIR_OFFSET_KEY_COUNT);
 
-        if (gen0KeyCount >= 0 && genCount == 1 && partitionPath.size() > 0) {
+        final boolean byCopy = gen0KeyCount >= 0 && genCount == 1 && partitionPath.size() > 0;
+        if (byCopy) {
             // peekNextSealTxn(), not sealTxn+1: after a recovery drop the writer's
             // sealTxn lags genCounter, and reusing a dropped sealTxn would race
             // the still-pending .pv purge.
@@ -1606,6 +1614,29 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             seal();
         }
+
+        // coverEndOffsetsCache is the authoritative per-cover valid extent --
+        // captureCoverEndOffsets refreshes it from each open handle on every
+        // chain publish, so it survives the closeSidecarMems above and is the
+        // one place the rebuilt sidecar size can be read after the fact. A
+        // never-written slot keeps its cached 0 and simply contributes nothing.
+        long sidecarBytes = 0;
+        for (int c = 0, n = coverEndOffsetsCache.size(); c < n; c++) {
+            sidecarBytes += coverEndOffsetsCache.getQuick(c);
+        }
+        // The seal path also emits its own record; this one adds the caller
+        // context (a sidecar rebuild, not a bare seal) plus the byte total,
+        // which is what turns the elapsed time into a throughput figure.
+        LOG.info().$("posting index sidecars rebuilt [indexName=").$(indexName)
+                .$(", sealTxn=").$(sealTxn)
+                .$(", path=").$(byCopy ? "copy" : "seal")
+                .$(", covers=").$(coverCountAtEntry)
+                .$(", keys=").$(keyCount)
+                .$(", gens=").$(genCount)
+                .$(", maxRowId=").$(maxValue)
+                .$(", sidecarBytes=").$(sidecarBytes)
+                .$(", timeMicros=").$(configuration.getMicrosecondClock().getTicks() - rebuildStartMicros)
+                .I$();
     }
 
     /**
@@ -1728,6 +1759,15 @@ public class PostingIndexWriter implements IndexWriter {
         if (genCount == 1 && gen0KeyCount >= 0) {
             return;
         }
+
+        // Past every early return, so a real seal is now going to be attempted.
+        // Both reads are once-per-seal against an operation measured in seconds
+        // for a large partition -- the clock cost is not observable here. genCount
+        // is captured before the collapse so the summary can report gens in->out,
+        // the figure that drives cairo.posting.seal.gen.threshold tuning and which
+        // is otherwise only visible at DEBUG (see compactIfOverBudget).
+        final long sealStartMicros = configuration.getMicrosecondClock().getTicks();
+        final int genCountAtEntry = genCount;
 
         // peekNextSealTxn(), not sealTxn+1: after a recovery drop the
         // writer's sealTxn lags genCounter, and reusing a dropped
@@ -1966,6 +2006,28 @@ public class PostingIndexWriter implements IndexWriter {
         // power-loss reader see chain entries that reference unflushed data.
         if (partitionPath.size() > 0 && keyMem.isOpen()) {
             keyMem.sync(false);
+        }
+
+        // Success-path summary. Every other INFO record in this class reports a
+        // deviation (an RSS-pressure fallback, an untrusted snapshot, a recovery),
+        // which leaves the normal path silent and gives an operator no baseline to
+        // compare a slow seal against. A seal can dominate an O3 commit -- it
+        // rewrites the covering sidecars for the whole partition -- so the one
+        // line that says which path ran, how much it collapsed and how long it
+        // took is what makes that cost attributable without a DEBUG restart.
+        // Every field is already-maintained writer state; nothing new is tracked.
+        if (isSealed) {
+            LOG.info().$("posting index sealed [indexName=").$(indexName)
+                    .$(", sealTxn=").$(sealTxn)
+                    .$(", path=").$(isLastSealIncremental ? "incremental" : "full")
+                    .$(", streaming=").$(isLastSealStreaming)
+                    .$(", snapshotDeferred=").$(isLastSealSnapshotDeferred)
+                    .$(", gens=").$(genCountAtEntry).$("->").$(genCount)
+                    .$(", keys=").$(keyCount)
+                    .$(", covers=").$(coverCount)
+                    .$(", valueBytes=").$(valueMemSize)
+                    .$(", timeMicros=").$(configuration.getMicrosecondClock().getTicks() - sealStartMicros)
+                    .I$();
         }
     }
 
@@ -7268,21 +7330,88 @@ public class PostingIndexWriter implements IndexWriter {
                 // Assemble this key's raw values into sidecarBuf.
                 long keyOff = keyOffsets[j];
                 long rawOffset = 0;
-                for (int i = 0; i < count; i++) {
-                    long rowId = Unsafe.getLong(
-                            mergedValuesAddr + (keyOff + i) * Long.BYTES);
-                    if (rowId < colTop) {
-                        writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
-                    } else {
-                        long srcOffset = (rowId - colTop) << shift;
-                        long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
-                        if (addr != 0) {
-                            Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
-                        } else {
+
+                // Resolve the covered column's base address ONCE for this key
+                // instead of once per value. getCoveredDataReadAddr is only
+                // offset-dependent through its grow-remap check, and row ids
+                // within a key ascend (add() rejects a descending value and the
+                // gen merge preserves that), so probing the last row id first
+                // performs any remap the whole run could need; every lower
+                // offset then resolves to base + offset against the same
+                // mapping. A zero base (unmappable column) drops to the
+                // unchanged per-value path below.
+                long base = 0;
+                long baseLimit = 0;
+                long lastRowId = Unsafe.getLong(mergedValuesAddr + (keyOff + count - 1) * Long.BYTES);
+                if (lastRowId >= colTop && getCoveredDataReadAddr(c, (lastRowId - colTop) << shift, valueSize) != 0) {
+                    base = coveredColReadAddrs[c];
+                    // 0 means addr-based (caller-owned mapping): no length is
+                    // tracked, exactly as the per-value path assumes. Otherwise
+                    // keep the mapped length so a row id that breaks the
+                    // ascending assumption cannot read past the mapping -- it
+                    // falls back to the checked call rather than trusting base.
+                    baseLimit = coveredColReadSizes[c];
+                }
+
+                if (base != 0) {
+                    for (int i = 0; i < count; i++) {
+                        long rowId = Unsafe.getLong(mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                        if (rowId < colTop) {
                             writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                        } else {
+                            long srcOffset = (rowId - colTop) << shift;
+                            long addr;
+                            if (baseLimit == 0 || srcOffset + valueSize <= baseLimit) {
+                                addr = base + srcOffset;
+                            } else {
+                                addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
+                            }
+                            if (addr != 0) {
+                                // Typed move for the power-of-two widths that
+                                // cover every fixed-size column type. An 8-byte
+                                // Unsafe.copyMemory is a general memcpy call;
+                                // TIMESTAMP / LONG / DOUBLE covers make this the
+                                // single hottest instruction of a reseal.
+                                switch (valueSize) {
+                                    case Long.BYTES:
+                                        Unsafe.putLong(sidecarBuf + rawOffset, Unsafe.getLong(addr));
+                                        break;
+                                    case Integer.BYTES:
+                                        Unsafe.putInt(sidecarBuf + rawOffset, Unsafe.getInt(addr));
+                                        break;
+                                    case Short.BYTES:
+                                        Unsafe.putShort(sidecarBuf + rawOffset, Unsafe.getShort(addr));
+                                        break;
+                                    case Byte.BYTES:
+                                        Unsafe.putByte(sidecarBuf + rawOffset, Unsafe.getByte(addr));
+                                        break;
+                                    default:
+                                        Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                                        break;
+                                }
+                            } else {
+                                writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                            }
                         }
+                        rawOffset += valueSize;
                     }
-                    rawOffset += valueSize;
+                } else {
+                    for (int i = 0; i < count; i++) {
+                        long rowId = Unsafe.getLong(
+                                mergedValuesAddr + (keyOff + i) * Long.BYTES);
+                        if (rowId < colTop) {
+                            writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                        } else {
+                            long srcOffset = (rowId - colTop) << shift;
+                            long addr = getCoveredDataReadAddr(c, srcOffset, valueSize);
+                            if (addr != 0) {
+                                Unsafe.copyMemory(addr, sidecarBuf + rawOffset, valueSize);
+                            } else {
+                                writeNullSentinel(sidecarBuf + rawOffset, valueSize, colType);
+                            }
+                        }
+                        rawOffset += valueSize;
+                    }
                 }
 
                 // Compress and write
@@ -7526,25 +7655,73 @@ public class PostingIndexWriter implements IndexWriter {
 
                 mem.putInt(totalValues);
 
+                // Reserve the whole fixed-size block up front and write into the
+                // mapped region directly, instead of appending value-by-value.
+                // mem.putLong re-checks the append offset and can extend the
+                // mapping on every call; the block size here is exact
+                // (totalValues * valueSize -- fixed-width, no compression on this
+                // path), so one jumpTo makes the region contiguous and the loop
+                // becomes a plain typed store. Same idiom flushAllPending already
+                // uses for the .pv gen ("extend to guarantee contiguous mapped
+                // region for direct encoding"). Staging through a scratch buffer
+                // was tried instead and was SLOWER -- it doubles the stores and
+                // this loop is memory-bound.
+                final long blockDataStart = mem.getAppendOffset();
+                final long blockDataSize = (long) totalValues * valueSize;
+                mem.jumpTo(blockDataStart + blockDataSize);
+                long dst = mem.addressOf(blockDataStart);
+                final long dstEnd = dst + blockDataSize;
+
                 for (int idx = 0; idx < activeKeyCount; idx++) {
                     int key = activeKeyIds[idx];
                     int pendingCount = Unsafe.getInt(pendingCountsAddr + (long) key * Integer.BYTES);
                     int spillCount = getSpillCount(key);
+                    if (pendingCount + spillCount == 0) {
+                        continue;
+                    }
+                    final long spillAddr = spillCount > 0
+                            ? Unsafe.getLong(spillKeyAddrsAddr + (long) key * Long.BYTES)
+                            : 0;
+                    final long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
 
-                    if (spillCount > 0) {
-                        long spillAddr = Unsafe.getLong(spillKeyAddrsAddr + (long) key * Long.BYTES);
-                        for (int i = 0; i < spillCount; i++) {
-                            long rowId = Unsafe.getLong(spillAddr + (long) i * Long.BYTES);
-                            writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType);
-                        }
+                    // Resolve the covered column's base address ONCE per key rather
+                    // than once per value. This key's row ids ascend -- spill holds
+                    // the earlier ones and add() rejects a descending value -- so the
+                    // highest is the last pending entry, or the last spilled entry
+                    // when nothing is pending. Probing it performs any grow-remap the
+                    // whole run could need, after which every lower offset resolves
+                    // against the same mapping. baseLimit keeps the mapped length so
+                    // a row id that breaks the ascending assumption falls back to the
+                    // checked call instead of reading past it; 0 means addr-based
+                    // (caller-owned, no length tracked), matching what the per-value
+                    // path already assumes.
+                    final long keyMaxRowId = pendingCount > 0
+                            ? Unsafe.getLong(keyValuesAddr + (long) (pendingCount - 1) * Long.BYTES)
+                            : Unsafe.getLong(spillAddr + (long) (spillCount - 1) * Long.BYTES);
+                    long base = 0;
+                    long baseLimit = 0;
+                    if (keyMaxRowId >= colTop
+                            && getCoveredDataReadAddr(c, (keyMaxRowId - colTop) << shift, valueSize) != 0) {
+                        base = coveredColReadAddrs[c];
+                        baseLimit = coveredColReadSizes[c];
                     }
 
-                    long keyValuesAddr = pendingValuesAddr + (long) key * PENDING_SLOT_CAPACITY * Long.BYTES;
+                    for (int i = 0; i < spillCount; i++) {
+                        writeSidecarValueDirect(dst, c, colTop, Unsafe.getLong(spillAddr + (long) i * Long.BYTES),
+                                shift, valueSize, colType, base, baseLimit);
+                        dst += valueSize;
+                    }
                     for (int i = 0; i < pendingCount; i++) {
-                        long rowId = Unsafe.getLong(keyValuesAddr + (long) i * Long.BYTES);
-                        writeSidecarValueSafe(mem, c, colTop, rowId, shift, valueSize, colType);
+                        writeSidecarValueDirect(dst, c, colTop, Unsafe.getLong(keyValuesAddr + (long) i * Long.BYTES),
+                                shift, valueSize, colType, base, baseLimit);
+                        dst += valueSize;
                     }
                 }
+                // totalValues is computed by the caller from the same pending +
+                // spill counts this loop walks, so the reserved block must be
+                // exactly filled. Under-filling would publish uninitialised bytes
+                // as covered values.
+                assert dst == dstEnd : "sidecar gen block underfilled";
             }
             mem.putLong((long) genIndex * Long.BYTES, blockStart);
         }
@@ -7606,6 +7783,99 @@ public class PostingIndexWriter implements IndexWriter {
             if (exceptionWorkspaceAddr != 0) {
                 Unsafe.free(exceptionWorkspaceAddr, maxKeyCount, MemoryTag.NATIVE_INDEX_READER);
             }
+        }
+    }
+
+    /**
+     * {@link #writeSidecarValueSafe} with the covered-column base address already
+     * resolved by the caller for the whole key run. Falls back to the checked
+     * per-value resolution when the caller could not resolve a base, or when the
+     * offset would leave a known mapped length -- so it can never address a byte
+     * the per-value path would not have.
+     *
+     * @param base      resolved covered-column base address, 0 when unresolved
+     * @param baseLimit mapped length behind {@code base}, 0 when caller-owned
+     */
+    private void writeSidecarValueHoisted(
+            MemoryMARW mem,
+            int covIdx,
+            long colTop,
+            long rowId,
+            int shift,
+            int valueSize,
+            int colType,
+            long base,
+            long baseLimit
+    ) {
+        if (rowId < colTop) {
+            writeNullSentinel(mem, valueSize, colType);
+            return;
+        }
+        final long srcOffset = (rowId - colTop) << shift;
+        long addr;
+        if (base != 0 && (baseLimit == 0 || srcOffset + valueSize <= baseLimit)) {
+            addr = base + srcOffset;
+        } else if (coveredColumnNames.size() > 0 || coveredColumnAddrs.size() > 0) {
+            addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
+        } else {
+            putFixedValue(mem, srcOffset, valueSize);
+            return;
+        }
+        if (addr == 0) {
+            writeNullSentinel(mem, valueSize, colType);
+        } else {
+            putFixedValue(mem, addr, valueSize);
+        }
+    }
+
+    /**
+     * {@link #writeSidecarValueHoisted} writing to a raw address inside the
+     * sidecar's already-reserved mapped block, rather than appending through
+     * MemoryMARW. Avoids the per-value append-offset check and possible mapping
+     * extend; the caller reserved the exact block with a single jumpTo.
+     */
+    private void writeSidecarValueDirect(
+            long dst,
+            int covIdx,
+            long colTop,
+            long rowId,
+            int shift,
+            int valueSize,
+            int colType,
+            long base,
+            long baseLimit
+    ) {
+        if (rowId < colTop) {
+            writeNullSentinel(dst, valueSize, colType);
+            return;
+        }
+        final long srcOffset = (rowId - colTop) << shift;
+        long addr;
+        if (base != 0 && (baseLimit == 0 || srcOffset + valueSize <= baseLimit)) {
+            addr = base + srcOffset;
+        } else {
+            addr = getCoveredDataReadAddr(covIdx, srcOffset, valueSize);
+        }
+        if (addr == 0) {
+            writeNullSentinel(dst, valueSize, colType);
+            return;
+        }
+        switch (valueSize) {
+            case Long.BYTES:
+                Unsafe.putLong(dst, Unsafe.getLong(addr));
+                break;
+            case Integer.BYTES:
+                Unsafe.putInt(dst, Unsafe.getInt(addr));
+                break;
+            case Short.BYTES:
+                Unsafe.putShort(dst, Unsafe.getShort(addr));
+                break;
+            case Byte.BYTES:
+                Unsafe.putByte(dst, Unsafe.getByte(addr));
+                break;
+            default:
+                Unsafe.copyMemory(addr, dst, valueSize);
+                break;
         }
     }
 
