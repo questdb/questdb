@@ -157,9 +157,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * bit-identical to the pre-dual-lane behavior.
      */
     private static double valueAsDouble(long buffer, long index, boolean hasIntegralValues) {
-        return hasIntegralValues
-                ? (double) SubsampleAlgorithm.getLongValue(buffer, index)
-                : SubsampleAlgorithm.getValue(buffer, index);
+        return SubsampleAlgorithm.getValueAsDouble(buffer, index, hasIntegralValues);
     }
 
     /**
@@ -352,11 +350,11 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             final int binStart = interiorStart + (int) ((long) b * nInner / bins);
             final int binEnd = interiorStart + (int) ((long) (b + 1) * nInner / bins);
 
-            // Seed with the first row of the bin. The buffer never holds NaN
-            // values (pass1 drops null/NaN rows before buffering); even if one
-            // slipped in, the < and > comparisons below keep the seed, matching
-            // MinMaxAlgorithm's seeding behavior, and the triangle stage
-            // already tolerates NaN areas.
+            // Seed with the first row of the bin. Per SubsampleAlgorithm's NULL
+            // contract the buffer holds no non-finite value, so plain < and >
+            // are sufficient here and the triangle stage below cannot see an
+            // Inf - Inf = NaN area (which, since NaN > maxArea is always false,
+            // would silently pin selection to each bucket's first point).
             int minIdx = binStart;
             int maxIdx = binStart;
             double minVal = valueAsDouble(buffer, binStart, hasIntegralValues);
@@ -378,15 +376,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             // Emit in buffer-index order, deduplicated, so candidates stay
             // strictly ascending (bins are disjoint and exclude the pinned
             // endpoints).
-            if (minIdx == maxIdx) {
-                candidates.add(minIdx);
-            } else if (minIdx < maxIdx) {
-                candidates.add(minIdx);
-                candidates.add(maxIdx);
-            } else {
-                candidates.add(maxIdx);
-                candidates.add(minIdx);
-            }
+            SubsampleAlgorithm.emitAscendingPair(candidates, minIdx, maxIdx);
         }
         candidates.add(end - 1);
     }

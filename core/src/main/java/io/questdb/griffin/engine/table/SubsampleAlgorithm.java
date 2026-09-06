@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 
 /**
@@ -46,6 +47,26 @@ import io.questdb.std.Unsafe;
  * bytes per input row and was never read back. Keep the stride a power of two
  * - it turns {@code index * ENTRY_SIZE} into a shift and packs exactly 4
  * entries per 64-byte cache line instead of straddling lines.
+ * <h2>NULL contract</h2>
+ * This is the single authoritative statement of what the buffer may contain;
+ * implementations must not restate or re-derive it.
+ * <p>
+ * The writer screens every row before appending, so <b>the buffer never holds a
+ * NULL value in either lane</b>:
+ * <ul>
+ *   <li>integral lane: the tag-specific sentinel ({@code LONG_NULL} for LONG,
+ *       {@code INT_NULL} for INT) is dropped; SHORT/BYTE have no sentinel.</li>
+ *   <li>floating lane: any value for which {@link Numbers#isNull(double)} holds
+ *       is dropped. QuestDB defines a NULL double as <b>non-finite</b>, so this
+ *       covers NaN <b>and both infinities</b> - a projected expression such as
+ *       {@code p * 1e308} can overflow to +/-Inf, and an infinity left in the
+ *       buffer would win a bucket's min/max and be rendered back to the client
+ *       as {@code null}.</li>
+ * </ul>
+ * Consequently implementations may compare values with plain {@code <} / {@code >}
+ * and need no non-finite guards of their own. Any new screening site must use
+ * {@link Numbers#isNull(double)} (never {@code Double.isNaN}, which admits the
+ * infinities) so all algorithms agree on what NULL means in the same column.
  */
 public interface SubsampleAlgorithm {
     int ENTRY_SIZE = 16;
@@ -107,5 +128,35 @@ public interface SubsampleAlgorithm {
      */
     static double getValue(long buffer, long index) {
         return Unsafe.getUnsafe().getDouble(buffer + index * ENTRY_SIZE + 8);
+    }
+
+    /**
+     * Reads the value slot as a double regardless of lane, for callers whose
+     * comparisons are inherently floating-point (LTTB's triangle math). The
+     * integral lane is widened, which may collapse LONG magnitudes beyond 2^53
+     * - acceptable where the result only ranks candidates, never where it
+     * decides an exact extremum.
+     */
+    static double getValueAsDouble(long buffer, long index, boolean hasIntegralValues) {
+        return hasIntegralValues ? (double) getLongValue(buffer, index) : getValue(buffer, index);
+    }
+
+    /**
+     * Appends the two given buffer indices to {@code out} in ascending index
+     * order, collapsing them to a single entry when they coincide (the bucket's
+     * min and max are the same row). Keeps every algorithm's output strictly
+     * ascending, which is the precondition the window-function pass2 walk and
+     * LTTB's candidate list both rely on.
+     */
+    static void emitAscendingPair(DirectLongList out, int a, int b) {
+        if (a == b) {
+            out.add(a);
+        } else if (a < b) {
+            out.add(a);
+            out.add(b);
+        } else {
+            out.add(b);
+            out.add(a);
+        }
     }
 }

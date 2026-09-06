@@ -1378,6 +1378,42 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubsampleIgnoresProjectedNonFiniteValues() throws Exception {
+        // A projected expression can overflow to +/-Inf where a stored column cannot: QuestDB
+        // normalises a stored 1.0/0.0 to NULL on ingest, but `p * 1e308` is computed after the
+        // read. QuestDB defines a NULL double as NON-FINITE, so m4/minmax/lttb must ignore those
+        // rows exactly as they ignore a stored NULL - otherwise an infinity wins its bucket's
+        // min/max and is rendered back to the client as a `null` data point (and lttb additionally
+        // computes Inf - Inf = NaN triangle areas, pinning selection to each bucket's first point).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE rt (p DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            // p * 1e308 overflows to +Inf exactly when p > 1, leaving four finite rows:
+            // 1.0E308@01-01, 5.0E307@01-03, 2.5E307@01-05, 7.5E307@01-07.
+            execute("INSERT INTO rt VALUES (1.0, '2024-01-01'), (3.0, '2024-01-02'), (0.5, '2024-01-03'), (9.0, '2024-01-04'),"
+                    + " (0.25, '2024-01-05'), (7.0, '2024-01-06'), (0.75, '2024-01-07'), (2.0, '2024-01-08')");
+
+            // minmax buckets (4 buffered rows > target 2): min is 2.5E307, max is 1.0E308. Before
+            // non-finite rows were screened, +Inf@01-02 won the bucket max and surfaced as `null`.
+            final String minmax = "p2\tts\n1.0E308\t2024-01-01T00:00:00.000000Z\n2.5E307\t2024-01-05T00:00:00.000000Z\n";
+            // m4/lttb: 4 buffered rows <= target 4, so every surviving row is kept - and every
+            // dropped row is non-finite. Before the fix the 4 +Inf rows were buffered too, which
+            // pushed the count over target and put `null` rows into the output.
+            final String all = "p2\tts\n1.0E308\t2024-01-01T00:00:00.000000Z\n5.0E307\t2024-01-03T00:00:00.000000Z\n"
+                    + "2.5E307\t2024-01-05T00:00:00.000000Z\n7.5E307\t2024-01-07T00:00:00.000000Z\n";
+
+            for (String[] c : new String[][]{{"minmax(p2, 2)", minmax}, {"m4(p2, 4)", all}, {"lttb(p2, 4)", all}}) {
+                // The projected +Inf rows must behave exactly like stored NULLs, so the same query
+                // with the overflowing rows replaced by NULL is the control and must agree.
+                assertQuery("SELECT p2, ts FROM (SELECT p * 1e308 p2, ts FROM rt) SUBSAMPLE " + c[0])
+                        .timestamp("ts").returns(c[1]);
+                assertQuery("SELECT p2, ts FROM (SELECT CASE WHEN p > 1 THEN NULL ELSE p * 1e308 END p2, ts FROM rt)"
+                        + " SUBSAMPLE " + c[0])
+                        .timestamp("ts").returns(c[1]);
+            }
+        });
+    }
+
+    @Test
     public void testSubsampleUsesProjectedNumericExpression() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE rt (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");

@@ -48,7 +48,7 @@ import org.jetbrains.annotations.Nullable;
  * Boolean "keep this row?" flag that marks the points selected by the Largest-Triangle-Three-Buckets
  * downsampling algorithm ({@link LttbAlgorithm#select}), re-homed here (like {@link M4FunctionFactory})
  * over a per-partition native buffer of {@code (ordinal, ts, value)} entries built during pass1 rather
- * than SUBSAMPLE's whole-cursor buffer. Reuses {@link M4FunctionFactory.BucketSelectWindowFunction} for
+ * than SUBSAMPLE's whole-cursor buffer. Reuses {@link BucketSelectWindowFunction} for
  * the buffering/pass1/pass2 plumbing: LTTB always emits first, one point per bucket, and last in
  * strictly ascending buffer-position order (and, in gap-preserving mode, per segment in ascending
  * segment order), matching the ascending-walk assumption that plumbing relies on. Large inputs run
@@ -144,7 +144,7 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
         if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
             throw SqlException.$(targetPosition, "target must be a constant or bind variable");
         }
-        final long resolvedTarget = M4FunctionFactory.BucketSelectWindowFunction.coerceAndValidateConstantTarget(
+        final long resolvedTarget = BucketSelectWindowFunction.coerceAndValidateConstantTarget(
                 targetArg, targetPosition, sqlExecutionContext);
 
         long gapThreshold = 0;
@@ -239,14 +239,14 @@ public class LttbFunctionFactory extends AbstractWindowFunctionFactory {
 
     // lttb(ts, value, target[, gap]) over (order by xxx) - no partition by, no framing.
     //
-    // Thin subclass of the shared M4FunctionFactory.BucketSelectWindowFunction to render the optional
+    // Thin subclass of the shared BucketSelectWindowFunction to render the optional
     // gap and release LttbAlgorithm's native scratch lists on close(). M4Algorithm and MinMaxAlgorithm are stateless
     // singletons, so the shared base's close() has nothing algorithm-specific to free - but LttbAlgorithm
     // owns native DirectLongList scratch fields (segment/target bookkeeping, lazily allocated in gap
     // mode, plus the MinMaxLTTB preselection candidate list, lazily allocated for large inputs; see
     // LttbAlgorithm.selectGapPreserving and LttbAlgorithm.preselectMinMax) and must be tracker-bound
     // and closed explicitly.
-    static class LttbBucketSelectWindowFunction extends M4FunctionFactory.BucketSelectWindowFunction {
+    static class LttbBucketSelectWindowFunction extends BucketSelectWindowFunction {
         private final String gapInterval;
         private final LttbAlgorithm lttbAlgorithm;
 

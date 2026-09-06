@@ -40,7 +40,7 @@ import io.questdb.std.ObjList;
  * <p>
  * Boolean "keep this row?" flag that marks up to 2 representative points (min, max) per time
  * bucket, using the same selection rule as SUBSAMPLE's MinMax algorithm ({@link
- * MinMaxAlgorithm#select}). Thin wrapper over {@link M4FunctionFactory.BucketSelectWindowFunction}
+ * MinMaxAlgorithm#select}). Thin wrapper over {@link BucketSelectWindowFunction}
  * - identical validation and buffered value-inspecting pass1/pass2 plumbing as {@code m4}, differing
  * only in the {@link io.questdb.griffin.engine.table.SubsampleAlgorithm} it drives (see that class'
  * javadoc for why the base is shared rather than duplicated).
@@ -111,10 +111,10 @@ public class MinMaxFunctionFactory extends AbstractWindowFunctionFactory {
         if (!targetArg.isConstant() && !targetArg.isRuntimeConstant()) {
             throw SqlException.$(targetPosition, "target must be a constant or bind variable");
         }
-        final long resolvedTarget = M4FunctionFactory.BucketSelectWindowFunction.coerceAndValidateConstantTarget(
+        final long resolvedTarget = BucketSelectWindowFunction.coerceAndValidateConstantTarget(
                 targetArg, targetPosition, sqlExecutionContext);
 
-        return new M4FunctionFactory.BucketSelectWindowFunction(
+        return new BucketSelectWindowFunction(
                 tsArg,
                 valueArg,
                 targetArg,

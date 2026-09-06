@@ -24,138 +24,35 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongList;
-import io.questdb.std.Unsafe;
 
 /**
  * M4 downsampling algorithm: selects up to 4 points per time bucket
  * (first, last, min, max).
  * <p>
- * Uses time-based buckets (equal time intervals), not row-count buckets.
- * This guarantees pixel-accurate min/max envelope and naturally preserves
- * gaps in the data (empty time intervals produce no output).
+ * The bucket walk itself lives in {@link AbstractTimeBucketAlgorithm}, shared
+ * with {@link MinMaxAlgorithm}; M4 differs only in emitting all four candidate
+ * rows rather than just the two extremes.
  * <p>
  * Reference: Jugel, U. et al. (2014). "M4: A Visualization-Oriented Time
  * Series Data Aggregation." PVLDB Vol. 7, No. 10.
  *
  * @see SubsampleAlgorithm
+ * @see AbstractTimeBucketAlgorithm
  */
-public class M4Algorithm implements SubsampleAlgorithm {
+public class M4Algorithm extends AbstractTimeBucketAlgorithm {
     public static final M4Algorithm INSTANCE = new M4Algorithm();
 
     @Override
-    public void select(long buffer, int bufferSize, int targetPoints, boolean hasIntegralValues,
-                       DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
-        selectedIndices.clear();
-        if (bufferSize <= 0 || targetPoints <= 0) {
-            return;
-        }
-        int numBuckets = targetPoints / 4;
-        if (numBuckets < 1) {
-            numBuckets = 1;
-        }
+    protected void emitBucket(DirectLongList out, int firstIdx, int minIdx, int maxIdx, int lastIdx) {
+        // Sort 4 indices with a sorting network (5 comparisons, 0 allocations)
+        // and deduplicate.
+        emitSorted4(out, firstIdx, minIdx, maxIdx, lastIdx);
+    }
 
-        long minTs = SubsampleAlgorithm.getTimestamp(buffer, 0);
-        long maxTs = SubsampleAlgorithm.getTimestamp(buffer, bufferSize - 1);
-        // Ascending signed timestamps can span an unsigned 64-bit duration.
-        final long span = maxTs - minTs;
-        if (span == 0) {
-            // A single bucket handles matching timestamps.
-            numBuckets = 1;
-        }
-        final long bucketWidth = Long.divideUnsigned(span, numBuckets);
-        final long bucketRemainder = Long.remainderUnsigned(span, numBuckets);
-
-        int dataIdx = 0;
-        for (int bucket = 0; bucket < numBuckets; bucket++) {
-            circuitBreaker.statefulThrowExceptionIfTripped();
-
-            long bucketStartTs = minTs + SubsampleAlgorithm.bucketOffset(bucketWidth, bucketRemainder, bucket, numBuckets);
-            long bucketEndTs = (bucket < numBuckets - 1) ? minTs + SubsampleAlgorithm.bucketOffset(bucketWidth, bucketRemainder, bucket + 1, numBuckets) : Long.MAX_VALUE;
-
-            int firstIdx = -1;
-            int lastIdx = -1;
-            int minIdx = -1;
-            int maxIdx = -1;
-            double minVal = 0;
-            double maxVal = 0;
-            // Integral lane: exact 64-bit comparisons on the raw long values. A double compare
-            // collapses LONG values beyond 2^53 and silently drops true extrema. First/last
-            // tracking is positional and does not read the value slot.
-            long minLong = 0;
-            long maxLong = 0;
-            boolean hasData = false;
-
-            while (dataIdx < bufferSize) {
-                if ((dataIdx & 0xFFF) == 0) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
-                }
-                long ts = Unsafe.getUnsafe().getLong(buffer + (long) dataIdx * ENTRY_SIZE);
-                // Final bucket processes all remaining rows (no end boundary)
-                if (bucket < numBuckets - 1 && ts >= bucketEndTs) {
-                    break;
-                }
-                if (ts >= bucketStartTs) {
-                    if (firstIdx == -1) {
-                        firstIdx = dataIdx;
-                    }
-                    lastIdx = dataIdx;
-                    if (hasIntegralValues) {
-                        long v = SubsampleAlgorithm.getLongValue(buffer, dataIdx);
-                        if (!hasData) {
-                            minLong = v;
-                            minIdx = dataIdx;
-                            maxLong = v;
-                            maxIdx = dataIdx;
-                            hasData = true;
-                        } else {
-                            if (v < minLong) {
-                                minLong = v;
-                                minIdx = dataIdx;
-                            }
-                            if (v > maxLong) {
-                                maxLong = v;
-                                maxIdx = dataIdx;
-                            }
-                        }
-                    } else {
-                        double v = SubsampleAlgorithm.getValue(buffer, dataIdx);
-                        if (!hasData) {
-                            minVal = v;
-                            minIdx = dataIdx;
-                            maxVal = v;
-                            maxIdx = dataIdx;
-                            hasData = true;
-                        } else {
-                            if (v < minVal) {
-                                minVal = v;
-                                minIdx = dataIdx;
-                            }
-                            if (v > maxVal) {
-                                maxVal = v;
-                                maxIdx = dataIdx;
-                            }
-                        }
-                    }
-                }
-                dataIdx++;
-            }
-
-            if (firstIdx == -1) {
-                continue;
-            }
-
-            // Sort 4 indices with a sorting network (5 comparisons, 0 allocations)
-            // and deduplicate.
-            assert minIdx >= 0 && maxIdx >= 0 : "selected indices must not be negative";
-            emitSorted4(selectedIndices, firstIdx, minIdx, maxIdx, lastIdx);
-        }
-        // Cap output to targetPoints. With small targets (e.g., 2 or 3),
-        // a single bucket can emit up to 4 rows, exceeding the target.
-        if (selectedIndices.size() > targetPoints) {
-            selectedIndices.setPos(targetPoints);
-        }
+    @Override
+    protected int pointsPerBucket() {
+        return 4;
     }
 
     /**
