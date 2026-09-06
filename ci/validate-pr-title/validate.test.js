@@ -11,9 +11,19 @@ const testValid = (title) =>
     })
   );
 
+// onError has to be a real callback here. Passing a bare `onError` identifier makes
+// this assertion pass on the ReferenceError that raises instead of on the title
+// being rejected, which lets every negative case below succeed against a validator
+// that accepts everything.
 const testInvalid = (title) =>
   assert.throws(
-    () => validate({ title, onError }),
+    () =>
+      validate({
+        title,
+        onError: () => {
+          throw new Error(`rejected "${title}"`);
+        },
+      }),
     `should NOT accept "${title}"`
   );
 

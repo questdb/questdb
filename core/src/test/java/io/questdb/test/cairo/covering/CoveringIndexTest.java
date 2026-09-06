@@ -38,6 +38,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.FSSTNative;
@@ -55,6 +56,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.api.MemoryMR;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -65,8 +67,8 @@ import io.questdb.std.DirectBitSet;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
-import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
@@ -4010,8 +4012,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader: genCount=2, but per-gen sidecars exist
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         assertTrue(cursor instanceof CoveringRowCursor);
                         assertTrue(((CoveringRowCursor) cursor).isCoveredAvailable(0));
 
@@ -4021,7 +4023,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             count++;
                         }
                         assertTrue(count > 0);
-                        Misc.free(cursor);
                     }
 
                     writer2.close();
@@ -4069,8 +4070,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Verify ALL 30 covered values across both gens
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                         CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         assertTrue(cc.isCoveredAvailable(0));
 
                         for (int i = 0; i < 30; i++) {
@@ -4079,7 +4080,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             assertEquals("value at row " + i, 10.0 * (i + 1), cc.getCoveredDouble(0), 0.001);
                         }
                         assertFalse(cc.hasNext());
-                        Misc.free(cc);
                     }
                     w2.close();
                 } finally {
@@ -4174,37 +4174,37 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
                         // Key 260 is in stride 1, local key 4
-                        RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cursor instanceof CoveringRowCursor);
-                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cursor instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(260, cc.next());
-                        assertEquals(1260L, cc.getCoveredLong(0));
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertTrue(cc.hasNext());
+                            assertEquals(260, cc.next());
+                            assertEquals(1260L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
                         // Key 299 is in stride 1, local key 43
-                        cursor = reader.getCursor(299, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(299, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(299, cc.next());
-                        assertEquals(1299L, cc.getCoveredLong(0));
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertTrue(cc.hasNext());
+                            assertEquals(299, cc.next());
+                            assertEquals(1299L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
                         // Key 0 is in stride 0 (control)
-                        cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(0, cc.next());
-                        assertEquals(1000L, cc.getCoveredLong(0));
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertTrue(cc.hasNext());
+                            assertEquals(0, cc.next());
+                            assertEquals(1000L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -6337,8 +6337,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     // Reader sees genCount=2 with per-gen sidecar data
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         // Per-gen sidecars: isCoveredAvailable(0) returns true
@@ -6355,7 +6355,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             count++;
                         }
                         assertEquals(20, count);
-                        Misc.free(cursor);
                     }
 
                     writer.close(); // seal happens here
@@ -6402,34 +6401,36 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // Key 0: only gen 0 data (rows 0,2)
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(0, cc.next());
-                        assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
-                        assertTrue(cc.hasNext());
-                        assertEquals(2, cc.next());
-                        assertEquals(30.0, cc.getCoveredDouble(0), 0.001);
-                        assertFalse(cc.hasNext());
+                            assertTrue(cc.hasNext());
+                            assertEquals(0, cc.next());
+                            assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(2, cc.next());
+                            assertEquals(30.0, cc.getCoveredDouble(0), 0.001);
+                            assertFalse(cc.hasNext());
+                        }
 
                         // Key 1: gen 0 + gen 1 (rows 1,3,4,5)
-                        cc = (CoveringRowCursor) reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(1, cc.next());
-                        assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
-                        assertTrue(cc.hasNext());
-                        assertEquals(3, cc.next());
-                        assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
-                        assertTrue(cc.hasNext());
-                        assertEquals(4, cc.next());
-                        assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
-                        assertTrue(cc.hasNext());
-                        assertEquals(5, cc.next());
-                        assertEquals(60.0, cc.getCoveredDouble(0), 0.001);
-                        assertFalse(cc.hasNext());
+                            assertTrue(cc.hasNext());
+                            assertEquals(1, cc.next());
+                            assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(3, cc.next());
+                            assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(4, cc.next());
+                            assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(5, cc.next());
+                            assertEquals(60.0, cc.getCoveredDouble(0), 0.001);
+                            assertFalse(cc.hasNext());
+                        }
                     }
                     writer.close();
                 } finally {
@@ -6475,19 +6476,19 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // Key 1: rows 1,3,5,7,9,11,13,15,17,19
-                        RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
-                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
-                        int count = 0;
-                        while (cc.hasNext()) {
-                            long rowId = cc.next();
-                            assertEquals(count * 2L + 1, rowId);
-                            assertEquals(100.0 + count * 2 + 1, cc.getCoveredDouble(0), 0.001);
-                            count++;
+                            int count = 0;
+                            while (cc.hasNext()) {
+                                long rowId = cc.next();
+                                assertEquals(count * 2L + 1, rowId);
+                                assertEquals(100.0 + count * 2 + 1, cc.getCoveredDouble(0), 0.001);
+                                count++;
+                            }
+                            assertEquals(10, count);
                         }
-                        assertEquals(10, count);
-                        Misc.free(cursor);
                     }
                     writer.close();
                 } finally {
@@ -6533,8 +6534,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{1}, new int[]{ColumnType.GEOSHORT}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{1}, new int[]{ColumnType.GEOSHORT}), EMPTY_CVR, 0);
+                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.isCoveredAvailable(0));
 
@@ -6558,7 +6559,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         assertEquals(101, cc.getCoveredShort(0));
 
                         assertFalse(cc.hasNext());
-                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Short.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -9111,17 +9111,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             // First covering read populates sidecarMems[0] via
                             // ensureSidecarOpen(), mmaping to the chain-published
                             // gen-0 extent.
-                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
-                                    0, 0, Long.MAX_VALUE, new int[]{0});
-                            assertTrue(cc.isCoveredAvailable(0));
-                            for (int i = 0; i < rowsPerGen; i++) {
-                                assertTrue("gen0 row " + i, cc.hasNext());
-                                assertEquals(i, cc.next());
-                                assertEquals("gen0 covered value at row " + i,
-                                        1000L + i, cc.getCoveredLong(0));
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0})) {
+                                assertTrue(cc.isCoveredAvailable(0));
+                                for (int i = 0; i < rowsPerGen; i++) {
+                                    assertTrue("gen0 row " + i, cc.hasNext());
+                                    assertEquals(i, cc.next());
+                                    assertEquals("gen0 covered value at row " + i,
+                                            1000L + i, cc.getCoveredLong(0));
+                                }
+                                assertFalse(cc.hasNext());
                             }
-                            assertFalse(cc.hasNext());
-                            Misc.free(cc);
 
                             long mmapSizeAfterGen0 = readSidecarMmapSize(reader, 0);
                             assertTrue("sanity: sidecar mmap was populated by first covering read",
@@ -9152,17 +9152,17 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             // return zero-padded bytes. With the fix the mapping is
                             // resized to the new published extent and every value
                             // round-trips.
-                            cc = (CoveringRowCursor) reader.getCursor(
-                                    0, 0, Long.MAX_VALUE, new int[]{0});
-                            assertTrue(cc.isCoveredAvailable(0));
-                            for (int i = 0; i < totalRows; i++) {
-                                assertTrue("post-reload row " + i, cc.hasNext());
-                                assertEquals(i, cc.next());
-                                assertEquals("post-reload covered value at row " + i,
-                                        1000L + i, cc.getCoveredLong(0));
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0})) {
+                                assertTrue(cc.isCoveredAvailable(0));
+                                for (int i = 0; i < totalRows; i++) {
+                                    assertTrue("post-reload row " + i, cc.hasNext());
+                                    assertEquals(i, cc.next());
+                                    assertEquals("post-reload covered value at row " + i,
+                                            1000L + i, cc.getCoveredLong(0));
+                                }
+                                assertFalse(cc.hasNext());
                             }
-                            assertFalse(cc.hasNext());
-                            Misc.free(cc);
 
                             long mmapSizeAfterReload = readSidecarMmapSize(reader, 0);
                             assertTrue(
@@ -9242,20 +9242,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             // First read populates sidecarMems[0..2] via
                             // ensureSidecarOpen(), each mmaped to the
                             // chain-published gen-0 extent for its slot.
-                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
-                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2});
-                            assertTrue("slot 0 covered after gen0", cc.isCoveredAvailable(0));
-                            assertTrue("slot 1 covered after gen0", cc.isCoveredAvailable(1));
-                            assertTrue("slot 2 covered after gen0", cc.isCoveredAvailable(2));
-                            for (int i = 0; i < rowsPerGen; i++) {
-                                assertTrue("gen0 row " + i, cc.hasNext());
-                                assertEquals(i, cc.next());
-                                assertEquals("gen0 LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
-                                assertEquals("gen0 INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
-                                assertEquals("gen0 DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2})) {
+                                assertTrue("slot 0 covered after gen0", cc.isCoveredAvailable(0));
+                                assertTrue("slot 1 covered after gen0", cc.isCoveredAvailable(1));
+                                assertTrue("slot 2 covered after gen0", cc.isCoveredAvailable(2));
+                                for (int i = 0; i < rowsPerGen; i++) {
+                                    assertTrue("gen0 row " + i, cc.hasNext());
+                                    assertEquals(i, cc.next());
+                                    assertEquals("gen0 LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
+                                    assertEquals("gen0 INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
+                                    assertEquals("gen0 DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                                }
+                                assertFalse(cc.hasNext());
                             }
-                            assertFalse(cc.hasNext());
-                            Misc.free(cc);
 
                             long[] gen0Sizes = new long[3];
                             for (int slot = 0; slot < 3; slot++) {
@@ -9284,20 +9284,20 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                             // Reload and read everything — every covered value
                             // for every slot must round-trip.
-                            cc = (CoveringRowCursor) reader.getCursor(
-                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2});
-                            assertTrue(cc.isCoveredAvailable(0));
-                            assertTrue(cc.isCoveredAvailable(1));
-                            assertTrue(cc.isCoveredAvailable(2));
-                            for (int i = 0; i < totalRows; i++) {
-                                assertTrue("post-reload row " + i, cc.hasNext());
-                                assertEquals(i, cc.next());
-                                assertEquals("post-reload LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
-                                assertEquals("post-reload INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
-                                assertEquals("post-reload DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(
+                                    0, 0, Long.MAX_VALUE, new int[]{0, 1, 2})) {
+                                assertTrue(cc.isCoveredAvailable(0));
+                                assertTrue(cc.isCoveredAvailable(1));
+                                assertTrue(cc.isCoveredAvailable(2));
+                                for (int i = 0; i < totalRows; i++) {
+                                    assertTrue("post-reload row " + i, cc.hasNext());
+                                    assertEquals(i, cc.next());
+                                    assertEquals("post-reload LONG @row " + i, 1000L + i, cc.getCoveredLong(0));
+                                    assertEquals("post-reload INT @row " + i, 2_000_000 + i, cc.getCoveredInt(1));
+                                    assertEquals("post-reload DOUBLE @row " + i, 3.5d * (i + 1), cc.getCoveredDouble(2), 1e-9);
+                                }
+                                assertFalse(cc.hasNext());
                             }
-                            assertFalse(cc.hasNext());
-                            Misc.free(cc);
 
                             for (int slot = 0; slot < 3; slot++) {
                                 long postReload = readSidecarMmapSize(reader, slot);
@@ -9755,8 +9755,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
 
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
-                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                            coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0);
+                         RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
                         assertTrue(cc.isCoveredAvailable(0));
 
@@ -9775,7 +9775,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             assertEquals(50.0 + (i - colTop), cc.getCoveredDouble(0), 0.001);
                         }
                         assertFalse(cc.hasNext());
-                        Misc.free(cursor);
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -12232,38 +12231,290 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
                         // Key 0 is in stride 0 (clean stride) — should have correct covered value
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cursor instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue("covering should be available after incremental seal", cc.isCoveredAvailable(0));
+                            assertTrue(cc.hasNext());
+                            assertEquals(0, cc.next());
+                            assertEquals(1000L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
+                        // Key 100 is in stride 0 (clean stride)
+                        try (RowCursor cursor = reader.getCursor(100, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
+
+                            assertTrue(cc.hasNext());
+                            assertEquals(100, cc.next());
+                            assertEquals(1100L, cc.getCoveredLong(0));
+                            assertFalse(cc.hasNext());
+                        }
+
+                        // Key 260 is in stride 1 (dirty stride) — should also work
+                        try (RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
+
+                            assertTrue(cc.hasNext());
+                            assertEquals(260, cc.next());
+                            assertEquals(1260L, cc.getCoveredLong(0));
+                        }
+                    }
+                } finally {
+                    Unsafe.free(colAddr, (long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    // Regression for NULL covered values after a full seal poisoned the lazy
+    // covered-column read maps: writeSidecarsPerColumn (name-based covers) maps
+    // each covered column, writes its sidecar, then unmaps it -- leaving the
+    // read-map arrays allocated with every entry zeroed.
+    // ensureCoveredColumnReadMaps() early-returns on the non-null arrays, so
+    // every later covered read in the SAME writer instance -- post-seal gen
+    // flushes (writeSidecarGenData) and incremental-seal dirty strides
+    // (writeSidecarStrideData) -- resolved source addr 0 and silently wrote
+    // NULL covered values while the row-id postings stayed correct. Surfaced
+    // by PostingIndexO3ConcurrencyFuzzTest#testCoveringPostingParquetO3SpillFuzz
+    // (-Dfuzz.s0=2677701527170915 -Dfuzz.s1=1788547351855), where a tiny spill
+    // budget forces many flush/seal cycles inside one indexing run, mixing
+    // full and incremental seals.
+    @Test
+    public void testIncrementalSealAfterFullSealKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "incr_after_full_cover";
+            int keyCount = 300; // 2 strides: 0..255 in stride 0, 256..299 in stride 1
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+
+                // Covered LONG column on disk: rowId r -> 1000 + r, keyCount + 1 rows.
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int r = 0; r <= keyCount; r++) {
+                        data.putLong(1000L + r);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    // Phase 1: every key once, then a full seal. The full seal
+                    // writes the .pc through the per-column map/unmap loop --
+                    // the step that used to poison the lazy read-map state.
+                    for (int k = 0; k < keyCount; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.setMaxValue(keyCount - 1);
+                    writer.commit();
+                    writer.seal();
+
+                    // Phase 2: one more row on key 260 (stride 1) -> sparse gen 1.
+                    // The next seal takes the incremental branch (stride 1 dirty,
+                    // stride 0 clean) and re-reads covered values for the WHOLE
+                    // dirty stride from the source column file.
+                    writer.add(260, keyCount);
+                    writer.setMaxValue(keyCount);
+                    writer.commit();
+                    writer.seal();
+                    assertTrue("second seal must take the incremental branch",
+                            writer.isLastSealIncrementalForTesting());
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0)) {
+                    // Dirty stride: key 260 holds the gen0 row and the new row.
+                    try (RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
                         assertTrue(cursor instanceof CoveringRowCursor);
                         CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue("covering should be available after incremental seal", cc.isCoveredAvailable(0));
+                        assertTrue(cc.isCoveredAvailable(0));
+                        assertTrue(cc.hasNext());
+                        assertEquals(260, cc.next());
+                        assertEquals(1260L, cc.getCoveredLong(0));
+                        assertTrue(cc.hasNext());
+                        assertEquals(keyCount, cc.next());
+                        assertEquals(1000L + keyCount, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+                    }
+
+                    // Dirty stride: key 270 did not change but sits in the
+                    // re-encoded stride, so its covered value was rewritten too.
+                    try (RowCursor cursor = reader.getCursor(270, 0, Long.MAX_VALUE, new int[]{0})) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.isCoveredAvailable(0));
+                        assertTrue(cc.hasNext());
+                        assertEquals(270, cc.next());
+                        assertEquals(1270L, cc.getCoveredLong(0));
+                        assertFalse(cc.hasNext());
+                    }
+
+                    // Clean stride: copied verbatim from the full seal's sidecar.
+                    try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                        assertTrue(cc.isCoveredAvailable(0));
                         assertTrue(cc.hasNext());
                         assertEquals(0, cc.next());
                         assertEquals(1000L, cc.getCoveredLong(0));
                         assertFalse(cc.hasNext());
-                        Misc.free(cursor);
-                        // Key 100 is in stride 0 (clean stride)
-                        cursor = reader.getCursor(100, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
-
-                        assertTrue(cc.hasNext());
-                        assertEquals(100, cc.next());
-                        assertEquals(1100L, cc.getCoveredLong(0));
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
-
-                        // Key 260 is in stride 1 (dirty stride) — should also work
-                        cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
-
-                        assertTrue(cc.hasNext());
-                        assertEquals(260, cc.next());
-                        assertEquals(1260L, cc.getCoveredLong(0));
-                        Misc.free(cursor);
                     }
-                } finally {
-                    Unsafe.free(colAddr, (long) keyCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                }
+            }
+        });
+    }
+
+    // Companion to testIncrementalSealAfterFullSealKeepsNameBasedCoveredValues
+    // pinning the SECOND consumer of the same poisoned state: a post-seal gen
+    // flush (commit -> flushAllPending -> writeSidecarGenData) with NO reseal
+    // afterwards. Readers serve covered values for unsealed generations
+    // straight from the appended gen sidecar blocks, so a NULL written there
+    // is user-visible even though no incremental seal ever ran. Guards
+    // against narrowing the fix to the incremental-seal path only.
+    @Test
+    public void testGenFlushAfterFullSealKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "gen_after_full_cover";
+            int keyCount = 300;
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int r = 0; r <= keyCount; r++) {
+                        data.putLong(1000L + r);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    for (int k = 0; k < keyCount; k++) {
+                        writer.add(k, k);
+                    }
+                    writer.setMaxValue(keyCount - 1);
+                    writer.commit();
+                    writer.seal(); // full seal: the poisoning step
+
+                    // Post-seal commit appends a sparse gen 1 whose sidecar
+                    // block is written NOW from the source column file. No
+                    // reseal follows; the reader must see this row's covered
+                    // value from the raw gen block.
+                    writer.add(260, keyCount);
+                    writer.setMaxValue(keyCount);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0);
+                     RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                    assertTrue(cursor instanceof CoveringRowCursor);
+                    CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    // Sealed gen 0 row: written by the full seal itself.
+                    assertTrue(cc.hasNext());
+                    assertEquals(260, cc.next());
+                    assertEquals(1260L, cc.getCoveredLong(0));
+                    // Unsealed gen 1 row: written by the post-seal gen flush.
+                    assertTrue(cc.hasNext());
+                    assertEquals(keyCount, cc.next());
+                    assertEquals(1000L + keyCount, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGenFlushAfterStreamingRollbackKeepsNameBasedCoveredValues() throws Exception {
+        assertMemoryLeak(() -> {
+            String name = "gen_after_streaming_rollback_cover";
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                int plen = path.size();
+                FilesFacade ff = configuration.getFilesFacade();
+                try (MemoryCMARWImpl data = new MemoryCMARWImpl(
+                        ff, TableUtils.dFile(path.trimTo(plen), "covered_long", COLUMN_NAME_TXN_NONE),
+                        ff.getPageSize(), -1, MemoryTag.MMAP_DEFAULT, 0)) {
+                    for (int row = 0; row < 600; row++) {
+                        data.putLong(1000L + row);
+                    }
+                }
+
+                ObjList<CharSequence> coverNames = new ObjList<>();
+                coverNames.add("covered_long");
+                LongList coverNameTxns = new LongList();
+                coverNameTxns.add(COLUMN_NAME_TXN_NONE);
+                LongList coverTops = new LongList();
+                coverTops.add(0L);
+                IntList coverShifts = new IntList();
+                coverShifts.add(3);
+                IntList coverIndices = new IntList();
+                coverIndices.add(1);
+                IntList coverTypes = new IntList();
+                coverTypes.add(ColumnType.LONG);
+
+                try (PostingIndexWriter writer = new PostingIndexWriter(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE)) {
+                    writer.configureCovering(coverNames, coverNameTxns, coverTops, coverShifts, coverIndices, coverTypes, -1);
+                    for (int row = 0; row < 600; row++) {
+                        writer.add(row % 300, row);
+                    }
+                    writer.setMaxValue(599);
+                    writer.commit();
+                    writer.rollbackValues(299);
+                    assertTrue("rollback must take the streaming branch", writer.isLastRollbackStreamingForTesting());
+
+                    // The same writer must re-map covered values after streaming rollback, without resealing or reconfiguration.
+                    writer.add(260, 300);
+                    writer.setMaxValue(300);
+                    writer.commit();
+                }
+
+                try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, -1, 0,
+                        coveringMetadata(new int[]{1}, new int[]{ColumnType.LONG}), EMPTY_CVR, 0);
+                     RowCursor cursor = reader.getCursor(260, 0, Long.MAX_VALUE, new int[]{0})) {
+                    assertTrue(cursor instanceof CoveringRowCursor);
+                    CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                    assertTrue(cc.isCoveredAvailable(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(260, cc.next());
+                    assertEquals(1260L, cc.getCoveredLong(0));
+                    assertTrue(cc.hasNext());
+                    assertEquals(300, cc.next());
+                    assertEquals("appended covered LONG after streaming rollback", 1300L, cc.getCoveredLong(0));
+                    assertFalse(cc.hasNext());
                 }
             }
         });
@@ -13886,8 +14137,8 @@ public class CoveringIndexTest extends AbstractCairoTest {
                 }
 
                 try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
-                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0)) {
-                    RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
+                        configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0);
+                     RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                     // Cursor should still implement CoveringRowCursor but isCoveredAvailable(0) returns false
                     assertTrue(cursor instanceof CoveringRowCursor);
                     assertFalse(((CoveringRowCursor) cursor).isCoveredAvailable(0));
@@ -13898,7 +14149,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     assertTrue(cursor.hasNext());
                     assertEquals(1, cursor.next());
                     assertFalse(cursor.hasNext());
-                    Misc.free(cursor);
                 }
             }
         });
@@ -15384,43 +15634,43 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0,
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        assertTrue(cursor instanceof CoveringRowCursor);
-                        CoveringRowCursor cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
+                            assertTrue(cursor instanceof CoveringRowCursor);
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
 
-                        // key 0: rows 0, 3, 6 -> values 10.0, 40.0, 70.0
-                        assertTrue(cc.hasNext());
-                        assertEquals(0, cc.next());
-                        assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
+                            // key 0: rows 0, 3, 6 -> values 10.0, 40.0, 70.0
+                            assertTrue(cc.hasNext());
+                            assertEquals(0, cc.next());
+                            assertEquals(10.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(3, cc.next());
-                        assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(3, cc.next());
+                            assertEquals(40.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(6, cc.next());
-                        assertEquals(70.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(6, cc.next());
+                            assertEquals(70.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertFalse(cc.hasNext());
+                        }
                         // key 1: rows 1, 4 -> values 20.0, 50.0
-                        cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0});
-                        cc = (CoveringRowCursor) cursor;
-                        assertTrue(cc.isCoveredAvailable(0));
+                        try (RowCursor cursor = reader.getCursor(1, 0, Long.MAX_VALUE, new int[]{0})) {
+                            CoveringRowCursor cc = (CoveringRowCursor) cursor;
+                            assertTrue(cc.isCoveredAvailable(0));
 
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(1, cc.next());
-                        assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(1, cc.next());
+                            assertEquals(20.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertTrue(cc.hasNext());
-                        assertEquals(4, cc.next());
-                        assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
+                            assertTrue(cc.hasNext());
+                            assertEquals(4, cc.next());
+                            assertEquals(50.0, cc.getCoveredDouble(0), 0.001);
 
-                        assertFalse(cc.hasNext());
-                        Misc.free(cursor);
+                            assertFalse(cc.hasNext());
+                        }
                     }
                 } finally {
                     Unsafe.free(colAddr, (long) rowCount * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
@@ -16535,8 +16785,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                     try (PostingIndexFwdReader reader = new PostingIndexFwdReader(
                             configuration, path.trimTo(plen), name, COLUMN_NAME_TXN_NONE, 0, 0,
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
-                        RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0});
-                        try {
+                        try (RowCursor cursor = reader.getCursor(0, 0, Long.MAX_VALUE, new int[]{0})) {
                             assertTrue(cursor instanceof CoveringRowCursor);
                             CoveringRowCursor cc = (CoveringRowCursor) cursor;
 
@@ -16549,8 +16798,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                 count++;
                             }
                             assertEquals(rowCount, count);
-                        } finally {
-                            Misc.free(cursor);
                         }
                     }
                 } finally {
@@ -16645,15 +16892,15 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             coveringMetadata(new int[]{2}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         int totalRows = 0;
                         for (int key = 0; key < 3; key++) {
-                            CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE, new int[]{0});
-                            while (cc.hasNext()) {
-                                long rowId = cc.next();
-                                double covered = cc.getCoveredDouble(0);
-                                assertEquals("covered value must round-trip across the seal boundary",
-                                        100.0 + rowId, covered, 0.001);
-                                totalRows++;
+                            try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(key, 0, Long.MAX_VALUE, new int[]{0})) {
+                                while (cc.hasNext()) {
+                                    long rowId = cc.next();
+                                    double covered = cc.getCoveredDouble(0);
+                                    assertEquals("covered value must round-trip across the seal boundary",
+                                            100.0 + rowId, covered, 0.001);
+                                    totalRows++;
+                                }
                             }
-                            Misc.free(cc);
                         }
                         assertEquals("reader must see every committed row across both seals", 30, totalRows);
                     }
@@ -16745,8 +16992,7 @@ public class CoveringIndexTest extends AbstractCairoTest {
                             coveringMetadata(new int[]{1}, new int[]{ColumnType.DOUBLE}), EMPTY_CVR, 0)) {
                         // minValue=464 drops block 0 (rows 400..463); blocks 1..3 remain.
                         final long minValue = 464;
-                        CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(1, minValue, Long.MAX_VALUE, new int[]{0});
-                        try {
+                        try (CoveringRowCursor cc = (CoveringRowCursor) reader.getCursor(1, minValue, Long.MAX_VALUE, new int[]{0})) {
                             assertTrue(cc.isCoveredAvailable(0));
                             int expectedRow = 464;
                             while (cc.hasNext()) {
@@ -16759,8 +17005,6 @@ public class CoveringIndexTest extends AbstractCairoTest {
                                 expectedRow++;
                             }
                             assertEquals(600, expectedRow);
-                        } finally {
-                            Misc.free(cc);
                         }
                     }
 
