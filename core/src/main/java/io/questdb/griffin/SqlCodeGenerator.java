@@ -39,6 +39,8 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.PartitionDimension;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.ProjectableRecordCursorFactory;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
@@ -79,6 +81,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.bool.BooleanSubQueryFunction;
+import io.questdb.griffin.engine.functions.bool.InSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToCharFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToDecimalFunctionFactory;
 import io.questdb.griffin.engine.functions.cast.CastByteToStrFunctionFactory;
@@ -292,6 +295,7 @@ import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursor
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
+import io.questdb.griffin.engine.table.CompositePageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -5001,6 +5005,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     && masterFactory.supportsFilterStealing()
                     && masterFactory.getBaseFactory().supportsPageFrameCursor();
             supportsParallelism |= canStealFilter;
+            // A composite slave supports a serial (getTimeFrameCursor) but NOT a concurrent (newTimeFrameCursor)
+            // time-frame cursor, so force the serial HorizonJoinRecordCursorFactory path: the async atom would
+            // NPE on the null per-worker cursor. Harmless for a slave with no time-frame cursor at all -- that
+            // still throws the slave-must-be-a-table error below.
+            supportsParallelism &= slaveFactory.supportsConcurrentTimeFrameCursor();
 
             // Check slave factory supports TimeFrameCursor for parallel cursor creation
             if (!slaveFactory.supportsTimeFrameCursor()) {
@@ -5574,7 +5583,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 int joinColumnSplit = masterMetadata.getColumnCount();
                 JoinContext slaveContext = slaveModel.getJoinContext();
                 if (!hasLinearHint) {
-                    if (slave.supportsTimeFrameCursor()) {
+                    // supportsConcurrentTimeFrameCursor(): the fast ASOF factories address the slave by
+                    // native rowIds / frame indices (from its symbol index and time frames). A merged
+                    // composite cursor's frames/rowIds are synthetic (per-day merge, not physical cells),
+                    // so it answers false and falls through to the light join below (matching 6a's
+                    // deliberate "composite ASOF uses the light join" design). No-op for a plain slave.
+                    if (slave.supportsTimeFrameCursor() && slave.supportsConcurrentTimeFrameCursor()) {
                         boolean isSingleSymbolJoin = isSingleSymbolJoin(symbolShortCircuit, listColumnFilterA);
                         boolean hasDenseHint = SqlHints.hasAsOfDenseHint(model, masterAlias, slaveModel.getName());
                         if (hasDenseHint) {
@@ -5800,7 +5814,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // reaching this point means the join is non-keyed
             if (!hasLinearHint) {
-                if (slave.supportsTimeFrameCursor()) {
+                // supportsConcurrentTimeFrameCursor(): exclude a merged composite cursor from the fast
+                // (native-rowId) no-key ASOF path -> light join. No-op for a plain slave.
+                if (slave.supportsTimeFrameCursor() && slave.supportsConcurrentTimeFrameCursor()) {
                     return new AsOfJoinNoKeyFastRecordCursorFactory(
                             configuration,
                             joinMetadata,
@@ -5948,7 +5964,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
-            if (!hasLinearHint && slave.supportsTimeFrameCursor()) {
+            // supportsConcurrentTimeFrameCursor(): exclude a merged composite cursor from the fast
+            // (native-rowId) no-key LT path -> light join. No-op for a plain slave.
+            if (!hasLinearHint && slave.supportsTimeFrameCursor() && slave.supportsConcurrentTimeFrameCursor()) {
                 return new LtJoinNoKeyFastRecordCursorFactory(
                         configuration,
                         joinMetadata,
@@ -6497,7 +6515,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
                                         || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
-                                if (parallelWindowJoinEnabled && masterSupportsPageFrames && slaveToFree.supportsTimeFrameCursor()) {
+                                // supportsConcurrentTimeFrameCursor(): a composite slave supports a serial
+                                // (getTimeFrameCursor) but NOT a concurrent (newTimeFrameCursor) cursor, so it must
+                                // fall through to the serial WindowJoinRecordCursorFactory below rather than the
+                                // async factory, whose atom would NPE on the null per-worker cursor.
+                                if (parallelWindowJoinEnabled && masterSupportsPageFrames && slaveToFree.supportsTimeFrameCursor() && slaveToFree.supportsConcurrentTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
                                     MemoryCARW bindVarMemory = null;
@@ -7726,10 +7748,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Validate all slave factories
             for (int s = 0; s < slaveCount; s++) {
-                if (!slaveFactories.getQuick(s).supportsTimeFrameCursor()) {
+                final RecordCursorFactory slaveFactory = slaveFactories.getQuick(s);
+                if (!slaveFactory.supportsTimeFrameCursor()) {
                     throw SqlException.position(slaveModels.getQuick(s).getJoinKeywordPosition())
                             .put("right-hand side of HORIZON JOIN can only be a table with an optional filter");
                 }
+                // If ANY slave lacks a concurrent (per-worker) time-frame cursor -- e.g. a composite
+                // cross-cell merge scan, whose newTimeFrameCursor() is null -- force the serial
+                // MultiHorizonJoinRecordCursorFactory path so the async atom never dereferences a null cursor.
+                supportsParallelism &= slaveFactory.supportsConcurrentTimeFrameCursor();
             }
 
             // Build combined metadata: [master cols] [offset, timestamp] [slave0 cols] [slave1 cols] ...
@@ -9784,7 +9811,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             if (hourIndex != -1) {
                 factory = generateSubQuery(model, executionContext);
-                pageFramingSupported = factory.supportsPageFrameCursor();
+                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
+                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
+                pageFramingSupported = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
                 if (pageFramingSupported) {
                     columnExpr = columns.getQuick(hourIndex).getAst();
                     // find position of the hour() argument in the factory meta
@@ -9804,7 +9833,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     IQueryModel.restoreWhereClause(expressionNodePool, model);
                 }
                 factory = generateSubQuery(model, executionContext);
-                pageFramingSupported = factory.supportsPageFrameCursor();
+                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
+                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
+                pageFramingSupported = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
             }
 
             RecordMetadata baseMetadata = factory.getMetadata();
@@ -9994,7 +10025,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             && SqlUtil.isParallelismSupported(keyFunctions)
                             && GroupByUtils.isParallelismSupported(groupByFunctions)
             ) {
-                boolean supportsParallelism = factory.supportsPageFrameCursor();
+                // Aggregation is order-indifferent, so the narrow opt-in capability is OR-ed in here
+                // alongside supportsPageFrameCursor() (e.g. a composite table's cell-blind frames).
+                boolean supportsParallelism = factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
                 CompiledFilter compiledFilter = null;
                 MemoryCARW bindVarMemory = null;
                 ObjList<Function> bindVarFunctions = null;
@@ -10006,7 +10039,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!supportsParallelism && factory.supportsFilterStealing()) {
                     RecordCursorFactory filterFactory = factory;
                     factory = factory.getBaseFactory();
-                    assert factory.supportsPageFrameCursor();
+                    assert factory.supportsPageFrameCursor() || factory.supportsPageFrameCursorForUnorderedAggregation();
                     compiledFilter = filterFactory.getCompiledFilter();
                     bindVarMemory = filterFactory.getBindVarMemory();
                     bindVarFunctions = filterFactory.getBindVarFunctions();
@@ -11542,6 +11575,67 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateQuery(model.getNestedModel(), executionContext, true);
     }
 
+    /**
+     * Sorts a composite table's INDEXED scan back into designated-timestamp order.
+     * <p>
+     * A composite table stores rows in per-cell subdirectories within each time partition, and the
+     * row-cursor family that serves an indexed WHERE is driven per PAGE FRAME. Frames arrive
+     * {@code (partition-timestamp ASC, cellKey ASC)}, so walking them emits, per day,
+     * {@code cell0 ++ cell1 ++ ...} -- CELL-MAJOR, not timestamp order. MEASURED: a value present in
+     * two cells at interleaved timestamps came back {@code 01:00 E0, 03:00 E0, 02:00 E1, 04:00 E1}
+     * against the twin's {@code 01, 02, 03, 04}. Right rows, wrong order, silently.
+     * <p>
+     * <b>Why a sort and not a merge.</b> The architecturally-clean fix is a k-way merge across a day's
+     * cells, which is what {@link io.questdb.griffin.engine.table.CompositeMergePartitionRecordCursor}
+     * already does for ordinary scans. It cannot be reused here: its own documentation records that it
+     * "walks every row of a pulled frame unconditionally" and "has no hook for a RowCursorFactory's
+     * row-level index selection", so dropping it under this family would silently DROP the key
+     * predicate -- returning rows for symbol values outside the WHERE clause. That is a worse failure
+     * than the one being fixed. Adding that hook is a genuine piece of work; sorting is correct by
+     * construction and can be replaced by the merge later without changing results.
+     * <p>
+     * <b>What it costs.</b> An O(n log n) sort over the MATCHED rows only, not the table. For a
+     * selective predicate -- the case an index is chosen for -- that is a small set, and it still
+     * beats the alternative this replaces, which was refusing the index entirely and falling back to a
+     * full merged scan over every row. For an unselective predicate the sort is real overhead.
+     * <p>
+     * <b>Consequence: cursor SIZE becomes undetermined.</b> A sorted cursor reports -1 until fully
+     * consumed, where the unwrapped index scan could report a concrete size up front. Legal, and
+     * transparent to results, but it does forgo size-based short-cuts for these queries.
+     * <p>
+     * <b>Known limit: EQUAL timestamps.</b> The sort key is the designated timestamp alone, so rows
+     * sharing a timestamp across different cells come back in whatever relative order the sort leaves
+     * them -- which need not match the tie-break
+     * {@link io.questdb.griffin.engine.table.CompositeMergePartitionRecordCursor} produces for the same
+     * query served without an index. Both are SQL-legal (a designated timestamp is not a total order),
+     * and this is the same caveat the 6a review already recorded as OBSERVABLE to ASOF/LT join
+     * semantics -- it is not introduced here, but it is not fixed here either. Not asserted in the
+     * tests, which use unique timestamps throughout, exactly as the rest of the composite read suite
+     * does for this reason. Adding cellKey as a secondary sort key would close it if a consumer ever
+     * needs the two plans to agree on ties.
+     */
+    private RecordCursorFactory wrapCompositeIndexedScan(RecordCursorFactory base, RecordMetadata metadata) throws SqlException {
+        final int timestampIndex = metadata.getTimestampIndex();
+        if (timestampIndex < 0) {
+            return base; // no designated timestamp: nothing to restore an order against
+        }
+        listColumnFilterA.clear();
+        listColumnFilterA.add(timestampIndex + 1); // positive = ascending
+        final RecordComparator comparator = recordComparatorCompiler.newInstance(metadata, listColumnFilterA);
+        final ListColumnFilter filterCopy = listColumnFilterA.copy();
+        // LIGHT sorts row IDs and re-reads each row from the base, so it needs random access. A
+        // COVERING index cursor serves its projection from the index sidecars and has none -- it
+        // throws "CoveringIndex does not support random access" -- so that case materialises the
+        // records instead. Same light/non-light choice wrapCompositeLatestBy documents, keyed on the
+        // same predicate.
+        if (!base.recordCursorSupportsRandomAccess()) {
+            entityColumnFilter.of(metadata.getColumnCount());
+            final RecordSink sink = RecordSinkFactory.getInstance(configuration, asm, metadata, entityColumnFilter);
+            return new SortedRecordCursorFactory(configuration, metadata, base, sink, comparator, filterCopy);
+        }
+        return new SortedLightRecordCursorFactory(configuration, metadata, base, comparator, filterCopy);
+    }
+
     private RecordCursorFactory generateTableQuery(
             IQueryModel model,
             SqlExecutionContext executionContext
@@ -11595,6 +11689,258 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return result;
+    }
+
+    /**
+     * Task 6b: applies LATEST BY directly over an already-built (6a cross-cell-merged) composite base
+     * scan, for the two {@code generateTableQuery0} sites that decline their own cell-blind LATEST BY
+     * cursor families for a composite table (the {@code generateLatestByTableQuery} guard, and the "no
+     * WHERE clause" branch's guard). This mirrors {@link #generateLatestBy(RecordCursorFactory,
+     * IQueryModel)}'s own logic (same factories, same {@link #keyTypes}/{@link #listColumnFilterA}
+     * scratch state, same {@code LatestByRecordCursorFactory} vs {@code LatestByLightRecordCursorFactory}
+     * choice keyed on random-access support) rather than calling that generic post-scan pipeline step
+     * directly: {@code generateLatestBy} asserts {@code model.getNestedModel() != null}, which does not
+     * hold here -- {@code model} at this point in {@code generateTableQuery0} IS the base-table model
+     * (the level that owns the LATEST BY clause and prepares {@link #keyTypes} for it), not a wrapper
+     * around one, so leaving {@code model.getLatestBy()} populated for the external step to consume (as
+     * a first attempt at this fix did) trips that assert instead of applying LATEST BY. {@code
+     * orderedByTimestampAsc} is computed from {@code model.isForceBackwardScan()} -- the SAME flag that
+     * just chose the scan's own forward/backward order a few lines above each call site -- rather than
+     * from {@code generateLatestBy}'s {@code nested.getOrderHash()} lookup (unavailable here for the
+     * same reason), which is a more direct and equally correct source of truth for whether the scan
+     * this method just built is genuinely ts-ascending.
+     */
+    private RecordCursorFactory wrapCompositeLatestBy(
+            RecordCursorFactory scanFactory,
+            IQueryModel model,
+            ObjList<ExpressionNode> latestBy,
+            RecordMetadata queryMeta
+    ) throws SqlException {
+        try {
+            // a sub-query present in the (already-compiled-by-now) residual filter may have clobbered
+            // the shared listColumnFilterA/keyTypes scratch state, so recompute it defensively from
+            // latestBy -- mirrors the same defensive re-populate generateLatestByTableQuery's caller
+            // does (see the comment there).
+            prepareLatestByColumnIndexes(latestBy, queryMeta);
+            // 'latest by' clause takes over the latest by nodes here, so the later generic
+            // generateLatestBy() post-scan pipeline step is a no-op for this model (mirrors the same
+            // comment/clear at the two cell-blind sites this helper replaces for a composite table) --
+            // required, not optional: generateLatestBy() asserts model.getNestedModel() != null, which
+            // does not hold for this (base-table) model, so leaving latestBy non-empty does not merely
+            // duplicate work, it trips that assert. MUST run after prepareLatestByColumnIndexes:
+            // latestBy IS model.getLatestBy() (same reference, see generateTableQuery), so clearing
+            // first would make prepareLatestByColumnIndexes see an empty list.
+            model.getLatestBy().clear();
+            if (!scanFactory.recordCursorSupportsRandomAccess()) {
+                return new LatestByRecordCursorFactory(
+                        configuration,
+                        scanFactory,
+                        RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),
+                        keyTypes,
+                        queryMeta.getTimestampIndex()
+                );
+            }
+            return new LatestByLightRecordCursorFactory(
+                    configuration,
+                    scanFactory,
+                    RecordSinkFactory.getInstance(configuration, asm, queryMeta, listColumnFilterA),
+                    keyTypes,
+                    queryMeta.getTimestampIndex(),
+                    !model.isForceBackwardScan()
+            );
+        } catch (Throwable e) {
+            Misc.free(scanFactory);
+            throw e;
+        }
+    }
+
+    /**
+     * Task 5b (extended by Task #28): attempts to resolve a composite table's equality/IN predicate on a
+     * partitioning dimension (e.g. {@code WHERE exch = 'BTC'} / {@code WHERE exch IN ('BTC','ETH')}) to
+     * the set of cellKeys it could possibly match, so {@code dfcFactory}'s partition-frame cursor can SKIP
+     * every other cell instead of relying solely on the row-level filter/index the rest of the
+     * {@code intrinsicModel.keyColumn != null} block still builds, unchanged, around this call. This is
+     * a pure ADDITIVE optimization -- dfcFactory sits underneath every downstream wrapper that block can
+     * choose (single-value symbol index, IN-list, covering index, sub-query, ...), so narrowing the
+     * cells it walks changes nothing about which rows those wrappers correctly select, only how many
+     * cells they have to look at to find them.
+     * <p>
+     * Returns {@code null} -- "do not prune, leave dfcFactory and the gate below untouched" -- whenever
+     * resolution is not safely possible right now:
+     * <ul>
+     *     <li>{@code keyColumn} is not a partitioning dimension's own source column (an ordinary
+     *     indexed symbol -- Task 6b's gate still applies to it, unchanged; Scope decision 3).</li>
+     *     <li>the matched dimension is {@code KIND_EXPRESSION} ({@link TableReader#keyOfDimensionValue}
+     *     does not support it -- Scope decision 4).</li>
+     *     <li>any predicate value function is a {@link Function#isRuntimeConstant() runtime constant}
+     *     (a bind variable, or otherwise not yet bound): baking a value bound at THIS compile/first
+     *     execution into a cellKey set cached on the factory would go silently wrong were this same
+     *     compiled factory later re-executed with a DIFFERENT bound value -- any such value aborts
+     *     pruning for the WHOLE predicate, not just that one value. This also means every value that
+     *     DOES reach {@link DimensionCellPrune#needsResidual}'s residual (built by {@code
+     *     buildDimensionResidualFilter}) is guaranteed non-runtime-constant -- i.e. an ordinary constant
+     *     (a {@code StrConstant} in practice, since {@code keyValueFuncs} only ever holds symbol-column
+     *     equality values).</li>
+     * </ul>
+     * A value that resolves to {@link SymbolTable#VALUE_NOT_FOUND} (never interned) contributes no
+     * ordinal -- an all-not-found predicate still returns a non-null result with an EMPTY {@code
+     * cellKeys} set (correctly prunes to a 0-row scan), which is why "not resolvable" (null) and
+     * "resolvable but matches nothing" (empty) must stay distinguishable, never conflated.
+     * <p>
+     * <b>Task #28 -- HASH/TRUNCATE join the multi-cell / latest-by routes via a residual:</b> Tasks
+     * #26/#27 lifted this method's original size-&gt;1 and latest-by declines ONLY for {@code
+     * KIND_IDENTITY} dimensions: an IDENTITY value&harr;cellKey map is bijective (a cell can only ever
+     * hold rows for the ONE raw value that produced its ordinal), so a multi-cell IDENTITY prune is
+     * ROW-EXACT with no residual filter needed, and the caller routes it straight through Task 6a's
+     * {@code CompositePageFrameRecordCursorFactory} merge (see {@code dimensionPrunedMultiCell} /
+     * {@code latestByDimensionPrune} at the call site), bypassing the {@code FilterOnValuesRecordCursorFactory}
+     * row-cursor family -- never audited for composite cross-cell order -- entirely. {@code KIND_HASH}/
+     * {@code KIND_TRUNCATE} are NOT bijective (distinct raw values can collide into the same bucket/
+     * prefix), so a residual-free prune through that same bypass would silently ADMIT rows for OTHER,
+     * non-matching raw values sharing the resolved cell(s) -- Tasks #26/#27 therefore left them declined.
+     * This task closes that gap instead of leaving it declined: {@link DimensionCellPrune#needsResidual}
+     * signals back to the caller whenever the matched dimension is NOT {@code KIND_IDENTITY} --
+     * independent of how many cells the predicate resolves to, since even a SINGLE-value HASH/TRUNCATE
+     * equality routed here via a latest-by (whose own row-cursor family never applies LATEST BY, so it
+     * cannot rely on that family's exact-value bitmap match) still needs one: its one bucket/prefix can
+     * still hold OTHER, colliding raw values. The caller reconstructs a {@code col IN (<original values>)}
+     * row filter over the merged pruned scan from {@code keyValueFuncs} (see {@code
+     * buildDimensionResidualFilter}) whenever {@code needsResidual} is set AND the prune is actually
+     * routed through the merge convergence -- == a plain {@code FilterOnValuesRecordCursorFactory} twin,
+     * never a bucket-wide admit. IDENTITY keeps {@code needsResidual=false} (unchanged, still row-exact,
+     * no filter built). A single-value HASH/TRUNCATE equality WITHOUT a latest-by does not reach the
+     * merge convergence at all (the caller only takes that route when the resolved set has size &gt; 1
+     * or a latest-by is present) -- it stays on the pre-#28 route instead, the unchanged row-cursor
+     * family below, whose per-value bitmap index already matches the exact raw value, buckets
+     * notwithstanding (5b's original single-cell case, still correct, still cheaper: no residual to
+     * build or evaluate).
+     */
+    private static @Nullable DimensionCellPrune resolveDimensionCellPruneSet(
+            TableReader reader,
+            RecordMetadata metadata,
+            CharSequence keyColumn,
+            ObjList<Function> keyValueFuncs
+    ) {
+        final PartitionSpec partitionSpec = reader.getMetadata().getPartitionSpec();
+        // Deliberately resolved against `metadata` (the reader-native TableRecordMetadata passed into
+        // generateTableQuery0, dense-index-aligned 1:1 with the physical table and its real writer
+        // indices) rather than `queryMeta` (a query-shaped GenericRecordMetadata built by
+        // buildQueryMetadata purely to describe OUTPUT columns): confirmed empirically that queryMeta's
+        // per-column writer index is NOT populated (getWriterIndex returns -1 there), so looking the
+        // writer index up via metadata's own dense index for this column name -- self-consistently, not
+        // mixing queryMeta's dense numbering with metadata's accessor -- is required, not merely tidier.
+        final int metaKeyColumnIndex = SqlUtil.getColumnIndexQuiet(metadata, keyColumn);
+        final int keyWriterIndex = metadata.getWriterIndex(metaKeyColumnIndex);
+        int dimIndex = -1;
+        for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
+            if (partitionSpec.getDimension(i).getColumnIndex() == keyWriterIndex) {
+                dimIndex = i;
+                break;
+            }
+        }
+        if (dimIndex == -1) {
+            return null;
+        }
+        final PartitionDimension dimension = partitionSpec.getDimension(dimIndex);
+        if (dimension.getKind() == PartitionDimension.KIND_EXPRESSION) {
+            return null;
+        }
+        final IntHashSet allowedOrdinals = new IntHashSet();
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final Function f = keyValueFuncs.getQuick(i);
+            if (f.isRuntimeConstant()) {
+                return null;
+            }
+            final int ord = reader.keyOfDimensionValue(dimIndex, f.getStrA(null));
+            if (ord != SymbolTable.VALUE_NOT_FOUND) {
+                allowedOrdinals.add(ord);
+            }
+        }
+        final IntHashSet allowedCellKeys = reader.resolveDimensionCellKeys(dimIndex, allowedOrdinals);
+        // Task #28: HASH/TRUNCATE no longer decline a size > 1 (or latest-by-routed) prune outright --
+        // see this method's own Task #28 doc -- they signal needsResidual instead, so the caller
+        // reconstructs the exact-value row filter that the (bypassed) row-cursor family would otherwise
+        // have provided. IDENTITY keeps needsResidual=false: its value<->cellKey map is bijective, so the
+        // prune alone is already row-exact and no filter is built.
+        final boolean needsResidual = dimension.getKind() != PartitionDimension.KIND_IDENTITY;
+        return new DimensionCellPrune(allowedCellKeys, needsResidual);
+    }
+
+    /**
+     * Paired result of {@link #resolveDimensionCellPruneSet}: the resolved allowed-cellKey set (never
+     * null when this carrier itself is non-null; may be EMPTY -- see that method's doc), and whether the
+     * caller must additionally apply a reconstructed {@code col IN (<original values>)} residual row
+     * filter over the merged pruned scan (Task #28) because the matched dimension's value&harr;cellKey
+     * map is not bijective (HASH/TRUNCATE).
+     */
+    private static final class DimensionCellPrune {
+        final IntHashSet cellKeys;
+        final boolean needsResidual;
+
+        DimensionCellPrune(IntHashSet cellKeys, boolean needsResidual) {
+            this.cellKeys = cellKeys;
+            this.needsResidual = needsResidual;
+        }
+    }
+
+    /**
+     * Task #28: reconstructs a {@code col IN (<original values>)} residual {@link Function} for a
+     * successfully cell-pruned HASH/TRUNCATE dimension predicate ({@link DimensionCellPrune#needsResidual}),
+     * applied as a row filter over the merged pruned scan at the merge-convergence call site. Needed
+     * because a HASH/TRUNCATE bucket/prefix is NOT bijective: the pruned cell(s) can also hold OTHER,
+     * non-matching raw values, and the row-cursor family that would normally exclude them (per-value
+     * bitmap matching) is bypassed once the prune routes through the merge convergence (see {@code
+     * dimensionPrunedMultiCell} / {@code latestByDimensionPrune} at the call site).
+     * <p>
+     * Mirrors {@link io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory}'s own handling of
+     * {@code intrinsicModel.keyValueFuncs} (see its constructor, ~line 144): builds a FRESH {@link ObjList}
+     * around the SAME {@link Function} instances rather than retaining/aliasing {@code keyValueFuncs}
+     * itself (a pooled list owned by the compiler's {@code WhereClauseParser}). Unlike CoveringIndex --
+     * which keeps its copy as a field, re-read at a LATER {@code getCursor()} -- this list is used ONLY
+     * synchronously, right here, to build {@code args} for {@link InSymbolFunctionFactory#newInstance};
+     * it is never stored or read again, so there is no window for a later/concurrent pooled-model
+     * {@code clear()} to corrupt it.
+     * <p>
+     * <b>Ownership:</b> every {@code keyValueFuncs} entry reaching here is guaranteed a non-runtime-constant
+     * (see {@code resolveDimensionCellPruneSet}'s doc) -- in practice always a {@code StrConstant} (or
+     * similarly inert constant), since {@code keyValueFuncs} only ever holds symbol-column equality
+     * values. Confirmed by reading {@code InSymbolFunctionFactory.newInstance}: for each constant value
+     * arg it reads the string once ({@code getStrA} -&gt; {@code Chars.toString}) into an internal {@code
+     * CharSequenceHashSet} and does NOT retain the {@link Function} instance itself -- only a genuine
+     * bind-variable/runtime-constant value (impossible here, {@code resolveDimensionCellPruneSet} already
+     * declined those) would be retained, into {@code deferredValues}, freed by the returned function's
+     * own {@code close()}. So the returned filter's {@code close()} (mirrors {@code UnaryFunction}'s
+     * default: frees {@code arg} only, plus the always-null {@code deferredValues} here) never touches
+     * {@code keyValueFuncs}' Function objects -- exactly like the pre-existing IDENTITY multi-cell route
+     * (Task #26), which also never frees them once it bypasses the row-cursor family: safe because a
+     * constant with no native resources is harmless whether closed zero, one, or (were it ever aliased)
+     * two times. The one thing this method DOES own outright is the freshly-built {@code SymbolColumn}
+     * (arg[0]): normally consumed into the returned function's {@code arg} field, but freed here directly
+     * if {@code newInstance} throws before reaching that assignment (its type-validation loop over the
+     * value args runs BEFORE it reads arg[0], so a throw there never transfers the SymbolColumn's
+     * ownership).
+     */
+    private Function buildDimensionResidualFilter(
+            int keyColumnIndex,
+            ObjList<Function> keyValueFuncs,
+            RecordMetadata queryMeta,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final SymbolColumn keyColumnArg = new SymbolColumn(keyColumnIndex, queryMeta.isSymbolTableStatic(keyColumnIndex));
+        final ObjList<Function> args = new ObjList<>(keyValueFuncs.size() + 1);
+        final IntList argPositions = new IntList(keyValueFuncs.size() + 1);
+        args.add(keyColumnArg);
+        argPositions.add(0);
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            args.add(keyValueFuncs.getQuick(i));
+            argPositions.add(0);
+        }
+        try {
+            return new InSymbolFunctionFactory().newInstance(0, args, argPositions, configuration, executionContext);
+        } catch (Throwable e) {
+            Misc.free(keyColumnArg);
+            throw e;
+        }
     }
 
     private RecordCursorFactory generateTableQuery0(
@@ -11780,6 +12126,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return new EmptyTableRecordCursorFactory(queryMeta);
             }
 
+            // Task 6b fix (composite LATEST ON + residual WHERE): for a composite table the compiled
+            // residual filter is carried here to be pushed INTO the merged per-key scan below, rather
+            // than freed and re-applied by the OUTER generateFilter AFTER LATEST BY (see the composite
+            // scan branch). Stays null for plain tables (byte-identical: never read on a plain path) and
+            // for composite queries with no residual filter; freed by this method's catch on any throw
+            // between here and the point ownership transfers to the FilteredRecordCursorFactory.
+            Function compositeLatestByFilter = null;
+            // Task #28: carries a reconstructed `col IN (<original values>)` residual filter for a
+            // successfully cell-pruned HASH/TRUNCATE dimension predicate that needs one (see
+            // DimensionCellPrune#needsResidual / buildDimensionResidualFilter), built once the
+            // dimension-prune decision below is known and consumed at the merge-convergence site --
+            // wrapped around the scan ahead of any LATEST BY, mirroring compositeLatestByFilter's own
+            // hand-off just below. Stays null for IDENTITY prunes (no residual needed), non-composite
+            // queries, and every shape that never reaches the merge convergence at all (e.g. a
+            // single-cell HASH/TRUNCATE equality without a latest-by, still routed through the unchanged
+            // row-cursor family); freed by this method's catch on any throw between here and the point
+            // ownership transfers to the FilteredRecordCursorFactory.
+            Function compositeDimensionResidualFilter = null;
             if (latestByColumnCount > 0) {
                 Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                 if (filter != null && filter.isConstant() && !filter.getBool(null)) {
@@ -11794,24 +12158,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return new EmptyTableRecordCursorFactory(queryMeta);
                 }
 
-                // a sub-query present in the filter may have used the latest by
-                // column index lists, so we need to regenerate them
-                prepareLatestByColumnIndexes(latestBy, queryMeta);
+                // Task 6b: generateLatestByTableQuery's entire cursor family -- indexed
+                // (LatestByValueRecordCursor, LatestByValuesIndexedFilteredRecordCursor, ...) AND
+                // non-indexed alike (LatestByValueListRecordCursor.find*, LatestByAllFilteredRecordCursor)
+                // -- walks PageFrameCursor frames directly with a backward "first-seen-per-key-wins"
+                // trick that assumes one physical partition per day; none of them consult 6a's
+                // CompositeMergePartitionRecordCursor, so a composite table's cell-concatenated frame
+                // order (cell1-then-cell0 within a day) can make the wrong row "first seen" for a key
+                // that spans cells. Toggling the indexed-vs-general choice inside that method does not
+                // help -- every branch there is equally cell-blind. Instead, for a composite table,
+                // decline generateLatestByTableQuery ENTIRELY and fall through to the ordinary
+                // interval/full scan construction below, which 6a already routes through the cross-cell
+                // merge; wrapCompositeLatestBy (see its doc) then applies LATEST BY directly over that
+                // merged scan at this method's own final return points. (An EARLIER version of this fix
+                // instead left model.getLatestBy() populated for the generic post-scan generateLatestBy()
+                // pipeline step to consume -- that step asserts model.getNestedModel() != null, which
+                // does not hold for this base-table model, so it trips the assert instead of applying
+                // LATEST BY; seen empirically via CompositeReadShapesTest before switching to
+                // wrapCompositeLatestBy.) A WHERE predicate on the latest-by column itself
+                // (intrinsicModel.keyColumn != null) falls through further, to that guard's own
+                // composite handling below.
+                if (!reader.getMetadata().getPartitionSpec().isComposite()) {
+                    // a sub-query present in the filter may have used the latest by
+                    // column index lists, so we need to regenerate them
+                    prepareLatestByColumnIndexes(latestBy, queryMeta);
 
-                return generateLatestByTableQuery(
-                        model,
-                        reader,
-                        queryMeta,
-                        tableToken,
-                        intrinsicModel,
-                        filter,
-                        executionContext,
-                        metadata.getTimestampIndex(),
-                        columnIndexes,
-                        columnSizeShifts,
-                        prefixes,
-                        hasInterval
-                );
+                    return generateLatestByTableQuery(
+                            model,
+                            reader,
+                            queryMeta,
+                            tableToken,
+                            intrinsicModel,
+                            filter,
+                            executionContext,
+                            metadata.getTimestampIndex(),
+                            columnIndexes,
+                            columnSizeShifts,
+                            prefixes,
+                            hasInterval
+                    );
+                }
+                // Composite: do NOT free-and-recompile. Carry the already-compiled residual filter to
+                // wrap the merged scan below as latestBy(filter(scan)); the OUTER generateFilter is then
+                // suppressed for that case so the predicate is not re-applied AFTER LATEST BY (which
+                // silently drops a key whose true-latest row fails it). May be null (no residual filter).
+                compositeLatestByFilter = filter;
             }
 
             // below code block generates index-based filter
@@ -11861,261 +12252,258 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     final int nKeyValues = intrinsicModel.keyValueFuncs.size();
                     final int nKeyExcludedValues = intrinsicModel.keyExcludedValueFuncs.size();
 
-                    if (intrinsicModel.keySubQuery != null) {
-                        RecordCursorFactory rcf = null;
-                        final Record.CharSequenceFunction func;
-                        Function filter;
-                        try {
-                            rcf = generate(intrinsicModel.keySubQuery, executionContext);
-                            func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
-                            filter = compileFilter(intrinsicModel, queryMeta, executionContext);
-                        } catch (Throwable th) {
-                            Misc.free(rcf);
-                            throw th;
-                        }
-
-                        if (filter != null && filter.isConstant() && !filter.getBool(null)) {
-                            Misc.free(dfcFactory);
-                            return new EmptyTableRecordCursorFactory(queryMeta);
-                        }
-                        return new FilterOnSubQueryRecordCursorFactory(
-                                configuration,
-                                queryMeta,
-                                dfcFactory,
-                                rcf,
-                                keyColumnIndex,
-                                filter,
-                                func,
-                                columnIndexes,
-                                columnSizeShifts
-                        );
-                    }
-                    assert nKeyValues > 0 || nKeyExcludedValues > 0;
-
-                    boolean orderByKeyColumn = false;
-                    int indexDirection = IndexReader.DIR_FORWARD;
-                    // Skip the order-by-key-column shortcut when an outer time-series join
-                    // needs the master in timestamp order. Honoring the order-by advice would
-                    // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
-                    // /LT/WINDOW merge that assumes ts order.
-                    if (intervalHitsOnlyOnePartition && !executionContext.isTimestampRequired()) {
-                        final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
-                        final int orderByAdviceSize = orderByAdvice.size();
-                        if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
-                            guardAgainstDotsInOrderByAdvice(model);
-                            // todo: when order by coincides with keyColumn and there is index we can incorporate
-                            //    ordering in the code that returns rows from index rather than having an
-                            //    "overhead" order by implementation, which would be trying to oder already ordered symbols
-                            if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
-                                queryMeta.setTimestampIndex(-1);
-                                if (orderByAdviceSize == 1) {
-                                    orderByKeyColumn = true;
-                                } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
-                                    orderByKeyColumn = true;
-                                    if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                        indexDirection = IndexReader.DIR_BACKWARD;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    boolean orderByTimestamp = false;
-                    // we can use skip sorting by timestamp if we:
-                    // - query index with a single value or
-                    // - query index with multiple values but use table order with forward scan (heap row cursor factory doesn't support backward scan)
-                    // it doesn't matter if we hit one or more partitions
-                    if (!orderByKeyColumn && isOrderByDesignatedTimestampOnly(model)) {
-                        int orderByDirection = getOrderByDirectionOrDefault(model, 0);
-                        if (nKeyValues == 1 || (nKeyValues > 1 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING)) {
-                            orderByTimestamp = true;
-
-                            if (orderByDirection == IQueryModel.ORDER_DIRECTION_DESCENDING) {
-                                indexDirection = IndexReader.DIR_BACKWARD;
-                            }
-                        } else if (nKeyExcludedValues > 0 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
-                            orderByTimestamp = true;
+                    final boolean compositeTable = reader.getMetadata().getPartitionSpec().isComposite();
+                    // Task 5b: WHERE <partitioning dimension> = 'v' / IN ('v1','v2') (equality/IN only --
+                    // nKeyExcludedValues == 0 -- Scope decision 1/2) is the feature's PRIMARY use case and
+                    // must be resolved to cell pruning BEFORE Task 6b's loud gate below fires, not after --
+                    // this is a pure ADDITIVE narrowing of dfcFactory's own cells, so the unchanged code
+                    // below (single-value/IN-list/covering-index/sub-query) still selects exactly the same
+                    // rows, just out of fewer cells. resolveDimensionCellPruneSet returns null (do not
+                    // prune) for every case it cannot safely resolve -- an ordinary (non-dimension) indexed
+                    // symbol, an EXPRESSION dimension, a runtime-constant (bind variable) value, or an
+                    // IN-list that resolves to 2+ distinct cells (see that method's own doc: the row-cursor
+                    // family below is not audited for composite cross-cell ORDER, only for correct rows) --
+                    // and those cases fall through to 6b's gate below completely UNCHANGED.
+                    boolean dimensionPruned = false;
+                    // Task #26 (extended by Task #28): true only when the prune below succeeded with an
+                    // allowed-cellKey set of size > 1. Originally (5b/#26) resolveDimensionCellPruneSet
+                    // only ever returned a size > 1 set for an IDENTITY dimension; Task #28 lifts that so
+                    // HASH/TRUNCATE can resolve a genuine multi-bucket/prefix set too (paired with
+                    // dimensionPruneNeedsResidual below). Either way, this steers control away from the
+                    // row-cursor family below (see its use just after the 6b gate) and towards the Task 6a
+                    // merge convergence.
+                    boolean dimensionPrunedMultiCell = false;
+                    // Task #28: true when the prune below succeeded AND the matched dimension is NOT
+                    // IDENTITY (DimensionCellPrune#needsResidual -- HASH/TRUNCATE's bucket/prefix is not
+                    // bijective, so the merge convergence this routes to needs a reconstructed residual
+                    // filter; see buildDimensionResidualFilter). Independent of dimensionPrunedMultiCell's
+                    // cell count -- consumed together with dimensionPrunedMultiCell/latestByDimensionPrune
+                    // just below to decide whether a residual is actually built (only when the prune is
+                    // ALSO routed through the merge convergence; a single-cell HASH/TRUNCATE equality
+                    // without a latest-by stays on the pre-#28 route and never needs one).
+                    boolean dimensionPruneNeedsResidual = false;
+                    // Whole-branch review CRITICAL (Task 6b) / Task #27 follow-up: a LATEST BY present
+                    // (latestByColumnCount > 0) reaches keyColumn != null only when the LATEST ON
+                    // PARTITION BY column IS this indexed dimension and the WHERE is an equality/IN on it.
+                    // Task 6b found that handing such a prune to the single-value/IN-list/covering
+                    // row-cursor family below is unsafe: that family NEVER applies LATEST BY (that lives in
+                    // generateLatestByTableQuery, which composite deliberately declines at the top of this
+                    // method); an un-applied latest-by then reaches the generic post-scan
+                    // generateLatestBy(), whose `assert nested != null` trips -- an AssertionError under
+                    // -ea, a raw NPE at nested.getOrderHash() in production (assertions off), i.e. a hard
+                    // failure / dropped latest-by, never a correct answer. 6b's original fix required
+                    // latestByColumnCount == 0 here, unconditionally declining every latest-by prune (loud
+                    // gate below). Task #27 replaced that blanket decline for IDENTITY dimensions: a
+                    // successful IDENTITY prune -- bijective, so ROW-EXACT with no residual filter needed --
+                    // routes to the SAME merge convergence Task 6a/#26 already use (dimensionPrunedMultiCell
+                    // below), which DOES apply LATEST BY via wrapCompositeLatestBy; see latestByDimensionPrune
+                    // just below. Task #27 still declined HASH/TRUNCATE outright whenever latest-by was
+                    // present (regardless of cell count), because that same merge convergence had no
+                    // residual filter to exclude a colliding OTHER raw value sharing the resolved cell.
+                    // Task #28 removes that remaining decline: resolveDimensionCellPruneSet no longer
+                    // special-cases latest-by at all, and dimensionPruneNeedsResidual (above) instead
+                    // signals the caller to build the missing residual, so HASH/TRUNCATE now takes the
+                    // identical route IDENTITY already did. The gate-throw path (still reached for any
+                    // decline -- e.g. a bind-variable value, an EXPRESSION dimension, or a non-dimension
+                    // keyColumn) frees the carried compositeLatestByFilter/compositeDimensionResidualFilter
+                    // via this method's catch (see there). NOTE: NO_INDEX(<dim>) does NOT escape this shape
+                    // -- when the latest-by key IS the dimension it is indexed regardless of the WHERE hint,
+                    // so keyColumn stays set. The correct route the gate does NOT block (independent of
+                    // this task) is LATEST ON over a NON-dimension column: there the dimension WHERE stays
+                    // a residual filter over the 6a-merged scan and LATEST BY applies as
+                    // latestBy(filter(scan)). A prune WITHOUT latest-on is unaffected (5b's win).
+                    if (compositeTable && nKeyValues > 0 && nKeyExcludedValues == 0) {
+                        DimensionCellPrune prune = resolveDimensionCellPruneSet(
+                                reader, metadata, intrinsicModel.keyColumn, intrinsicModel.keyValueFuncs);
+                        if (prune != null) {
+                            dfcFactory.setAllowedCellKeys(prune.cellKeys);
+                            dimensionPruned = true;
+                            dimensionPrunedMultiCell = prune.cellKeys.size() > 1;
+                            dimensionPruneNeedsResidual = prune.needsResidual;
                         }
                     }
+                    // Task #27 (broadened by Task #28): a successful prune (dimensionPruned) that ALSO has
+                    // a LATEST BY present -- for ANY dimension kind now, IDENTITY or HASH/TRUNCATE alike --
+                    // must route to the merge convergence (Task 6a's CompositePageFrameRecordCursorFactory
+                    // + wrapCompositeLatestBy) exactly like dimensionPrunedMultiCell already does, rather
+                    // than fall into the row-cursor family below (which never applies LATEST BY).
+                    // Deliberately covers BOTH single- and multi-cell prunes -- dimensionPrunedMultiCell
+                    // alone is not enough here, since a single-cell equality (allowedCellKeys.size() == 1,
+                    // e.g. a single HASH bucket) also needs this routing whenever latest-by is present; see
+                    // its use just below.
+                    boolean latestByDimensionPrune = dimensionPruned && latestByColumnCount > 0;
+                    // Task #28: build the reconstructed residual HERE, synchronously, while keyColumnIndex
+                    // and intrinsicModel.keyValueFuncs are in scope -- see buildDimensionResidualFilter's
+                    // own ownership doc. Guarded on the EXACT predicate the merge-convergence call site
+                    // below uses to decide whether to route through it at all (dimensionPrunedMultiCell ||
+                    // latestByDimensionPrune): a single-cell HASH/TRUNCATE equality without a latest-by
+                    // stays on the pre-#28 row-cursor route below instead, which never consumes this filter
+                    // -- building it unconditionally on dimensionPruneNeedsResidual alone would construct
+                    // (and then never free) an orphaned Function for that shape. Carried in the outer
+                    // compositeDimensionResidualFilter (declared near compositeLatestByFilter above) so it
+                    // survives to the merge-convergence site below and is freed by this method's catch on
+                    // any throw in between.
+                    if (dimensionPruneNeedsResidual && (dimensionPrunedMultiCell || latestByDimensionPrune)) {
+                        compositeDimensionResidualFilter = buildDimensionResidualFilter(
+                                keyColumnIndex, intrinsicModel.keyValueFuncs, queryMeta, executionContext);
+                    }
 
-                    if (nKeyExcludedValues == 0) {
-                        Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
-                        if (filter != null && filter.isConstant()) {
+                    // COMPOSITE + an indexed WHERE. Every row-cursor factory this family can return
+                    // (single-value, IN-list, NOT-IN, key sub-query, and the covering-index shortcut)
+                    // is a framingSupported=false PageFrameRecordCursorFactory driven by a per-partition
+                    // index RowCursorFactory. Frames arrive (day ASC, cellKey ASC), so the walk emits,
+                    // per day, cell0 ++ cell1 ++ ... -- CELL-MAJOR, not timestamp order.
+                    //
+                    // MEASURED 2026-08-25 on a table where one sym value spans two cells at interleaved
+                    // timestamps. Plan: DeferredSingleSymbolFilterPageFrame / Index forward scan.
+                    //     plain      01:00 E0, 02:00 E1, 03:00 E0, 04:00 E1
+                    //     composite  01:00 E0, 03:00 E0, 02:00 E1, 04:00 E1
+                    // Silently wrong ORDER, not wrong rows -- which is why two earlier probe shapes
+                    // passed: seeding one sym value per cell cannot expose it, and an outer ORDER BY
+                    // sorts it away.
+                    //
+                    // This was REFUSED until 2026-08-26. It is now served by sorting the scan's output
+                    // back into designated-timestamp order (wrapCompositeIndexedScan), which is correct
+                    // by construction. Two alternatives were rejected:
+                    //
+                    //  - Put 6a's CompositeMergePartitionRecordCursor under this family. It walks every
+                    //    row of a pulled frame unconditionally -- it has no hook for a RowCursorFactory's
+                    //    row-level index selection -- so swapping it in would silently DROP the key
+                    //    predicate, returning rows for symbol values outside the WHERE list. Wrong ROWS
+                    //    is worse than wrong order. Adding that hook would remove the sort; nothing
+                    //    depends on it yet.
+                    //  - Fold the key predicate back into a residual filter and use the plain merged
+                    //    scan (mirroring the NOT-IN-too-many-values restore below). Needs keyValueFuncs
+                    //    reconstructed safely -- either re-quoting values into a fresh AST node (escaping
+                    //    risk: the round trip through GenericLexer.unquote() is unverified for values
+                    //    containing quotes) or hand-building a Function tree outside
+                    //    FunctionParser.parseFunction (ownership risk: an arbitrary keyColumn's
+                    //    keyValueFuncs can hold a runtime-constant/bind-variable entry, whose
+                    //    constant-vs-deferred split changes which entries a hand-built
+                    //    InSymbolFunctionFactory.Func retains vs discards, so a generic caller cannot
+                    //    free the leftovers without risking a leak or a double-free).
+                    //
+                    // Task 5b: a successfully cell-pruned DIMENSION predicate (dimensionPruned) needs no
+                    // sort -- pruning selects whole cells and leaves the merged scan's order intact --
+                    // so it is excluded below. Task #28 extends that to HASH/TRUNCATE dimensions via
+                    // buildDimensionResidualFilter, whose ownership doc explains why the reconstruction
+                    // risk above cannot arise for it: resolveDimensionCellPruneSet declines every
+                    // runtime-constant value before a residual is ever built.
+                    //
+                    // A NO_INDEX hint still bypasses this path entirely: it stops WhereClauseParser from
+                    // setting intrinsicModel.keyColumn, leaving the predicate a residual filter over the
+                    // merged scan. That is now an optimisation choice rather than a workaround.
+                    final boolean compositeIndexedNeedsSort = compositeTable && !dimensionPruned;
+
+                    // Task #26 (broadened by Task #28): a successfully-pruned multi-cell set
+                    // (dimensionPrunedMultiCell -- IDENTITY, or now HASH/TRUNCATE paired with
+                    // dimensionPruneNeedsResidual/compositeDimensionResidualFilter above) skips this
+                    // ENTIRE row-cursor-family block (key sub-query / single-value / IN-list via
+                    // FilterOnValuesRecordCursorFactory / NOT-IN) -- none of it is needed: for IDENTITY the
+                    // cell prune above is already ROW-EXACT (see resolveDimensionCellPruneSet's doc), and
+                    // for HASH/TRUNCATE the reconstructed residual (applied at the merge-convergence call
+                    // site) now does the same exact-value job this row-cursor family would have; either
+                    // way FilterOnValues itself is cell-order-UNSAFE for a genuine multi-cell match (this
+                    // method's own doc). intrinsicModel.filter (any OTHER, non-key residual predicate, e.g.
+                    // an AND'd `px > 2.05`) is left completely untouched here -- mirrors the
+                    // NOT-IN-too-many-values restore idiom below (fall through without returning), so
+                    // control reaches the general Task 6a merged-scan routing at the bottom of this method,
+                    // where model.setWhereClause(intrinsicModel.filter) applies it over the already-pruned
+                    // dfcFactory.
+                    // Task #27 (broadened by Task #28): latestByDimensionPrune (a successful prune WITH a
+                    // latest-by present, single- or multi-cell, IDENTITY or HASH/TRUNCATE alike -- see its
+                    // own doc just above) skips this block for the same reason plus one more: even the
+                    // single-cell case must not reach this family, because none of its factories apply
+                    // LATEST BY (see the "Whole-branch review CRITICAL" doc above) -- only the Task 6a
+                    // convergence below does, via wrapCompositeLatestBy.
+                    if (!dimensionPrunedMultiCell && !latestByDimensionPrune) {
+                        if (intrinsicModel.keySubQuery != null) {
+                            RecordCursorFactory rcf = null;
+                            final Record.CharSequenceFunction func;
+                            Function filter;
                             try {
-                                if (!filter.getBool(null)) {
-                                    Misc.free(dfcFactory);
-                                    return new EmptyTableRecordCursorFactory(queryMeta);
-                                }
-                            } finally {
-                                filter = Misc.free(filter);
+                                rcf = generate(intrinsicModel.keySubQuery, executionContext);
+                                func = validateSubQueryColumnAndGetGetter(intrinsicModel, rcf.getMetadata());
+                                filter = compileFilter(intrinsicModel, queryMeta, executionContext);
+                            } catch (Throwable th) {
+                                Misc.free(rcf);
+                                throw th;
                             }
-                        }
 
-                        if (nKeyValues == 1) {
-                            final RowCursorFactory rcf;
-                            Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
-                            try {
-                                final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex));
-                                final int symbolKey = symbolFunc.isRuntimeConstant()
-                                        ? SymbolTable.VALUE_NOT_FOUND
-                                        : symbolMapReader.keyOf(symbolFunc.getStrA(null));
-
-                                if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
-                                    int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
-                                    int[] coveringMapping = buildCoveringIndexMapping(
-                                            reader, keyReaderColIdx, columnIndexes, queryMeta
-                                    );
-                                    if (coveringMapping != null) {
-                                        CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
-                                                queryMeta,
-                                                dfcFactory,
-                                                keyReaderColIdx,
-                                                symbolKey,
-                                                symbolFunc,
-                                                columnIndexes,
-                                                coveringMapping,
-                                                null,
-                                                null,
-                                                false,
-                                                null,
-                                                null
-                                        );
-                                        // coveringFactory now owns dfcFactory and symbolFunc; clear our
-                                        // references so the outer catch and finally do not double-free them.
-                                        dfcFactory = null;
-                                        symbolFunc = null;
-                                        if (filter != null) {
-                                            return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
-                                        }
-                                        return coveringFactory;
-                                    }
-                                }
-
-                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                    if (filter == null) {
-                                        rcf = new DeferredSymbolIndexRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolFunc,
-                                                indexDirection
-                                        );
-                                    } else {
-                                        rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolFunc,
-                                                filter,
-                                                indexDirection
-                                        );
-                                    }
-                                } else {
-                                    if (filter == null) {
-                                        rcf = new SymbolIndexRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolKey,
-                                                indexDirection,
-                                                null
-                                        );
-                                    } else {
-                                        rcf = new SymbolIndexFilteredRowCursorFactory(
-                                                keyColumnIndex,
-                                                symbolKey,
-                                                filter,
-                                                indexDirection,
-                                                null
-                                        );
-                                    }
-                                }
-
-                                if (filter == null) {
-                                    // This special case factory can later be disassembled to framing and index
-                                    // cursors in SAMPLE BY processing
-                                    RecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
-                                            configuration,
-                                            keyColumnIndex,
-                                            symbolFunc,
-                                            rcf,
-                                            queryMeta,
-                                            dfcFactory,
-                                            orderByKeyColumn || orderByTimestamp,
-                                            columnIndexes,
-                                            columnSizeShifts,
-                                            supportsRandomAccess
-                                    );
-                                    symbolFunc = null;
-                                    return result;
-                                }
-                                if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                                    symbolFunc = null;
-                                }
-                                return new PageFrameRecordCursorFactory(
-                                        configuration,
-                                        queryMeta,
-                                        dfcFactory,
-                                        rcf,
-                                        orderByKeyColumn || orderByTimestamp,
-                                        filter,
-                                        false,
-                                        columnIndexes,
-                                        columnSizeShifts,
-                                        supportsRandomAccess,
-                                        false
-                                );
-                            } finally {
-                                Misc.free(symbolFunc);
+                            if (filter != null && filter.isConstant() && !filter.getBool(null)) {
+                                Misc.free(dfcFactory);
+                                return new EmptyTableRecordCursorFactory(queryMeta);
                             }
-                        }
-
-                        // Check if covering index can serve IN-list queries
-                        if (!orderByKeyColumn && !SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
-                            int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
-                            int[] coveringMapping = buildCoveringIndexMapping(
-                                    reader, keyReaderColIdx, columnIndexes, queryMeta
+                            final RecordCursorFactory subQueryScan = new FilterOnSubQueryRecordCursorFactory(
+                                    configuration,
+                                    queryMeta,
+                                    dfcFactory,
+                                    rcf,
+                                    keyColumnIndex,
+                                    filter,
+                                    func,
+                                    columnIndexes,
+                                    columnSizeShifts
                             );
-                            if (coveringMapping != null) {
-                                CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
-                                        queryMeta,
-                                        dfcFactory,
-                                        keyReaderColIdx,
-                                        SymbolTable.VALUE_NOT_FOUND,
-                                        null,
-                                        columnIndexes,
-                                        coveringMapping,
-                                        intrinsicModel.keyValueFuncs,
-                                        reader,
-                                        false,
-                                        null,
-                                        null
-                                );
-                                // coveringFactory now owns dfcFactory; clear our reference so the
-                                // outer catch does not double-free it.
-                                dfcFactory = null;
-                                if (filter != null) {
-                                    return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
+                            return compositeIndexedNeedsSort
+                                    ? wrapCompositeIndexedScan(subQueryScan, queryMeta) : subQueryScan;
+                        }
+                        assert nKeyValues > 0 || nKeyExcludedValues > 0;
+
+                        boolean orderByKeyColumn = false;
+                        int indexDirection = IndexReader.DIR_FORWARD;
+                        // Skip the order-by-key-column shortcut when an outer time-series join
+                        // needs the master in timestamp order. Honoring the order-by advice would
+                        // strip the timestamp index and let a sym-ordered cursor feed a SPLICE/ASOF
+                        // /LT/WINDOW merge that assumes ts order.
+                        // Both order-ELISION shortcuts below are switched off for a composite table.
+                        // Each one tells a downstream factory "the requested order is already satisfied,
+                        // skip the sort" -- a promise a cell-sequential page-frame walk cannot keep. With
+                        // them off, the scan is wrapped in an ascending timestamp sort (see
+                        // wrapCompositeIndexedScan) so it genuinely delivers what its metadata advertises,
+                        // and any ORDER BY -- including DESC, and including `ORDER BY sym, ts` -- is sorted
+                        // by the ordinary machinery instead of being elided. That also keeps indexDirection
+                        // at DIR_FORWARD, so no backward index scan is requested for composite.
+                        if (intervalHitsOnlyOnePartition && !compositeIndexedNeedsSort && !executionContext.isTimestampRequired()) {
+                            final ObjList<ExpressionNode> orderByAdvice = model.getOrderByAdvice();
+                            final int orderByAdviceSize = orderByAdvice.size();
+                            if (orderByAdviceSize > 0 && orderByAdviceSize < 3) {
+                                guardAgainstDotsInOrderByAdvice(model);
+                                // todo: when order by coincides with keyColumn and there is index we can incorporate
+                                //    ordering in the code that returns rows from index rather than having an
+                                //    "overhead" order by implementation, which would be trying to oder already ordered symbols
+                                if (Chars.equals(orderByAdvice.getQuick(0).token, intrinsicModel.keyColumn)) {
+                                    queryMeta.setTimestampIndex(-1);
+                                    if (orderByAdviceSize == 1) {
+                                        orderByKeyColumn = true;
+                                    } else if (Chars.equals(orderByAdvice.getQuick(1).token, model.getTimestamp().token)) {
+                                        orderByKeyColumn = true;
+                                        if (getOrderByDirectionOrDefault(model, 1) == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                                            indexDirection = IndexReader.DIR_BACKWARD;
+                                        }
+                                    }
                                 }
-                                return coveringFactory;
+                            }
+                        }
+                        boolean orderByTimestamp = false;
+                        // we can use skip sorting by timestamp if we:
+                        // - query index with a single value or
+                        // - query index with multiple values but use table order with forward scan (heap row cursor factory doesn't support backward scan)
+                        // it doesn't matter if we hit one or more partitions
+                        if (!orderByKeyColumn && !compositeIndexedNeedsSort && isOrderByDesignatedTimestampOnly(model)) {
+                            int orderByDirection = getOrderByDirectionOrDefault(model, 0);
+                            if (nKeyValues == 1 || (nKeyValues > 1 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING)) {
+                                orderByTimestamp = true;
+
+                                if (orderByDirection == IQueryModel.ORDER_DIRECTION_DESCENDING) {
+                                    indexDirection = IndexReader.DIR_BACKWARD;
+                                }
+                            } else if (nKeyExcludedValues > 0 && orderByDirection == IQueryModel.ORDER_DIRECTION_ASCENDING) {
+                                orderByTimestamp = true;
                             }
                         }
 
-                        if (orderByKeyColumn) {
-                            queryMeta.setTimestampIndex(-1);
-                        }
-
-                        return new FilterOnValuesRecordCursorFactory(
-                                configuration,
-                                queryMeta,
-                                dfcFactory,
-                                intrinsicModel.keyValueFuncs,
-                                keyColumnIndex,
-                                reader,
-                                filter,
-                                model.getOrderByAdviceMnemonic(),
-                                orderByKeyColumn,
-                                orderByTimestamp,
-                                getOrderByDirectionOrDefault(model, 0),
-                                indexDirection,
-                                columnIndexes,
-                                columnSizeShifts
-                        );
-                    } else if (nKeyExcludedValues > 0) {
-                        if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
+                        if (nKeyExcludedValues == 0) {
                             Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
                             if (filter != null && filter.isConstant()) {
                                 try {
@@ -12128,12 +12516,172 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
                             }
 
-                            return new FilterOnExcludedValuesRecordCursorFactory(
+                            if (nKeyValues == 1) {
+                                final RowCursorFactory rcf;
+                                Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
+                                try {
+                                    final SymbolMapReader symbolMapReader = reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex));
+                                    final int symbolKey = symbolFunc.isRuntimeConstant()
+                                            ? SymbolTable.VALUE_NOT_FOUND
+                                            : symbolMapReader.keyOf(symbolFunc.getStrA(null));
+
+                                    if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
+                                        int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
+                                        int[] coveringMapping = buildCoveringIndexMapping(
+                                                reader, keyReaderColIdx, columnIndexes, queryMeta
+                                        );
+                                        if (coveringMapping != null) {
+                                            CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                                    queryMeta,
+                                                    dfcFactory,
+                                                    keyReaderColIdx,
+                                                    symbolKey,
+                                                    symbolFunc,
+                                                    columnIndexes,
+                                                    coveringMapping,
+                                                    null,
+                                                    null,
+                                                    false,
+                                                    null,
+                                                    // patternKeys: master's adaptive symbol-pattern path
+                                                    // drives the multi-key merge this way instead; this
+                                                    // call site uses a single symbol key, so null.
+                                                    null
+                                            );
+                                            // coveringFactory now owns dfcFactory and symbolFunc; clear our
+                                            // references so the outer catch and finally do not double-free them.
+                                            dfcFactory = null;
+                                            symbolFunc = null;
+                                            final RecordCursorFactory singleCoveringScan = filter != null
+                                                    ? wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext)
+                                                    : coveringFactory;
+                                            return compositeIndexedNeedsSort
+                                                    ? wrapCompositeIndexedScan(singleCoveringScan, queryMeta)
+                                                    : singleCoveringScan;
+                                        }
+                                    }
+
+                                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                        if (filter == null) {
+                                            rcf = new DeferredSymbolIndexRowCursorFactory(
+                                                    keyColumnIndex,
+                                                    symbolFunc,
+                                                    indexDirection
+                                            );
+                                        } else {
+                                            rcf = new DeferredSymbolIndexFilteredRowCursorFactory(
+                                                    keyColumnIndex,
+                                                    symbolFunc,
+                                                    filter,
+                                                    indexDirection
+                                            );
+                                        }
+                                    } else {
+                                        if (filter == null) {
+                                            rcf = new SymbolIndexRowCursorFactory(
+                                                    keyColumnIndex,
+                                                    symbolKey,
+                                                    indexDirection,
+                                                    null
+                                            );
+                                        } else {
+                                            rcf = new SymbolIndexFilteredRowCursorFactory(
+                                                    keyColumnIndex,
+                                                    symbolKey,
+                                                    filter,
+                                                    indexDirection,
+                                                    null
+                                            );
+                                        }
+                                    }
+
+                                    if (filter == null) {
+                                        // This special case factory can later be disassembled to framing and index
+                                        // cursors in SAMPLE BY processing
+                                        RecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
+                                                configuration,
+                                                keyColumnIndex,
+                                                symbolFunc,
+                                                rcf,
+                                                queryMeta,
+                                                dfcFactory,
+                                                orderByKeyColumn || orderByTimestamp,
+                                                columnIndexes,
+                                                columnSizeShifts,
+                                                supportsRandomAccess
+                                        );
+                                        symbolFunc = null;
+                                        return compositeIndexedNeedsSort
+                                                ? wrapCompositeIndexedScan(result, queryMeta) : result;
+                                    }
+                                    if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
+                                        symbolFunc = null;
+                                    }
+                                    final RecordCursorFactory indexedScan = new PageFrameRecordCursorFactory(
+                                            configuration,
+                                            queryMeta,
+                                            dfcFactory,
+                                            rcf,
+                                            orderByKeyColumn || orderByTimestamp,
+                                            filter,
+                                            false,
+                                            columnIndexes,
+                                            columnSizeShifts,
+                                            supportsRandomAccess,
+                                            false
+                                    );
+                                    return compositeIndexedNeedsSort
+                                            ? wrapCompositeIndexedScan(indexedScan, queryMeta) : indexedScan;
+                                } finally {
+                                    Misc.free(symbolFunc);
+                                }
+                            }
+
+                            // Check if covering index can serve IN-list queries
+                            if (!orderByKeyColumn && !SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
+                                int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
+                                int[] coveringMapping = buildCoveringIndexMapping(
+                                        reader, keyReaderColIdx, columnIndexes, queryMeta
+                                );
+                                if (coveringMapping != null) {
+                                    CoveringIndexRecordCursorFactory coveringFactory = new CoveringIndexRecordCursorFactory(
+                                            queryMeta,
+                                            dfcFactory,
+                                            keyReaderColIdx,
+                                            SymbolTable.VALUE_NOT_FOUND,
+                                            null,
+                                            columnIndexes,
+                                            coveringMapping,
+                                            intrinsicModel.keyValueFuncs,
+                                            reader,
+                                            false,
+                                            null,
+                                            // patternKeys: mutually exclusive with keyValueFuncs, which
+                                            // is what drives this IN-list merge.
+                                            null
+                                    );
+                                    // coveringFactory now owns dfcFactory; clear our reference so the
+                                    // outer catch does not double-free it.
+                                    dfcFactory = null;
+                                    final RecordCursorFactory coveringScan = filter != null
+                                            ? wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext)
+                                            : coveringFactory;
+                                    return compositeIndexedNeedsSort
+                                            ? wrapCompositeIndexedScan(coveringScan, queryMeta) : coveringScan;
+                                }
+                            }
+
+                            if (orderByKeyColumn) {
+                                queryMeta.setTimestampIndex(-1);
+                            }
+
+                            final RecordCursorFactory valuesScan = new FilterOnValuesRecordCursorFactory(
                                     configuration,
                                     queryMeta,
                                     dfcFactory,
-                                    intrinsicModel.keyExcludedValueFuncs,
+                                    intrinsicModel.keyValueFuncs,
                                     keyColumnIndex,
+                                    reader,
                                     filter,
                                     model.getOrderByAdviceMnemonic(),
                                     orderByKeyColumn,
@@ -12141,34 +12689,68 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     getOrderByDirectionOrDefault(model, 0),
                                     indexDirection,
                                     columnIndexes,
-                                    columnSizeShifts,
-                                    configuration.getMaxSymbolNotEqualsCount()
+                                    columnSizeShifts
                             );
-                        } else if (intrinsicModel.keyExcludedNodes.size() > 0) {
-                            // restore filter
-                            ExpressionNode root = intrinsicModel.keyExcludedNodes.getQuick(0);
+                            return compositeIndexedNeedsSort
+                                    ? wrapCompositeIndexedScan(valuesScan, queryMeta) : valuesScan;
+                        } else if (nKeyExcludedValues > 0) {
+                            if (reader.getSymbolMapReader(columnIndexes.getQuick(keyColumnIndex)).getSymbolCount() < configuration.getMaxSymbolNotEqualsCount()) {
+                                Function filter = compileFilter(intrinsicModel, queryMeta, executionContext);
+                                if (filter != null && filter.isConstant()) {
+                                    try {
+                                        if (!filter.getBool(null)) {
+                                            Misc.free(dfcFactory);
+                                            return new EmptyTableRecordCursorFactory(queryMeta);
+                                        }
+                                    } finally {
+                                        filter = Misc.free(filter);
+                                    }
+                                }
 
-                            for (int i = 1, n = intrinsicModel.keyExcludedNodes.size(); i < n; i++) {
-                                ExpressionNode expression = intrinsicModel.keyExcludedNodes.getQuick(i);
+                                final RecordCursorFactory excludedScan = new FilterOnExcludedValuesRecordCursorFactory(
+                                        configuration,
+                                        queryMeta,
+                                        dfcFactory,
+                                        intrinsicModel.keyExcludedValueFuncs,
+                                        keyColumnIndex,
+                                        filter,
+                                        model.getOrderByAdviceMnemonic(),
+                                        orderByKeyColumn,
+                                        orderByTimestamp,
+                                        getOrderByDirectionOrDefault(model, 0),
+                                        indexDirection,
+                                        columnIndexes,
+                                        columnSizeShifts,
+                                        configuration.getMaxSymbolNotEqualsCount()
+                                );
+                                return compositeIndexedNeedsSort
+                                        ? wrapCompositeIndexedScan(excludedScan, queryMeta) : excludedScan;
+                            } else if (intrinsicModel.keyExcludedNodes.size() > 0) {
+                                // restore filter
+                                ExpressionNode root = intrinsicModel.keyExcludedNodes.getQuick(0);
 
-                                OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
-                                ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
-                                newRoot.paramCount = 2;
-                                newRoot.lhs = expression;
-                                newRoot.rhs = root;
+                                for (int i = 1, n = intrinsicModel.keyExcludedNodes.size(); i < n; i++) {
+                                    ExpressionNode expression = intrinsicModel.keyExcludedNodes.getQuick(i);
 
-                                root = newRoot;
-                            }
+                                    OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+                                    ExpressionNode newRoot = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
+                                    newRoot.paramCount = 2;
+                                    newRoot.lhs = expression;
+                                    newRoot.rhs = root;
 
-                            if (intrinsicModel.filter == null) {
-                                intrinsicModel.filter = root;
-                            } else {
-                                OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
-                                ExpressionNode filter = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
-                                filter.paramCount = 2;
-                                filter.lhs = intrinsicModel.filter;
-                                filter.rhs = root;
-                                intrinsicModel.filter = filter;
+                                    root = newRoot;
+                                }
+
+                                if (intrinsicModel.filter == null) {
+                                    intrinsicModel.filter = root;
+                                } else {
+                                    OperatorExpression andOp = OperatorExpression.chooseRegistry(configuration.getCairoSqlLegacyOperatorPrecedence()).getOperatorDefinition("and");
+                                    ExpressionNode filter = expressionNodePool.next().of(OPERATION, andOp.operator.token, andOp.precedence, 0);
+                                    filter.paramCount = 2;
+                                    filter.lhs = intrinsicModel.filter;
+                                    filter.rhs = root;
+                                    intrinsicModel.filter = filter;
+                                }
                             }
                         }
                     }
@@ -12211,7 +12793,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                     if (f != null) {
                         dfcFactory = null; // ownership transferred to f
-                        return f;
+                        // Composite: this is an INDEX-driven scan like every other one in this method,
+                        // so it emits page frames in (day ASC, cellKey ASC) -- cell-major -- order while
+                        // its metadata advertises designated-timestamp order. Wrapped here, at the single
+                        // call site, rather than at each return inside tryGenerateSymbolPatternIndex,
+                        // so no future branch added in there can escape the sort.
+                        //
+                        // This path arrived with the master merge that brought the adaptive
+                        // symbol-pattern index (LIKE/ILIKE/regex on an indexed symbol column). It is
+                        // exactly the "new code assuming one partition per day" class this branch's
+                        // merge checklist exists to catch, and it was unguarded.
+                        // Unconditional for a composite table, rather than reusing the
+                        // compositeIndexedNeedsSort flag: that flag is scoped to the
+                        // intrinsicModel.keyColumn block above and is not visible here, and its
+                        // !dimensionPruned half does not apply anyway -- this path's predicate is a
+                        // pattern on an ORDINARY indexed symbol, so nothing has necessarily reduced the
+                        // scan to a single cell. Sorting when it turns out to be unnecessary costs
+                        // time; not sorting when it was returns rows in the wrong order.
+                        return reader.getMetadata().getPartitionSpec().isComposite()
+                                ? wrapCompositeIndexedScan(f, queryMeta) : f;
                     }
                 }
 
@@ -12233,8 +12833,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         assert columnIndex > -1;
 
                         // this is our kind of column — bitmap only (native scanner)
+                        // A COMPOSITE table declines this optimisation rather than refusing the query.
+                        // SortedSymbolIndexRecordCursorFactory walks the column's global bitmap index in
+                        // symbol-key order across every partition slot -- for a composite table that spans
+                        // every sibling cell of a day, and the factory has no cell awareness. It advertises
+                        // an ordering its cell-sequential walk does not deliver, so the requested sort gets
+                        // ELIDED. MEASURED 2026-08-25 on the single-day shape the optimisation requires:
+                        // row COUNT was right (96 == 96), but `order by sym, ts` returned
+                        //     plain      00:30 Y, 01:15 X, 02:00 Y, 02:45 X ...  (ts-interleaved)
+                        //     composite  00:30 Y, 02:00 Y, 03:30 Y, 05:00 Y ...  (cell-major)
+                        //
+                        // Skipping it falls through to the plain merged scan below, where ORDER BY sorts
+                        // normally and correctly. That is strictly better than the refusal this replaces:
+                        // the query now WORKS, just without a shortcut composite never had. Teaching the
+                        // factory about cells would restore the shortcut; nothing depends on it first.
                         if (queryMeta.getColumnIndexType(columnIndex) == IndexType.BITMAP
-                                && !SqlHints.hasNoIndexHint(model)) {
+                                && !SqlHints.hasNoIndexHint(model)
+                                && !reader.getMetadata().getPartitionSpec().isComposite()) {
                             boolean orderByKeyColumn = false;
                             int indexDirection = IndexReader.DIR_FORWARD;
                             if (orderByAdviceSize == 1) {
@@ -12267,7 +12882,84 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final RowCursorFactory rowFactory = new PageFrameRowCursorFactory(model.isForceBackwardScan() ? ORDER_DESC : ORDER_ASC);
 
                 model.setWhereClause(intrinsicModel.filter);
-                return new PageFrameRecordCursorFactory(
+                // Task 6a: route a composite table's WHERE/interval frame scan through the cross-cell merge
+                // as well (see the no-where full-scan site below for the rationale and the timestamp-index
+                // guard). The residual (post-scan) filter is applied by generateFilter around the merged
+                // getCursor(), so ordering is preserved through it.
+                if (reader.getMetadata().getPartitionSpec().isComposite() && queryMeta.getTimestampIndex() != -1) {
+                    RecordCursorFactory compositeScan = new CompositePageFrameRecordCursorFactory(
+                            configuration,
+                            queryMeta,
+                            dfcFactory,
+                            rowFactory,
+                            false,
+                            null,
+                            true,
+                            columnIndexes,
+                            columnSizeShifts,
+                            supportsRandomAccess,
+                            false
+                    );
+                    // Task #28: wrap the merged pruned scan with the reconstructed dimension residual
+                    // filter (HASH/TRUNCATE bucket/prefix disambiguation -- see buildDimensionResidualFilter)
+                    // BEFORE any latest-by wrap below, so LATEST ON composes as
+                    // latestBy(residual(prune(scan))), matching generateLatestByTableQuery's own
+                    // filter-then-latestBy order for a plain table. Mirrors the compositeLatestByFilter
+                    // hand-off just below: FilteredRecordCursorFactory takes ownership of both compositeScan
+                    // and the filter (frees both on close, and we free both here if its own construction
+                    // throws); once it owns them we null the carrier so this method's catch does not
+                    // double-free. When compositeLatestByFilter is ALSO non-null (an extra AND'd residual
+                    // predicate present together with a dimension prune), the SECOND FilteredRecordCursorFactory
+                    // constructed just below auto-detects wrapping another one (see its own constructor) and
+                    // collapses both filters into one ChainedAndFilter over the TRUE base scan, rather than
+                    // nesting two cursor layers. Stays a no-op (null) for IDENTITY prunes and every
+                    // non-dimension shape, unchanged from #26/#27.
+                    if (compositeDimensionResidualFilter != null) {
+                        final RecordCursorFactory residualScan;
+                        try {
+                            residualScan = new FilteredRecordCursorFactory(compositeScan, compositeDimensionResidualFilter);
+                        } catch (Throwable e) {
+                            Misc.free(compositeScan);
+                            compositeDimensionResidualFilter = Misc.free(compositeDimensionResidualFilter);
+                            throw e;
+                        }
+                        compositeDimensionResidualFilter = null;
+                        compositeScan = residualScan;
+                    }
+                    // Task 6b: latestBy.size() > 0 here only when the generateLatestByTableQuery guard
+                    // above declined (composite); apply LATEST BY directly over the merged scan.
+                    if (latestBy.size() > 0) {
+                        if (compositeLatestByFilter != null) {
+                            // Correctness fix: compose latestBy(filter(scan)), matching what
+                            // generateLatestByTableQuery does for a plain table by pushing the filter into
+                            // its per-key scan. Wrap the merged scan with the already-compiled residual
+                            // filter so LATEST BY only ever sees rows that pass the predicate, and clear
+                            // the where clause set just above so the OUTER generateFilter does NOT re-run
+                            // the predicate AFTER LATEST BY -- that ordering, filter(latestBy(scan)),
+                            // silently drops a key whose true-latest row fails the filter instead of
+                            // falling back to its latest surviving row. FilteredRecordCursorFactory takes
+                            // ownership of both compositeScan and the filter (frees both on close, and we
+                            // free both here if its own construction throws); once it owns them we null
+                            // the carrier so this method's catch does not double-free.
+                            model.setWhereClause(null);
+                            final RecordCursorFactory filteredScan;
+                            try {
+                                filteredScan = new FilteredRecordCursorFactory(compositeScan, compositeLatestByFilter);
+                            } catch (Throwable e) {
+                                Misc.free(compositeScan);
+                                // Free AND null so the outer catch's Misc.free(compositeLatestByFilter)
+                                // is a no-op (free(null)) rather than a second close of the same Function.
+                                compositeLatestByFilter = Misc.free(compositeLatestByFilter);
+                                throw e;
+                            }
+                            compositeLatestByFilter = null;
+                            return wrapCompositeLatestBy(filteredScan, model, latestBy, queryMeta);
+                        }
+                        return wrapCompositeLatestBy(compositeScan, model, latestBy, queryMeta);
+                    }
+                    return compositeScan;
+                }
+                RecordCursorFactory plainScan = new PageFrameRecordCursorFactory(
                         configuration,
                         queryMeta,
                         dfcFactory,
@@ -12280,14 +12972,65 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         supportsRandomAccess,
                         false
                 );
+                // Task #28: a composite table's dimension-prune residual can reach HERE too, not just the
+                // composite-merge branch above -- discovered empirically via a bare `count()` (no ORDER
+                // BY/LATEST ON referencing ts): queryMeta.getTimestampIndex() == -1 (ts not needed in the
+                // projection, order-indifferent) skips the `isComposite() && timestampIndex != -1` branch
+                // above entirely, landing here instead, on the SAME already-cell-pruned dfcFactory --
+                // "the frame-counting fast path" the class javadoc of CompositeCellPruningTest's
+                // multi-cell-IN test refers to. That plain per-cell PageFrameRecordCursorFactory has NO
+                // row-level filtering of its own here (filter arg is null, unconditionally, a few lines
+                // up) -- fine for IDENTITY (row-exact prune, no residual ever built) but WRONG for
+                // HASH/TRUNCATE without this wrap: it would silently include a pruned bucket/prefix
+                // cell's OTHER, non-matching raw values. Mirrors the identical wrap above verbatim
+                // (ownership/free-once notes there apply here too); wrapping in FilteredRecordCursorFactory
+                // also correctly forces row-based (not frame-vectorized) counting for this shape -- the
+                // same unavoidable cost any OTHER residual filter already imposes on count() elsewhere in
+                // the engine, required for correctness, not a new trade-off. Stays null (no-op) for
+                // IDENTITY prunes, plain (non-composite) tables, and every non-dimension shape.
+                if (compositeDimensionResidualFilter != null) {
+                    final RecordCursorFactory residualScan;
+                    try {
+                        residualScan = new FilteredRecordCursorFactory(plainScan, compositeDimensionResidualFilter);
+                    } catch (Throwable e) {
+                        Misc.free(plainScan);
+                        compositeDimensionResidualFilter = Misc.free(compositeDimensionResidualFilter);
+                        throw e;
+                    }
+                    compositeDimensionResidualFilter = null;
+                    plainScan = residualScan;
+                }
+                if (latestBy.size() > 0) {
+                    return wrapCompositeLatestBy(plainScan, model, latestBy, queryMeta);
+                }
+                return plainScan;
             } catch (Throwable e) {
                 Misc.free(dfcFactory);
+                // Free the carried composite residual filter(s) if we threw before ownership passed to the
+                // FilteredRecordCursorFactory (e.g. the composite indexed-predicate loud gate above, or a
+                // throw from buildDimensionResidualFilter itself). Both nulled once transferred, so this
+                // never double-frees.
+                Misc.free(compositeLatestByFilter);
+                Misc.free(compositeDimensionResidualFilter);
                 throw e;
             }
         }
 
         // no where clause
-        if (latestByColumnCount == 0) {
+        // Task 6b: this "no WHERE clause" branch has its OWN independent LATEST BY implementation
+        // below (LatestByAllIndexedRecordCursorFactory / LatestByDeferredListValuesFilteredRecordCursorFactory
+        // / LatestByAllSymbolsFilteredRecordCursorFactory / LatestByAllFilteredRecordCursorFactory, all fed a
+        // FRESH FullPartitionFrameCursorFactory built right here) -- a SEPARATE code path from
+        // generateLatestByTableQuery (used only when a WHERE clause/override/pushed-interval is present),
+        // discovered auditing this method for Task 6b's differential tests (a bare `LATEST ON ts PARTITION
+        // BY sym` with no WHERE clause reaches THIS branch, not generateLatestByTableQuery). Every one of
+        // its cursors is the same cell-blind backward "first-seen-per-key-wins" family as
+        // generateLatestByTableQuery's (see the guard there), so it is equally wrong for composite. Widen
+        // this branch's condition to ALSO take the (already 6a-merged) full-scan path for ANY composite
+        // table regardless of latestByColumnCount, then apply LATEST BY directly over that merged scan via
+        // wrapCompositeLatestBy (see its doc: the generic post-scan generateLatestBy() pipeline step
+        // cannot be used here, its own assert requires a wrapping model this base-table model does not have).
+        if (latestByColumnCount == 0 || reader.getMetadata().getPartitionSpec().isComposite()) {
             // construct new metadata, which is a copy of what we constructed just above, but
             // in the interest of isolating problems we will only affect this factory
 
@@ -12304,7 +13047,36 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
             RowCursorFactory rowCursorFactory = new PageFrameRowCursorFactory(order);
 
-            return new PageFrameRecordCursorFactory(
+            // Task 6a: a composite table stores rows in per-cell partition subdirs within each time
+            // partition, so a plain page-frame scan emits per day cell0 ++ cell1 ++ ... = globally
+            // ts-MISORDERED. Route it through the cross-cell merge factory whose getCursor() is genuinely
+            // ts-ordered (and whose getScanDirection() is therefore truthful). Only when the designated
+            // timestamp is in the scan's column set: otherwise there is nothing to merge on (an
+            // order-indifferent bare projection of non-ts columns), and the plain factory's storage order
+            // is the pre-existing, acceptable behaviour for such a query.
+            if (reader.getMetadata().getPartitionSpec().isComposite() && queryMeta.getTimestampIndex() != -1) {
+                RecordCursorFactory compositeScan = new CompositePageFrameRecordCursorFactory(
+                        configuration,
+                        queryMeta,
+                        cursorFactory,
+                        rowCursorFactory,
+                        model.isOrderDescendingByDesignatedTimestampOnly(),
+                        null,
+                        true,
+                        columnIndexes,
+                        columnSizeShifts,
+                        supportsRandomAccess,
+                        false
+                );
+                // Task 6b: latestByColumnCount > 0 here only for a composite table (see the widened
+                // condition above); apply LATEST BY directly over the merged scan.
+                if (latestByColumnCount > 0) {
+                    return wrapCompositeLatestBy(compositeScan, model, latestBy, queryMeta);
+                }
+                return compositeScan;
+            }
+
+            RecordCursorFactory plainScan = new PageFrameRecordCursorFactory(
                     configuration,
                     queryMeta,
                     cursorFactory,
@@ -12317,6 +13089,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     supportsRandomAccess,
                     false
             );
+            if (latestByColumnCount > 0) {
+                return wrapCompositeLatestBy(plainScan, model, latestBy, queryMeta);
+            }
+            return plainScan;
         }
 
         // 'latest by' clause takes over the latest by nodes, so that the later generateLatestBy() is no-op

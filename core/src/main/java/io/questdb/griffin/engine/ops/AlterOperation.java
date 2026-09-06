@@ -78,6 +78,18 @@ public class AlterOperation extends AbstractOperation implements Mutable {
     public final static short SET_MAT_VIEW_REFRESH = SET_MAT_VIEW_REFRESH_TIMER + 1; // 25
     public final static short SET_PARQUET_ENCODING = SET_MAT_VIEW_REFRESH + 1; // 26
     public final static short SET_TABLE_FORMAT = SET_PARQUET_ENCODING + 1; // 27
+    /**
+     * SP1C: drop ONE cell of a composite day, e.g. {@code DROP PARTITION LIST '2023-01-01/E0'}.
+     * <p>
+     * A separate command rather than a wider {@code DROP_PARTITION} payload, deliberately.
+     * {@code extraInfo} is serialized into the WAL as a LENGTH-prefixed flat array of longs with no
+     * stride marker -- the stride lives only in each reader ({@code extraInfo.size() / 2}). Widening
+     * {@code DROP_PARTITION} to triples would therefore misread an OLD segment replayed by NEW code,
+     * an ordinary upgrade, silently taking the next partition's timestamp for a cellKey. That hazard
+     * applies to PLAIN tables, which are released. A distinct code cannot be confused with the old
+     * one in either direction, and a plain table never emits it.
+     */
+    public final static short DROP_PARTITION_CELL = SET_TABLE_FORMAT + 1; // 28
     // V2 layout (this branch onwards): index type fits in low 3 bits, dedup
     // key sits at bit 3, and bit 63 is the format-version marker that
     // distinguishes v2 payloads from any pre-v2 ALTER message still queued in
@@ -204,7 +216,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case DROP_INDEX -> securityContext.authorizeAlterTableDropIndex(tableToken, getAuthColumnNames());
             case ADD_SYMBOL_CACHE, REMOVE_SYMBOL_CACHE ->
                     securityContext.authorizeAlterTableAlterColumnCache(tableToken, getAuthColumnNames());
-            case DROP_PARTITION, FORCE_DROP_PARTITION, SQUASH_PARTITIONS ->
+            case DROP_PARTITION, DROP_PARTITION_CELL, FORCE_DROP_PARTITION, SQUASH_PARTITIONS ->
                     securityContext.authorizeAlterTableDropPartition(tableToken);
             case ATTACH_PARTITION -> securityContext.authorizeAlterTableAttachPartition(tableToken);
             case DETACH_PARTITION -> securityContext.authorizeAlterTableDetachPartition(tableToken);
@@ -344,6 +356,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
             case RENAME_COLUMN -> "rename column operation";
             case CHANGE_COLUMN_TYPE -> "change column type operation";
             case DROP_PARTITION -> "drop partition operation";
+            case DROP_PARTITION_CELL -> "drop partition cell operation";
             case DETACH_PARTITION -> "detach partition operation";
             case ATTACH_PARTITION -> "attach partition operation";
             default -> null;
@@ -581,6 +594,26 @@ public class AlterOperation extends AbstractOperation implements Mutable {
         }
     }
 
+    /**
+     * SP1C: {@code extraInfo} here is a set of THREE longs per cell --
+     * {@code (timestamp, partitionNamePosition, cellKey)}. The stride differs from
+     * {@link #applyDropPartition}'s deliberately; see {@link #DROP_PARTITION_CELL}.
+     */
+    private void applyDropPartitionCell(MetadataService svc) {
+        for (int i = 0, n = extraInfo.size() / 3; i < n; i++) {
+            long partitionTimestamp = extraInfo.getQuick(i * 3);
+            int cellKey = (int) extraInfo.getQuick(i * 3 + 2);
+            if (!svc.removePartitionCell(partitionTimestamp, cellKey)) {
+                throw CairoException.partitionManipulationRecoverable()
+                        .put("could not remove partition cell [table=").put(getTableToken().getTableName())
+                        .put(", partitionTimestamp=").ts(svc.getMetadata().getTimestampType(), partitionTimestamp)
+                        .put(", cellKey=").put(cellKey)
+                        .put(']')
+                        .position((int) extraInfo.getQuick(i * 3 + 1));
+            }
+        }
+    }
+
     private void applyDropPartition(MetadataService svc) {
         // long list is a set of two longs per partition - (timestamp, partitionNamePosition)
         for (int i = 0, n = extraInfo.size() / 2; i < n; i++) {
@@ -730,6 +763,9 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                 break;
             case DROP_PARTITION:
                 applyDropPartition(svc);
+                break;
+            case DROP_PARTITION_CELL:
+                applyDropPartitionCell(svc);
                 break;
             case CONVERT_PARTITION_TO_PARQUET:
                 applyConvertPartition(svc, true);

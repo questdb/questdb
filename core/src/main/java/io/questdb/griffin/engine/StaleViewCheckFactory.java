@@ -157,6 +157,11 @@ public class StaleViewCheckFactory implements RecordCursorFactory {
     }
 
     @Override
+    public boolean supportsPageFrameCursorForUnorderedAggregation() {
+        return base.supportsPageFrameCursorForUnorderedAggregation();
+    }
+
+    @Override
     public boolean supportsUpdateRowId(TableToken tableName) {
         return base.supportsUpdateRowId(tableName);
     }

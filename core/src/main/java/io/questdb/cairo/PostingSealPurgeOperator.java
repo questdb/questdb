@@ -25,13 +25,18 @@
 package io.questdb.cairo;
 
 import io.questdb.cairo.idx.PostingIndexUtils;
+import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8StringSink;
+import io.questdb.std.str.Utf8s;
 import io.questdb.tasks.PostingSealPurgeTask;
 
 import java.io.Closeable;
@@ -48,10 +53,12 @@ import java.io.Closeable;
 public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.SealedFileVisitor {
 
     private static final Log LOG = LogFactory.getLog(PostingSealPurgeOperator.class);
+    private final ObjList<String> cellDirs = new ObjList<>();
     private final CairoEngine engine;
     private final FilesFacade ff;
     private final Path path;
     private final int pathRootLen;
+    private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private boolean scanAllCoversRemoved;
     private boolean scanAnyCoverRemoved;
     private CharSequence scanColumnName;
@@ -175,6 +182,46 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
 
         path.trimTo(pathRootLen).concat(liveToken.getDirName());
         int pathTableLen = path.size();
+
+        // COMPOSITE: the real posting files live at <day>/<cell>.<cellNameTxn>/, not at the day
+        // directory this operator has always addressed. The task carries the DAY's nameTxn (its record
+        // is persisted in a purge-log system table with a fixed column set, so it cannot carry a
+        // cellKey without a schema change), so the cells are enumerated from disk instead and the whole
+        // guarded sequence below is run once per cell.
+        //
+        // Without this, every superseded seal on a composite table leaked forever: MEASURED, the plain
+        // twin reclaimed sym.pv.0 while the composite table kept both sym.pv.0 and sym.pv.1 under
+        // <day>/E0.<txn>/ after the purge job ran to exhaustion.
+        //
+        // A dormant composite table (dimensions declared, plain on-disk layout) has no cell
+        // directories; it falls through to the plain path below, so its behaviour is unchanged.
+        if (isCompositeLayout(liveToken)) {
+            cellDirs.clear();
+            path.trimTo(pathTableLen);
+            TableUtils.setPathForNativePartition(
+                    path,
+                    task.getTimestampType(),
+                    task.getPartitionBy(),
+                    task.getPartitionTimestamp(),
+                    -1L
+            );
+            final int pathDayLen = path.size();
+            listCellDirs(path);
+            if (cellDirs.size() > 0) {
+                boolean allCellsDone = true;
+                for (int i = 0, n = cellDirs.size(); i < n; i++) {
+                    path.trimTo(pathDayLen);
+                    path.concat(cellDirs.getQuick(i));
+                    allCellsDone &= purgeAtPartitionPath(task, liveToken, path.size());
+                }
+                path.trimTo(pathTableLen);
+                return allCellsDone;
+            }
+        }
+
+        // PLAIN (and dormant-composite): unchanged -- build the day path with the task's own nameTxn
+        // and run the guarded sequence exactly once.
+        path.trimTo(pathTableLen);
         TableUtils.setPathForNativePartition(
                 path,
                 task.getTimestampType(),
@@ -182,7 +229,61 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                 task.getPartitionTimestamp(),
                 task.getPartitionNameTxn()
         );
-        int pathPartitionLen = path.size();
+        return purgeAtPartitionPath(task, liveToken, path.size());
+    }
+
+    /**
+     * Does this table store its partitions as {@code <day>/<cell>.<nameTxn>/}?
+     * <p>
+     * Metadata dimension count alone is not the answer: a DORMANT composite table (dimensions
+     * declared, pre-existing data, plain on-disk layout) has dimensions but no cell directories. The
+     * caller therefore treats this as "look for cells" and falls back to the plain path when none are
+     * found, so a dormant table behaves exactly as before.
+     */
+    private boolean isCompositeLayout(TableToken tableToken) {
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            return metadata.getPartitionSpec() != null && metadata.getPartitionSpec().getDimensionCount() > 0;
+        } catch (Throwable th) {
+            // A table being dropped or otherwise unreadable is not this operator's problem to report;
+            // treating it as plain preserves the previous behaviour exactly.
+            return false;
+        }
+    }
+
+    /**
+     * Collects the CELL subdirectory names of the day directory {@code path} currently points at.
+     * Cells are named {@code <cellSegment>} or {@code <cellSegment>.<nameTxn>}; the day container also
+     * holds zero-byte column phantoms, which are files and so are skipped.
+     */
+    private void listCellDirs(Path dayPath) {
+        final long findPtr = ff.findFirst(dayPath.$());
+        if (findPtr < 1) {
+            return;
+        }
+        try {
+            do {
+                if (ff.findType(findPtr) != Files.DT_DIR) {
+                    continue;
+                }
+                final long nameptr = ff.findName(findPtr);
+                utf8Sink.clear();
+                Utf8s.utf8ZCopy(nameptr, utf8Sink);
+                if (Utf8s.equalsAscii(".", utf8Sink) || Utf8s.equalsAscii("..", utf8Sink)) {
+                    continue;
+                }
+                cellDirs.add(utf8Sink.toString());
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
+    }
+
+    /**
+     * The guarded seal-delete sequence for ONE partition directory, whose path is already built and
+     * whose length is {@code pathPartitionLen}. Extracted verbatim so a composite table can run it per
+     * CELL; a plain table runs it exactly once, as before.
+     */
+    private boolean purgeAtPartitionPath(PostingSealPurgeTask task, TableToken liveToken, int pathPartitionLen) {
 
         // Liveness guard against sealTxn reuse -- the C1 endgame the publish-time
         // head guard cannot cover. A staged-but-never-published sealTxn whose
@@ -319,7 +420,9 @@ public class PostingSealPurgeOperator implements Closeable, PostingIndexUtils.Se
                     .I$();
         }
         scanColumnName = null;
-        path.trimTo(pathTableLen);
+        // pathTableLen is a local of purge(); this helper leaves the scratch path at the table root and
+        // every caller re-builds from there before its next use.
+        path.trimTo(pathRootLen);
         return done;
     }
 }

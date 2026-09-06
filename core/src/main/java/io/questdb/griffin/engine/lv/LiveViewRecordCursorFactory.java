@@ -560,6 +560,22 @@ public class LiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
         return base.supportsPageFrameCursor();
     }
 
+    /**
+     * Delegating is not optional here either, for the same reason as {@link #newTimeFrameCursor()}.
+     * {@link RecordCursorFactory#supportsConcurrentTimeFrameCursor()} DEFAULTS to
+     * {@link #supportsTimeFrameCursor()}, so without this override a live view over a base that
+     * serves a SERIAL time-frame cursor but has no per-worker twin would advertise a concurrent
+     * cursor it cannot produce -- {@link #newTimeFrameCursor()} delegates straight to the base and
+     * would hand back that base's null. A composite-partitioned base is exactly such a base
+     * (CompositePageFrameRecordCursorFactory: supportsTimeFrameCursor() == forward,
+     * supportsConcurrentTimeFrameCursor() == false, newTimeFrameCursor() == null as a backstop), and
+     * a live view over a composite table is permitted, so the two can meet.
+     */
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        return base.supportsConcurrentTimeFrameCursor();
+    }
+
     @Override
     public boolean supportsTimeFrameCursor() {
         return base.supportsTimeFrameCursor();

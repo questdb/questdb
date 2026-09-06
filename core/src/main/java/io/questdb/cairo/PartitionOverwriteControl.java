@@ -54,6 +54,10 @@ public class PartitionOverwriteControl {
             ReaderPartitionUsage readerPartitionUsage = new ReaderPartitionUsage();
             readerPartitionUsage.owner = reader;
             readerPartitionUsage.partitionsList = partitions;
+            // Snapshot the stride the list above was just dumped at (4 plain / 8 composite) alongside
+            // it -- the list on its own is just flat longs, with no self-describing marker of its own,
+            // so notifyPartitionMutates() has no other way to know how to stride through it later.
+            readerPartitionUsage.longsPerAttachedPartition = reader.getLongsPerAttachedPartition();
             readerPartitionUsage.ownerTxn = reader.getTxn();
             ObjList<ReaderPartitionUsage> usages = readerPartitionUsageMap.computeIfAbsent(reader.getTableToken().getDirName(), k -> new ObjList<>());
             synchronized (usages) {
@@ -95,7 +99,8 @@ public class PartitionOverwriteControl {
                 synchronized (usages) {
                     for (int i = 0, n = usages.size(); i < n; i++) {
                         ReaderPartitionUsage readerPartitionUsage = usages.get(i);
-                        int partitionBlockIndex = TxReader.findPartitionRawIndex(readerPartitionUsage.partitionsList, partitionTimestamp);
+                        int partitionBlockIndex = TxReader.findPartitionRawIndex(
+                                readerPartitionUsage.partitionsList, partitionTimestamp, readerPartitionUsage.longsPerAttachedPartition);
                         if (partitionBlockIndex >= 0) {
                             long usedPartitionNameTxn = TxReader.getPartitionNameTxnByRawIndex(readerPartitionUsage.partitionsList, partitionBlockIndex);
                             long visibleRows = TxReader.getPartitionSizeByRawIndex(readerPartitionUsage.partitionsList, partitionBlockIndex);
@@ -144,6 +149,7 @@ public class PartitionOverwriteControl {
     }
 
     private static class ReaderPartitionUsage {
+        private int longsPerAttachedPartition;
         private TableReader owner;
         private long ownerTxn;
         private LongList partitionsList;

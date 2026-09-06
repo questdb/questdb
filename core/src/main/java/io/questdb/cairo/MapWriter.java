@@ -26,6 +26,7 @@ package io.questdb.cairo;
 
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.BitmapIndexWriter;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.FilesFacade;
@@ -68,6 +69,66 @@ public interface MapWriter extends SymbolCountProvider {
             path.trimTo(plen);
             Misc.free(mem);
         }
+    }
+
+    /**
+     * Reverse-looks-up dense key {@code key} on {@code writer}, returning its interned string value
+     * -- the write-side mirror of {@link io.questdb.cairo.sql.SymbolTable#valueOf(int)}, which only
+     * concrete reader types (e.g. {@code SymbolMapReaderImpl}) expose; {@code MapWriter} itself
+     * declares no {@code valueOf}. A {@link SymbolMapWriter} already holds the exact backing data a
+     * reverse lookup needs -- it appends new symbols to the very same offset/value memory
+     * {@link #getSymbolOffsetsMemory()}/{@link #getSymbolValuesMemory()} already expose -- so this
+     * reads it back directly instead of requiring a separate {@code SymbolMapReader} to be opened.
+     * Mirrors {@code SymbolMapReaderImpl.uncachedValue(int)}'s exact mechanics.
+     * <p>
+     * Only meaningful for a {@code key} previously returned by {@link #put(CharSequence)} (or an
+     * equivalent intern call) on this same {@code writer} -- e.g. composite-partitioning path
+     * construction (Plan 4a Task 3), which reverse-looks-up an IDENTITY dimension's source-column
+     * symbol key, a TRUNCATE dimension's dedicated-dictionary ordinal, or the {@code _cell}
+     * registry's own cellKey, all of which are plain {@code MapWriter}s. Not meant for an arbitrary
+     * out-of-range key or a {@code NullMapWriter} -- callers must already know {@code writer} is a
+     * real, populated symbol map.
+     * <p>
+     * {@link SymbolTable#VALUE_IS_NULL} -- what {@link #put(CharSequence)} returns for a NULL
+     * symbol, and therefore a perfectly ordinary key a caller can hold -- reverse-looks-up to
+     * {@code null}, mirroring the read side's {@code SymbolMapReaderImpl#valueOf(int)} contract
+     * for that one case (which already returns {@code null} for any key outside
+     * {@code [0, symbolCount)}, VALUE_IS_NULL included). Without this guard the key falls through
+     * to {@link SymbolMapWriter#keyToOffset(int)}, which turns {@code Integer.MIN_VALUE} into a
+     * hugely NEGATIVE memory offset: an {@code assert} failure under {@code -ea}, and an unchecked
+     * out-of-bounds native read (garbage value or SIGSEGV) without it. That was the root cause of
+     * the composite-partitioning WAL-apply hang on a NULL IDENTITY dimension value -- see
+     * {@code TableWriter#renderDimensionSegment}.
+     * <p>
+     * <b>This guard is NOT as broad as the read side's.</b> A review pass (composite-partitioning
+     * NULL-fix follow-up) suggested widening it to the reader's full {@code key > -1 && key <
+     * symbolCount} form, matching {@code SymbolMapReaderImpl#valueOf} bound-for-bound and making a
+     * POSITIVE out-of-range key null too instead of silently reading garbage -- {@code -ea} or not.
+     * That widened form was tried and reverted: {@code TableWriter#processPartitionRemoveCandidates0}
+     * calls {@code CellRegistry#getTupleFromWriter}, which calls this method with a
+     * {@code partitionRemoveCandidates}-queued cellKey that can be a currently-out-of-range ordinal
+     * at render time (root cause not yet investigated) and, unlike every other caller here, does
+     * NOT null-check the result before feeding it to {@code CompositeTupleCodec#decode} --
+     * widening this guard turns that into an immediate {@code NullPointerException} that suspends
+     * the table, empirically reproducible with as few as THREE distinct real (non-NULL, non-empty)
+     * symbol values dispatched in one commit on a brand-new composite table -- not a NULL/empty-value
+     * edge case at all, an everyday shape. So: for a POSITIVE out-of-range key, this method still
+     * reads silent garbage rather than returning null -- exactly like an assertion-free build reads
+     * a NULL IDENTITY key before this class's own {@code VALUE_IS_NULL} guard. Fixing that requires
+     * fixing (or null-guarding) {@code getTupleFromWriter}'s caller first; tracked as a follow-up,
+     * out of scope here.
+     */
+    static CharSequence valueOf(MapWriter writer, int key) {
+        // DO NOT widen this guard to the reader's `key > -1 && key < symbolCount` shape. It looks
+        // like an oversight and is not: CellRegistry#getTupleFromWriter reads back an ordinal this
+        // same writer JUST interned, before the writer's committed symbol count covers it, and
+        // relies on that read succeeding. Widening the guard was measured to turn this into a
+        // TABLE-SUSPENDING failure on three ordinary distinct symbol values in a single commit, with
+        // no NULL involved at all.
+        if (key == SymbolTable.VALUE_IS_NULL) {
+            return null;
+        }
+        return writer.getSymbolValuesMemory().getStrA(writer.getSymbolOffsetsMemory().getLong(SymbolMapWriter.keyToOffset(key)));
     }
 
     /**

@@ -1487,7 +1487,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            @Nullable CharSequence cellSegment,
+            int cellKey
     ) {
         final long mergeRowCount;
         if (mergeType == O3_BLOCK_MERGE) {
@@ -1507,7 +1509,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 oldPartitionTimestamp,
-                srcNameTxn
+                srcNameTxn,
+                cellSegment
         );
         int plen = pathToOldPartition.size();
 
@@ -1518,7 +1521,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 partitionTimestamp,
-                partitionAppend ? srcNameTxn : txn
+                partitionAppend ? srcNameTxn : txn,
+                cellSegment
         );
         int pplen = pathToNewPartition.size();
         final long colTopSinkAddr = columnTopAddress(partitionUpdateSinkAddr, columnIndex);
@@ -1566,7 +1570,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         colTopSinkAddr,
                         columnIndex,
                         columnNameTxn,
-                        partitionUpdateSinkAddr
+                        partitionUpdateSinkAddr,
+                        cellKey
                 );
                 break;
             case OPEN_MID_PARTITION_FOR_MERGE:
@@ -1615,7 +1620,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         oldPartitionTimestamp,
                         columnIndex,
                         columnNameTxn,
-                        partitionUpdateSinkAddr
+                        partitionUpdateSinkAddr,
+                        cellKey
                 );
                 break;
             case OPEN_LAST_PARTITION_FOR_MERGE:
@@ -1747,6 +1753,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         final long srcDataNewPartitionSize = task.getSrcDataNewPartitionSize();
         final long srcDataOldPartitionSize = task.getSrcDataOldPartitionSize();
         final long o3SplitPartitionSize = task.getO3SplitPartitionSize();
+        final CharSequence cellSegment = task.getCellSegment();
+        final int cellKey = task.getCellKey();
 
         subSeq.done(cursor);
 
@@ -1795,7 +1803,9 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn
+                columnNameTxn,
+                cellSegment,
+                cellKey
         );
     }
 
@@ -1981,7 +1991,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long colTopSinkAddr,
             int columnIndex,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            int cellKey
     ) {
         long dstFixFd = 0;
         long dstVarFd = 0;
@@ -1991,7 +2002,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 // When partition is split, it's column top remains same.
                 // On writing to the split partition second time the column top can be bigger than the partition.
                 // Trim column top to partition top.
-                srcDataTop = Math.min(srcDataMax, tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax));
+                // Plan 4b Task 2 (opus review Critical, root cause): cell-aware -- see
+                // publishOpenColumnTasks's own updated docs for the confirmed corruption this cell-blind
+                // read (and the sibling-clobbering write it fed into) caused.
+                srcDataTop = Math.min(srcDataMax, tableWriter.getColumnTop(oldPartitionTimestamp, cellKey, columnIndex, srcDataMax));
                 if (srcDataTop == srcDataMax) {
                     Unsafe.putLong(colTopSinkAddr, srcDataMax);
                 }
@@ -2860,13 +2874,17 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long oldPartitionTimestamp,
             int columnIndex,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            int cellKey
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
         // not set, we need to check file existence and read
         if (srcDataTop == -1) {
             try {
-                srcDataTop = Math.min(tableWriter.getColumnTop(oldPartitionTimestamp, columnIndex, srcDataMax), srcDataMax);
+                // Plan 4b Task 2 (opus review Critical, root cause): cell-aware -- see
+                // publishOpenColumnTasks's own updated docs for the confirmed corruption this cell-blind
+                // read (and the sibling-clobbering write it fed into) caused.
+                srcDataTop = Math.min(tableWriter.getColumnTop(oldPartitionTimestamp, cellKey, columnIndex, srcDataMax), srcDataMax);
             } catch (Throwable e) {
                 LOG.error().$("merge mid partition error 1 [table=").$(tableWriter.getTableToken())
                         .$(", e=").$(e)

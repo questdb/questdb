@@ -32,6 +32,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
+import io.questdb.cairo.PartitionSpec;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -401,6 +402,41 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
 
         protected void putPartitionBy() {
             sink.putAscii(" PARTITION BY ").put(table.getPartitionByName());
+            final PartitionSpec partitionSpec = table.getPartitionSpec();
+            if (partitionSpec.isComposite()) {
+                for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
+                    sink.putAscii(", ");
+                    partitionSpec.getDimension(i).toSink(sink, this::getColumnName);
+                }
+                final int clusterColumnCount = partitionSpec.getClusterColumnCount();
+                if (clusterColumnCount > 0) {
+                    sink.putAscii(" ORDER BY ");
+                    for (int i = 0; i < clusterColumnCount; i++) {
+                        if (i > 0) {
+                            sink.putAscii(", ");
+                        }
+                        sink.put(getColumnName(partitionSpec.getClusterColumn(i)));
+                    }
+                }
+                if (partitionSpec.getNamingMode() == PartitionSpec.MODE_PLAIN) {
+                    sink.putAscii(" LAYOUT PLAIN");
+                }
+            }
+        }
+
+        // partitionSpec dimension/cluster-column indices are stable WRITER indices (see the
+        // contract note on TableReaderMetadata/TableWriterMetadata#getPartitionSpec() and
+        // TableUtils#readCompositePartitionSpec), not dense positions -- unlike
+        // table.getColumnQuiet(int), which is dense-keyed. Writer index == dense index only until
+        // a lower-writer-index column is dropped (dropped columns are tombstoned, not
+        // renumbered), so resolving a writer index through getColumnQuiet would silently name the
+        // wrong column, or NPE once the writer index exceeds the shrunken dense column count.
+        // table.getColumnByWriterIndex translates correctly; it returns null (rather than
+        // throwing) if no column now carries that writer index, which getColumnName mirrors so
+        // callers (PartitionDimension.toSink and the ORDER BY loop below) never NPE either.
+        private CharSequence getColumnName(int writerIndex) {
+            CairoColumn column = table.getColumnByWriterIndex(writerIndex);
+            return column != null ? column.getName() : null;
         }
 
         protected void putTimestamp() {
@@ -412,6 +448,14 @@ public class ShowCreateTableRecordCursorFactory extends AbstractRecordCursorFact
         protected void putWal() {
             if (!table.isWalEnabled()) {
                 sink.putAscii(" BYPASS");
+                sink.putAscii(" WAL");
+            } else if (table.getPartitionSpec().isComposite()) {
+                // Plain tables rely on WAL-enabled being the silent default when the keyword is
+                // omitted, so it is never re-emitted here. Composite dimensions have no such
+                // default to fall back on (the parser applies the same non-WAL default whether or
+                // not dimensions are present), so leaving this silent would round-trip a composite
+                // WAL table into a non-WAL one on DROP + re-execute. Re-emit explicitly instead;
+                // plain-table output above is untouched.
                 sink.putAscii(" WAL");
             }
         }

@@ -269,8 +269,19 @@ public final class SelectedRecordCursorFactory extends AbstractRecordCursorFacto
     }
 
     @Override
+    public boolean supportsPageFrameCursorForUnorderedAggregation() {
+        return base.supportsPageFrameCursorForUnorderedAggregation();
+    }
+
+    @Override
     public boolean supportsSharedCursors() {
         return base.supportsSharedCursors();
+    }
+
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        // Delegate so a composite (no concurrent twin) stays off the async join path through a projection.
+        return base.supportsConcurrentTimeFrameCursor();
     }
 
     @Override

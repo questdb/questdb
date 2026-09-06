@@ -36,6 +36,7 @@ import io.questdb.mp.ConcurrentPool;
 import io.questdb.std.Misc;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
+import org.jetbrains.annotations.Nullable;
 import io.questdb.std.str.Path;
 
 import java.io.Closeable;
@@ -148,8 +149,25 @@ public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
             ColumnVersionReader cvr,
             long partitionRowCount
     ) {
+        return openRO(tablePath, partitionTimestamp, partitionNameTxn, partitionBy, metadata, cvr, partitionRowCount, null);
+    }
+
+    /**
+     * Cell-aware counterpart: {@code cellSegment} is {@code null} for a plain table, making this
+     * byte-identical to the overload above.
+     */
+    public Frame openRO(
+            @Transient Path tablePath,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            int partitionBy,
+            RecordMetadata metadata,
+            ColumnVersionReader cvr,
+            long partitionRowCount,
+            @Nullable CharSequence cellSegment
+    ) {
         FrameImpl frame = getOrCreate();
-        frame.openRO(tablePath, partitionTimestamp, partitionNameTxn, partitionBy, metadata, cvr, partitionRowCount);
+        frame.openRO(tablePath, partitionTimestamp, partitionNameTxn, partitionBy, metadata, cvr, partitionRowCount, cellSegment);
         return frame;
     }
 

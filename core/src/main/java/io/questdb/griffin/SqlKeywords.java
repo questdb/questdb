@@ -1039,6 +1039,14 @@ public class SqlKeywords {
                 && (tok.charAt(5) | 32) == 'r';
     }
 
+    public static boolean isHiveKeyword(CharSequence tok) {
+        return tok.length() == 4
+                && (tok.charAt(0) | 32) == 'h'
+                && (tok.charAt(1) | 32) == 'i'
+                && (tok.charAt(2) | 32) == 'v'
+                && (tok.charAt(3) | 32) == 'e';
+    }
+
     public static boolean isHorizonKeyword(CharSequence tok) {
         return tok.length() == 7
                 && (tok.charAt(0) | 32) == 'h'
@@ -1281,6 +1289,16 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 't'
                 && (tok.charAt(3) | 32) == 'e'
                 && (tok.charAt(4) | 32) == 's'
+                && (tok.charAt(5) | 32) == 't';
+    }
+
+    public static boolean isLayoutKeyword(CharSequence tok) {
+        return tok.length() == 6
+                && (tok.charAt(0) | 32) == 'l'
+                && (tok.charAt(1) | 32) == 'a'
+                && (tok.charAt(2) | 32) == 'y'
+                && (tok.charAt(3) | 32) == 'o'
+                && (tok.charAt(4) | 32) == 'u'
                 && (tok.charAt(5) | 32) == 't';
     }
 
@@ -1891,6 +1909,15 @@ public class SqlKeywords {
                 && (tok.charAt(2) | 32) == 'v'
                 && (tok.charAt(3) | 32) == 'o'
                 && (tok.charAt(4) | 32) == 't';
+    }
+
+    public static boolean isPlainKeyword(CharSequence tok) {
+        return tok.length() == 5
+                && (tok.charAt(0) | 32) == 'p'
+                && (tok.charAt(1) | 32) == 'l'
+                && (tok.charAt(2) | 32) == 'a'
+                && (tok.charAt(3) | 32) == 'i'
+                && (tok.charAt(4) | 32) == 'n';
     }
 
     public static boolean isPrecedingKeyword(CharSequence tok) {

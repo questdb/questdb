@@ -80,6 +80,19 @@ public interface SqlCompiler extends QuietCloseable, Mutable {
 
     QueryBuilder query();
 
+    /**
+     * Parses {@code expression} into a bare {@link ExpressionNode}: a pure syntax parse -- no query
+     * optimizer, no table/column resolution. {@code model} is only consulted by the parser for the
+     * rare expression shapes that need one (e.g. a lambda/sub-query) and may be {@code null} for an
+     * ordinary scalar expression. Unlike a full {@code SELECT ... FROM <table>} compile-and-optimize
+     * (which resolves columns through that query's own {@code RecordMetadata}), this does no column
+     * resolution at all -- the caller is free to bind the returned node against any {@code
+     * RecordMetadata} it chooses afterwards (e.g. via {@link FunctionParser}), so the result is safe to
+     * use outside a test context whenever production code needs to turn expression TEXT back into an
+     * {@link ExpressionNode} without forcing a full query compile.
+     */
+    ExpressionNode parseStandaloneExpression(CharSequence expression, IQueryModel model) throws SqlException;
+
     @TestOnly
     void setEnableJitNullChecks(boolean value);
 

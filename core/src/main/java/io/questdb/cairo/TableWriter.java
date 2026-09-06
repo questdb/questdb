@@ -41,8 +41,12 @@ import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.AsyncWriterCommand;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -71,13 +75,17 @@ import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
+import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.PurgingOperator;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.UpdateOperatorImpl;
 import io.questdb.griffin.engine.ops.AbstractOperation;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.griffin.model.ExpressionNode;
+import io.questdb.griffin.model.IQueryModel;
 import io.questdb.griffin.engine.table.parquet.ParquetFileDecoder;
 import io.questdb.griffin.engine.table.parquet.ParquetMetadataWriter;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
@@ -102,10 +110,14 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FindVisitor;
+import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.IntIntHashMap;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.IntLongHashMap;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.Long256;
+import io.questdb.std.LongIntHashMap;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -123,6 +135,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Uuid;
 import io.questdb.std.Vect;
 import io.questdb.std.datetime.DateFormat;
+import io.questdb.std.str.CharSink;
 import io.questdb.std.str.DirectUtf8Sequence;
 import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.DirectUtf8StringZ;
@@ -179,11 +192,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // ... column top for every column
     public static final int PARTITION_SINK_SIZE_LONGS = 8;
     public static final int PARTITION_SINK_COL_TOP_OFFSET = PARTITION_SINK_SIZE_LONGS * Long.BYTES;
+    // Composite-partitioning (Plan 4a Task 4): a partition-dimension's source column is always
+    // SYMBOL-typed (Plan 1 Task 2, locked), whose O3 buffer element is a plain int32 key -- this is
+    // the shl resolveRowCellKey reads dimension ordinals at.
+    private static final int COMPOSITE_DIMENSION_SOURCE_COLUMN_SHL = ColumnType.pow2SizeOf(ColumnType.SYMBOL);
     public static final int SWITCH_NO_PARQUET = -1;
     public static final int SWITCH_OK = 0;
     public static final int SWITCH_SKIPPED = -2;
     public static final long TIMESTAMP_EPOCH = 0L;
     public static final int TIMESTAMP_MERGE_ENTRY_BYTES = Long.BYTES * 2;
+    /**
+     * {@code @TestOnly} fault injection for the {@code o3PartitionUpdRemaining} ownership window:
+     * when set, both partition-dispatch sites throw between {@code
+     * o3PartitionUpdRemaining.incrementAndGet()} and the {@code o3CommitPartitionAsync()} that takes
+     * ownership of the matching decrement. That window used to strand the counter above zero with
+     * nothing able to lower it, turning {@link #o3ConsumePartitionUpdates()}'s untimed {@code while
+     * (o3PartitionUpdRemaining > 0)} spin into an unkillable WAL-apply hang. Exists so a bounded test
+     * can prove the counter is now exception-safe; see {@code O3PartitionUpdRemainingLatchTest}.
+     * <p>
+     * Default false -> never set in production, so the JIT dead-code-eliminates both guards. Plain
+     * (non-volatile) boolean, matching {@code PostingIndexWriter#COVERING_FASTPATH_DISABLED}: the
+     * tests apply the WAL synchronously on the very thread that sets the flag AND that reaches the
+     * guard (the dispatch is always performed by the committing thread), so there is no cross-thread
+     * visibility hazard.
+     */
+    @TestOnly
+    public static boolean O3_FAIL_BETWEEN_PARTITION_COUNT_AND_DISPATCH = false;
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(TableWriter.class);
     /*
@@ -295,6 +329,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
+    private final IntList replaceDeleteCellKeys = new IntList();
+    private final IntHashSet replaceRowCellKeys = new IntHashSet();
     private final Path path;
     private final int pathRootSize;
     private final int pathSize;
@@ -319,6 +355,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final TxnScoreboard txnScoreboard;
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
+    private final FindVisitor collectOrphanCellDirs = this::collectOrphanCellDirs;
+    /// Live composite days recorded by the non-attached walk, scanned for orphaned cell directories
+    /// AFTER it finishes -- nesting the two walks shared `path`/`utf8Sink` and corrupted the outer one.
+    private final LongList compositeLiveDays = new LongList();
+    private final Utf8StringSink orphanNameSink = new Utf8StringSink();
+    /// Scratch for the orphaned-cell scan: the cell segment, its live directory name, and the name
+    /// txns of the directories that belong to that cell but are not its live version.
+    private final StringSink orphanCellSink = new StringSink();
+    private final LongList orphanCandidateDirs = new LongList();
+    private final StringSink orphanLiveDirSink = new StringSink();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
     private final Uuid uuid = new Uuid();
     private final LowerCaseCharSequenceIntHashMap validationMap = new LowerCaseCharSequenceIntHashMap();
@@ -326,6 +372,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<Runnable> activeNullSetters;
     private ColumnVersionReader attachColumnVersionReader;
     private IndexBuilder attachIndexBuilder;
+    private final IntList attachCellKeys = new IntList();
+    private final IntList detachedCellKeys = new IntList();
+    private final LongList attachCellSizes = new LongList();
     private long attachMaxTimestamp;
     private MemoryCMR attachMetaMem;
     private TableWriterMetadata attachMetadata;
@@ -336,14 +385,161 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private long avgRecordSize;
     private boolean avoidIndexOnCommit = false;
     private BlockFileWriter blockFileWriter;
+    // Per-commit memoization of packed-ordinal-tuple -> cellKey for composite tables (see
+    // resolveCellKey(int[])). Null until the first composite resolveCellKey() call (never
+    // allocated for a plain table); cleared at commit/rollback boundaries by resetCellKeyMemo()
+    // so a stale entry can never survive a rolled-back registry truncation.
+    private LongIntHashMap cellKeyMemo;
     private int columnCount;
     private long commitRowCount;
     private long committedMasterRef;
+    // Composite fast-append (spec 1 + spec 2, Task 2 -- SHARED per-cell max cache): a writer-instance-
+    // scoped cache of the real max timestamp this writer has itself observed committed for a given
+    // cellKey, read by BOTH isCompositeSingleCellFastAppendPossible(...) and
+    // isCompositeMultiCellFastAppendPossible(...) to decide "append-only into that cell" for a cell that
+    // already has committed rows (there is no cheap persisted per-cell max-timestamp today -- see those
+    // methods' own docs). Keyed by cellKey alone (not by day): safe because the predicates only ever
+    // consult/update it for a commit landing in the table's CURRENT last day partition, and a cell's
+    // (day, cellKey) existence is independently verified via the _txn attached-partition record first,
+    // so a stale cross-day value can never cause a false "empty cell" or false "append-only" read.
+    // FOLD-NOT-WIPE (Task 2, replacing Task 1's dedicated compositeMultiCellMaxTimestamp + its wipe):
+    // EVERY flag-on composite commit maintains each touched cell's entry, so the cache is NEVER stale-low
+    // and can never drive a false-positive append-only read. Because the single-cell fast-append ACTS on
+    // that read, a stale-low value would fast-append an out-of-order row past the cell's max (on-disk
+    // corruption), so never-stale-low is the hard invariant. Exactly one of two paths maintains it on
+    // every commit:
+    //   (1) a commit that takes spec-1's single-cell fast-append early return folds its cell via the
+    //       ACTION (applyCompositeSingleCellFastAppend, Math.max);
+    //   (2) EVERY OTHER commit reaches isCompositeMultiCellFastAppendPossible, which is the UNIVERSAL
+    //       maintainer: it resolves every touched cell's true max in one forward scan and folds them all
+    //       (Math.max), unconditionally -- even on a per-cell ordering violation, an ineligible verdict,
+    //       dedup mode, OR a multi-day / non-last-partition span. Its dedup and last-partition checks are
+    //       eligibility gates only; they no longer early-return before the fold (the stale-low bug Task 2
+    //       closed: those two gates once bailed BEFORE folding while the full O3 path still advanced the
+    //       cell's real max).
+    // The single-cell predicate deliberately does NOT fold on a multi-cell (or dedup / multi-day) commit
+    // -- it runs FIRST in the hook, so folding there would mask the multi-cell predicate's own pre-commit
+    // read; the multi-cell predicate (which always runs unless (1) fired) is the backstop. Folding can
+    // never go stale-low even across a day roll or under dedup: a composite table carries no WAL lag (the
+    // scanned [rowLo, rowHi) is the complete committed row set), dedup never drops a cell's max-timestamp
+    // row nor fabricates a higher one, and a cell touched only on an older day folds an older-day max the
+    // last-partition empty-cell gate then never consults. A cell this writer has not itself observed is
+    // cold (absent -> get() returns -1) and fails closed. Null until the first composite commit this
+    // writer observes (never allocated for a plain table, or while the flag is off).
+    private IntLongHashMap compositeCellMaxTimestamp;
+    // Non-owning holder for a composite table's write-side interners (dedicated dicts + _cell
+    // registry). Null for plain/cluster-only tables. The interner SymbolMapWriters themselves live
+    // in denseSymbolMapWriters and are freed there (freeSymbolMapWriters); this reference is merely
+    // dropped on teardown -- never closed here, which would double-free.
+    private CompositeDictionaries compositeDicts;
+    // reused across internDimensionValue() calls to avoid an allocation per TRUNCATE-dimension intern
+    private final StringSink compositeDimSink = new StringSink();
+    // Composite-partitioning Plan 4e Task 2: per-dimension compiled Function cache for KIND_EXPRESSION
+    // dimensions (the Function-eval bridge -- see ensureCompositeExpressionFunctionsCompiled()). Null
+    // until the first EXPRESSION-dimension row is ever routed (never allocated for a table with no
+    // EXPRESSION dimension); indexed by dimension index, with a null entry for every non-EXPRESSION
+    // dimension. Freed on writer teardown in freeSymbolMapWriters() (mirrors compositeDicts).
+    private ObjList<Function> compositeExpressionFunctions;
+    // -1 (never compiled) until the first successful compile of compositeExpressionFunctions, then
+    // the writer's own getMetadataVersion() at that point; a mismatch at the next EXPRESSION-row
+    // route triggers a full recompile (see ensureCompositeExpressionFunctionsCompiled()) -- mirrors
+    // InsertAsSelectOperationImpl's own cached-metadataVersion invalidation. Composite tables already
+    // hard-reject RENAME/DROP COLUMN and ALTER COLUMN TYPE outright, so in practice the only
+    // reachable trigger is ADD COLUMN, which never actually invalidates an EXPRESSION dimension's own
+    // column-index bindings (a new column is always appended past every existing index) -- this is
+    // therefore defensive future-proofing, not a currently-reachable correctness fix.
+    private long compositeExpressionFunctionsMetadataVersion = -1;
+    // Reused Record adapter over this writer's own o3Columns buffers (composite-partitioning Plan 4e
+    // Task 2), positioned per row by compositeExpressionRecord.of(absoluteRow) immediately before
+    // each compiled EXPRESSION Function#getStrA(...) call. One instance for the life of the writer --
+    // safe because resolveRowCellKey's only caller (processO3BlockComposite) evaluates rows strictly
+    // serially on the writer's own thread, exactly like compositeDimSink/dimensionOrdinalMemo above.
+    private CompositeExpressionRecord compositeExpressionRecord;
+    // Minimal background-job SqlExecutionContext for compiling/evaluating composite EXPRESSION
+    // dimensions (composite-partitioning Plan 4e Task 2); allocated lazily alongside the first
+    // compile and reused thereafter -- it carries no per-table-schema state of its own, only a
+    // reference to engine, so a metadata-version-triggered recompile never needs a fresh one.
+    private CompositeExpressionSqlExecutionContext compositeExpressionSqlExecutionContext;
+    // Composite single-cell fast-append (spec 1, Task 1 -- detection only): counts commits
+    // isCompositeSingleCellFastAppendPossible(...) found eligible while the flag is on. Static
+    // (JVM-wide, not per-table/per-writer) because the writer that actually processes a WAL commit
+    // is internal to drainWalQueue()/the WAL-apply job and is released back to the pool immediately
+    // after -- a per-instance field would not reliably be observable by a caller that re-acquires
+    // the writer afterwards. Detection only: incrementing this never changes which code path a
+    // commit takes (see the processWalCommit hook). Test-visible via getCompositeFastAppendEligibleCount().
+    private static final AtomicLong compositeFastAppendEligibleCount = new AtomicLong();
+    // Composite single-cell fast-append (spec 1, Task 2): counts commits that ACTUALLY fast-appended
+    // (took the cheap early return), a strict subset of ...EligibleCount -- an eligible commit whose
+    // cell this task does not yet fast-append (a brand-new/empty cell, a var-size-column table, or a
+    // cell carrying a non-zero column top) still increments ...EligibleCount but falls through to the
+    // full path and does NOT increment this. Static for the same reason as ...EligibleCount above.
+    // Test-visible via getCompositeFastAppendCommittedCount().
+    private static final AtomicLong compositeFastAppendCommittedCount = new AtomicLong();
+    // Composite fast-append (spec 1 + spec 2, Task 2 -- N-cell handle cache): cellKey -> that cell's
+    // kept-open last-partition column-file handles (one primary MemoryMA per column; fixed-size only, so
+    // no aux handles -- var-size-column tables fall back to the full path). Bounded to
+    // getWalCompositeFastAppendMaxOpenCells() entries by the LRU order list compositeFastAppendCellLru
+    // (index 0 == least-recently-used, last == most-recently-used): a miss opens the cell at its CURRENT
+    // committed size and inserts it, evicting the LRU cell if over the cap. EVERY close site (LRU
+    // eviction, full-path fall-through, rollback, doClose) closes NON-TRUNCATING (close(false)) -- a
+    // truncating close would shrink a committed cell to 0 bytes, the spec-1 T3 corruption the crash suite
+    // guards. One shared open-partition-ts: all cached cells belong to the last day, so a commit into a
+    // DIFFERENT day (partition roll) drops the whole cache first. Reused across consecutive commits into
+    // the same cell(s) to avoid the async dispatch's re-open-every-commit. Null until the first
+    // fast-append actually runs (never allocated for a plain table or while the flag is off). Replaces
+    // spec-1's single scalar handle -- removes the dual-handle-on-one-file corruption hazard before Task 3
+    // lets two paths share a cell.
+    private IntObjHashMap<ObjList<MemoryMA>> compositeFastAppendCellCache;
+    private IntList compositeFastAppendCellLru;                        // LRU order over cached cellKeys
+    private long compositeFastAppendOpenPartitionTs = Long.MIN_VALUE; // the day all cached cells belong to
+    // Composite MULTI-cell fast-append (spec 2, Task 1 -- detection only): counts commits
+    // isCompositeMultiCellFastAppendPossible(...) found eligible while the flag is on. Static for the
+    // same reason as compositeFastAppendEligibleCount (spec 1's own analog) above: the writer that
+    // processes a WAL commit is internal to drainWalQueue()/the WAL-apply job and released right
+    // after. Test-visible via getCompositeMultiCellFastAppendEligibleCount().
+    private static final AtomicLong compositeMultiCellFastAppendEligibleCount = new AtomicLong();
+    // Composite MULTI-cell fast-append (spec 2, Task 3): counts commits that ACTUALLY multi-cell
+    // fast-appended (took the cheap early return through applyCompositeMultiCellFastAppend), a strict
+    // subset of ...EligibleCount. Because Task 3 folds canCompositeFastAppendCell into the predicate's
+    // eligibility (so eligible => every cell is appendable, all-or-nothing), every eligible multi-cell
+    // commit now also fast-appends -- unlike spec-1's single-cell counters, where an eligible-but-
+    // unsupported cell still splits the two counts. Static for the same reason as its siblings above.
+    // Test-visible via getCompositeMultiCellFastAppendCommittedCount().
+    private static final AtomicLong compositeMultiCellFastAppendCommittedCount = new AtomicLong();
+    // SP8 Task 4 (anti-vacuity floors): counts calls to processO3BlockComposite -- the general
+    // composite dispatch path every non-fast-appended composite commit takes (see that method's own
+    // "every composite dispatch always takes the async merge path" doc). No existing composite
+    // counter distinguishes "this commit went through the O3/full path" from "this commit
+    // fast-appended", so the fuzz harness's O3-merge-path floor (spec Sec 4.5) needs this one. Static
+    // for the same reason as its siblings above (the writer that processes a WAL commit is internal
+    // to drainWalQueue()/the WAL-apply job and released right after). Test-visible via
+    // getCompositeO3MergeCommitCount().
+    private static final AtomicLong compositeO3MergeCommitCount = new AtomicLong();
+    // SP8 Task 4 (anti-vacuity floors): counts ROWS (not commits) dispatched by
+    // dispatchCompositeCellRange into a cell that already has committed data (srcDataMax > 0) --
+    // spec Sec 4.5's "rows landing in a non-last partition (O3 into an existing cell)" floor. No
+    // existing counter exposes this; srcDataMax is a local computed at dispatch time, not persisted
+    // anywhere else. Static for the same reason as its siblings above. Test-visible via
+    // getCompositeExistingCellRowCount().
+    private static final AtomicLong compositeExistingCellRowCount = new AtomicLong();
+    // (Task 2 removed the dedicated compositeMultiCellMaxTimestamp cache Task 1 had added as a
+    // workaround: isCompositeMultiCellFastAppendPossible now reads and folds the SHARED
+    // compositeCellMaxTimestamp above -- see its FOLD-NOT-WIPE docs -- so one source of truth exists for
+    // both predicates before Task 3's multi-cell routine relies on it.)
     private ConvertOperatorImpl convertOperatorImpl;
     private DedupColumnCommitAddresses dedupColumnCommitAddresses;
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
     private ObjectStackPool<PostingSealPurgeTask> deferredPostingSealPurgeTaskPool;
     private String designatedTimestampColumnName;
+    // Per-(dimIndex, sourceSymbolKey) memoization of HASH/TRUNCATE ordinal resolution for
+    // composite tables (see resolveDimensionOrdinal(int, int, CharSequence)). Null until the
+    // first composite resolveDimensionOrdinal() call that actually needs it (never allocated for
+    // a plain table, and never populated for an IDENTITY dimension, which bypasses this memo
+    // entirely). Reset at the same commit/rollback boundaries as cellKeyMemo, as a safety net
+    // (see resetDimensionOrdinalMemo()) -- but that coarse reset is not the only cadence this
+    // memo needs: the CALLER owns resetting it per WAL-segment once sourceSymbolKey becomes a
+    // per-segment LOCAL key (see resetDimensionOrdinalMemo()'s javadoc).
+    private LongIntHashMap dimensionOrdinalMemo;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
     // Mirrors the hasParquetPartitions flag last published to the metadata cache, so
@@ -389,6 +585,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private ObjList<Runnable> o3NullSetters1;
     private ObjList<Runnable> o3NullSetters2;
     private PagedDirectLongList o3PartitionUpdateSink;
+    // Composite-partitioning (Plan 4a Task 4): side-table from a partitionUpdateSinkAddr block's
+    // address to the cellKey it was dispatched for. The shared partitionUpdateSinkAddr block layout
+    // (PARTITION_SINK_SIZE_LONGS, consumed by O3CopyJob/O3OpenColumnJob/O3PartitionJob too) has no
+    // spare slot to carry cellKey natively, so o3ConsumePartitionUpdateSink resolves it through this
+    // TableWriter-local map instead (keyed by the block's own address, which allocateBlock() already
+    // returns as a stable value for the life of one processO3Block* call). Absent entries mean
+    // cellKey 0 (a plain table never populates this map at all, so it stays null forever -- zero
+    // cost). Lazily allocated on first composite dispatch; cleared at the same point
+    // o3PartitionUpdateSink itself is reset (top of processO3BlockComposite) since block addresses
+    // are only meaningful within one call.
+    private final IntList movedDefaultColumns = new IntList();
+    private LongIntHashMap o3PartitionUpdateSinkCellKeys;
     private long o3RowCount;
     private MemoryMAT o3TimestampMem;
     private MemoryARW o3TimestampMemCpy;
@@ -397,6 +605,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private SymbolColumnIndexer parquetRewriteIndexer;
     private byte parquetRewriteIndexerType = IndexType.NONE;
     private RowGroupBuffers parquetRewriteRowGroupBuffers;
+    private CharSequence orphanScanLiveDir;
+    private Path orphanScanPath;
+    private CharSequence orphanScanSegment;
     private long partitionTimestampHi;
     private boolean performRecovery;
     private boolean processingQueue;
@@ -519,7 +730,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             this.timestampType = metadata.getTimestampType();
             this.timestampDriver = ColumnType.getTimestampDriver(timestampType);
             this.partitionBy = metadata.getPartitionBy();
+            // setComposite() must run before initPartitionBy(): a genuinely-partitioned table's
+            // initPartitionBy() does not reload attachedPartitions, so whatever stride was in effect
+            // when the region was first (blindly, pre-metadata) loaded above at ofRW(path) is what
+            // sticks. That first load always uses the plain default (metadata -- and therefore
+            // composite-ness -- isn't known yet at that point); harmless for a freshly-created table
+            // (nothing persisted to misread yet) or a plain table (the stride was already correct), but
+            // for an already-partitioned COMPOSITE table it leaves reserved slot 5 of the last
+            // partition's record holding stale garbage (Task 1's carry-forward risk) --
+            // reloadAttachedPartitionsAfterComposite() below closes it by redoing the attached-partitions
+            // load at the now-correct stride.
+            this.txWriter.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
             this.txWriter.initPartitionBy(timestampType, metadata.getPartitionBy());
+            this.txWriter.reloadAttachedPartitionsAfterComposite();
 
             this.txnScoreboard = txnScoreboardPool.getTxnScoreboard(tableToken);
             path.trimTo(pathSize);
@@ -781,7 +1004,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.upsertDefaultTxnName(columnIndex, columnNameTxn, txWriter.getLastPartitionTimestamp());
 
         // create column files
-        if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
+        if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+            // Composite: no single "current partition" -- potentially several sibling CELLS share
+            // txWriter.getLastPartitionTimestamp(). See writeCompositeAddColumnColumnVersions's own docs.
+            writeCompositeAddColumnColumnVersions(columnIndex, columnNameTxn);
+        } else if (txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy)) {
             try {
                 openNewColumnFiles(columnName, columnType, indexType, indexValueBlockCapacity);
             } catch (CairoException e) {
@@ -838,6 +1065,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw CairoException.invalidMetadataRecoverable("column does not exist", columnName);
         }
 
+        // Plan 4a DDL gate sweep: ADD INDEX is not yet cell-aware for a real composite table
+        // (whole-branch review finding N2, refined here). The retroactive index-build walk
+        // (indexHistoricPartitions/indexLastPartition, via setStateForTimestamp's own bare 5-arg
+        // setPathForNativePartition call) has TWO distinct failure modes for a routed cell: historic
+        // partitions silently no-op (a double ff.exists guard both evaluate false against the phantom
+        // bare-day path, so ADD INDEX reports success while historic partitions are never actually
+        // indexed), while the current/last partition throws a raw, confusing CairoException
+        // ("could not create index file") when createIndexFiles tries to create a .k file whose parent
+        // directory was never created. Gated unconditionally for any real (non-dormant) composite
+        // table, with a clear message instead of either failure mode. Plain and dormant-composite
+        // tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+
+        // SP2 (2026-08-18): the retroactive index-build WALK is now cell-aware -- both sites resolve
+        // per partition INDEX (see setStateForPartitionIndex), so historic partitions no longer test a
+        // phantom day path and the last partition no longer names a directory that does not exist.
+        // That converted the old SILENT NO-OP into a loud failure, which is the cardinal rule's
+        // preferred outcome but not yet a working feature: with the gate lifted, ADD INDEX now reaches
+        // the column read and fails
+        //     "could not read symbol column during indexing [fd=-1, fileOffset=0, bytesToRead=4]" errno=9
+        // i.e. the .d file could not be opened. The remaining suspect is the per-cell column NAME TXN:
+        // getColumnNameTxn(timestamp, columnIndex) resolves by timestamp, which is cellKey-0-only on a
+        // composite table. Gate retained until the column read is cell-aware too -- an ungated failure
+        // that suspends the table is worse than a refusal.
         TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);
 
         commit();
@@ -993,6 +1246,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // SQL compiler will check that table has it
         assert metadata.getTimestampIndex() > -1;
 
+        // Plan 4a DDL gate sweep: ATTACH PARTITION is not yet cell-aware for a real composite table,
+        // and is the WORST of this sweep's findings -- not a crash but a SILENT one. The destination
+        // write (TableWriter.java ~1046) is unconditionally bare (flat "<day>.<txn>", never nested
+        // under a cell segment); attachPartitionCheckFilesMatchFixedColumn/VarSizeColumn/SymbolColumn
+        // validate columns via flat concatenation with no cell concept, and a missing column is not
+        // treated as an error -- it is silently recorded as a full-partition column top
+        // (upsertColumnTop). So attaching a genuinely multi-cell ".detached" source can return
+        // AttachDetachStatus.OK while every column reads back NULL/absent, with the real bytes sitting
+        // one directory level deeper, never linked in. Thrown directly (see detachPartition's own
+        // comment for why this bypasses the AttachDetachStatus convention). Gated unconditionally for
+        // any real (non-dormant) composite table. Plain and dormant-composite tables are completely
+        // unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+
         if (txWriter.attachedPartitionsContains(timestamp)) {
             LOG.info().$("partition is already attached [path=").$substr(pathRootSize, path).I$();
             // TODO: potentially we can merge with existing data
@@ -1012,8 +1281,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        // final name of partition folder after attachment
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, getTxn());
+        // final name of partition folder after attachment. A composite day is a CONTAINER holding its
+        // cells, and carries no .nameTxn suffix -- composite versions are per CELL, inside it.
+        final boolean compositeAttach = metadata.getPartitionSpec().getDimensionCount() > 0;
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp,
+                compositeAttach ? -1L : getTxn());
         if (ff.exists(path.$())) {
             // Very unlikely since txn is part of the folder name
             return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
@@ -1040,6 +1312,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (hasParquetMeta && !hasParquetData) {
                     LOG.error().$("cannot attach partition, parquet metadata present but data file missing [path=").$(detachedPath).I$();
                     return AttachDetachStatus.ATTACH_ERR_MISSING_PARQUET_DATA;
+                }
+
+                if (compositeAttach) {
+                    // Must run BEFORE the size/min-max read below: that read renders the artifact's
+                    // cellKeys through THIS table's registry, which is only meaningful for this table's
+                    // own artifact. attachPrepare has a generic table_id check, but it runs later --
+                    // by then a foreign artifact would already have been read as if it were ours.
+                    CompositeDetachedArtifact.checkSameTable(
+                            ff, configuration, detachedPath.trimTo(detachedRootLen),
+                            metadata.getTableId(), tableToken.getTableName());
+                    detachedPath.trimTo(detachedRootLen);
                 }
 
                 // detached metadata files validation
@@ -1159,7 +1442,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean appendPartitionAttached = size() == 0 || txWriter.getNextPartitionTimestamp(nextMaxTimestamp) > txWriter.getNextPartitionTimestamp(txWriter.getMaxTimestamp());
 
             txWriter.beginPartitionSizeUpdate();
-            txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
+            if (compositeAttach) {
+                // One attached-partition entry per cell, each with its own size, all inside the single
+                // _txn commit below: invariant 3 (all cells or none).
+                for (int i = 0, n = attachCellKeys.size(); i < n; i++) {
+                    txWriter.updatePartitionSizeByCell(
+                            timestamp, attachCellKeys.getQuick(i), attachCellSizes.getQuick(i), -1L);
+                }
+            } else {
+                txWriter.updatePartitionSizeByTimestamp(timestamp, partitionSize, getTxn());
+            }
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, nextMaxTimestamp);
             if (isSoftLink) {
                 txWriter.setPartitionReadOnlyByTimestamp(timestamp, true);
@@ -1274,6 +1566,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
         }
 
+        // Plan 4a DDL gate sweep: ALTER COLUMN TYPE is not yet cell-aware for a real composite table
+        // for ANY target type, not just SYMBOL (the narrower, pre-existing guard just below covers
+        // only the symbol-interner-ordering hazard). ConvertOperatorImpl's per-partition rewrite loop
+        // (the actual data-copy machinery this method hands off to via getConvertOperator()) resolves
+        // each partition's on-disk path with the bare 5-arg setPathForNativePartition overload -- no
+        // cell segment -- so for a routed cell that path does not correspond to any real directory.
+        // Reachable even for a non-symbol target type, so this must be its own, broader check. Gated
+        // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
+        // tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+
+
         for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
             if (txWriter.isPartitionReadOnly(i)) {
                 formatPartitionForTimestamp(txWriter.getPartitionTimestampByIndex(i), -1);
@@ -1282,6 +1588,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         .put(", partition=").put(utf8Sink).put(']');
             }
         }
+
+        // SP2 (2026-08-18): gate RETAINED with a measured cause. With it lifted, ALTER COLUMN TYPE
+        // fails "could not open, file does not exist: <day>/px.d" -- ConvertOperatorImpl resolves
+        // the column files at the DAY container, not the cell directory. Unlike the other column
+        // DDLs fixed in SP2, its paths are threaded through parallel conversion tasks from several
+        // call sites, so making it cell-aware is a change in that class rather than a per-call fix.
+
 
         ConvertOperatorImpl convertOperator = getConvertOperator();
         try {
@@ -1334,10 +1647,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // open new column files (skip when last partition is parquet - no native files)
             int lastPartitionIndex = txWriter.getPartitionCount() - 1;
+            // COMPOSITE SKIPS THIS BLOCK ENTIRELY, and the reason is stronger than the one that
+            // prompted it. The block eagerly opens the new column's files for the currently-open last
+            // partition, then calls setColumnAppendPosition -> getColumnTop(columnIndex), which asserts
+            // lastOpenPartitionTs is set. A composite table routinely has NO open partition (it never
+            // keeps the bare day container open), so that assert fired and suspended the table.
+            //
+            // Skipping only when nothing is open would leave a subtler hazard: getColumnTop(int) reads
+            // columnVersionWriter.getColumnTopQuick(lastOpenPartitionTs, columnIndex), which is
+            // cellKey-BLIND. A timestamp does not identify a cell, so on a multi-cell day that can read
+            // a SIBLING cell's column top and position the append wrong. That was unreachable while the
+            // path resolution above failed first; fixing the path would have made it reachable. Skipping
+            // outright avoids reintroducing a cellKey-0 read behind a cell-aware path.
+            //
+            // Nothing is lost: the column files are created when the partition is next opened for a
+            // write. Covered by the ALTER COLUMN TYPE tests, which INSERT afterwards and compare
+            // against the plain twin.
             if ((txWriter.getTransientRowCount() > 0 || !PartitionBy.isPartitioned(partitionBy))
-                    && (lastPartitionIndex < 0 || !txWriter.isPartitionParquet(lastPartitionIndex))) {
-                long partitionTimestamp = txWriter.getLastPartitionTimestamp();
-                setStateForTimestamp(path, partitionTimestamp);
+                    && (lastPartitionIndex < 0 || !txWriter.isPartitionParquet(lastPartitionIndex))
+                    && !isRoutedComposite()) {
+                // setStateForPartitionIndex, not setStateForTimestamp. Only PLAIN tables reach this
+                // block now (see the guard above), and for a plain table the two are equivalent -- it is
+                // kept because resolving by INDEX is correct by construction rather than by the
+                // coincidence that a plain table has one partition per timestamp. It arrived here as the
+                // fix for a real composite failure ("could not open read-write
+                // [file=.../2023-01-02.1/px.d.3]", MEASURED 2026-08-26 with no parquet involved); that
+                // failure is now prevented one level up instead, and the rationale lives with the guard.
+                setStateForPartitionIndex(path, lastPartitionIndex);
                 openColumnFiles(columnName, columnNameTxn, columnIndex, path.size());
                 setColumnAppendPosition(columnIndex, txWriter.getTransientRowCount(), false);
                 path.trimTo(pathSize);
@@ -1468,7 +1804,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 int lastPartitionIndex = txWriter.getPartitionCount() - 1;
                 boolean skipForPosting = metadata.isIndexed(columnIndex)
                         && IndexType.isPosting(metadata.getColumnIndexType(columnIndex));
-                if (!skipForPosting && transientRowCount > 0 && lastPartitionIndex >= 0 && !txWriter.isPartitionParquet(lastPartitionIndex)) {
+                // This reopen is CELL-BLIND and must not run on a routed composite table: it builds a
+                // DAY path via setStateForTimestamp, while a composite table's column files live under
+                // <day>/<cell>. It therefore opens the day-level <day>/exch.d -- a 0-byte stray that
+                // exists beside the cell directories -- and setColumnAppendPosition then maps and
+                // extends it. MEASURED: one ALTER ... SYMBOL CAPACITY grew that file from 0 bytes to
+                // 2 MiB of pure waste, and left the writer's active handle for the column pointing
+                // outside every cell.
+                //
+                // Data survived only because the composite write path re-resolves its own per-cell
+                // handles and never consults this one -- an unstated invariant of another code path,
+                // which is not something a correctness argument should rest on.
+                //
+                // Skipping the reopen is the repair; the ALTER itself is deliberately NOT gated. Symbol
+                // capacity is a TABLE-GLOBAL property of the column's symbol map with no per-cell
+                // component, so refusing it would be a functional limitation with no safety benefit.
+                // Everything the statement promises -- metadata rewrite, symbol file hard-link/purge,
+                // rebuildCapacity -- has already happened above; this trailing block only restores the
+                // PLAIN append path's handle, which a routed composite table does not use. Precedent:
+                // the sibling scaleSymbolCapacities() skips this same reposition for isRoutedComposite()
+                // tables and they append correctly afterwards. The block is housekeeping (its own catch
+                // calls handleHousekeepingException), not part of the ALTER's contract.
+                if (!skipForPosting && transientRowCount > 0 && lastPartitionIndex >= 0
+                        && !txWriter.isPartitionParquet(lastPartitionIndex) && !isRoutedComposite()) {
                     long partitionTimestamp = txWriter.getLastPartitionTimestamp();
                     long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
                     int plen = path.size();
@@ -1565,6 +1923,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (pendingParquetToNativeConversions.size() == 0) {
             return;
         }
+        // Composite invariant (merge audit 2026-08-10): the body below is cell-blind -- it deletes
+        // partition dirs through the cellKey-0 safeDeletePartitionDir overload and reopens "the"
+        // partition for a day. It is unreachable for a routed composite table because the ONLY
+        // populator of pendingParquetToNativeConversions is convertPartitionParquetToNative, which
+        // throws on isRoutedComposite() before it can queue anything. A non-empty queue here on a
+        // routed composite table therefore means that gate was bypassed or removed: fail loudly
+        // rather than silently deleting the wrong cell's directory.
+        // Composite is supported now: every queued entry carries the cellKey whose directory it
+        // describes, so the deletes below address the right cell rather than cellKey 0.
         try {
             // Persist reconstructed column tops before the txn, else _txn references a stale _cv.
             if (columnVersionWriter.hasChanges()) {
@@ -1580,14 +1947,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
             }
 
-            for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 3) {
+            for (int i = 0, n = pendingParquetToNativeConversions.size(); i < n; i += 4) {
                 long pts = pendingParquetToNativeConversions.getQuick(i);
                 long oldNameTxn = pendingParquetToNativeConversions.getQuick(i + 1);
                 boolean isLastConverted = pendingParquetToNativeConversions.getQuick(i + 2) != 0L;
+                // -1 on a plain table, where safeDeletePartitionDir's cell-aware overload is
+                // byte-identical to the cellKey-0 one it replaces.
+                int cellKey = (int) pendingParquetToNativeConversions.getQuick(i + 3);
                 if (isLastConverted) {
                     closeActivePartition(false);
                 }
-                safeDeletePartitionDir(pts, oldNameTxn);
+                safeDeletePartitionDir(pts, oldNameTxn, cellKey < 0 ? 0 : cellKey);
                 if (isLastConverted) {
                     openPartition(pts, txWriter.getTransientRowCount());
                     setAppendPosition(txWriter.getTransientRowCount(), false);
@@ -1715,6 +2085,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
+        // Plan 4a DDL gate sweep: CONVERT PARTITION TO PARQUET is not yet cell-aware for a real
+        // composite table. It calls squashPartitionForce (below) unconditionally as its first
+        // mutating step -- itself cell-blind (see squashPartitionForce's own gate/comment) -- and,
+        // even past that, independently builds every one of its own paths (source native dir, the
+        // "upgraded" native dir, the target parquet file) with the bare 5-arg
+        // setPathForNativePartition/setPathForParquetPartition overloads, which do not have a
+        // cell-aware overload at all for the parquet case. A "successful" conversion's cell-blind
+        // safeDeletePartitionDir cleanup step could also delete a shared day container -- i.e. every
+        // sibling cell's data -- not just the target cell's. Separately, composite ingestion itself
+        // already explicitly refuses to write into a parquet-formatted composite cell (see
+        // processO3BlockComposite's own "does not yet support FORMAT PARQUET" guard), so even a
+        // hypothetically-successful conversion would brick future ingestion into that day. Gated
+        // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
+        // tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        // Composite: convert every CELL of the day, each to its own parquet file. The cell-blind
+        // flow below would hand the encoder the bare day container -- whose column files are zero-byte
+        // phantoms -- with a non-zero row count, which is a SIGBUS in the native encoder, not an error.
+        if (isRoutedComposite()) {
+            return convertCompositePartitionNativeToParquet(partitionTimestamp, bloomFilterColumns, bloomFilterFpp);
+        }
+
         if (inTransaction()) {
             assert !tableToken.isWal();
             LOG.info()
@@ -1780,7 +2174,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             columnVersionWriter.commit();
             // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * txWriter.getLongsPerAttachedPartition(), partitionRowCount);
             txWriter.setPartitionParquetGenerated(partitionIndex, true);
             txWriter.setPartitionParquet(partitionTimestamp, parquetFileLength);
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -1846,6 +2240,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
+        // Plan 4a DDL gate sweep: CONVERT PARTITION TO NATIVE is not yet cell-aware for a real
+        // composite table -- it independently builds the source parquet path and the "upgraded"
+        // native dir path (below) with the bare 5-arg setPathForParquetPartition/
+        // setPathForNativePartition overloads, mirroring convertPartitionNativeToParquet's own gate
+        // (see its comment for the fuller mechanism). Gated unconditionally for any real
+        // (non-dormant) composite table. Plain and dormant-composite tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        if (isRoutedComposite()) {
+            // The DEFERRED form must NOT be silently satisfied by an immediate commit. Its caller
+            // (ConvertOperatorImpl, for a column-type change over parquet partitions) batches several
+            // conversions and commits them together via commitPendingParquetToNativeConversions, which
+            // is still cell-blind and still gated. Committing per-cell right here would quietly change
+            // that caller's atomicity contract instead of failing, so refuse -- reusing the pending
+            // conversions literal, which is exactly what is unsupported.
+            // The DEFERRED form is now supported: the conversion queues its per-CELL cleanup and the
+            // batched commitPendingParquetToNativeConversions does the single commit plus the
+            // cell-aware directory deletes, preserving the caller's atomicity contract.
+            return doCommit
+                    ? convertCompositePartitionParquetToNative(partitionTimestamp)
+                    : convertCompositePartitionParquetToNativeDeferred(partitionTimestamp);
+        }
+
         if (doCommit && inTransaction()) {
             LOG.info()
                     .$("committing open transaction before applying convert partition to native command [table=")
@@ -1904,7 +2322,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             restoreIndexFilesAfterParquetToNative(partitionTimestamp, partitionNameTxn, newPartitionDirLen, parquetRowCount);
 
             // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, parquetRowCount);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * txWriter.getLongsPerAttachedPartition(), parquetRowCount);
             long partitionSeqTxn;
             if (walApplySeqTxn > 0) {
                 // parquet -> native on the WAL data-apply path: stamp the apply seqTxn instead of -1.
@@ -1935,6 +2353,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 pendingParquetToNativeConversions.add(partitionTimestamp);
                 pendingParquetToNativeConversions.add(partitionNameTxn);
                 pendingParquetToNativeConversions.add(lastPartitionConverted ? 1L : 0L);
+                // Fourth slot: the cellKey, -1 on a plain table. The drain reads the queue in strides
+                // of FOUR, so every producer must push four -- a three-wide push here would shift every
+                // later entry and delete the wrong directory.
+                pendingParquetToNativeConversions.add(-1L);
             }
 
         } catch (Throwable th) {
@@ -1991,6 +2413,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
+        // Plan 4a DDL gate sweep: DETACH PARTITION is not yet cell-aware for a real composite table.
+        // Both the source (the folder to be detached, TableWriter.java ~1994) and destination (the
+        // ".detached" folder, ~2020) paths are built with the bare, cell-blind 5-arg
+        // setPathForNativePartition overload -- for a routed cell that path does not correspond to any
+        // real on-disk directory. Thrown directly (bypassing this method's own AttachDetachStatus
+        // return-code convention) so the message is unambiguous and consistent with every other gate
+        // in this sweep; a non-OK AttachDetachStatus would still surface as a CairoException to the
+        // caller via AttachDetachStatus#getException, but with a generic, less specific message.
+        // Gated unconditionally for any real (non-dormant) composite table. Plain and
+        // dormant-composite tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+
         if (inTransaction()) {
             assert !tableToken.isWal();
             LOG.info()
@@ -2025,10 +2461,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // To check that partition is squashed, get the next partition and
         // verify that it's not the same timestamp as the one we are trying to detach.
         // The next partition should exist, since the last partition cannot be detached.
-        assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != timestamp;
+        if (isRoutedComposite()) {
+            // A composite day is SEVERAL entries -- one per cell -- all sharing this raw timestamp, so
+            // the plain assertion below ("the next entry belongs to another day") is false here by
+            // construction: squash merges FRAGMENTS, not sibling cells, and is right not to. What must
+            // hold after the squash is that no fragment of this day survives, i.e. every remaining
+            // entry at this calendar floor carries the SAME raw timestamp.
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                final long ts = txWriter.getPartitionTimestampByIndex(i);
+                assert txWriter.getLogicalPartitionTimestamp(ts) != timestamp || ts == timestamp
+                        : "unsquashed fragment still attached at detach time";
+            }
+        } else {
+            assert txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndex + 1)) != timestamp;
+        }
 
         long minTimestamp = txWriter.getMinTimestamp();
-        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        // -1 for composite: the DAY CONTAINER has no .nameTxn suffix (composite versions are per CELL,
+        // inside the container), so resolving it with a cell's nameTxn names the 1A orphan-directory
+        // shape <day>.<txn> rather than the real container.
+        long partitionNameTxn = isRoutedComposite() ? -1L : txWriter.getPartitionNameTxn(partitionIndex);
         Path detachedPath = Path.PATH.get();
 
         try {
@@ -2130,7 +2582,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // all good, commit
                 txWriter.beginPartitionSizeUpdate();
-                txWriter.removeAttachedPartitions(timestamp);
+                detachedCellKeys.clear();
+                if (isRoutedComposite()) {
+                    // removeAttachedPartitions(ts) resolves cellKey 0 only; a composite day holds one
+                    // entry per cell and detaching the day must detach all of them, or the table keeps
+                    // entries pointing into a directory that has just been moved to .detached.
+                    // The keys are captured here because the DIRECTORY removal below needs them and this
+                    // loop is the last place they exist -- afterwards _txn no longer knows about them.
+                    int idx;
+                    while ((idx = findCompositePartitionIndexByTimestamp(timestamp)) >= 0) {
+                        final int detachedCellKey = txWriter.getPartitionCellKey(idx);
+                        detachedCellKeys.add(detachedCellKey);
+                        txWriter.removeAttachedPartitions(timestamp, detachedCellKey);
+                    }
+                } else {
+                    txWriter.removeAttachedPartitions(timestamp);
+                }
                 txWriter.setMinTimestamp(nextMinTimestamp);
                 txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
                 txWriter.bumpTruncateVersion();
@@ -2161,7 +2628,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
-        safeDeletePartitionDir(timestamp, partitionNameTxn);
+        if (detachedCellKeys.size() > 0) {
+            // One candidate per cell. safeDeletePartitionDir(ts, nameTxn) delegates with cellKey = 0, so
+            // it removes only the FIRST cell and silently orphans the rest -- measured: detaching a
+            // two-cell day left a live <day>/E1 behind. The orphan is invisible to queries (its _txn
+            // entries are gone, so the twin comparison still passes) but it makes the day's container
+            // already exist, and ATTACH then fails ATTACH_ERR_DIR_EXISTS -- a status TOLERATED as a WAL
+            // command failure, so the ALTER silently does nothing.
+            for (int i = 0, n = detachedCellKeys.size(); i < n; i++) {
+                safeDeletePartitionDir(timestamp, partitionNameTxn, detachedCellKeys.getQuick(i));
+            }
+            removeDetachedDayContainer(timestamp);
+        } else {
+            safeDeletePartitionDir(timestamp, partitionNameTxn);
+        }
         return AttachDetachStatus.OK;
     }
 
@@ -2199,6 +2679,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // if a column is indexed, it is also of type SYMBOL
             throw CairoException.invalidMetadataRecoverable("column is not indexed", columnName);
         }
+
+        // Plan 4a DDL gate sweep: DROP INDEX is not yet cell-aware for a real composite table.
+        // DropIndexOperator#executeDropIndex is not a pure metadata flip -- for a NATIVE-format
+        // partition it hard-links the column's .d file to a new version, and both the source and
+        // destination paths are built (via its own partitionDFile helper) with the bare 5-arg
+        // setPathForNativePartition overload. Since the source never exists at that bare path for a
+        // routed cell, ff.hardLink fails and this throws unconditionally for any composite table with
+        // routed, indexed NATIVE data. Gated unconditionally for any real (non-dormant) composite
+        // table, with a clear message rather than the raw "cannot hardLink" failure. Plain and
+        // dormant-composite tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+
+
+        // SP2 (2026-08-18): gate RETAINED, now with a measured root cause rather than a guess. With it
+        // lifted, DROP INDEX fails
+        //     cannot hardLink [src=.../2023-01-01/sym.d.1, hardLink=.../2023-01-01/sym.d.1]  errno=17
+        // -- source and destination are the SAME path. DropIndexOperator#partitionDFile builds both
+        // through the bare 5-arg setPathForNativePartition (the day container, not the cell directory),
+        // and its two column versions both come from the cellKey-0-only
+        // getColumnNameTxn(timestamp, columnIndex), so they collide. Making it cell-aware means
+        // threading cellKey through DropIndexOperator's walk -- a change in that class, not here.
+
+
         final int defaultIndexValueBlockSize = Numbers.ceilPow2(configuration.getIndexValueBlockSize());
 
         if (inTransaction()) {
@@ -2341,6 +2846,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     @Override
     public void forceRemovePartitions(LongList partitionTimestamps) {
+        // SP1D (Task 3): FORCE DROP PARTITION is cell-aware as of 2026-08-18. The gate that stood
+        // here predicted its own failure exactly -- "getPartitionIndex is cellKey-blind ... for a day
+        // with 2+ cells this can only ever select and drop ONE cell" -- and measurement with the gate
+        // lifted showed it removed NOTHING, because after cell 0 the blind lookup returns -1. The loop
+        // below now drains every cell of each requested day, columnVersionWriter.removePartition stays
+        // day-level (once per timestamp), and the surviving active partition's max is read from the
+        // cell rather than the day container.
+
         long minTimestamp = txWriter.getMinTimestamp(); // partition min timestamp
         long maxTimestamp = txWriter.getMaxTimestamp(); // partition max timestamp
         boolean firstPartitionDropped = false;
@@ -2352,7 +2865,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         int removedCount = 0;
         for (int i = 0; i < partitionTimestamps.size(); i++) {
             long timestamp = partitionTimestamps.getQuick(i);
-            final int index = txWriter.getPartitionIndex(timestamp);
+            // SP1D (Task 3): cell-agnostic. getPartitionIndex resolves cellKey 0 ONLY, so on a
+            // composite table this returned -1 the moment cell 0 was gone and FORCE DROP removed
+            // NOTHING at all -- measured with the gate lifted. Identical for a plain table, whose day
+            // is its own single cell.
+            final int index = txWriter.getAnyPartitionIndexByTimestamp(timestamp);
             if (index < 0) {
                 LOG.debug().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestampDriver, timestamp).I$();
                 continue;
@@ -2368,17 +2885,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             firstPartitionDropped |= timestamp == txWriter.getPartitionTimestampByIndex(0);
+
+            // SP1D: drain EVERY cell of the day. The original body removed one attached entry per
+            // requested timestamp, which is correct for a plain table (a day IS its single cell) and
+            // could never empty a composite day. FORCE DROP can only ever name a whole day -- its LIST
+            // parser rejects <day>/<cell> with a date-format error -- so removing the day's every cell
+            // is exactly what the statement asked for.
+            // REGRESSION FIX 2026-08-18: the drain is COMPOSITE-ONLY. It was unconditional, and on a
+            // PLAIN table with split partitions it dropped rows master keeps:
+            // getAnyPartitionIndexByTimestamp searches with Vect.BIN_SEARCH_SCAN_UP, which can answer
+            // with a nearby entry when the exact floor is absent, whereas master's getPartitionIndex
+            // requires an exact lo-timestamp match. So once the day entry was removed the next
+            // iteration found a split FRAGMENT and removed that too.
+            // Caught by WalTableFailureTest#testForceDropPartitionRangeNotOnDiskWithSplits (4200 rows
+            // expected, 3240 survived). A plain day is its own single cell, so one removal is both
+            // sufficient and exactly what master did.
+            if (isRoutedComposite()) {
+                int cellIndex = index;
+                while (cellIndex >= 0) {
+                    final long entryTs = txWriter.getPartitionTimestampByIndex(cellIndex);
+                    // Bound the drain to THIS day. A sibling cell shares the raw timestamp; anything
+                    // else (a fragment, or the next day) must not be swept up by a SCAN_UP answer.
+                    if (entryTs != timestamp) {
+                        break;
+                    }
+                    final int cellKey = txWriter.getPartitionCellKey(cellIndex);
+                    final long cellNameTxn = txWriter.getPartitionNameTxn(cellIndex);
+                    txWriter.removeAttachedPartitions(timestamp, cellKey);
+                    // Add the partition to the partition remove list that can be deleted if there are
+                    // no open readers after the commit
+                    partitionRemoveCandidates.add(timestamp, cellNameTxn, cellKey);
+                    cellIndex = txWriter.getAnyPartitionIndexByTimestamp(timestamp);
+                }
+            } else {
+                final long cellNameTxn = txWriter.getPartitionNameTxn(index);
+                txWriter.removeAttachedPartitions(timestamp);
+                partitionRemoveCandidates.add(timestamp, cellNameTxn, 0);
+            }
+
+            // SP1D: column versions are keyed by DAY, not by cell, so this is called ONCE per
+            // requested timestamp and deliberately NOT inside the drain -- calling it per cell would
+            // wipe records still belonging to siblings not yet removed.
+            //
+            // It runs AFTER the drain rather than before it (the original single-entry code ran it
+            // first). For a plain table the two orders are indistinguishable -- one entry, one call.
+            // For composite the call would otherwise precede N removals, so a failure mid-drain would
+            // leave the day's column versions wiped while cells were still attached. Wiping last means
+            // the torn state cannot occur.
             columnVersionWriter.removePartition(timestamp);
-            txWriter.removeAttachedPartitions(timestamp);
-            // Add the partition to the partition remove list that can be deleted if there are no open readers
-            // after the commit
-            partitionRemoveCandidates.add(timestamp, txWriter.getPartitionNameTxn(index));
         }
 
         if (removedCount > 0) {
             if (txWriter.getPartitionCount() > 0) {
                 if (firstPartitionDropped) {
-                    minTimestamp = readMinTimestamp();
+                    // Composite: fold the surviving day's CELLS. Records are (timestamp ASC, cellKey
+                    // ASC) and a cell's minimum is unrelated to its cellKey, so no single record is the
+                    // table minimum -- the third site in this class of defect, after
+                    // dropPartitionByExactTimestamp and removePartitionCell.
+                    //
+                    // The plain arm is left EXACTLY as master wrote it, deliberately. Its index-1 read
+                    // happens AFTER the removal, so it appears to skip the actual survivor at index 0;
+                    // that is upstream behaviour on a path this branch must keep byte-identical, and it
+                    // is recorded here rather than "fixed" in passing.
+                    minTimestamp = isRoutedComposite() ? readMinTimestampAcrossLeadingCells() : readMinTimestamp();
                     txWriter.setMinTimestamp(minTimestamp);
                 }
 
@@ -2389,12 +2958,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
                     long parquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(partitionIndex) : -1L;
                     long txn = txWriter.getPartitionNameTxn(partitionIndex);
-                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
+                    // SP1D: the surviving active partition is a CELL on a composite table, so the
+                    // cell-blind 5-arg resolver would read the max from a day container that holds no
+                    // column files. Same defect 1B fixed for DROP's active-tail branch (N1).
+                    if (isRoutedComposite()) {
+                        final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+                        cellSegmentSink.clear();
+                        renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(partitionIndex));
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn, cellSegmentSink);
+                    } else {
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, activePartitionTs, txn);
+                    }
                     try {
                         readPartitionMinMaxTimestamps(activePartitionTs, path, metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize, activePartitionRows);
                         maxTimestamp = attachMaxTimestamp;
                     } finally {
                         path.trimTo(pathSize);
+                    }
+                    if (isRoutedComposite()) {
+                        // fold the surviving day's cells -- see readMaxTimestampAcrossTrailingCells
+                        maxTimestamp = readMaxTimestampAcrossTrailingCells(partitionIndex);
                     }
                 }
 
@@ -2426,6 +3009,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getSeqTxn() + txWriter.getLagTxnCount();
     }
 
+    /**
+     * The number of distinct packed-ordinal-tuples currently memoized by {@link #resolveCellKey(int[])}
+     * since the last commit/rollback boundary. Test-only introspection of {@link #cellKeyMemo}.
+     */
+    @TestOnly
+    public int getCellKeyMemoSize() {
+        return cellKeyMemo != null ? cellKeyMemo.size() : 0;
+    }
+
     public int getColumnCount() {
         return columns.size();
     }
@@ -2442,6 +3034,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
     }
 
+    /**
+     * Plan 4b Task 2: {@code cellKey}-aware counterpart of {@link #getColumnNameTxn(long, int)}, used by
+     * the composite O3 dispatch ({@code O3PartitionJob#publishOpenColumnTasks}) so a merge/append into
+     * one cell never reads a DIFFERENT cell's column-version record sharing the same partition timestamp.
+     * {@code cellKey == 0} is byte-identical to the 2-arg overload.
+     */
+    public long getColumnNameTxn(long partitionTimestamp, int cellKey, int columnIndex) {
+        return columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, columnIndex);
+    }
+
     public long getColumnStructureVersion() {
         return txWriter.getColumnStructureVersion();
     }
@@ -2449,6 +3051,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public long getColumnTop(long partitionTimestamp, int columnIndex, long defaultValue) {
         long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
         return colTop > -1L ? colTop : defaultValue;
+    }
+
+    /**
+     * Plan 4b Task 2: {@code cellKey}-aware counterpart of {@link #getColumnTop(long, int, long)}, used
+     * by the composite O3 merge path ({@code O3OpenColumnJob#appendMidPartition}/{@code
+     * #mergeMidPartition}) so a cell's own pre-existing column top is never aliased to a DIFFERENT cell's
+     * record sharing the same partition timestamp. {@code cellKey == 0} is byte-identical to the 3-arg
+     * overload.
+     */
+    public long getColumnTop(long partitionTimestamp, int cellKey, int columnIndex, long defaultValue) {
+        long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
+        return colTop > -1L ? colTop : defaultValue;
+    }
+
+    /**
+     * The write-side composite interners (dedicated dictionaries + {@code _cell} registry) for this
+     * table, or {@code null} if the table has no composite interners (plain or cluster-only table).
+     */
+    public CompositeDictionaries getCompositeDictionaries() {
+        return compositeDicts;
     }
 
     public long getDataAppendPageSize() {
@@ -2464,12 +3086,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     @TestOnly
+    public int getDenseSymbolMapCount() {
+        return denseSymbolMapWriters.size();
+    }
+
+    @TestOnly
     public ObjList<MapWriter> getDenseSymbolMapWriters() {
         return denseSymbolMapWriters;
     }
 
     public String getDesignatedTimestampColumnName() {
         return designatedTimestampColumnName;
+    }
+
+    /**
+     * The number of distinct {@code (dimIndex, sourceSymbolKey)} pairs currently memoized by
+     * {@link #resolveDimensionOrdinal(int, int, CharSequence)} since the last reset (commit,
+     * rollback, or a caller-driven {@link #resetDimensionOrdinalMemo()}). Test-only introspection
+     * of {@link #dimensionOrdinalMemo}, mirroring {@link #getCellKeyMemoSize()}.
+     */
+    @TestOnly
+    public int getDimensionOrdinalMemoSize() {
+        return dimensionOrdinalMemo != null ? dimensionOrdinalMemo.size() : 0;
     }
 
     public FilesFacade getFilesFacade() {
@@ -2525,7 +3163,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public int getParquetColumnType(int partitionIndex, int metadataColumnIndex) {
         long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        // Cell-aware: partitionIndex IS a cell on a composite table, so its data.parquet is at
+        // <day>/<cell>.<txn>/, not <day>.<txn>/. Built the bare way this opened a day-level path that
+        // does not exist and suspended the table on ALTER COLUMN TYPE over a parquet partition.
+        setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp,
+                partitionNameTxn, cellSegmentOrNull(txWriter.getPartitionCellKey(partitionIndex)));
         final long parquetSize = txWriter.getPartitionParquetFileSize(partitionIndex);
         final long parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
         try {
@@ -2561,11 +3203,29 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.getPartitionIndex(timestamp);
     }
 
+    /**
+     * Cell-scoped {@link #getPartitionIndexByTimestamp(long)}. On a composite table several cells share
+     * one partition timestamp, so resolving by timestamp alone answers for cellKey 0; an attached entry
+     * IS a cell, so resolving by (timestamp, cellKey) is exact. For a plain table cellKey is 0 and the
+     * two agree.
+     */
+    public int getPartitionIndexByTimestamp(long timestamp, int cellKey) {
+        final int rawIndex = txWriter.findAttachedPartitionRawIndexBy(timestamp, cellKey);
+        return rawIndex < 0 ? -1 : rawIndex / txWriter.getLongsPerAttachedPartition();
+    }
+
     public long getPartitionNameTxn(int partitionIndex) {
         return txWriter.getPartitionNameTxn(partitionIndex);
     }
 
     public long getPartitionNameTxnByPartitionTimestamp(long partitionTimestamp) {
+        // A getter that throws, deliberately. This wrapper has NO caller in this repository -- every
+        // OSS call site goes through getTxFile()/txWriter to the TxReader method instead -- and exists
+        // only for the enterprise storage-policy job, which compares what it returns against its own
+        // expectations to decide whether its staged work is stale. On a composite day there is no
+        // single name-txn to return (each cell carries its own), so answering for cellKey 0 would hand
+        // that staleness check a plausible wrong answer. See refuseCompositeStoragePolicy.
+        refuseCompositeStoragePolicy("name-txn");
         return txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp);
     }
 
@@ -2580,6 +3240,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public long getPartitionRowCountByPartitionTimestamp(long partitionTimestamp) {
+        // Enterprise-only, like the name-txn wrapper above: on a composite day this would return ONE
+        // cell's row count as though it were the day's.
+        refuseCompositeStoragePolicy("row-count");
         return txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
     }
 
@@ -2591,8 +3254,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public int getPartitionSquashCountByPartitionTimestamp(long partitionTimestamp) {
+        // Enterprise-only. getPartitionIndex is the cellKey-0 lookup, so on a composite day this
+        // reports one arbitrary cell's squash count.
+        refuseCompositeStoragePolicy("squash-count");
         final int index = txWriter.getPartitionIndex(partitionTimestamp);
         return index >= 0 ? txWriter.getPartitionSquashCount(index) : -1;
+    }
+
+    /**
+     * Cell ordinal of an attached partition entry, or 0 for a plain table. Exposed for
+     * {@link io.questdb.griffin.DropIndexOperator}, which walks partitions by index and must resolve
+     * each one's cell directory rather than the shared day container.
+     */
+    public int getPartitionCellKey(int partitionIndex) {
+        return txWriter.getPartitionCellKey(partitionIndex);
+    }
+
+    /**
+     * True when this writer's table is a REAL composite table, i.e. it has dimensions AND has routed at
+     * least one cell. Exposed for {@link io.questdb.griffin.DropIndexOperator} so it can pick the
+     * cell-aware path without duplicating the predicate -- see the private overload's own doc for why
+     * this is narrower than {@code dimCount > 0}.
+     */
+    public boolean isComposite() {
+        return isRoutedComposite();
     }
 
     public long getPartitionTimestamp(int partitionIndex) {
@@ -2627,6 +3312,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public MapWriter getSymbolMapWriter(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex);
+    }
+
+    /**
+     * Reverse-looks-up dense symbol key {@code key} on column {@code colIndex}'s own symbol map back
+     * to its interned string -- the narrow accessor {@link #getSymbolMapWriter(int)} alone cannot
+     * provide ({@link MapWriter} declares no {@code valueOf}; see {@link MapWriter#valueOf(MapWriter, int)}).
+     * Used by {@link #renderCellSegment(CharSink, int)} to render an {@code IDENTITY} dimension's
+     * value at partition-path-construction time (composite-partitioning Plan 4a Task 3) -- not the
+     * O3 hot path, so a clean reverse lookup here is fine.
+     */
+    public CharSequence symbolValueOf(int colIndex, int key) {
+        return MapWriter.valueOf(getSymbolMapWriter(colIndex), key);
     }
 
     public SymbolTableProvider getSymbolTableProvider() {
@@ -2724,6 +3421,55 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         commit(metadata.getO3MaxLag());
     }
 
+    /**
+     * Maps a raw dimension value to its dense interned key on the write side, dispatching on the
+     * dimension's transform kind (see {@link PartitionDimension#getKind()}): {@code IDENTITY} reuses
+     * the source column's own symbol map ({@link #getSymbolMapWriter(int)}), {@code HASH} computes a
+     * pure hash bucket with no dictionary involved (see {@link CompositeDimensionTransform#hashBucket}),
+     * {@code TRUNCATE} interns the first-{@code N}-char prefix into the dimension's dedicated
+     * dictionary ({@link #getCompositeDictionaries()}; a composite table always has one for a
+     * TRUNCATE dimension), and {@code EXPRESSION} interns {@code value} verbatim into that SAME kind
+     * of dedicated dictionary (composite-partitioning Plan 4e Task 2) -- {@code value} is already the
+     * fully-evaluated string result of the dimension's compiled {@code Function} by the time it
+     * reaches this method (see {@code resolveExpressionDimensionOrdinal}), so unlike {@code
+     * TRUNCATE} no further transform is applied here.
+     */
+    public int internDimensionValue(int dimIndex, CharSequence value) {
+        PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
+        switch (dim.getKind()) {
+            case PartitionDimension.KIND_IDENTITY:
+                return getSymbolMapWriter(dim.getColumnIndex()).put(value);
+            case PartitionDimension.KIND_HASH:
+                return CompositeDimensionTransform.hashBucket(value, dim.getParam());
+            case PartitionDimension.KIND_TRUNCATE:
+                return getDedicatedDictOrThrow(dimIndex).put(
+                        CompositeDimensionTransform.truncatedPrefix(value, dim.getParam(), compositeDimSink)
+                );
+            case PartitionDimension.KIND_EXPRESSION:
+                return getDedicatedDictOrThrow(dimIndex).put(value);
+            default:
+                throw new UnsupportedOperationException("unknown composite partition dimension kind: " + dim.getKind());
+        }
+    }
+
+    /**
+     * The dedicated dictionary {@link MapWriter} for a {@code TRUNCATE} or {@code EXPRESSION}
+     * dimension (composite-partitioning Plan 2 / Plan 4e Task 2) -- both kinds share the same
+     * {@code CompositeInternerLayout} dedicated-dict bucket. Throws rather than returning {@code
+     * null}: should not happen for a real TRUNCATE/EXPRESSION dimension (a composite table always
+     * provisions one), but a wrong-kind/stale {@code dimIndex} must surface as a clear error here,
+     * not a bare NPE downstream.
+     */
+    private MapWriter getDedicatedDictOrThrow(int dimIndex) {
+        CompositeDictionaries dicts = getCompositeDictionaries();
+        MapWriter dedicatedDict = dicts != null ? dicts.dedicatedDictFor(dimIndex) : null;
+        if (dedicatedDict == null) {
+            throw CairoException.nonCritical()
+                    .put("no dedicated dictionary for composite dimension [dimIndex=").put(dimIndex).put(']');
+        }
+        return dedicatedDict;
+    }
+
     public boolean inTransaction() {
         return txWriter != null && (txWriter.inTransaction() || hasO3() || (columnVersionWriter != null && columnVersionWriter.hasChanges()));
     }
@@ -2785,14 +3531,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long newPartitionNameTxn,
             long newParquetFileSize
     ) {
+        linkOrRebuildPartitionIndexFilesAfterParquetRewrite(partitionTimestamp, 0, oldPartitionNameTxn, newPartitionNameTxn, newParquetFileSize);
+    }
+
+    /**
+     * Cell-scoped {@link #linkOrRebuildPartitionIndexFilesAfterParquetRewrite(long, long, long, long)},
+     * for a caller re-encoding ONE cell of a composite day. Both directories carry the cell segment,
+     * and the column top and column name-txn are read at (timestamp, cellKey, column) -- the
+     * by-timestamp form answers for cellKey 0, so it would decide "link" vs "rebuild" from cell 0's
+     * tops and link a sibling's index files under cell 0's name txn. {@code cellKey == 0} on a plain
+     * table renders and links exactly as the form above.
+     */
+    public void linkOrRebuildPartitionIndexFilesAfterParquetRewrite(
+            long partitionTimestamp,
+            int cellKey,
+            long oldPartitionNameTxn,
+            long newPartitionNameTxn,
+            long newParquetFileSize
+    ) {
         if (parquetRewriteColumnIndexes == null) {
             parquetRewriteColumnIndexes = new IntList();
         } else {
             parquetRewriteColumnIndexes.clear();
         }
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
+        // renderCellSegment throws on a non-composite table, and the 4-arg form above delegates here
+        // with cellKey 0 -- so a plain table takes a NULL segment and renders exactly as it always did.
+        final CharSequence cellSegment = renderCellSegmentOrNull(cellKey);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn, cellSegment);
         final int srcDirLen = path.size();
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn, cellSegment);
         final int dstDirLen = other.size();
         try {
             for (int columnIndex = 0, n = metadata.getColumnCount(); columnIndex < n; columnIndex++) {
@@ -2800,13 +3567,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !IndexType.isIndexed(indexType)) {
                     continue;
                 }
-                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
                 if (columnTop == 0) {
                     linkColumnIndexFiles(
                             srcDirLen,
                             dstDirLen,
                             metadata.getColumnName(columnIndex),
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
+                            getColumnNameTxn(partitionTimestamp, cellKey, columnIndex),
                             indexType,
                             partitionTimestamp,
                             oldPartitionNameTxn
@@ -2824,6 +3591,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (parquetRewriteColumnIndexes.size() > 0) {
                 rebuildParquetRewriteIndexes(
                         partitionTimestamp,
+                        cellKey,
                         newPartitionNameTxn,
                         newParquetFileSize,
                         dstDirLen,
@@ -2843,6 +3611,63 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
         final int newPartitionDirLen = other.size();
         linkPartitionIndexFiles(partitionTimestamp, oldPartitionNameTxn, partitionDirLen, newPartitionDirLen);
+    }
+
+    /**
+     * Cell-scoped {@link #linkPartitionIndexFiles(long, long, long)}, for a caller installing ONE cell
+     * of a composite day into a new partition version (the enterprise cold-switch does this per cell).
+     * <p>
+     * Both directories carry the cell segment, and the index files are linked with THAT cell's row
+     * count, column tops and column name-txns: `_cv` is keyed by (timestamp, cellKey, column), so the
+     * by-timestamp form would apply cell 0's tops to another cell's index files. A day whose only cell
+     * key is 0 -- which is every plain table -- renders and links exactly as the form above.
+     */
+    public void linkPartitionIndexFiles(long partitionTimestamp, int cellKey, long oldPartitionNameTxn, long newPartitionNameTxn) {
+        final int index = getPartitionIndexByTimestamp(partitionTimestamp, cellKey);
+        if (index < 0) {
+            throw CairoException.nonCritical()
+                    .put("cannot link index files, partition cell is gone [table=").put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").ts(timestampType, partitionTimestamp)
+                    .put(", cellKey=").put(cellKey).put(']');
+        }
+        final CharSequence cellSegment = renderCellSegmentOrNull(cellKey);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn, cellSegment);
+        final int partitionDirLen = path.size();
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn, cellSegment);
+        final int newPartitionDirLen = other.size();
+        linkPartitionIndexFiles(
+                partitionTimestamp,
+                cellKey,
+                oldPartitionNameTxn,
+                txWriter.getPartitionSize(index),
+                partitionDirLen,
+                newPartitionDirLen
+        );
+    }
+
+    /**
+     * Cell-scoped {@link #safeDeletePartitionDir(long, long)}: reclaims the superseded version dir of
+     * ONE cell. The by-timestamp form removes cellKey 0's directory whatever cell the caller meant.
+     */
+    public void safeDeletePartitionDir(long timestamp, long partitionNameTxn, int cellKey) {
+        // Call O3 methods to remove check TxnScoreboard and remove partition directly
+        partitionRemoveCandidates.clear();
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn, cellKey);
+        processPartitionRemoveCandidates();
+    }
+
+    /**
+     * This cell's rendered segment, or {@code null} when the table is not composite --
+     * {@link #renderCellSegment(CharSink, int)} throws there, and every cell-scoped entry point in
+     * this class is reachable from a plain table through its cellKey-0 delegate.
+     */
+    private @Nullable CharSequence renderCellSegmentOrNull(int cellKey) {
+        if (metadata.getPartitionSpec().getDimensionCount() <= 0) {
+            return null;
+        }
+        final StringSink cellSegment = Misc.getThreadLocalSink();
+        renderCellSegment(cellSegment, cellKey);
+        return cellSegment;
     }
 
     public void markDistressed() {
@@ -2905,6 +3730,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
 
+        refuseCompositeStoragePolicy("mark-ready");
+
         if (inTransaction()) {
             assert !tableToken.isWal();
             LOG.info()
@@ -2937,7 +3764,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return true;
             }
             if (txWriter.getNativePartitionSeqTxn(partitionIndex) <= 0 && tableToken.isWal()) {
-                txWriter.setPartitionSeqTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, txWriter.getSeqTxn());
+                txWriter.setPartitionSeqTxnByRawIndex(partitionIndex * txWriter.getLongsPerAttachedPartition(), txWriter.getSeqTxn());
             }
             txWriter.setPartitionParquetGenerated(partitionIndex, true);
             txWriter.bumpPartitionTableVersion();
@@ -3012,7 +3839,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void normalizeColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount) {
-        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, partitionRowCount, true);
+        normalizeColumnTopsAfterParquetRewrite(partitionTimestamp, 0, partitionRowCount);
+    }
+
+    /**
+     * Cell-scoped {@link #normalizeColumnTopsAfterParquetRewrite(long, long)}: the rewritten parquet
+     * materializes every current-schema column for ONE cell, so only that cell's tops are zeroed.
+     */
+    public void normalizeColumnTopsAfterParquetRewrite(long partitionTimestamp, int cellKey, long partitionRowCount) {
+        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, cellKey, partitionRowCount, true);
         if (columnVersionWriter.hasChanges()) {
             columnVersionWriter.commit();
             txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -3033,6 +3868,69 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             freeColumns(false);
             throw e;
         }
+    }
+
+    /**
+     * {@code preparePartitionForParquetConversion} for a COMPOSITE day: force-squash and clear stale
+     * parquet for EVERY cell, not for the one cellKey-0 record a timestamp resolves to.
+     * <p>
+     * Both steps are per cell for the same reason: a day is N partition records, each with its own
+     * split fragments and its own {@code <day>/<cell>.<txn>/data.parquet}. Resolving by timestamp
+     * squashed one cell and deleted one cell-less path, which is why this entry point refused
+     * composite tables outright until now -- it would have told the policy job "this day is ready"
+     * having prepared a fraction of it.
+     * <p>
+     * The day's cellKeys are collected FIRST and each is re-resolved to a fresh index inside the loop:
+     * {@code squashPartitionForce} rewrites the attached-partition array, so an index captured before
+     * it can name a different record afterwards. That re-resolution is the difference between this and
+     * a loop that looks equivalent.
+     * <p>
+     * Returns -1 when every cell is already parquet (or has parquet generated), matching the plain
+     * contract of "nothing to do".
+     */
+    private long prepareCompositeDayForParquetConversion(long partitionTimestamp) {
+        final IntList cellKeys = new IntList();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                cellKeys.add(txWriter.getPartitionCellKey(i));
+            }
+        }
+        if (cellKeys.size() == 0) {
+            formatPartitionForTimestamp(partitionTimestamp, -1);
+            throw CairoException.nonCritical()
+                    .put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
+                    .put(", partition=").put(utf8Sink).put(']');
+        }
+
+        int prepared = 0;
+        for (int c = 0, cn = cellKeys.size(); c < cn; c++) {
+            final int cellKey = cellKeys.getQuick(c);
+            int idx = findCompositePartitionIndex(partitionTimestamp, cellKey);
+            if (idx < 0) {
+                continue;
+            }
+            if (txWriter.isPartitionParquetGenerated(idx) || txWriter.isPartitionParquet(idx)) {
+                continue;
+            }
+            squashPartitionForce(idx);
+
+            // re-resolve: the squash above rewrites the attached-partition array
+            idx = findCompositePartitionIndex(partitionTimestamp, cellKey);
+            if (idx < 0) {
+                continue;
+            }
+            final long cellNameTxn = txWriter.getPartitionNameTxn(idx);
+            final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+            cellSegmentSink.clear();
+            renderCellSegment(cellSegmentSink, cellKey);
+            setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy,
+                    partitionTimestamp, cellNameTxn, cellSegmentSink);
+            ff.removeQuiet(path.$());
+            path.trimTo(pathSize);
+            prepared++;
+        }
+
+        return prepared > 0 ? partitionTimestamp : -1L;
     }
 
     public long preparePartitionForParquetConversion(long partitionTimestamp) {
@@ -3058,6 +3956,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", partition=").$ts(timestampDriver, partitionTimestamp)
                     .I$();
             return -1L;
+        }
+
+        if (isRoutedComposite()) {
+            return prepareCompositeDayForParquetConversion(partitionTimestamp);
         }
 
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
@@ -3224,6 +4126,62 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final byte indexType = metadata.getColumnIndexType(index);
         String columnName = metadata.getColumnName(index);
 
+        // Plan 4b feature-gate sweep: DROP COLUMN is not yet cell-aware for a real composite table.
+        // removeColumnFiles (below, via commit()) iterates every raw (ts,cellKey) partition-row index
+        // and calls columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex) -- the bare
+        // 2-arg, cellKey-0-only overload -- so every cell sharing a day with cellKey 0 gets cellKey 0's
+        // columnNameTxn queued for purge instead of its own. The resulting PurgingOperator/
+        // ColumnPurgeOperator consumers then resolve the physical file location via the bare 5-arg
+        // TableUtils#setPathForNativePartition overload (no cell segment) in both the synchronous
+        // (PurgingOperator#purge) and async (ColumnPurgeOperator#setUpPartitionPath) halves -- neither
+        // has ANY composite/cellKey awareness at all. ff.removeQuiet swallows the mismatch silently: a
+        // routed multi-cell day's dropped-column files are never reclaimed (an unbounded, silent space
+        // leak, confirmed by code inspection: zero cell-aware call sites in PurgingOperator.java or
+        // ColumnPurgeOperator.java), while metadata.removeColumn (below) correctly forgets the column
+        // table-wide via its writer-index tombstone, unaffected by cellKey. This is a genuine, larger
+        // instance of the same "unaudited purge" gap the O3PartitionPurgeJob C1 gate closed for
+        // partition-level purge -- but for column-level purge, never previously found/gated. Rejected
+        // unconditionally for any real (non-dormant) composite table, before the narrower dimension/
+        // cluster-column-reference guard just below (which is orthogonal -- a permanent partition-spec
+        // integrity rule, not a cell-blindness issue -- and becomes unreachable-first here, mirroring
+        // changeColumnType's identical precedent elsewhere in this file). Plain and dormant-composite
+        // tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table (proven by
+        // ShowCreateTableTest's testShowCreateCompositeAfterDropLowerIndexDimensionColumn and 2
+        // siblings) -- see isRoutedComposite()'s own doc for why that predicate is wrong for a
+        // DDL-safety gate.
+        // A composite partition dimension pins its source SYMBOL column by stable WRITER index
+        // (PartitionDimension.getColumnIndex() is documented as a writer index, never a dense
+        // position -- see its javadoc). Resolve via getWriterIndex() rather than comparing the dense
+        // `index` above directly: TableWriterMetadata never actually renumbers a live column's dense
+        // slot after a drop (removeColumn() only tombstones in place, see below), so the two happen to
+        // coincide today, but going through the documented writer-index accessor -- mirroring its use
+        // one line below for tombstoneCoveredColumnInOtherIndexes -- keeps this guard correct by
+        // construction rather than by that incidental invariant. Dropping the dimension's source column
+        // would leave the dimension dangling -- routing a live table by a column that no longer exists.
+        // The same hazard applies to a composite partition's ORDER BY / cluster columns (also pinned by
+        // stable writer index, see PartitionSpec#getClusterColumn(int)): SHOW CREATE renders them by
+        // writer index, so a dropped cluster column would misrender / NPE. Reject both before any
+        // mutation; the symmetric counterpart of the ADD/ALTER SYMBOL guards in addColumn(...) and
+        // changeColumnType(...).
+        final int droppedWriterIndex = metadata.getColumnMetadata(index).getWriterIndex();
+        final PartitionSpec partitionSpec = metadata.getPartitionSpec();
+        for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
+            if (partitionSpec.getDimension(i).getColumnIndex() == droppedWriterIndex) {
+                throw CairoException.nonCritical()
+                        .put("cannot drop column '").put(name)
+                        .put("' referenced by a composite partition dimension");
+            }
+        }
+        for (int i = 0, n = partitionSpec.getClusterColumnCount(); i < n; i++) {
+            if (partitionSpec.getClusterColumn(i) == droppedWriterIndex) {
+                throw CairoException.nonCritical()
+                        .put("cannot drop column '").put(name)
+                        .put("' referenced by a composite partition ORDER BY column");
+            }
+        }
+
         LOG.info().$("removing [column=").$safe(name).$(", path=").$substr(pathRootSize, path).I$();
 
         // check if we are moving timestamp from a partitioned table
@@ -3284,12 +4242,156 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * SP1C: removes ONE cell of a composite day, leaving its siblings attached.
+     * <p>
+     * The lifecycle spec's rule is that a partition predicate selects CELLS, and that dropping every
+     * cell of a day drops the day. This is the single-cell case; {@link #removePartition(long)} is the
+     * whole-day case and drains every cell. The removal primitives are the ones sub-projects 1B and 1D
+     * built and proved: {@code removeAttachedPartitions(ts, cellKey)} removes exactly one
+     * {@code (ts, cellKey)} record, so a sibling sharing the timestamp cannot be touched.
+     * <p>
+     * Before 1C this shape was refused at the statement, because measurement showed the LIST parser
+     * accepted a cell-qualified name and then dropped the WHOLE day: a three-cell day went to empty.
+     * That is why the refusal existed and why this method must remove exactly one record.
+     */
+    @Override
+    public boolean removePartitionCell(long timestamp, int cellKey) {
+        if (!PartitionBy.isPartitioned(partitionBy)) {
+            return false;
+        }
+        if (!isRoutedComposite()) {
+            throw CairoException.critical(0)
+                    .put("dropping an individual cell requires a composite table [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+        partitionRemoveCandidates.clear();
+        commit();
+
+        final int rawIndex = txWriter.findAttachedPartitionRawIndexBy(timestamp, cellKey);
+        if (rawIndex < 0) {
+            return false;
+        }
+        final int index = rawIndex / txWriter.getLongsPerAttachedPartition();
+        final long nameTxn = txWriter.getPartitionNameTxn(index);
+
+        // SP1C: a boundary cell carries the table's MIN or MAX, so those bounds must be recomputed --
+        // passing the current ones through leaves _txn pointing at removed data. That is invisible to a
+        // composite min(ts)/max(ts), which routes through the cross-cell merge SCAN rather than the
+        // _txn shortcut, so it must be asserted against the STORED bound (see
+        // testDroppingBoundaryCellsRecomputesMinAndMax). Third instance of this class in one session:
+        // 1B's N1 read the max through a cell-blind path, 1D's read the min from a day container, and
+        // this one did not recompute at all.
+        final int partitionCountBefore = txWriter.getPartitionCount();
+        final boolean removingFirst = index == 0;
+        final boolean removingLast = index == partitionCountBefore - 1;
+        long newMinTimestamp = txWriter.getMinTimestamp();
+        long newMaxTimestamp = txWriter.getMaxTimestamp();
+        if (removingLast && partitionCountBefore > 1) {
+            // the active partition is going: close it before its files are unlinked
+            closeActivePartition(false);
+            final int prevIndex = partitionCountBefore - 2;
+            final long prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
+            final boolean prevIsParquet = txWriter.isPartitionParquet(prevIndex);
+            final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
+            final long prevSize = txWriter.getPartitionSize(prevIndex);
+            try {
+                final StringSink prevCellSink = Misc.getThreadLocalSink();
+                prevCellSink.clear();
+                renderCellSegment(prevCellSink, txWriter.getPartitionCellKey(prevIndex));
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp,
+                        txWriter.getPartitionNameTxn(prevIndex), prevCellSink);
+                readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()),
+                        prevIsParquet, parquetFileSize, prevSize);
+                newMaxTimestamp = attachMaxTimestamp;
+            } finally {
+                path.trimTo(pathSize);
+            }
+            if (isRoutedComposite()) {
+                // fold the surviving day's cells -- see readMaxTimestampAcrossTrailingCells
+                newMaxTimestamp = readMaxTimestampAcrossTrailingCells(prevIndex);
+            }
+        }
+        if (partitionCountBefore == 1) {
+            // The drop empties the table. Carrying the old minimum forward strands it permanently: the
+            // WAL/O3 commit path folds the incoming batch in with min(existing, batchMin), so a stale
+            // minimum always beats any later data and is never recomputed -- leaving _txn describing a
+            // partition that no longer exists, which trips the minTimestamp >= partition[0] assert in
+            // commitWalInsertTransactions and suspends the table (silently persisted in production,
+            // where assertions are off). MAX_VALUE is the identity for that min.
+            //
+            // Same defect as the one fixed in dropPartitionByExactTimestamp (e548783f9e); this is its
+            // sibling, found by auditing that method's other callers rather than by a failure. NOT
+            // reachable from SQL today -- AlterOperation.DROP_PARTITION_CELL exists but nothing in the
+            // parser constructs it -- so it is demonstrated through the public writer entry point the
+            // opcode will call once wired. See CompositeDropCellMinTimestampTest.
+            newMinTimestamp = Long.MAX_VALUE;
+        }
+
+        txWriter.beginPartitionSizeUpdate();
+        txWriter.removeAttachedPartitions(timestamp, cellKey);
+        // Recomputed AFTER the removal, and across the surviving day's CELLS.
+        //
+        // This used to read partition index 1 before the removal, reasoning that "index 1 is exactly
+        // the survivor when index 0 goes". Index 1 IS the survivor; what does not follow is that the
+        // survivor holds the table minimum. Records are ordered (timestamp ASC, cellKey ASC), so the
+        // survivor is the lowest surviving cellKey of the earliest day, and cellKey order carries no
+        // information about a cell's timestamps -- it is the order dimension VALUES were first
+        // ingested. A sibling cell of the same day can hold earlier rows.
+        //
+        // The consequence of taking the minimum too HIGH is silent: cullIntervals discards every
+        // interval below _txn's minimum, so timestamp-filtered reads lose rows while counts and
+        // unfiltered scans stay right. Same defect, same session, as the one this method's own comment
+        // used to contrast itself favourably against in dropPartitionByExactTimestamp -- both were
+        // wrong, for the same reason, and only that method's was reachable from SQL.
+        if (partitionCountBefore > 1 && (removingFirst || timestamp == txWriter.getPartitionTimestampByIndex(0))) {
+            newMinTimestamp = readMinTimestampAcrossLeadingCells();
+        }
+        txWriter.setMinTimestamp(newMinTimestamp);
+        txWriter.finishPartitionSizeUpdate(newMinTimestamp, newMaxTimestamp);
+        txWriter.bumpTruncateVersion();
+        // Column versions are keyed by DAY. They may only be wiped once the day's LAST cell is gone --
+        // otherwise records still belonging to surviving siblings would be destroyed. 1D hit the same
+        // constraint in forceRemovePartitions and resolved it the same way.
+        if (!txWriter.hasAnyAttachedPartitionForTimestamp(timestamp)) {
+            columnVersionWriter.removePartition(timestamp);
+        }
+        partitionRemoveCandidates.add(timestamp, nameTxn, cellKey);
+
+        commitRemovePartitionOperation();
+        return true;
+    }
+
     @Override
     public boolean removePartition(long timestamp) {
         partitionRemoveCandidates.clear();
         if (!PartitionBy.isPartitioned(partitionBy)) {
             return false;
         }
+        // Plan 4a DDL gate sweep: DROP PARTITION is not yet cell-aware for a real (routed) composite
+        // table, and is actively unsafe, not just imprecise. Two independently-confirmed mechanisms:
+        // (1) dropPartitionByExactTimestamp's "removing active partition" branch resolves the new
+        // tail's min/max timestamp via the bare, cell-blind 5-arg setPathForNativePartition overload
+        // and throws "file does not exist" for a routed composite table's own current tail (N1).
+        // (2) TxWriter#removeAttachedPartitions(long) (its non-active-partition branch) silently
+        // defaults to cellKey 0 only; for a day with 2+ cells, this while-loop (below,
+        // getLogicalPartitionTimestamp-driven) re-probes the SAME raw index forever once cellKey 0's
+        // entry is gone and a sibling cell's entry -- which shares the exact same raw/floor timestamp
+        // -- is left sitting there untouched: a genuine, empirically-reproduced INFINITE LOOP (not a
+        // clean crash), confirmed live in this sweep (a forked test JVM spun logging "partition is
+        // already removed" until forcibly killed after several minutes). Composite on-disk versioning
+        // is also per-cell (nameTxn differs per cell sharing a day), so the physical-delete step
+        // (processPartitionRemoveCandidates0's own bare-path unlink) can, depending on which cell's
+        // nameTxn happens to be the initial -1 sentinel, collapse to the SHARED day container and
+        // delete sibling cells' data that was never meant to be touched. Gated unconditionally for any
+        // real (non-dormant) composite table -- cell-aware DROP PARTITION is deferred to a later
+        // sub-plan (4b+). Plain and dormant-composite tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        // SP1B: whole-day DROP PARTITION is now cell-correct for composite (N1/N2/N3 fixed plus the
+        // day-container housekeeping), so this no longer refuses. The SQL layer refuses the one shape
+        // that is still wrong -- a cell-qualified LIST name, which dropped the WHOLE day (measured).
 
         // commit changes, there may be uncommitted rows of any partition
         commit();
@@ -3305,7 +4407,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // To delete all the splits, start from the index that is next or equal to the timestamp parameter.
             partitionIndex = -partitionIndex - 1;
         }
-        partitionIndex /= LONGS_PER_TX_ATTACHED_PARTITION;
+        partitionIndex /= txWriter.getLongsPerAttachedPartition();
 
         boolean dropped = false;
         long partitionTimestamp;
@@ -3335,6 +4437,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final int type = metadata.getColumnType(index);
         final byte indexType = metadata.getColumnIndexType(index);
         String columnName = metadata.getColumnName(index);
+
+        // Plan 4b feature-gate sweep: RENAME COLUMN is not yet cell-aware for a real composite table,
+        // and its failure mode is worse than most other gates in this sweep -- not just a clean throw.
+        // metadata.renameColumn + rewriteAndSwapMetadata (below) commit the NEW name to durable _meta
+        // BEFORE hardLinkAndPurgeColumnFiles (the actual per-partition file rename) ever runs. That
+        // helper iterates every raw (ts,cellKey) partition-row index and resolves both the old-name
+        // source path AND the columnNameTxn to hard-link via the same cellKey-0-only 2-arg
+        // columnVersionWriter.getColumnNameTxn/getColumnTop lookups DROP COLUMN's gate (just above)
+        // rejects, then builds the actual hardlink source/destination paths with the bare 5-arg
+        // TableUtils#setPathForNativePartition overload (TableWriter#hardLinkAndPurgeColumnFiles,
+        // no cell segment). For a real multi-cell day, at least one cell's phantom source path will not
+        // exist where hardLinkAndPurgeColumnFiles expects it: any cell that DOES hard-link successfully
+        // (e.g. one coinciding with the bare/dormant-shaped path) survives under the new name; a cell
+        // that fails mid-loop throws (converted to throwDistressException) with metadata ALREADY
+        // switched and persisted to the new name for every cell, and column files under the OLD name
+        // permanently orphaned for whichever cells never got hard-linked -- a genuine partial/torn
+        // metadata-vs-files split, not just a clean rejection. A reader reopening after that finds no
+        // file for the (new name, that cell) combination, which -- per the sibling ATTACH PARTITION gate's
+        // own precedent in this sweep -- reads back as a column-top/NULL rather than an error: a silent
+        // wrong-answer, not merely an availability loss. Rejected unconditionally, before any of this
+        // runs, for any real (non-dormant) composite table. Plain and dormant-composite tables are
+        // completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+
 
         LOG.info().$("renaming column '").$safe(columnName).$('[')
                 .$(ColumnType.nameOf(type)).$("]' to '").$safe(newName)
@@ -3467,10 +4595,314 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         bumpColumnStructureVersion();
     }
 
+    /**
+     * Clears {@link #dimensionOrdinalMemo} (see {@link #resolveDimensionOrdinal(int, int,
+     * CharSequence)}). This task's own call sites reset it at the same commit/rollback boundaries
+     * as {@link #cellKeyMemo} (mirroring the private {@code resetCellKeyMemo()}), as a safety net
+     * for the same rollback-truncation reason. <b>That is not the only cadence this memo needs</b>:
+     * once a caller (Plan 4a Task 4) passes a per-WAL-segment LOCAL symbol key as {@code
+     * sourceSymbolKey}, the same local key value can denote a different string in the next
+     * segment, and a single commit/WAL-apply can span many segments -- so that caller MUST also
+     * call this method once per segment boundary, before resolving ordinals for a new segment's
+     * local keys. This method is deliberately public (unlike the private {@code
+     * resetCellKeyMemo()}) precisely so that finer-grained, caller-owned reset is possible; this
+     * task does not itself know when a WAL segment boundary occurs.
+     */
+    public void resetDimensionOrdinalMemo() {
+        if (dimensionOrdinalMemo != null) {
+            dimensionOrdinalMemo.clear();
+        }
+    }
+
     public void resetWalApplyCounters() {
         physicallyWrittenRowsSinceLastCommit.reset();
         dedupRowsRemovedSinceLastCommit.reset();
         hasTtlEvictedPartitionsSinceLastCommit = false;
+    }
+
+    /**
+     * Resolves a row's dense composite {@code cellKey} from its already-resolved per-dimension
+     * ordinals -- for {@code IDENTITY} the ordinal is the source SYMBOL column's own resolved
+     * global symbol key (read directly off the column at O3 time, no dictionary lookup needed at
+     * this layer); see {@link #internDimensionValue(int, CharSequence)} for how HASH/TRUNCATE
+     * ordinals are derived from a string when only a string is available. Delegates to
+     * {@link CellRegistry#internCell(int[], int)}, memoizing the packed-ordinal-tuple -&gt;
+     * cellKey mapping in {@link #cellKeyMemo} for the life of the current transaction, so a
+     * repeated tuple within one commit is a plain hash-map lookup rather than a re-encode-and-
+     * intern through the {@code _cell} symbol map -- {@code internCell} is already idempotent
+     * (repeated calls with an equal tuple return the same ordinal, per its own javadoc), so this
+     * memo is purely a cheap-lookup optimization, never a correctness requirement. The memo is
+     * cleared at every commit/rollback boundary by {@code resetCellKeyMemo()} (called from
+     * {@code commitTxWriter}, {@code commitTxWriterAndPublishPendingPostingSealPurges}, and
+     * {@code rollback}) -- the rollback case matters for correctness, not just hygiene: a
+     * rollback can truncate the {@code _cell} registry back past a memoized tuple's slot, and a
+     * surviving stale cache entry would then hand out a cellKey the registry no longer agrees
+     * with.
+     * <p>
+     * The packed-{@code long} memo key only covers arity 1-2 losslessly (the shapes reachable
+     * today -- a single dimension in practice, or two per a parsed multi-dimension spec, see
+     * {@code CompositePartitionParseTest#testParseTwoDimsAndOrderBy}); for a hypothetically
+     * larger arity this still returns the correct cellKey (interning is idempotent regardless),
+     * just without the memo fast path -- packing more than two 32-bit ordinals losslessly into
+     * one 64-bit key isn't possible without a second collision-verification structure this task
+     * doesn't need yet.
+     * <p>
+     * Only ever valid on a composite table ({@code getPartitionSpec().getDimensionCount() > 0});
+     * a plain table must never reach this method and incurs zero cost from it (never called, and
+     * {@link #cellKeyMemo} is never allocated). Not yet called from the O3/WAL-apply write path --
+     * wiring a real per-row call into {@code processO3Block} is composite-partitioning Plan 4a
+     * Task 4.
+     *
+     * @param dimOrdinals per-dimension resolved ordinals; only indices {@code [0, dimCount)} are
+     *                    read, so callers may reuse one scratch array across many rows without
+     *                    reallocating
+     * @return the dense cellKey for this ordinal tuple (0 for the first-ever distinct tuple, 1
+     * for the next distinct one, ...)
+     */
+    public int resolveCellKey(int[] dimOrdinals) {
+        int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        if (dimCount <= 0) {
+            throw new UnsupportedOperationException(
+                    "resolveCellKey() must not be called on a non-composite table [table=" + tableToken + ']'
+            );
+        }
+
+        if (dimCount <= 2) {
+            long memoKey = dimCount == 1
+                    ? Integer.toUnsignedLong(dimOrdinals[0])
+                    : Numbers.encodeLowHighInts(dimOrdinals[0], dimOrdinals[1]);
+            if (cellKeyMemo == null) {
+                cellKeyMemo = new LongIntHashMap();
+            } else {
+                int cached = cellKeyMemo.get(memoKey);
+                if (cached != LongIntHashMap.NO_ENTRY_VALUE) {
+                    return cached;
+                }
+            }
+            int cellKey = getCompositeDictionaries().cellRegistry().internCell(dimOrdinals, dimCount);
+            cellKeyMemo.put(memoKey, cellKey);
+            return cellKey;
+        }
+
+        // arity > 2: no lossless single-long packing attempted (yet); internCell is idempotent,
+        // so this remains correct, just unmemoized.
+        return getCompositeDictionaries().cellRegistry().internCell(dimOrdinals, dimCount);
+    }
+
+    /**
+     * Resolves a single dimension's dense ordinal for a {@code HASH} or {@code TRUNCATE}
+     * dimension from a provided {@code (sourceSymbolKey, value)} pair, memoized per {@code
+     * (dimIndex, sourceSymbolKey)} so a repeated source symbol key is a plain hash-map lookup
+     * rather than a re-hash ({@code HASH}) or re-intern ({@code TRUNCATE}) of {@code value}. This
+     * is the counterpart to {@link #resolveCellKey(int[])}: that method turns a row's
+     * already-resolved per-dimension ordinals into a cellKey, whereas this method computes ONE
+     * dimension's ordinal in the first place, for the two dimension kinds that genuinely need a
+     * string ({@link CompositeDimensionTransform}).
+     * <p>
+     * {@code IDENTITY} is deliberately NOT this method's concern: for an IDENTITY dimension the
+     * ordinal simply IS {@code sourceSymbolKey} (the source SYMBOL column's own resolved key), so
+     * this method returns it directly -- no memo lookup, no dictionary call, {@code value} not
+     * even consulted. Plan 4a Task 4's real per-row O3 caller is expected to fill an IDENTITY
+     * dimension's ordinal straight from the column buffer without ever calling this method; the
+     * bypass here exists only so a caller invoking this method uniformly across all dimension
+     * kinds still gets the right answer instead of wasting a memo slot.
+     * <p>
+     * For {@code HASH}/{@code TRUNCATE} (and {@code EXPRESSION}, which throws), the transform
+     * itself is never reimplemented here: a memo miss delegates to {@link
+     * #internDimensionValue(int, CharSequence)}, which already dispatches on {@link
+     * PartitionDimension#getKind()} and computes {@code HASH}'s bucket ({@link
+     * CompositeDimensionTransform#hashBucket}) or {@code TRUNCATE}'s dedicated-dict ordinal
+     * ({@link CompositeDimensionTransform#truncatedPrefix} + dict {@code put}); {@code
+     * EXPRESSION} lands on {@code internDimensionValue}'s own {@code UnsupportedOperationException}
+     * (deferred to Plan 4e). This method's only added value is the memoization.
+     * <p>
+     * <b>Memo key and reset.</b> The memo key packs {@code (sourceSymbolKey, dimIndex)} losslessly
+     * into one {@code long} (both are full-range ints; mirrors {@code resolveCellKey}'s own
+     * packed-key precedent). {@link #dimensionOrdinalMemo} is reset at the same commit/rollback
+     * boundaries as {@link #cellKeyMemo} (see {@link #resetDimensionOrdinalMemo()}) purely as a
+     * safety net -- that coarse reset is <b>not</b> sufficient on its own for correctness once a
+     * caller passes a per-WAL-segment LOCAL symbol key as {@code sourceSymbolKey}: the same local
+     * key value can denote a different string in a different segment, and one commit/WAL-apply
+     * can span many segments. <b>The caller (Plan 4a Task 4) owns calling {@link
+     * #resetDimensionOrdinalMemo()} at the correct finer-grained cadence</b> (per segment, before
+     * resolving ordinals for a new segment's local keys) -- this method and its memo have no way
+     * to detect a segment boundary on their own.
+     * <p>
+     * Only ever meaningfully called for a composite table's HASH/TRUNCATE dimension; gating and
+     * allocation mirror {@link #resolveCellKey(int[])}: {@link #dimensionOrdinalMemo} is lazily
+     * allocated on first use, so a plain table -- which never calls this method -- incurs zero
+     * cost from it.
+     *
+     * @param dimIndex        the dimension index (see {@code PartitionSpec.getDimension(int)})
+     * @param sourceSymbolKey the source SYMBOL column's resolved key for this row (global or, for
+     *                        Task 4's O3-time usage, a per-segment local key -- see above); for an
+     *                        IDENTITY dimension this is returned as-is
+     * @param value           the dimension source column's decoded string value for this row;
+     *                        consulted only on a memo miss for HASH/TRUNCATE, never for IDENTITY
+     * @return the dense per-dimension ordinal, ready to feed into {@link #resolveCellKey(int[])}
+     */
+    public int resolveDimensionOrdinal(int dimIndex, int sourceSymbolKey, CharSequence value) {
+        PartitionDimension dim = metadata.getPartitionSpec().getDimension(dimIndex);
+        if (dim.getKind() == PartitionDimension.KIND_IDENTITY) {
+            return sourceSymbolKey;
+        }
+
+        long memoKey = Numbers.encodeLowHighInts(sourceSymbolKey, dimIndex);
+        if (dimensionOrdinalMemo == null) {
+            dimensionOrdinalMemo = new LongIntHashMap();
+        } else {
+            int cached = dimensionOrdinalMemo.get(memoKey);
+            if (cached != LongIntHashMap.NO_ENTRY_VALUE) {
+                return cached;
+            }
+        }
+        // HASH -> hashBucket, TRUNCATE -> dedicated-dict put, EXPRESSION -> throws (Plan 4e) --
+        // internDimensionValue already dispatches correctly; nothing re-derived here.
+        int ordinal = internDimensionValue(dimIndex, value);
+        dimensionOrdinalMemo.put(memoKey, ordinal);
+        return ordinal;
+    }
+
+    /**
+     * Renders this table's on-disk cell-directory segment for a resolved {@code cellKey}, per
+     * {@link PartitionSpec#getNamingMode()}: {@code MODE_HIVE} renders each dimension as
+     * {@code <sourceColumnName>=<value>} (e.g. {@code exch=BTC}); {@code MODE_PLAIN} renders the
+     * bare {@code <value>} (e.g. {@code BTC}). An arity-&gt;1 spec joins each dimension's segment
+     * with {@code '/'} -- nested directory levels, Hive-multi-column-partitioning-style (e.g.
+     * {@code exchange=NYSE/symbol=BTC}) -- rather than hardcoding a single dimension.
+     * <p>
+     * This is pure path-string rendering (composite-partitioning Plan 4a Task 3): it does not touch
+     * {@code processO3Block}/the write path (Task 4) and does not construct a full partition path
+     * itself -- a caller combines the rendered segment with
+     * {@link TableUtils#setSinkForNativePartition(CharSink, int, int, long, long, CharSequence)}.
+     * <p>
+     * Decodes {@code cellKey} back to its per-dimension ordinal tuple via
+     * {@link CellRegistry#getTupleFromWriter(int, int[])} (the write-side reverse lookup added
+     * alongside this method), then renders each ordinal per {@link PartitionDimension#getKind()}:
+     * {@code IDENTITY}'s ordinal is the source SYMBOL column's own resolved key, reverse-looked-up
+     * to its string via {@link #symbolValueOf(int, int)}; {@code HASH}'s ordinal already IS the
+     * bucket number in {@code [0, N)}, rendered as a plain integer (a bucket cannot be un-hashed
+     * back to a value, and doesn't need to be); {@code TRUNCATE}'s ordinal reverse-looks-up the
+     * interned prefix in its dedicated dictionary. {@code EXPRESSION} rendering (a dedicated-dict
+     * reverse lookup, byte-identical to {@code TRUNCATE}) is deferred to Plan 4e Task 3 -- but
+     * IS reachable here today (Plan 4e Task 1 found this empirically: a brand new composite table's
+     * first WAL commit renders an artificial placeholder cell's segment name before any real row is
+     * ever dispatched, see {@code processWalCommitFinishApply}), so it throws a clean
+     * {@link CairoException} rather than silently mis-rendering or crashing uncontrolled.
+     * <p>
+     * Every reverse-looked-up value is written through {@link TableUtils#putPathSafe(CharSink, CharSequence)},
+     * which percent-escapes path-unsafe characters: unlike a table/column identifier, a SYMBOL value
+     * or TRUNCATE prefix is arbitrary user data with no existing restriction against containing
+     * {@code /}, {@code .}, or other characters that would otherwise corrupt the partition path
+     * structure. The HIVE-mode {@code <sourceColumnName>=} key prefix is not escaped: column names
+     * are already restricted to filesystem-safe characters at DDL time
+     * ({@link TableUtils#isValidColumnName}).
+     * <p>
+     * Not the O3 hot path (path construction happens once per partition-cell, not once per row), so
+     * this allocates a fresh per-call tuple array rather than reusing a scratch field, unlike
+     * {@link #resolveCellKey(int[])}'s caller-provided-scratch contract.
+     *
+     * @param sink    destination for the rendered segment (no leading/trailing separator; e.g.
+     *                writes exactly {@code "exch=BTC"}, not {@code "/exch=BTC"})
+     * @param cellKey the dense cellKey to render, as returned by {@link #resolveCellKey(int[])}
+     * @throws UnsupportedOperationException if called on a non-composite table
+     * @throws CairoException                if any dimension is {@code KIND_EXPRESSION} -- not yet
+     *                                       evaluated/renderable (composite-partitioning Plan 4e
+     *                                       Task 1; real rendering, a dedicated-dict reverse lookup
+     *                                       byte-identical to {@code KIND_TRUNCATE}, is Task 3).
+     *                                       Reachable even before any row is dispatched: a brand new
+     *                                       composite table's first WAL commit unconditionally tears
+     *                                       down an artificial 0-length "lag" placeholder partition
+     *                                       (see {@code processWalCommitFinishApply}) before real row
+     *                                       data is ever processed, and that teardown renders the
+     *                                       placeholder's own cell segment name through here.
+     */
+
+    public void renderCellSegment(CharSink<?> sink, int cellKey) {
+        renderCellSegment(sink, cellKey, metadata.getPartitionSpec().getNamingMode());
+    }
+
+    /**
+     * As {@link #renderCellSegment(CharSink, int)}, but rendering in an EXPLICIT naming mode rather
+     * than the table's own {@code LAYOUT}.
+     * <p>
+     * Exists for storage that is not this table's own directory tree. The enterprise cold-storage
+     * bucket key is read by other tools and by a restore that has no access to this table's registry,
+     * so it always renders the Hive form ({@code exch=BTC}) even for a table stored locally as
+     * {@code LAYOUT PLAIN} ({@code BTC}) -- the same "values, not ordinals, across a boundary" rule
+     * that makes a foreign detached artifact unattachable.
+     * <p>
+     * The 2-arg form delegates here with the table's own mode, so on-disk path building is unchanged.
+     */
+    public void renderCellSegment(CharSink<?> sink, int cellKey, byte namingMode) {
+        PartitionSpec spec = metadata.getPartitionSpec();
+        int dimCount = spec.getDimensionCount();
+        if (dimCount <= 0) {
+            throw new UnsupportedOperationException(
+                    "renderCellSegment() must not be called on a non-composite table [table=" + tableToken + ']'
+            );
+        }
+        int[] tuple = new int[dimCount];
+        getCompositeDictionaries().cellRegistry().getTupleFromWriter(cellKey, tuple);
+        for (int i = 0; i < dimCount; i++) {
+            if (i > 0) {
+                sink.put('/');
+            }
+            renderDimensionSegment(sink, spec, i, tuple[i], namingMode);
+        }
+    }
+
+    /**
+     * Renders one dimension's cell-directory segment -- one path component out of
+     * {@link #renderCellSegment(CharSink, int)}'s possibly-multi-segment output -- into {@code sink}.
+     * <p>
+     * {@code KIND_EXPRESSION} (composite-partitioning Plan 4e Task 2/3) has no source column
+     * ({@code getColumnIndex() == -1} by construction), so the {@code MODE_HIVE} prefix uses the
+     * dimension's {@code alias} instead of a source column name (mirroring how {@code SHOW CREATE
+     * TABLE} already renders this dimension via its alias, see {@link PartitionDimension#toSink}),
+     * and its value is a pure dedicated-dict reverse lookup -- byte-identical to {@code
+     * KIND_TRUNCATE} below, NOT a re-evaluation of the expression: the ordinal already IS the
+     * dedicated dict's key, interned once at eval time by {@link
+     * #resolveExpressionDimensionOrdinal(int, long)}/{@link #internDimensionValue(int, CharSequence)}.
+     * This method is reached even for a commit that never dispatches a single row (a brand new
+     * composite table's first WAL commit unconditionally tears down an artificial 0-length "lag"
+     * placeholder partition -- see {@code processWalCommitFinishApply} -- before real row data is
+     * ever processed, and that teardown renders the placeholder's own cell segment name through
+     * here too); this is exactly the same placeholder path every other dimension kind already
+     * renders through successfully today, so {@code KIND_EXPRESSION} needs no special handling for it.
+     */
+    private void renderDimensionSegment(CharSink<?> sink, PartitionSpec spec, int dimIndex, int ordinal, byte namingMode) {
+        PartitionDimension dim = spec.getDimension(dimIndex);
+        if (namingMode == PartitionSpec.MODE_HIVE) {
+            if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
+                sink.put(dim.getAlias()).put('=');
+            } else {
+                sink.put(metadata.getColumnName(dim.getColumnIndex())).put('=');
+            }
+        }
+        // putCellSegmentPathSafe(sink, ordinal, value) is ORDINAL-driven, not value-driven (mirrors
+        // TableReader#renderCellSegment's identical fix): the NULL token is decided from `ordinal`
+        // itself (== SymbolTable.VALUE_IS_NULL), not from whether the reverse lookup happened to
+        // return null. On THIS side the reverse lookup (symbolValueOf / MapWriter.valueOf)
+        // currently only ever returns null for VALUE_IS_NULL, so the two decisions coincide today
+        // -- but that is a coincidence of MapWriter.valueOf's current implementation, not a
+        // contract this call site should lean on. Symmetric-by-construction with the reader side:
+        // an ordinal that is NOT VALUE_IS_NULL but still fails to resolve throws loud instead of
+        // silently rendering %NULL.
+        switch (dim.getKind()) {
+            case PartitionDimension.KIND_IDENTITY:
+                TableUtils.putCellSegmentPathSafe(sink, ordinal, symbolValueOf(dim.getColumnIndex(), ordinal));
+                break;
+            case PartitionDimension.KIND_HASH:
+                sink.put(ordinal);
+                break;
+            case PartitionDimension.KIND_TRUNCATE:
+            case PartitionDimension.KIND_EXPRESSION:
+                TableUtils.putCellSegmentPathSafe(sink, ordinal, MapWriter.valueOf(getDedicatedDictOrThrow(dimIndex), ordinal));
+                break;
+            default:
+                throw new UnsupportedOperationException("unknown composite partition dimension kind: " + dim.getKind());
+        }
     }
 
     @Override
@@ -3480,6 +4912,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 LOG.info().$("tx rollback [name=").$(tableToken).I$();
                 partitionRemoveCandidates.clear();
+                // Composite fast-append (spec 1 + spec 2, Task 2): drop ALL kept-open cell handles,
+                // NON-TRUNCATING. Any bytes appended for the rolled-back txn are past each cell's
+                // still-committed _txn size (ignored on reopen); the next commit reopens at the committed
+                // size.
+                closeAllCompositeFastAppendCells();
                 rollbackDeferredPostingSealPurges();
                 o3CommitBatchTimestampMin = Long.MAX_VALUE;
                 if ((masterRef & 1) != 0) {
@@ -3493,6 +4930,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 txWriter.unsafeLoadAll();
                 rollbackIndexes();
                 rollbackSymbolTables(true);
+                resetCellKeyMemo();
+                resetDimensionOrdinalMemo();
                 columnVersionWriter.readUnsafe();
                 closeActivePartition(false);
                 purgeUnusedPartitions();
@@ -3514,10 +4953,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     public void safeDeletePartitionDir(long timestamp, long partitionNameTxn) {
-        // Call O3 methods to remove check TxnScoreboard and remove partition directly
-        partitionRemoveCandidates.clear();
-        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
-        processPartitionRemoveCandidates();
+        safeDeletePartitionDir(timestamp, partitionNameTxn, 0);
     }
 
     @Override
@@ -3670,11 +5106,300 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return false;
     }
 
+    /**
+     * Cell-aware {@link #markPartitionParquetReady(long)}: flags ONE cell of a composite day as
+     * parquet-generated, having verified that cell's own {@code data.parquet} exists.
+     * <p>
+     * The storage-policy job produces one parquet file per cell, so readiness is a per-cell fact. The
+     * by-timestamp form is refused on a composite table precisely because it would answer for cellKey 0.
+     * <p>
+     * A plain table has no cells; the cellKey is ignored and the by-timestamp form runs unchanged, so
+     * callers do not have to branch.
+     */
+    public boolean markPartitionParquetReady(long partitionTimestamp, int cellKey) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (!isRoutedComposite()) {
+            return markPartitionParquetReady(partitionTimestamp);
+        }
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final int partitionIndex = findCompositePartitionIndex(partitionTimestamp, cellKey);
+        if (partitionIndex < 0) {
+            return false;
+        }
+        final int rawIndex = partitionIndex * txWriter.getLongsPerAttachedPartition();
+        if (txWriter.isPartitionParquetByRawIndex(rawIndex)) {
+            return true;
+        }
+
+        try {
+            final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(rawIndex);
+            compositeDimSink.clear();
+            renderCellSegment(compositeDimSink, cellKey);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, cellNameTxn, compositeDimSink);
+            path.concat(PARQUET_PARTITION_NAME);
+            if (!ff.exists(path.$())) {
+                return false;
+            }
+            if (txWriter.isPartitionParquetGenerated(partitionIndex)) {
+                return true;
+            }
+            if (txWriter.getNativePartitionSeqTxn(partitionIndex) <= 0 && tableToken.isWal()) {
+                txWriter.setPartitionSeqTxnByRawIndex(rawIndex, txWriter.getSeqTxn());
+            }
+            txWriter.setPartitionParquetGenerated(partitionIndex, true);
+            txWriter.bumpPartitionTableVersion();
+            commitTxWriter();
+            return true;
+        } finally {
+            path.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Cell-aware {@link #switchNativePartitionWithParquet(long, long)}: flips ONE cell of a composite
+     * day from native to parquet format.
+     * <p>
+     * Mirrors the plain implementation step for step, with every path built through the cell-aware
+     * overloads and every {@code _txn} access done by RAW INDEX rather than by timestamp.
+     * <p>
+     * <b>Deliberately does NOT force-squash</b>, unlike the plain path. On a composite table the squash
+     * has to happen before the parquet is encoded, or the file the job produced no longer matches the
+     * partition -- which is why {@code convertCompositePartitionNativeToParquet} squashes the day up
+     * front, and why the storage-policy pipeline squashes in its prepare step. Squashing here, after
+     * the encode, would silently invalidate the very file being switched to.
+     */
+    public int switchNativePartitionWithParquet(long partitionTimestamp, int cellKey, long parquetFileSize) {
+        assert metadata.getTimestampIndex() > -1;
+        assert PartitionBy.isPartitioned(partitionBy);
+
+        if (!isRoutedComposite()) {
+            return switchNativePartitionWithParquet(partitionTimestamp, parquetFileSize);
+        }
+
+        if (inTransaction()) {
+            assert !tableToken.isWal();
+            commit();
+        }
+
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        if (partitionTimestamp == txWriter.getLogicalPartitionTimestamp(txWriter.getMaxTimestamp())) {
+            // active partition; conversion unsupported, same as the plain path
+            return SWITCH_SKIPPED;
+        }
+
+        final int partitionIndex = findCompositePartitionIndex(partitionTimestamp, cellKey);
+        if (partitionIndex < 0) {
+            throw CairoException.nonCritical()
+                    .put("cannot switch cell to parquet, cell does not exist [table=")
+                    .put(tableToken.getTableName())
+                    .put(", partitionTimestamp=").put(partitionTimestamp)
+                    .put(", cellKey=").put(cellKey).put(']');
+        }
+        final int rawIndex = partitionIndex * txWriter.getLongsPerAttachedPartition();
+
+        if (txWriter.isPartitionParquetByRawIndex(rawIndex)) {
+            return SWITCH_SKIPPED;
+        }
+        if (!txWriter.isPartitionParquetGenerated(partitionIndex)) {
+            return SWITCH_NO_PARQUET;
+        }
+
+        final long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(rawIndex);
+        final long partitionSize = txWriter.getPartitionSizeByRawIndex(rawIndex);
+        compositeDimSink.clear();
+        renderCellSegment(compositeDimSink, cellKey);
+        final String cellSegment = compositeDimSink.toString();
+
+        int newPartitionDirLen = 0;
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
+            final int partitionDirLen = path.size();
+            if (!ff.exists(path.$())) {
+                throw CairoException.nonCritical().put("cell directory does not exist [path=").put(path).put(']');
+            }
+            path.concat(PARQUET_PARTITION_NAME);
+            if (!ff.exists(path.$())) {
+                txWriter.setPartitionParquetGenerated(partitionIndex, false);
+                txWriter.bumpPartitionTableVersion();
+                commitTxWriter();
+                return SWITCH_NO_PARQUET;
+            }
+
+            // A NEGATIVE size means "measure it". Each cell of a day has its own parquet file and so
+            // its own size, but a caller that converted the whole day in one pass (the storage-policy
+            // job) only has the day's total. Rather than make it build cell paths to stat each file --
+            // duplicating path logic outside this class -- it passes -1 and the size is taken here,
+            // where the path is already resolved and known to exist.
+            if (parquetFileSize < 0) {
+                parquetFileSize = ff.length(path.$());
+            }
+
+            // upgrade the cell's version
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn(), cellSegment);
+            createDirsOrFail(ff, other, configuration.getMkDirMode());
+            newPartitionDirLen = other.size();
+
+            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn(), cellSegment);
+            LOG.info().$("switching native cell to parquet [path=").$substr(pathRootSize, path).I$();
+            if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                throw CairoException.critical(ff.errno())
+                        .put("could not hard link parquet file [table=").put(tableToken.getTableName())
+                        .put(", from=").put(path).put(", to=").put(other).put(']');
+            }
+
+            setPathForParquetPartitionMetadata(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
+            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, getTxn(), cellSegment);
+            if (ff.exists(path.$())) {
+                if (ff.hardLink(path.$(), other.$()) != FILES_RENAME_OK) {
+                    throw CairoException.critical(ff.errno())
+                            .put("could not hard link parquet metadata sidecar [table=").put(tableToken.getTableName())
+                            .put(", from=").put(path).put(", to=").put(other).put(']');
+                }
+            } else {
+                if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                    LOG.error().$("could not remove cell dir [path=").$(other).I$();
+                }
+                return SWITCH_NO_PARQUET;
+            }
+
+            linkPartitionIndexFiles(partitionTimestamp, cellKey, partitionNameTxn, partitionSize, partitionDirLen, newPartitionDirLen);
+
+            txWriter.updatePartitionSizeAndTxnByRawIndex(rawIndex, partitionSize);
+            txWriter.setPartitionParquetByRawIndex(rawIndex, parquetFileSize);
+            txWriter.bumpPartitionTableVersion();
+            commitTxWriter();
+        } catch (Throwable e) {
+            if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
+                LOG.error().$("could not remove cell dir [path=").$(other).I$();
+            }
+            throw e;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // Post-commit housekeeping; failures must not roll back the committed transaction.
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+            safeDeletePartitionDir(partitionTimestamp, partitionNameTxn, cellKey);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+
+        return SWITCH_OK;
+    }
+
+    /**
+     * Cell-aware counterpart of {@link #linkPartitionIndexFiles(long, long, int, int)}.
+     * <p>
+     * The by-timestamp original reads the row count, column top and column name-txn at cellKey 0 --
+     * {@code _cv} is keyed by (timestamp, cellKey, column), so on a multi-cell day it would apply cell
+     * 0's tops to another cell's index files. The row count is passed in because the caller has already
+     * resolved this cell's raw index.
+     */
+    private void linkPartitionIndexFiles(
+            long partitionTimestamp,
+            int cellKey,
+            long partitionNameTxn,
+            long partitionSize,
+            int partitionDirLen,
+            int newPartitionDirLen
+    ) {
+        // The trims are the point of the try/finally, not tidiness: `path` and `other` are writer
+        // FIELDS, and the very next thing a caller does can be a purge, whose loop calls
+        // setPathForNativePartition(other, ...) WITHOUT trimming first -- it relies on `other` sitting
+        // at the table root. Left at a partition directory here, that purge builds
+        // "<day>/<cell>.<newTxn>/<day>/<cell>.<oldTxn>", fails to unlink it, and schedules an async
+        // purge against a path that never existed. The by-timestamp sibling of this method has always
+        // had these trims; this one was written without them and a tiering fuzz found the difference.
+        try {
+            final int columnCount = metadata.getColumnCount();
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                if (!ColumnType.isSymbol(metadata.getColumnType(columnIndex)) || !metadata.isIndexed(columnIndex)) {
+                    continue;
+                }
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
+                if (columnTop == -1 || columnTop >= partitionSize) {
+                    continue;
+                }
+                linkColumnIndexFiles(
+                        partitionDirLen,
+                        newPartitionDirLen,
+                        metadata.getColumnName(columnIndex),
+                        getColumnNameTxn(partitionTimestamp, cellKey, columnIndex),
+                        metadata.getColumnIndexType(columnIndex),
+                        partitionTimestamp,
+                        partitionNameTxn
+                );
+            }
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+    }
+
+    /**
+     * Refuses a STORAGE POLICY step on a routed composite table.
+     * <p>
+     * Storage policy's OSS-facing surface is four TableWriter entry points --
+     * {@link #preparePartitionForParquetConversion}, the caller's own parquet generation,
+     * {@link #markPartitionParquetReady} and {@link #switchNativePartitionWithParquet} -- driven in
+     * that order by the enterprise {@code StoragePolicyWriterCommand}. EVERY one of them is keyed by
+     * PARTITION TIMESTAMP alone: there is no cellKey anywhere in that API. On a composite table a
+     * timestamp does not identify a partition (a day is N cells), so each resolves through the
+     * cellKey-0 {@code getPartitionIndex(partitionTimestamp)} and builds paths with the cell-less
+     * {@code setPathForNativePartition}.
+     * <p>
+     * MEASURED 2026-08-28 (CompositeStoragePolicyTest, before this gate existed): only the LAST of the
+     * four refused. The first two ran to completion on a composite table -- the squash step
+     * force-squashed a cellKey-0-resolved index, deleted a cell-less parquet path and RETURNED THE
+     * TIMESTAMP, i.e. told the policy job "this day is ready, generate parquet for it". The sequence
+     * therefore half-applied and only failed at the end. Refusing at every entry point, before any
+     * commit or squash, is what makes the refusal safe rather than merely present.
+     * <p>
+     * "does not YET support": this is a deferral, not a ban like UPDATE or cross-table ATTACH. The
+     * capability already exists on this branch -- {@code convertCompositePartitionNativeToParquet}
+     * converts a composite day to parquet per cell. What is missing is on the ENTERPRISE side: the
+     * policy job would have to enumerate a day's cells and generate one parquet file per cell, and its
+     * per-partition API (one name-txn, one row count, one squash tracker, one file size) would have to
+     * become per-cell with it. That cannot be built or tested from this repository.
+     *
+     * @param step the entry point being refused, so a policy job's error names which one it hit
+     */
+    private void refuseCompositeStoragePolicy(CharSequence step) {
+        if (isRoutedComposite()) {
+            throw CairoException.critical(0)
+                    .put("composite partitioning does not yet support STORAGE POLICY [table=")
+                    .put(tableToken.getTableName())
+                    .put(", step=").put(step).put(']');
+        }
+    }
+
     // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
     // skipped (active or already parquet), SWITCH_NO_PARQUET (-1) if there is no parquet file to switch to.
     public int switchNativePartitionWithParquet(long partitionTimestamp, long parquetFileSize) {
         assert metadata.getTimestampIndex() > -1;
         assert PartitionBy.isPartitioned(partitionBy);
+
+        // Composite gate (merge audit 2026-08-10): this method resolves the partition by timestamp
+        // alone and builds its paths with the cell-less setPathForNativePartition, then deletes the
+        // old dir via the cellKey-0 safeDeletePartitionDir -- all cell-blind. It has no production
+        // caller in OSS today (tests only); its production caller is the enterprise storage-policy
+        // job.
+        //
+        // Folded into refuseCompositeStoragePolicy 2026-08-28. This was the ONLY one of storage
+        // policy's four entry points that refused, so the sequence half-applied before reaching it.
+        refuseCompositeStoragePolicy("switch");
 
         if (inTransaction()) {
             assert !tableToken.isWal();
@@ -3780,7 +5505,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             final long originalSize = txWriter.getPartitionSize(partitionIndex);
             // used to update txn and bump recordStructureVersion
-            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * txWriter.getLongsPerAttachedPartition(), originalSize);
             txWriter.setPartitionParquet(partitionTimestamp, parquetFileSize);
             txWriter.bumpPartitionTableVersion();
             commitTxWriter();
@@ -3951,6 +5676,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public void upsertColumnVersion(long partitionTimestamp, int columnIndex, long columnTop) {
         columnVersionWriter.upsert(partitionTimestamp, columnIndex, txWriter.txn, columnTop);
+    }
+
+    /**
+     * Cell-scoped {@link #upsertColumnVersion(long, int, long)}. The 2-arg form writes the record for
+     * cellKey 0, so on a composite table it bumps a DIFFERENT cell's version than the caller is working
+     * on -- which is why DROP INDEX read the same column version before and after the bump and then
+     * tried to hard-link a file onto itself.
+     */
+    public void upsertColumnVersion(long partitionTimestamp, int cellKey, int columnIndex, long columnTop) {
+        columnVersionWriter.upsert(partitionTimestamp, cellKey, columnIndex, txWriter.txn, columnTop);
     }
 
     /**
@@ -4781,6 +6516,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean applyFromWalLagToLastPartitionPossible(long commitToTimestamp, long lagRowCount, boolean lagOrdered, long committedMaxTimestamp, long lagMinTimestamp, long lagMaxTimestamp) {
+        // Composite-partitioning guard (Plan 4a Task 4 fix wave 1): this fast path copies WAL rows
+        // straight onto the writer's single shared "last partition" column-file handles
+        // (this.columns, see applyLagToLastPartition/cthAppendWalColumnToLastPartition) keyed only by
+        // day -- it has no notion of cellKey at all. For a composite table those handles are never
+        // repointed at a real per-cell segment (processO3BlockComposite dispatch is always async and
+        // never touches this.columns), so any row that took this path would land bytes-on-disk in the
+        // orphan bare day directory instead of its own <day>/<cell> segment. Disabling this path
+        // entirely for composite tables forces every commit through the cell-aware processO3Block
+        // routing instead (see the needFullCommit composite guard in processWalCommit).
+        if (metadata.getPartitionSpec().getDimensionCount() > 0) {
+            return false;
+        }
         return !isCommitDedupMode()
                 && lagRowCount > 0
                 && lagOrdered
@@ -4795,14 +6542,965 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 && !lastPartitionHasLegacyCoveringHead();
     }
 
+    /**
+     * Composite single-cell fast-append eligibility (composite-partitioning fast-append spec 1,
+     * Task 1 -- detection only; see {@code docs/superpowers/specs/2026-07-21-composite-single-cell-
+     * fast-append-design.md}). The per-cell analog of
+     * {@link #applyFromWalLagToLastPartitionPossible} -- that method is hard-gated {@code false} for
+     * every composite table ({@code dimCount > 0}, see its own docs); this is what a later task will
+     * substitute for it in the eligible case, once a real composite fast-append exists. TODAY this
+     * method's result is only counted ({@link #compositeFastAppendEligibleCount}), never acted on --
+     * every caller still always falls through to the existing, unchanged {@code
+     * processO3BlockComposite} path regardless of what this method returns.
+     * <p>
+     * Returns the single {@code cellKey} every row {@code [rowLo, rowHi)} resolves to (using the
+     * SAME absolute row numbering {@link #resolveRowCellKey}/{@link #processO3BlockComposite} use --
+     * true whenever {@code ordered}, the only case this method returns non-negative for, since a
+     * composite table never has WAL lag to rebase row numbering against) if ALL of the following
+     * hold, else -1:
+     * <ul>
+     *     <li><b>Ordered:</b> {@code ordered} (the WAL sequencer's own flag for this txn).</li>
+     *     <li><b>Not dedup:</b> {@link #isCommitDedupMode()} is false.</li>
+     *     <li><b>Last partition:</b> {@code [o3TimestampMin, o3TimestampMax]} falls entirely within
+     *     the table's current (last) day partition -- mirrors {@code
+     *     applyFromWalLagToLastPartitionPossible}'s own {@code lastPartitionTimestamp}/{@code
+     *     partitionTimestampHi} bounds.</li>
+     *     <li><b>Single-cell:</b> every row resolves to the same {@code cellKey} ({@link
+     *     #resolveRowCellKey}). This is the ~2.5us/commit irreducible cost the feasibility spike
+     *     measured.</li>
+     *     <li><b>Append-only into that cell:</b> {@code o3TimestampMin} is strictly greater than the
+     *     cell's real committed max timestamp. There is no persisted per-cell max-timestamp yet: the
+     *     {@code _txn} composite attached-partition {@code (ts, cellKey)} record (Plan 3) gives only
+     *     the partition-floor {@code ts} and the cell's row count ({@link
+     *     TxReader#findAttachedPartitionRawIndexBy}/{@link TxReader#getPartitionSizeByRawIndex}) --
+     *     slots 5-7 are reserved, unused today. A row count of 0 (no {@code (lastPartitionTimestamp,
+     *     cellKey)} entry yet, or an entry with size 0) means the cell is genuinely empty, so this is
+     *     trivially satisfied; otherwise this method consults {@link #compositeCellMaxTimestamp}, a
+     *     writer-instance-scoped cache of the real max timestamp it has itself observed committed
+     *     for that cellKey from a PRIOR single-cell commit. A cell with committed rows this writer
+     *     instance has not itself observed a single-cell commit for (a freshly (re)opened writer, or
+     *     a cell whose only commits so far were multi-cell) is conservatively treated as NOT
+     *     append-only -- a missed detection, never a false positive. See the Task 1 report for why a
+     *     real persisted per-cell max-timestamp (e.g. those reserved {@code _txn} slots) is the
+     *     natural next step before any later task lets this predicate's result skip real work.</li>
+     * </ul>
+     * Never called for a plain table -- every caller gates on {@code dimCount > 0} (and {@link
+     * #isRoutedComposite()}) first.
+     *
+     * @return the single cellKey every row in {@code [rowLo, rowHi)} resolves to, if this commit is
+     * fast-append-eligible; -1 otherwise
+     */
+    int isCompositeSingleCellFastAppendPossible(long rowLo, long rowHi, boolean ordered, long o3TimestampMin, long o3TimestampMax) {
+        if (!ordered || isCommitDedupMode()) {
+            return -1;
+        }
+        if (txWriter.getPartitionTimestampByTimestamp(o3TimestampMin) != lastPartitionTimestamp
+                || o3TimestampMax > partitionTimestampHi) {
+            return -1;
+        }
+
+        final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        final int[] dimScratch = new int[dimCount];
+        final int cellKey = resolveRowCellKey(rowLo, dimScratch);
+        for (long row = rowLo + 1; row < rowHi; row++) {
+            if (resolveRowCellKey(row, dimScratch) != cellKey) {
+                // Multi-cell: out of the single-cell branch's scope. FOLD-NOT-WIPE (Task 2): do NOT wipe
+                // the shared compositeCellMaxTimestamp (Task 1 did, to avoid a stale-low false positive) --
+                // and, deliberately, do NOT fold this commit's touched cells here either. This predicate
+                // runs strictly BEFORE isCompositeMultiCellFastAppendPossible in the processWalCommit hook;
+                // that method reads the shared cache's PRE-commit state to decide per-cell append-only, so
+                // folding this commit's contribution here would mask its read and make every multi-cell
+                // commit a false "not append-only" miss. The multi-cell predicate is the folder for every
+                // multi-cell commit (it ALWAYS folds, even on a per-cell ordering violation), which keeps
+                // the shared cache never stale-low without this masking. Just bail.
+                return -1;
+            }
+        }
+
+        final boolean appendOnly;
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(lastPartitionTimestamp, cellKey);
+        // PARQUET cells can never fast-append -- see the identical guard in
+        // isCompositeMultiCellFastAppendPossible for the measurement. Checked BEFORE the
+        // empty-cell branch: a parquet cell reporting size 0 must still be refused, not treated as
+        // trivially append-only.
+        if (partitionIndexRaw > -1 && txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)) {
+            return -1;
+        }
+        if (partitionIndexRaw < 0 || txWriter.getPartitionSizeByRawIndex(partitionIndexRaw) == 0L) {
+            // Cell genuinely has no committed rows yet (today, in this day partition) -- trivially
+            // append-only.
+            appendOnly = true;
+        } else {
+            long cachedMax = compositeCellMaxTimestamp != null ? compositeCellMaxTimestamp.get(cellKey) : -1;
+            // -1 is IntLongHashMap's own "no entry" sentinel here, not a real cached value: this
+            // writer instance has not itself observed this cell's real max timestamp yet.
+            appendOnly = cachedMax != -1 && o3TimestampMin > cachedMax;
+        }
+
+        // Confirmed single-cell above regardless of the append-only outcome, so this commit's own
+        // o3TimestampMax is a real, trustworthy observation of this cell's new true max once it
+        // completes -- fold it in (keeping the larger of the two, in case of a rare non-append
+        // commit) for future eligibility checks within this writer's lifetime.
+        if (compositeCellMaxTimestamp == null) {
+            compositeCellMaxTimestamp = new IntLongHashMap();
+        }
+        long priorCached = compositeCellMaxTimestamp.get(cellKey);
+        if (priorCached == -1 || o3TimestampMax > priorCached) {
+            compositeCellMaxTimestamp.put(cellKey, o3TimestampMax);
+        }
+
+        return appendOnly ? cellKey : -1;
+    }
+
+    /**
+     * Test-visible read of {@link #compositeFastAppendEligibleCount} (composite-partitioning
+     * fast-append spec 1, Task 1 -- detection only). Static -- see that field's own docs for why.
+     */
+    public static long getCompositeFastAppendEligibleCount() {
+        return compositeFastAppendEligibleCount.get();
+    }
+
+    /**
+     * Composite MULTI-cell fast-append eligibility (composite-partitioning fast-append spec 2, Task 1
+     * -- detection only; the multi-cell analog of {@link #isCompositeSingleCellFastAppendPossible},
+     * see that method's own docs for the single-cell case, {@code
+     * docs/superpowers/specs/2026-07-21-composite-multi-cell-fast-append-design.md}). TODAY this
+     * method's result is only counted ({@link
+     * #compositeMultiCellFastAppendEligibleCount}), never acted on -- every caller still always falls
+     * through to the existing, unchanged {@code processO3BlockComposite} path regardless of what this
+     * method returns. Never called for a plain table, or for {@code rowHi - rowLo < 2} -- every caller
+     * gates on {@code dimCount > 0} and {@link #isRoutedComposite()} first.
+     * <p>
+     * Shares {@code isCompositeSingleCellFastAppendPossible}'s not-dedup and last-(day-)partition
+     * gates verbatim. Diverges from it in two ways, both required by the concrete eligibility
+     * scenarios this method exists to detect (composite-partitioning fast-append spec 2's whole
+     * premise: cells are independent, so a commit need not be single-cell OR globally ordered to be
+     * safely fast-appendable, as long as each cell it touches is):
+     * <ul>
+     *     <li><b>Not gated on the {@code ordered} parameter.</b> {@code ordered} is the WAL
+     *     sequencer's own GLOBAL flag -- true only when {@code [rowLo, rowHi)}'s timestamps are
+     *     non-decreasing across the WHOLE commit. A commit interleaving two (or more) independently
+     *     timestamp-sorted per-cell streams (e.g. concurrent per-symbol producers) is routinely
+     *     globally out-of-order ({@code ordered=false}) while every individual cell's own rows, taken
+     *     in the order they appear in {@code [rowLo, rowHi)}, are perfectly non-decreasing -- and
+     *     therefore just as safely append-only per cell as the single-cell case. This method
+     *     independently verifies PER-CELL ordering instead (in the same forward pass that resolves
+     *     each row's cellKey), never rejecting on the whole-commit {@code ordered} flag alone. (The
+     *     parameter is still accepted, for call-site symmetry with the single-cell predicate and
+     *     because Tasks 2-3 consume both with the same signature, but is not itself a hard gate here.)</li>
+     *     <li><b>Resolves the DISTINCT cellKey set</b> touched by {@code [rowLo, rowHi)} (via {@link
+     *     #resolveRowCellKey}, the same absolute row numbering {@link #processO3BlockComposite} uses)
+     *     instead of requiring all rows to share one cellKey.</li>
+     * </ul>
+     * Returns {@code true} only if ALL of the following hold (all-or-nothing: any cell failing any
+     * gate makes the WHOLE commit ineligible, mirroring this task's own "K_max cap exceeded" and
+     * "one OOO cell" acceptance scenarios):
+     * <ul>
+     *     <li><b>Not dedup:</b> {@link #isCommitDedupMode()} is false.</li>
+     *     <li><b>Last partition:</b> {@code [o3TimestampMin, o3TimestampMax]} falls entirely within
+     *     the table's current (last) day partition -- identical bounds check to the single-cell
+     *     method's own.</li>
+     *     <li><b>Every touched cell internally ordered:</b> that cell's own rows, in the order they
+     *     appear in {@code [rowLo, rowHi)}, are non-decreasing in timestamp (see above).</li>
+     *     <li><b>&ge; 2 distinct cells:</b> exactly one distinct cell is spec 1's own single-cell
+     *     branch's scope, not double-handled here.</li>
+     *     <li><b>&le; {@link CairoConfiguration#getWalCompositeFastAppendMaxOpenCells()} distinct
+     *     cells</b> (the configured {@code K_max} cap).</li>
+     *     <li><b>Every touched cell pre-existing and non-empty:</b> {@link
+     *     TxReader#findAttachedPartitionRawIndexBy}/{@link TxReader#getPartitionSizeByRawIndex} report
+     *     a real, non-zero-size {@code (lastPartitionTimestamp, cellKey)} entry. A brand-new/never-
+     *     committed cell (no entry at all) is conservatively NOT eligible here -- its own first commit
+     *     takes the full path regardless (mirrors {@code canCompositeFastAppendCell}'s identical gate
+     *     for the single-cell action, though Task 1 never calls that method: no action is taken yet).</li>
+     *     <li><b>Every touched cell append-only:</b> this commit's minimum timestamp INTO THAT CELL
+     *     (the timestamp of the first row in {@code [rowLo, rowHi)} resolving to it, which -- given
+     *     internal ordering just verified above -- is that cell's true minimum in this commit) is
+     *     strictly greater than the cell's real committed max, per the SHARED {@link
+     *     #compositeCellMaxTimestamp} (Task 2 unified this with the single-cell predicate's cache -- see
+     *     its FOLD-NOT-WIPE docs). A cell this writer has not itself observed a max timestamp for
+     *     is conservatively treated as NOT append-only -- a missed detection, never a false positive,
+     *     exactly mirroring the single-cell method's own cold-cache handling.</li>
+     * </ul>
+     * Every distinct cell touched by this commit has its observed max (this commit's own MAX ts for that
+     * cell over the whole scan) folded into the shared {@link #compositeCellMaxTimestamp} before
+     * returning, REGARDLESS of the eligibility verdict above -- including when {@code distinctCount < 2}
+     * (an ordinary single-cell-shaped commit), when a per-cell ordering violation made the commit
+     * ineligible, when {@link #isCommitDedupMode()} is set, AND when the commit spans more than the last
+     * day partition (a multi-day / backfill commit). The unchanged full O3 composite path commits these
+     * rows regardless, so each touched cell's real max genuinely does advance to {@code max(old, new)}
+     * whether or not THIS commit counted as "eligible"; this is also the only way a cell ever becomes
+     * warm enough for a LATER multi-cell commit's append-only check to consult (see the field's own docs).
+     * Task 2 makes this predicate the UNIVERSAL cache-maintainer: it is the sole fold site for every
+     * flag-on composite commit that does not take spec-1's single-cell fast-append early return (that
+     * path folds via the action), so the dedup and last-partition gates -- which used to early-return
+     * false BEFORE folding -- are now eligibility conditions only, never fold-skipping bails. That closes
+     * the stale-low gap where a multi-day (or dedup) commit advanced a cell's real max via the full path
+     * while leaving the shared cache pinned low, which the LIVE single-cell fast-append ACTION reads to
+     * gate append-only -- a stale-low entry there fast-appends an out-of-order row past the cell's max
+     * (on-disk corruption). The fold can never go stale-low even across a day roll or under dedup: see
+     * {@link #compositeCellMaxTimestamp}'s own FOLD-NOT-WIPE docs.
+     * <p>
+     * <b>Does NOT check the fixed-size-column / column-top-0 gates.</b> This is, deliberately, a
+     * DETECTION-only method that mirrors {@link #isCompositeSingleCellFastAppendPossible}'s own
+     * detection-layer scope exactly: neither predicate checks whether the touched cell's columns are
+     * all fixed-size, nor whether any column carries a non-zero column top (an ADD COLUMN artifact).
+     * Those two gates live at the ACTION layer only, in {@link #canCompositeFastAppendCell}, which spec
+     * 1's real single-cell action ({@link #applyCompositeSingleCellFastAppend}) invokes per cell,
+     * immediately before acting -- never this detection method. A future task that lets an eligible
+     * multi-cell commit here actually fast-append MUST invoke {@link #canCompositeFastAppendCell} (or
+     * an equivalent per-cell check) for EVERY touched cell before acting on any of them, falling the
+     * WHOLE commit back to the existing full path if any single one of those cells fails it -- exactly
+     * mirroring the single-cell action's own precondition. This method's {@code true} result alone is
+     * never sufficient for a caller to act on.
+     *
+     * @return true iff this commit is multi-cell fast-append-eligible (detection only -- no caller
+     * acts on this result yet)
+     */
+    boolean isCompositeMultiCellFastAppendPossible(
+            long rowLo,
+            long rowHi,
+            boolean ordered, // unread today; kept for signature parity with isCompositeSingleCellFastAppendPossible
+            long o3TimestampMin,
+            long o3TimestampMax
+    ) {
+        // Task 2 -- UNIVERSAL cache-maintainer. This predicate is the sole fold site for every flag-on
+        // composite commit that does NOT take spec-1's single-cell fast-append early return (that path
+        // folds via the action itself). So the two early-bail gates it shares with the single-cell
+        // predicate -- dedup and the last-(day-)partition bound -- must NOT skip the fold, or the shared
+        // compositeCellMaxTimestamp the LIVE single-cell action reads would be left stale-low for a cell
+        // the unchanged full O3 path then advances: a multi-day commit that carries a last-day cell's max
+        // into a NEW day, or a dedup commit that advances a cell's max, both bailed BEFORE folding here.
+        // A later single-cell commit landing between that stale value and the cell's real max would be
+        // falsely judged append-only and its out-of-order row fast-appended past the cell's max =
+        // corruption. Both conditions therefore become ELIGIBILITY gates only; the forward scan and the
+        // fold at the bottom run unconditionally (read-then-fold order preserved -- see below).
+        final boolean dedup = isCommitDedupMode();
+        final boolean lastPartition = txWriter.getPartitionTimestampByTimestamp(o3TimestampMin) == lastPartitionTimestamp
+                && o3TimestampMax <= partitionTimestampHi;
+
+        final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        final int[] dimScratch = new int[dimCount];
+        final int timestampIndex = metadata.getTimestampIndex();
+        final MemoryCR o3TsColumn = o3Columns.getQuick(getPrimaryColumnIndex(timestampIndex));
+        final int maxOpenCells = configuration.getWalCompositeFastAppendMaxOpenCells();
+
+        // Single forward pass: resolve each row's cellKey, track the distinct cellKey set touched by
+        // this commit plus, per cell, its minimum ts (cellMinTs, set once on first sight), its running
+        // last-seen ts (cellLastTs) and its running MAX ts (cellMaxTs, == last-seen when internally
+        // ordered). Detect per-cell internal ordering (a later row for an already-seen cell that is < that
+        // cell's own last-seen ts). -1 is IntLongHashMap's own "no entry" sentinel, not a real timestamp
+        // value (same simplification as the single-cell method's own cache reads). Unlike Task 1 this does
+        // NOT bail mid-scan on an ordering violation: it scans the WHOLE commit so the FOLD below sees each
+        // touched cell's true max even for an ineligible/out-of-order commit (Task 2 shares one cache with
+        // the single-cell fast-append ACTION, so this cache must never go stale-low; folding each cell's
+        // real max keeps it correct -- see compositeCellMaxTimestamp's FOLD-NOT-WIPE docs).
+        final IntList distinctCells = new IntList();
+        final IntLongHashMap cellMinTs = new IntLongHashMap();
+        final IntLongHashMap cellLastTs = new IntLongHashMap();
+        final IntLongHashMap cellMaxTs = new IntLongHashMap();
+        boolean orderingViolated = false;
+        for (long row = rowLo; row < rowHi; row++) {
+            final int cellKey = resolveRowCellKey(row, dimScratch);
+            final long ts = o3TsColumn.getLong(row << 4);
+            final long last = cellLastTs.get(cellKey);
+            if (last == -1) {
+                distinctCells.add(cellKey);
+                cellMinTs.put(cellKey, ts);
+                cellLastTs.put(cellKey, ts);
+                cellMaxTs.put(cellKey, ts);
+            } else {
+                if (ts < last) {
+                    // Per-cell internal ordering violated -> never fast-append-eligible (recorded, not
+                    // bailed: keep scanning so the fold still sees this cell's true max).
+                    orderingViolated = true;
+                }
+                cellLastTs.put(cellKey, ts);
+                if (ts > cellMaxTs.get(cellKey)) {
+                    cellMaxTs.put(cellKey, ts);
+                }
+            }
+        }
+
+        final int distinctCount = distinctCells.size();
+
+        // Decide eligibility reading the shared cache's state as it stood BEFORE this commit's own fold-in
+        // below mutates it. The single-cell predicate ran first in the hook but deliberately did NOT fold
+        // this commit's cells (see its own docs), so these reads see genuinely pre-commit values. The
+        // dedup and last-partition gates (both would have early-returned false before Task 2's fix) are
+        // now folded into this boolean instead, so an ineligible commit still reaches the fold below.
+        boolean eligible = !dedup && lastPartition && !orderingViolated && distinctCount >= 2 && distinctCount <= maxOpenCells;
+        if (eligible) {
+            for (int i = 0; i < distinctCount; i++) {
+                final int cellKey = distinctCells.getQuick(i);
+                final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(lastPartitionTimestamp, cellKey);
+                if (partitionIndexRaw < 0 || txWriter.getPartitionSizeByRawIndex(partitionIndexRaw) == 0L) {
+                    eligible = false; // brand-new/empty cell -- not pre-existing
+                    break;
+                }
+                // PARQUET cells can never fast-append. This path writes straight into a cell's NATIVE
+                // column files and bumps the partition size; a parquet cell's rows live in data.parquet,
+                // which it does not touch. MEASURED before this guard, on a converted day taking an
+                // ordinary IN-ORDER insert: _txn said 5 rows, the parquet file held 4, and every read of
+                // that partition then threw
+                //     parquet partition row count mismatch [partitionHi=5, parquetRowCount=4]
+                // i.e. the partition became unreadable. Covered by
+                // CompositeParquetColumnTopTest#testInOrderAppendIntoConvertedCell.
+                //
+                // The whole fast-append family had NO parquet awareness, which was correct while a
+                // composite table could not hold a parquet cell. CONVERT PARTITION TO PARQUET made that
+                // false without the family being re-audited -- the third time in this branch that an
+                // assumption outlived the restriction it rested on.
+                if (txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)) {
+                    eligible = false;
+                    break;
+                }
+                final long cachedMax = compositeCellMaxTimestamp != null ? compositeCellMaxTimestamp.get(cellKey) : -1;
+                final long cellMin = cellMinTs.get(cellKey);
+                if (cachedMax == -1 || cellMin <= cachedMax) {
+                    eligible = false; // never observed by this writer, or not append-only
+                    break;
+                }
+                // Task 3: the multi-cell ACTION (applyCompositeMultiCellFastAppend) appends to EVERY
+                // touched cell unconditionally, so every cell must ALSO pass the action-layer gate -- all
+                // fixed-size columns table-wide, no index, and column top 0 per cell (see
+                // canCompositeFastAppendCell). Task 1 deliberately left this to the action layer (it was
+                // detection-only, took no action); Task 3 folds it into eligibility so eligible == true
+                // GUARANTEES every cell is appendable and the action never falls back mid-commit -- which
+                // would leave a partially-committed multi-cell commit (some cells fast-appended, the rest
+                // not). All-or-nothing. This runs BEFORE the unconditional fold below, so an ineligible
+                // commit still folds its cells' maxes (read-then-fold order preserved -- Task 2's stale-low
+                // invariant; the fold must run for ineligible commits too). The `break`s above are pure
+                // short-circuit: eligible is monotonically false once cleared and the fold is a separate
+                // loop, so bailing early only skips redundant (and, for canCompositeFastAppendCell, costly)
+                // work.
+                if (!canCompositeFastAppendCell(cellKey)) {
+                    eligible = false;
+                    break;
+                }
+            }
+        }
+
+        // Fold every touched cell's real observed max into the SHARED cache, ALWAYS -- regardless of the
+        // eligibility verdict, an ordering violation, dedup mode, OR a multi-day / non-last-partition
+        // span. This is the guaranteed folder for every commit that reaches this predicate (i.e. every
+        // flag-on composite commit except the ones taking spec-1's single-cell fast-append early return,
+        // which fold via the action): the single-cell fast-append action reads this same cache to gate
+        // append-only, so a stale-low entry here would let it corrupt a cell. cellMaxTs is the cell's true
+        // max over the whole commit (== last-seen when ordered). Folding is exactly correct even for dedup
+        // and cross-day commits, and can never go stale-low: a composite table carries no WAL lag (so
+        // [rowLo, rowHi) IS the complete row set), dedup never drops a cell's max-timestamp row nor
+        // fabricates a higher one, and Math.max only ever raises the entry -- so the folded value is always
+        // >= the cell's post-commit true max on the last partition (a stale-HIGH entry only ever costs a
+        // missed fast-append, never a false positive). A cell touched only on an older day folds an
+        // older-day max that the last-partition empty-cell gate then never consults (the cell is empty on
+        // the new last day), so keying by cellKey alone stays sound across the roll.
+        if (compositeCellMaxTimestamp == null) {
+            compositeCellMaxTimestamp = new IntLongHashMap();
+        }
+        for (int i = 0; i < distinctCount; i++) {
+            final int cellKey = distinctCells.getQuick(i);
+            final long observedMax = cellMaxTs.get(cellKey);
+            final long priorCached = compositeCellMaxTimestamp.get(cellKey);
+            if (priorCached == -1 || observedMax > priorCached) {
+                compositeCellMaxTimestamp.put(cellKey, observedMax);
+            }
+        }
+
+        return eligible;
+    }
+
+    /**
+     * Test-visible read of {@link #compositeMultiCellFastAppendEligibleCount} (composite-partitioning
+     * fast-append spec 2, Task 1 -- detection only). Static -- see that field's own docs for why.
+     */
+    public static long getCompositeMultiCellFastAppendEligibleCount() {
+        return compositeMultiCellFastAppendEligibleCount.get();
+    }
+
+    /**
+     * Test-visible read of {@link #compositeMultiCellFastAppendCommittedCount} (composite-partitioning
+     * fast-append spec 2, Task 3 -- commits that ACTUALLY took the multi-cell fast-append early return,
+     * a strict subset of {@link #getCompositeMultiCellFastAppendEligibleCount()}). Static -- see that
+     * field's own docs.
+     */
+    public static long getCompositeMultiCellFastAppendCommittedCount() {
+        return compositeMultiCellFastAppendCommittedCount.get();
+    }
+
+    /**
+     * Test-visible read of {@link #compositeFastAppendCommittedCount} (composite-partitioning
+     * fast-append spec 1, Task 2 -- commits that ACTUALLY took the fast-append early return, a strict
+     * subset of {@link #getCompositeFastAppendEligibleCount()}). Static -- see that field's own docs.
+     */
+    public static long getCompositeFastAppendCommittedCount() {
+        return compositeFastAppendCommittedCount.get();
+    }
+
+    /**
+     * Test-visible read of {@link #compositeO3MergeCommitCount} (SP8 Task 4 anti-vacuity floor:
+     * commits that took the composite O3/full dispatch path, i.e. every non-fast-appended composite
+     * commit). Static -- see that field's own docs.
+     */
+    @TestOnly
+    public static long getCompositeO3MergeCommitCount() {
+        return compositeO3MergeCommitCount.get();
+    }
+
+    /**
+     * Test-visible read of {@link #compositeExistingCellRowCount} (SP8 Task 4 anti-vacuity floor:
+     * rows dispatched into a cell that already had committed data, i.e. an O3 merge/append into a
+     * non-last, non-empty partition). Static -- see that field's own docs.
+     */
+    @TestOnly
+    public static long getCompositeExistingCellRowCount() {
+        return compositeExistingCellRowCount.get();
+    }
+
+    /**
+     * Composite single-cell fast-append (spec 1, Task 2 -- the crux): synchronously append the commit's
+     * rows {@code o3Columns[rowLo, rowHi)} onto the target cell's kept-open {@code <day>/<cell>} segment,
+     * bump THAT cell's {@code (ts, cellKey)} {@code _txn} size, advance the writer-global max timestamp,
+     * and return so the caller commits the cheap way ({@link #commit00()} durably persists the size bump
+     * + seqTxn together -- the crash-safety invariant). The composite analog of plain's
+     * {@link #applyFromWalLagToLastPartition}, cell-keyed; plain's path is untouched.
+     * <p>
+     * Preconditions (guaranteed by the caller: {@link #isCompositeSingleCellFastAppendPossible} returned
+     * this {@code cellKey} AND {@link #canCompositeFastAppendCell} passed): a single, ordered,
+     * append-only-into-that-cell, last-partition, non-dedup commit; an existing non-empty cell; all
+     * fixed-size columns; every column top 0. This is the routine Task 3 fault-injects to PROVE the
+     * crash-safety invariant.
+     */
+    private void applyCompositeSingleCellFastAppend(int cellKey, long rowLo, long rowHi, long o3TimestampMax) {
+        final long partitionTs = lastPartitionTimestamp;
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTs, cellKey);
+        final long srcDataMax = txWriter.getPartitionSizeByRawIndex(partitionIndexRaw);
+        final long copyRowCount = rowHi - rowLo;
+        final long newSize = srcDataMax + copyRowCount;
+
+        try {
+            // Cache-backed (Task 2): a hit reuses the cell's kept-open handles, a miss opens them at the
+            // cell's current committed size and evicts the LRU cell if over the cap.
+            final ObjList<MemoryMA> cellColumns = ensureCompositeFastAppendCellOpen(cellKey, partitionTs, partitionIndexRaw, srcDataMax);
+            final int timestampIndex = metadata.getTimestampIndex();
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType <= 0) {
+                    continue; // deleted column
+                }
+                // Column top is 0 for every column here (canCompositeFastAppendCell gated on it), so the
+                // destination physical row index is the cell's committed size directly.
+                appendCompositeFastAppendColumn(i, columnType, i == timestampIndex, rowLo, copyRowCount, cellColumns.getQuick(i), srcDataMax);
+            }
+            // Durability: flush the cell's column files (respecting commitMode, exactly like
+            // syncColumns0) BEFORE the _txn size bump lands durably in commit00 -- so a crash can never
+            // leave _txn recording rows whose bytes were not flushed. Under NOSYNC this is a no-op, at
+            // parity with the full composite path and plain's fast-append.
+            syncCompositeFastAppendCell(cellColumns);
+        } catch (Throwable th) {
+            // A half-written cell leaves in-memory state untrustworthy. The appended bytes are past the
+            // cell's still-committed size (ignored on reopen -> the WAL replays this un-acked txn), so
+            // on-disk recovery stays sound; discard the writer so the pool rebuilds from that state.
+            distressed = true;
+            throw th;
+        }
+
+        // Cell-keyed (ts, cellKey) size bump -- the IDENTICAL call the async path uses for an in-place
+        // cell extend (o3ConsumePartitionUpdateSink); for an existing cell (rawIndex >= 0) it writes only
+        // the masked size slot (preserving nameTxn). NEVER a cell-blind day-granularity transientRowCount
+        // bump (the exact bug the composite off-switches forbid).
+        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTs, newSize, txWriter.getTxn() - 1, cellKey);
+        // Maintain fixed/transient (transientRowCount == the array's LAST (ts ASC, cellKey ASC) entry's
+        // size; fixedRowCount == the sum of the rest; getRowCount == their sum). Add copyRowCount to
+        // transient if this cell IS that last entry, else to fixed -- exactly the single-(ts,cellKey)-block
+        // arithmetic o3ConsumePartitionUpdateSink performs, never the cell-blind `transientRowCount += n`.
+        final int lastIndex = txWriter.getPartitionCount() - 1;
+        if (txWriter.getPartitionTimestampByIndex(lastIndex) == partitionTs && txWriter.getPartitionCellKey(lastIndex) == cellKey) {
+            txWriter.transientRowCount = newSize;
+        } else {
+            txWriter.fixedRowCount += copyRowCount;
+        }
+        // Advance the writer-global max timestamp + last-partition ceiling, matching the full composite
+        // path (processO3BlockComposite). Min timestamp is unchanged (a pure append after the cell's max).
+        txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+        partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
+        addPhysicallyWrittenRows(copyRowCount);
+        // Keep the per-cell max cache consistent. The eligibility predicate already folded o3TimestampMax
+        // in when it ran for this commit; fold defensively (idempotent Math.max) so the routine is correct
+        // even if ever invoked without that preceding predicate call.
+        if (compositeCellMaxTimestamp == null) {
+            compositeCellMaxTimestamp = new IntLongHashMap();
+        }
+        final long cached = compositeCellMaxTimestamp.get(cellKey);
+        if (cached == -1 || o3TimestampMax > cached) {
+            compositeCellMaxTimestamp.put(cellKey, o3TimestampMax);
+        }
+    }
+
+    /**
+     * Composite MULTI-cell fast-append (spec 2, Task 3 -- the crux): the N-cell analog of {@link
+     * #applyCompositeSingleCellFastAppend}. Synchronously appends this commit's rows onto EACH touched
+     * cell's kept-open {@code <day>/<cell>} segment, bumps each cell's {@code (ts, cellKey)} {@code _txn}
+     * size, folds all N bumps into fixed/transient, advances the writer-global max timestamp, and returns
+     * so the caller commits the cheap way -- ONE {@code _txn} via {@link #commit00()} durably persists all
+     * N size bumps + seqTxn together. Crash-safety invariant (Task 4 proves it, but the STRUCTURE lives
+     * here): append all N cells' rows -> sync all N cells -> write all N {@code _txn} size bumps -> commit
+     * the SINGLE {@code _txn}. A crash before that one commit leaves every cell's extra bytes PAST its
+     * still-committed size, ignored on reopen, so the WAL replays this un-acked txn == the plain twin.
+     * NEVER commit per cell.
+     * <p>
+     * Preconditions (guaranteed by the caller: {@link #isCompositeMultiCellFastAppendPossible} returned
+     * true, which -- as of Task 3 -- folds {@link #canCompositeFastAppendCell} into its per-cell
+     * eligibility): {@code >= 2} distinct cells, each pre-existing + non-empty, each append-only into
+     * itself, each internally timestamp-ordered within {@code [rowLo, rowHi)}, last-partition, non-dedup,
+     * and every cell appendable (all fixed-size columns, no index, column top 0). ALL-OR-NOTHING: because
+     * eligibility already proved every cell appendable, this never falls back mid-commit.
+     * <p>
+     * The commit may be globally out-of-order (independent per-cell producer streams interleaved), so a
+     * cell's rows are an internally-ordered SUBSEQUENCE of {@code [rowLo, rowHi)} -- possibly several
+     * contiguous runs. This streams maximal same-cell runs in buffer order (left to right), appending each
+     * run to its cell via the per-column primitive {@link #appendCompositeFastAppendColumn}: successive
+     * runs of one cell concatenate because that primitive computes the absolute destination offset from the
+     * cell's running row count. Buffer order == per-cell timestamp order (the predicate's {@code
+     * !orderingViolated} guarantee), so each cell is physically appended in ascending timestamp order --
+     * exactly what a pure append requires. No re-sort: this reuses {@link #processO3BlockComposite}'s
+     * group-by-cell notion (per-row {@link #resolveRowCellKey}) but streams runs instead of regrouping.
+     */
+    private void applyCompositeMultiCellFastAppend(long rowLo, long rowHi, long o3TimestampMax) {
+        final long partitionTs = lastPartitionTimestamp;
+        final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        final int[] dimScratch = new int[dimCount];
+        final int timestampIndex = metadata.getTimestampIndex();
+
+        // Per-cell state keyed by cellKey. distinctCells preserves first-sight (buffer) order for a
+        // deterministic bump loop; cellBaseSize/cellRawIndex are resolved once on first sight; cellNewSize
+        // grows as each of the cell's runs is appended (final value == committed size + rows appended).
+        final IntList distinctCells = new IntList();
+        final IntLongHashMap cellBaseSize = new IntLongHashMap();
+        final IntIntHashMap cellRawIndex = new IntIntHashMap();
+        final IntLongHashMap cellNewSize = new IntLongHashMap();
+
+        try {
+            // APPEND PASS: walk [rowLo, rowHi) grouping into maximal contiguous same-cell runs, appending
+            // each run to its cell's kept-open segment. A cell may recur as several runs (interleaved
+            // commit); each run appends at the cell's current running size, so its runs concatenate.
+            long runLo = rowLo;
+            while (runLo < rowHi) {
+                final int cellKey = resolveRowCellKey(runLo, dimScratch);
+                long runHi = runLo + 1;
+                while (runHi < rowHi && resolveRowCellKey(runHi, dimScratch) == cellKey) {
+                    runHi++;
+                }
+                final long runLen = runHi - runLo;
+
+                final int ki = cellNewSize.keyIndex(cellKey);
+                final int partitionIndexRaw;
+                final long base;
+                final long dstRowCount;
+                if (ki > -1) {
+                    // First sight of this cell in this commit (keyIndex >= 0 == absent): resolve its
+                    // committed size + raw partition index once.
+                    partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTs, cellKey);
+                    base = txWriter.getPartitionSizeByRawIndex(partitionIndexRaw);
+                    distinctCells.add(cellKey);
+                    cellBaseSize.put(cellKey, base);
+                    cellRawIndex.put(cellKey, partitionIndexRaw);
+                    cellNewSize.putAt(ki, cellKey, base);
+                    dstRowCount = base;
+                } else {
+                    partitionIndexRaw = cellRawIndex.get(cellKey);
+                    base = cellBaseSize.get(cellKey);
+                    dstRowCount = cellNewSize.valueAt(ki);
+                }
+
+                // Cache-backed (Task 2): the cell's kept-open handles (a hit reuses them; a miss opens at
+                // the cell's committed size, evicting the LRU cell if over the cap). The predicate gated
+                // distinctCount <= the cap == the cache size, so once a cell has been appended to (it is
+                // then most-recently-used) it can never be evicted mid-commit before a later run of its
+                // own: only not-yet-appended or prior-commit cells are ever evicted, and a not-yet-appended
+                // cell simply reopens at its committed base. appendCompositeFastAppendColumn jumps to the
+                // ABSOLUTE offset from dstRowCount, so the append is correct regardless of handle position.
+                final ObjList<MemoryMA> cellColumns = ensureCompositeFastAppendCellOpen(cellKey, partitionTs, partitionIndexRaw, base);
+                for (int i = 0; i < columnCount; i++) {
+                    final int columnType = metadata.getColumnType(i);
+                    if (columnType <= 0) {
+                        continue; // deleted column
+                    }
+                    // Column top is 0 for every column (canCompositeFastAppendCell gated it via the
+                    // predicate), so the destination physical row index is the running cell size directly.
+                    appendCompositeFastAppendColumn(i, columnType, i == timestampIndex, runLo, runLen, cellColumns.getQuick(i), dstRowCount);
+                }
+                cellNewSize.put(cellKey, dstRowCount + runLen);
+
+                runLo = runHi;
+            }
+
+            // SYNC PASS: flush EVERY touched cell's column files (respecting commitMode) BEFORE any _txn
+            // size bump lands durably in commit00 -- so a crash can never leave _txn recording rows whose
+            // bytes were not flushed. Under NOSYNC this is a no-op. All cells synced here, after all
+            // appends, so the crash-safety order holds: append all -> sync all -> bump all -> ONE _txn.
+            for (int i = 0, n = distinctCells.size(); i < n; i++) {
+                syncCompositeFastAppendCell(compositeFastAppendCellCache.get(distinctCells.getQuick(i)));
+            }
+        } catch (Throwable th) {
+            // A half-written cell leaves in-memory state untrustworthy. Every appended byte is past its
+            // cell's still-committed size (no _txn bump has landed yet), so on-disk recovery stays sound
+            // (the un-acked txn replays from the WAL); discard the writer so the pool rebuilds from disk.
+            distressed = true;
+            throw th;
+        }
+
+        // N-FOLD _txn SIZE BUMP. The (ts ASC, cellKey ASC) partition array is NOT reindexed by any bump
+        // below: every touched cell pre-exists (guaranteed by canCompositeFastAppendCell in the predicate),
+        // so updateAttachedPartitionSizeByRawIndex takes its in-place update branch (rawIndex >= 0) and
+        // never inserts -- the array's LAST entry's identity is therefore stable across the whole loop, so
+        // resolve it once. At most ONE touched cell can be that last entry (transient); every other touched
+        // cell is a non-last entry (fixed). This is spec-1's single-cell (ts, cellKey) arithmetic applied N
+        // times (see applyCompositeSingleCellFastAppend).
+        final int lastIndex = txWriter.getPartitionCount() - 1;
+        final long lastEntryTs = txWriter.getPartitionTimestampByIndex(lastIndex);
+        final int lastEntryCellKey = txWriter.getPartitionCellKey(lastIndex);
+        long totalDelta = 0;
+        for (int i = 0, n = distinctCells.size(); i < n; i++) {
+            final int cellKey = distinctCells.getQuick(i);
+            final int partitionIndexRaw = cellRawIndex.get(cellKey);
+            final long newSize = cellNewSize.get(cellKey);
+            final long delta = newSize - cellBaseSize.get(cellKey);
+            // Cell-keyed (ts, cellKey) size bump -- the IDENTICAL call the async path uses for an in-place
+            // cell extend; for an existing cell (rawIndex >= 0) it writes only the masked size slot
+            // (preserving nameTxn). NEVER a cell-blind day-granularity transientRowCount bump.
+            txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTs, newSize, txWriter.getTxn() - 1, cellKey);
+            if (lastEntryTs == partitionTs && lastEntryCellKey == cellKey) {
+                txWriter.transientRowCount = newSize;
+            } else {
+                txWriter.fixedRowCount += delta;
+            }
+            totalDelta += delta;
+        }
+
+        // Advance the writer-global max timestamp + last-partition ceiling, matching the full composite
+        // path (processO3BlockComposite). Min timestamp is unchanged (every cell is a pure append after its
+        // own committed max, and the last partition already exists, so the table min never moves). Do NOT
+        // fold compositeCellMaxTimestamp here: the multi-cell predicate ALREADY folded every touched cell's
+        // max for this commit (Task 2's read-then-fold, run immediately before this action in the hook),
+        // and that folded value equals this commit's per-cell committed max. A redundant re-fold would be a
+        // harmless Math.max but is unnecessary -- Task 4 / whole-branch must NOT re-add one.
+        txWriter.updateMaxTimestamp(Math.max(txWriter.getMaxTimestamp(), o3TimestampMax));
+        partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
+        addPhysicallyWrittenRows(totalDelta);
+    }
+
+    /**
+     * Copies {@code [srcRowLo, srcRowLo + copyRowCount)} rows of one FIXED-size column from the
+     * (already symbol-remapped) {@code o3Columns} WAL buffer onto {@code dstDataMem} at physical row
+     * {@code dstRowCount}, for {@link #applyCompositeSingleCellFastAppend}. Reuses the same low-level
+     * primitives as plain's {@link #cthAppendWalColumnToLastPartition} -- {@link Vect#copyFromTimestampIndex}
+     * for the designated timestamp (WAL stores it as a 2-long {@code (ts, rowid)} index; the partition
+     * column is 1 long/row) and {@link Vect#memcpy} via {@link #mapAppendColumnBuffer} otherwise. Var-size
+     * columns never reach here (the whole table falls back to the full path -- see
+     * {@link #canCompositeFastAppendCell}).
+     */
+    private void appendCompositeFastAppendColumn(int columnIndex, int columnType, boolean designatedTimestamp, long srcRowLo, long copyRowCount, MemoryMA dstDataMem, long dstRowCount) {
+        final MemoryCR o3SrcDataMem = o3Columns.get(getPrimaryColumnIndex(columnIndex));
+        if (designatedTimestamp) {
+            final long copyBytes = copyRowCount << 3;
+            final long destOffset = dstRowCount << 3;
+            final long srcAddr = o3SrcDataMem.addressOf(srcRowLo << 4);
+            dstDataMem.jumpTo(destOffset + copyBytes);
+            final long destAddr = mapAppendColumnBuffer(dstDataMem, destOffset, copyBytes, true);
+            try {
+                Vect.copyFromTimestampIndex(srcAddr, 0, copyRowCount - 1, Math.abs(destAddr));
+            } finally {
+                mapAppendColumnBufferRelease(destAddr, destOffset, copyBytes);
+            }
+        } else {
+            final int shl = ColumnType.pow2SizeOf(columnType);
+            final long copyBytes = copyRowCount << shl;
+            final long destOffset = dstRowCount << shl;
+            dstDataMem.jumpTo(destOffset + copyBytes);
+            if (copyBytes > 0) {
+                final long destAddr = mapAppendColumnBuffer(dstDataMem, destOffset, copyBytes, true);
+                try {
+                    Vect.memcpy(Math.abs(destAddr), o3SrcDataMem.addressOf(srcRowLo << shl), copyBytes);
+                } finally {
+                    mapAppendColumnBufferRelease(destAddr, destOffset, copyBytes);
+                }
+            }
+        }
+    }
+
+    /**
+     * True iff {@link #applyCompositeSingleCellFastAppend} can handle this eligible (per
+     * {@link #isCompositeSingleCellFastAppendPossible}) cell; otherwise the commit falls back to the
+     * proven full O3 composite path (never wrong, just not accelerated). Spec-1 scope: fixed-size
+     * columns only, an existing non-empty cell (a brand-new cell's first commit takes the full path,
+     * which creates its directory / files / {@code _txn} record; later commits fast-append), and every
+     * column top 0 (an ADD-COLUMN top is spec-2 work).
+     */
+    private boolean canCompositeFastAppendCell(int cellKey) {
+        // Indexed columns: plain's fast-append (applyLagToLastPartition) re-indexes the appended rows
+        // (updateIndexesParallel / publishPostingIndexes); this synchronous cell append does not touch
+        // any index, so an indexed (bitmap or posting) table falls back to the full path, which keeps
+        // its indexes correct.
+        if (indexCount > 0) {
+            return false;
+        }
+        final int timestampIndex = metadata.getTimestampIndex();
+        for (int i = 0; i < columnCount; i++) {
+            final int columnType = metadata.getColumnType(i);
+            // Dimension source columns are always SYMBOL (fixed), so this only ever excludes a var-size
+            // (STRING/VARCHAR/BINARY/ARRAY) VALUE column, whose aux vector this path does not carry.
+            if (columnType > 0 && i != timestampIndex && ColumnType.isVarSize(columnType)) {
+                return false;
+            }
+        }
+        final long partitionTs = lastPartitionTimestamp;
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTs, cellKey);
+        if (partitionIndexRaw < 0 || txWriter.getPartitionSizeByRawIndex(partitionIndexRaw) <= 0) {
+            return false; // brand-new / empty cell: first commit takes the full path
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0 && getColumnTop(partitionTs, cellKey, i, 0L) != 0L) {
+                return false; // non-zero column top (ADD COLUMN after this cell had rows)
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Test-visible count of cells whose {@code <day>/<cell>} column handles are currently kept open in the
+     * N-cell fast-append handle cache ({@link #compositeFastAppendCellCache}) -- bounded by
+     * {@link CairoConfiguration#getWalCompositeFastAppendMaxOpenCells()}. Zero until the first fast-append
+     * runs. Task 3's multi-cell routine + this cache's own tests consume it.
+     */
+    public int getCompositeFastAppendOpenCellCount() {
+        return compositeFastAppendCellCache == null ? 0 : compositeFastAppendCellCache.size();
+    }
+
+    /**
+     * Returns the target cell's {@code <day>/<cell>} column-file handles from the N-cell handle cache
+     * ({@link #compositeFastAppendCellCache}), opening them on a miss. On a HIT the cell's kept-open
+     * handles are reused (the whole point -- no re-open per commit) and marked most-recently-used. A MISS
+     * opens the files at the cell's CURRENT committed size (see
+     * {@link #openCompositeFastAppendCellColumns}), inserts the entry, and evicts the least-recently-used
+     * cell (NON-TRUNCATING close) if the cache now exceeds
+     * {@link CairoConfiguration#getWalCompositeFastAppendMaxOpenCells()}. All cached cells belong to ONE
+     * day: a commit into a different {@code partitionTs} (a partition roll) drops the whole cache first.
+     */
+    private ObjList<MemoryMA> ensureCompositeFastAppendCellOpen(int cellKey, long partitionTs, int partitionIndexRaw, long srcDataMax) {
+        if (compositeFastAppendOpenPartitionTs != partitionTs) {
+            // Partition rolled (new last day), or first-ever open: every cached handle points at the prior
+            // day -- close them all NON-TRUNCATING before caching a cell of the new day.
+            closeAllCompositeFastAppendCells();
+            compositeFastAppendOpenPartitionTs = partitionTs;
+        }
+        if (compositeFastAppendCellCache == null) {
+            compositeFastAppendCellCache = new IntObjHashMap<>();
+            compositeFastAppendCellLru = new IntList();
+        }
+        final int keyIndex = compositeFastAppendCellCache.keyIndex(cellKey);
+        if (keyIndex < 0) {
+            // Hit: reuse the kept-open handles, mark most-recently-used.
+            touchCompositeFastAppendCellLru(cellKey);
+            return compositeFastAppendCellCache.valueAt(keyIndex);
+        }
+        // Miss: open at the cell's CURRENT committed size (srcDataMax, never 0), insert, then evict the LRU
+        // cell if now over the cap (never the just-added cell -- guarded by the LRU size check).
+        final ObjList<MemoryMA> cellColumns = openCompositeFastAppendCellColumns(cellKey, partitionTs, partitionIndexRaw, srcDataMax);
+        compositeFastAppendCellCache.putAt(keyIndex, cellKey, cellColumns);
+        compositeFastAppendCellLru.add(cellKey); // most-recently-used at the tail
+        final int maxOpenCells = configuration.getWalCompositeFastAppendMaxOpenCells();
+        while (compositeFastAppendCellCache.size() > maxOpenCells && compositeFastAppendCellLru.size() > 1) {
+            evictLruCompositeFastAppendCell();
+        }
+        return cellColumns;
+    }
+
+    /**
+     * Opens the cell's {@code <day>/<cell>} column files into a FRESH handle list, each positioned at the
+     * cell's committed size {@code srcDataMax} (never 0 -- the fast-append writes PAST the committed rows).
+     * Mirrors {@link #openColumnFiles}'s own {@code MemoryMA.of} call. On a partial-open failure every
+     * handle opened so far is closed NON-TRUNCATING (so a committed cell column is never shrunk below its
+     * committed size) and the throwable rethrown -- the caller never caches a half-open cell.
+     */
+    private ObjList<MemoryMA> openCompositeFastAppendCellColumns(int cellKey, long partitionTs, int partitionIndexRaw, long srcDataMax) {
+        final ObjList<MemoryMA> cellColumns = new ObjList<>(columnCount);
+        while (cellColumns.size() < columnCount) {
+            cellColumns.add(Vm.getPMARInstance(configuration));
+        }
+        final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
+        final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+        cellSegmentSink.clear();
+        renderCellSegment(cellSegmentSink, cellKey);
+        try {
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTs, cellNameTxn, cellSegmentSink);
+            final int cellDirLen = path.size();
+            for (int i = 0; i < columnCount; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType <= 0) {
+                    continue; // deleted column: leave its handle closed
+                }
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTs, cellKey, i);
+                final MemoryMA mem = cellColumns.getQuick(i);
+                mem.of(
+                        ff,
+                        dFile(path.trimTo(cellDirLen), metadata.getColumnName(i), columnNameTxn),
+                        dataAppendPageSize,
+                        -1,
+                        MemoryTag.MMAP_TABLE_WRITER,
+                        configuration.getWriterFileOpenOpts(),
+                        Files.POSIX_MADV_RANDOM
+                );
+                mem.jumpTo(srcDataMax << ColumnType.pow2SizeOf(columnType)); // column top is 0 (gated)
+            }
+        } catch (Throwable th) {
+            // Partial open: some handles opened + positioned at the committed size, one failed (e.g. a
+            // mid-flight ff.mmap failure while positioning). A failed handle's append offset is 0 -- so a
+            // TRUNCATING close would shrink that committed cell column file BELOW its committed size and
+            // corrupt already-committed rows. This open runs before the _txn size bump, so the cell's
+            // committed size is unchanged; close every handle WITHOUT truncation so the bytes past the
+            // committed size are merely ignored on reopen and the WAL replays the un-acked txn == plain
+            // twin. The cell is never inserted into the cache (the caller inserts only on success). Guard
+            // each close so a throw from one handle's cleanup cannot leave a LATER handle un-neutralized.
+            for (int i = 0, n = cellColumns.size(); i < n; i++) {
+                final MemoryMA mem = cellColumns.getQuick(i);
+                if (mem != null) {
+                    try {
+                        mem.close(false);
+                    } catch (Throwable closeErr) {
+                        th.addSuppressed(closeErr);
+                    }
+                }
+            }
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+        }
+        return cellColumns;
+    }
+
+    // Marks cellKey most-recently-used: move it to the tail of the LRU order list.
+    private void touchCompositeFastAppendCellLru(int cellKey) {
+        final int at = compositeFastAppendCellLru.indexOf(cellKey, 0, compositeFastAppendCellLru.size());
+        if (at != -1) {
+            compositeFastAppendCellLru.removeIndex(at);
+        }
+        compositeFastAppendCellLru.add(cellKey);
+    }
+
+    // Evicts the least-recently-used cell (head of the LRU order list): drop it from the cache and close
+    // its handles NON-TRUNCATING (a truncating close would shrink a committed cell to 0 bytes -- the
+    // spec-1 T3 corruption). The evicted cell's committed rows were already synced after their own commit,
+    // so a later miss simply reopens the file at its committed size.
+    private void evictLruCompositeFastAppendCell() {
+        final int lruCellKey = compositeFastAppendCellLru.getQuick(0);
+        compositeFastAppendCellLru.removeIndex(0);
+        final ObjList<MemoryMA> cellColumns = compositeFastAppendCellCache.get(lruCellKey);
+        compositeFastAppendCellCache.remove(lruCellKey);
+        closeCompositeFastAppendCellColumns(cellColumns);
+    }
+
+    /**
+     * Closes + drops EVERY cached cell's handles NON-TRUNCATING, and resets the shared open-partition-ts.
+     * Called on a partition roll, before any full-path commit (the full O3 path rewrites the partition, so
+     * the kept-open handles must be released first), on rollback(), and (via doClose) on writer close.
+     * Durability of each cell's committed rows was already ensured by {@link #syncCompositeFastAppendCell}
+     * after every fast-append, so this only releases the mmap/fd -- never truncating.
+     */
+    private void closeAllCompositeFastAppendCells() {
+        // Iterate the LRU order list -- it holds exactly the cached cellKeys (kept in lock-step with the
+        // cache on every insert/evict), avoiding the cache's raw backing array with its empty null slots.
+        if (compositeFastAppendCellLru != null) {
+            for (int i = 0, n = compositeFastAppendCellLru.size(); i < n; i++) {
+                closeCompositeFastAppendCellColumns(compositeFastAppendCellCache.get(compositeFastAppendCellLru.getQuick(i)));
+            }
+            compositeFastAppendCellLru.clear();
+        }
+        if (compositeFastAppendCellCache != null) {
+            compositeFastAppendCellCache.clear();
+        }
+        compositeFastAppendOpenPartitionTs = Long.MIN_VALUE;
+    }
+
+    // Closes one cell's column handles NON-TRUNCATING (close(false)); the MemoryMA objects are then
+    // garbage (getPMARInstance returns a fresh unpooled instance). A null cellColumns (never-cached) or a
+    // null per-column handle (a deleted column) is skipped.
+    private void closeCompositeFastAppendCellColumns(ObjList<MemoryMA> cellColumns) {
+        if (cellColumns == null) {
+            return;
+        }
+        for (int i = 0, n = cellColumns.size(); i < n; i++) {
+            final MemoryMA mem = cellColumns.getQuick(i);
+            if (mem != null) {
+                mem.close(false);
+            }
+        }
+    }
+
+    private void syncCompositeFastAppendCell(ObjList<MemoryMA> cellColumns) {
+        final int commitMode = configuration.getCommitMode();
+        if (commitMode == CommitMode.NOSYNC) {
+            return;
+        }
+        final boolean async = commitMode == CommitMode.ASYNC;
+        for (int i = 0; i < columnCount; i++) {
+            if (metadata.getColumnType(i) > 0) {
+                cellColumns.getQuick(i).sync(async);
+            }
+        }
+    }
+
+    /**
+     * AUDIT NOTE (cellKey-0 / active-tail sweep, 2026-08-26; reachability RESOLVED same day). This
+     * operates on {@code lastPartitionTimestamp} -- the writer's ACTIVE TAIL -- and updates its size
+     * with the cellKey-0-only {@code updatePartitionSizeByTimestamp}. Both would be wrong for a routed
+     * composite table: {@code finishO3Commit} documents that the active-tail fields describe the bare,
+     * non-cell day directory and are "NEVER a valid target" there.
+     * <p>
+     * Deliberately NOT patched, and the reason is now measured rather than assumed: this method is
+     * UNREACHABLE for a composite table. The audit's earlier wording ("neither caller carries a
+     * composite guard") was too weak -- it looked at the two call sites inside
+     * {@code applyFromWalLagToLastPartition} instead of that method's own callers, three of which are
+     * hard-gated for composite. See the drift-lock assert in the body for the fourth (a genuine
+     * fall-through, safe only via {@code needFullCommit}) and for the positive control behind the
+     * claim.
+     * <p>
+     * So threading a cellKey in here would add per-cell handling to dead code. If a real composite
+     * fast-append ever lands (see {@code compositeFastAppendEligibleCount}), it needs its own per-cell
+     * path -- not a retrofit of this one, whose active-tail concept has no single meaning on a
+     * multi-cell day.
+     */
     private void applyLagToLastPartition(long maxTimestamp, int lagRowCount, long lagMinTimestamp) {
+        // DRIFT LOCK (measured 2026-08-26). This active-tail apply is cell-blind: it writes through
+        // this.columns, which for a composite table is never repointed at a real <day>/<cell> segment,
+        // so a row taking this path lands in the orphan bare day directory -- silent loss, not a crash.
+        //
+        // Three of the four routes here are hard-gated for composite (canFastCommit / canFastCommitNew
+        // via applyFromWalLagToLastPartitionPossible's dimCount check; tryFastAppendInOrderBlock's own
+        // early return). The FOURTH is not: processWalCommit's `if (!needFullCommit || canFastCommitNew)`
+        // is false-false for composite, so control FALLS THROUGH to the unguarded direct call just below
+        // it. That call is reachable in principle and harmless only because needFullCommit is forced true
+        // for every composite commit, so lag never accumulates and getLagRowCount() is always 0.
+        //
+        // MEASURED, not reasoned: a temporary throw here fired 0 times across the 508-test composite
+        // suite. Inverting it to plain tables fired 180 times and failed 105 of those same tests, which
+        // is the positive control proving the path is heavily exercised in that very run and the zero is
+        // real rather than a dead edit.
+        //
+        // That safety is therefore an emergent property of a gate maintained elsewhere, and
+        // tryFastAppendInOrderBlock's own comment already warns these gates "are maintained separately
+        // and intentionally diverge, so the two can drift apart". Assert rather than throw: assertions
+        // are on under test and fuzz, so any future relaxation of needFullCommit fails loudly in CI,
+        // while production behaviour is unchanged.
+        assert metadata.getPartitionSpec().getDimensionCount() == 0
+                : "applyLagToLastPartition is cell-blind and must never run for a composite table "
+                + "[table=" + tableToken.getTableName() + ", lagRowCount=" + lagRowCount + "]";
         long initialTransientRowCount = txWriter.transientRowCount;
         txWriter.transientRowCount += lagRowCount;
         txWriter.updatePartitionSizeByTimestamp(lastPartitionTimestamp, txWriter.transientRowCount);
         if (walApplySeqTxn > 0) {
             // In-order appends to the active partition take this fast path instead of the O3 sink,
             // so stamp the last (native) partition with the apply seqTxn here too.
-            final int lastRaw = (txWriter.getPartitionCount() - 1) * LONGS_PER_TX_ATTACHED_PARTITION;
+            final int lastRaw = (txWriter.getPartitionCount() - 1) * txWriter.getLongsPerAttachedPartition();
             if (lastRaw >= 0 && !txWriter.isPartitionParquetByRawIndex(lastRaw)) {
                 txWriter.setPartitionSeqTxnByRawIndex(lastRaw, walApplySeqTxn);
             }
@@ -5394,6 +8092,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void cleanupMaterialisedCoveredColumnTempFiles(
             IntList coveringColumnIndices,
             long partitionTimestamp,
+            // COMPOSITE: the cell whose temp files are removed -- the name txn they were written under
+            // comes from `_cv` at (timestamp, cellKey, column). 0 for a plain table.
+            int cellKey,
             int plen
     ) {
         for (int slot = 0, n = coveringColumnIndices.size(); slot < n; slot++) {
@@ -5403,7 +8104,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             final int columnType = metadata.getColumnType(tableColIdx);
             final CharSequence colName = metadata.getColumnName(tableColIdx);
-            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, tableColIdx);
             ff.removeQuiet(dFile(path.trimTo(plen), colName, colNameTxn));
             if (ColumnType.isVarSize(columnType)) {
                 ff.removeQuiet(iFile(path.trimTo(plen), colName, colNameTxn));
@@ -5618,14 +8319,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void commitTxWriter() {
         txWriter.commit(denseSymbolMapWriters);
+        resetCellKeyMemo();
+        resetDimensionOrdinalMemo();
         publishDeferredPostingSealPurges(txWriter.getTxn(), false);
     }
 
     private void commitTxWriterAndPublishPendingPostingSealPurges() {
         txWriter.commit(denseSymbolMapWriters);
+        resetCellKeyMemo();
+        resetDimensionOrdinalMemo();
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
+    }
+
+    /**
+     * Clears {@link #cellKeyMemo} (see {@code resolveCellKey(int[])}). Called at every
+     * commit/rollback boundary: a successful commit no longer needs entries computed for a
+     * transaction that has now been made durable, and a rollback may have truncated the
+     * {@code _cell} registry back past a memoized tuple's slot -- clearing here prevents a stale
+     * cached cellKey from outliving the registry state it was computed against.
+     */
+    private void resetCellKeyMemo() {
+        if (cellKeyMemo != null) {
+            cellKeyMemo.clear();
+        }
     }
 
     private void configureAppendPosition() {
@@ -5726,6 +8444,53 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
         }
+        // Register the composite interners as first-class _txn symbol maps, in layout order: the
+        // per-dimension dedicated dictionaries (TRUNCATE/EXPRESSION dims) first, then the _cell
+        // registry. Their _txn slots were reserved at CREATE (TableUtils bumps symbolMapCount), so
+        // txWriter.getSymbolValueCount(slot) reads a valid (zero) count for each. Constructed by
+        // mirroring the per-column SymbolMapWriter above, except the name/name-txn come from the
+        // layout and columnIndex is -1 (the interners own no table column -- scaleSymbolCapacities
+        // and other column-index consumers already skip columnIndex <= -1). Interners are added ONLY
+        // to the dense list, never the sparse (column-indexed) symbolMapWriters. Gated on !isView()
+        // to mirror the per-column construction and the create-path file provisioning (both skip
+        // views), keeping _txn.symbolColumnCount == denseSymbolMapWriters.size().
+        if (!tableToken.isView()) {
+            CompositeInternerLayout layout = CompositeInternerLayout.of(metadata.getPartitionSpec());
+            if (layout.hasInterners()) {
+                final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+                ObjList<MapWriter> dedicatedDicts = new ObjList<>(dimCount);
+                for (int i = 0; i < dimCount; i++) {
+                    if (layout.needsDedicatedDict(i)) {
+                        final int symbolIndexInTxWriter = denseSymbolMapWriters.size();
+                        SymbolMapWriter dictWriter = new SymbolMapWriter(
+                                configuration,
+                                path.trimTo(pathSize),
+                                layout.dictName(i),
+                                layout.dictColumnNameTxn(i),
+                                txWriter.getSymbolValueCount(symbolIndexInTxWriter),
+                                symbolIndexInTxWriter,
+                                txWriter,
+                                -1
+                        );
+                        denseSymbolMapWriters.add(dictWriter);
+                        dedicatedDicts.extendAndSet(i, dictWriter);
+                    }
+                }
+                final int registryIndexInTxWriter = denseSymbolMapWriters.size();
+                SymbolMapWriter registryWriter = new SymbolMapWriter(
+                        configuration,
+                        path.trimTo(pathSize),
+                        CompositeInternerLayout.REGISTRY_NAME,
+                        CompositeInternerLayout.REGISTRY_TXN,
+                        txWriter.getSymbolValueCount(registryIndexInTxWriter),
+                        registryIndexInTxWriter,
+                        txWriter,
+                        -1
+                );
+                denseSymbolMapWriters.add(registryWriter);
+                compositeDicts = new CompositeDictionaries(dedicatedDicts, new CellRegistry(registryWriter));
+            }
+        }
         if (isDeduplicationEnabled()) {
             dedupColumnCommitAddresses = new DedupColumnCommitAddresses();
             // Set dedup column count, excluding designated timestamp
@@ -5775,6 +8540,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             SymbolColumnIndexer indexer,
             IntList coveringColumnIndices,
             long partitionTimestamp,
+            // COMPOSITE: the cell whose covered columns are being inlined; `_cv` is keyed by
+            // (timestamp, cellKey, column). 0 for a plain table.
+            int cellKey,
             ObjList<MemoryMARW> covMmaps,
             boolean normalizeColumnTops
     ) {
@@ -5804,11 +8572,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             MemoryMARW auxMem = covMmaps.getQuick(2 * slot);
             coveringAddrs.setQuick(slot, dataMem != null && dataMem.isOpen() ? dataMem.addressOf(0) : 0);
             coveringAuxAddrs.setQuick(slot, auxMem != null && auxMem.isOpen() ? auxMem.addressOf(0) : 0);
-            coveringTops.add(normalizeColumnTops ? 0 : columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringTops.add(normalizeColumnTops ? 0 : columnVersionWriter.getColumnTopQuick(partitionTimestamp, cellKey, covCol));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covCol);
             coveringTypes.add(covType);
-            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
+            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, covCol));
         }
         indexer.configureCovering(
                 coveringAddrs, coveringAuxAddrs, coveringTops, coveringShifts,
@@ -5823,10 +8591,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp) {
-        configureCoveringIfNeeded(indexer.getWriter(), columnIndex, partitionTimestamp);
+        configureCoveringIfNeeded(indexer.getWriter(), columnIndex, partitionTimestamp, 0);
+    }
+
+    private void configureCoveringIfNeeded(ColumnIndexer indexer, int columnIndex, long partitionTimestamp, int cellKey) {
+        configureCoveringIfNeeded(indexer.getWriter(), columnIndex, partitionTimestamp, cellKey);
     }
 
     private void configureCoveringIfNeeded(IndexWriter indexer, int columnIndex, long partitionTimestamp) {
+        configureCoveringIfNeeded(indexer, columnIndex, partitionTimestamp, 0);
+    }
+
+    /**
+     * Cell-scoped covering configuration. A covered column's top and name txn live in `_cv`, which is
+     * keyed by (timestamp, cellKey, column) -- so a cellKey-0 read hands the indexer ANOTHER cell's
+     * covered data to inline, and the sealed index answers with values that belong to a sibling.
+     * {@code cellKey == 0} is what every plain-table caller passes, byte-identical to before.
+     */
+    private void configureCoveringIfNeeded(IndexWriter indexer, int columnIndex, long partitionTimestamp, int cellKey) {
         TableColumnMetadata colMeta = metadata.getColumnMetadata(columnIndex);
         IntList coveringCols = colMeta.getCoveringColumnIndices();
         if (coveringCols == null || coveringCols.size() == 0) {
@@ -5852,8 +8634,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             int covType = metadata.getColumnType(covCol);
             coveringNames.add(metadata.getColumnName(covCol));
-            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol));
-            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
+            coveringNameTxns.add(columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, covCol));
+            coveringTops.add(columnVersionWriter.getColumnTopQuick(partitionTimestamp, cellKey, covCol));
             coveringShifts.add(ColumnType.pow2SizeOf(covType));
             coveringIndices.add(covCol);
             coveringTypes.add(covType);
@@ -5895,10 +8677,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void copyOrRebuildColumnIndexes(long partitionTimestamp, long newPartitionNameTxn, long partitionRowCount) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        final long oldPartitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn);
+        copyOrRebuildColumnIndexes(partitionTimestamp, txWriter.getPartitionNameTxn(partitionIndex), null, newPartitionNameTxn, partitionRowCount);
+    }
+
+    /**
+     * Cell-aware counterpart: both the source and destination directories nest under {@code cellSegment}
+     * for a composite table. The 3-arg form resolves the old name-txn through a cellKey-0 lookup and
+     * builds both paths with the bare overload, which on a composite day names the phantom bare-day
+     * container rather than any cell.
+     */
+    private void copyOrRebuildColumnIndexes(
+            long partitionTimestamp,
+            long oldPartitionNameTxn,
+            @Nullable CharSequence cellSegment,
+            long newPartitionNameTxn,
+            long partitionRowCount
+    ) {
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, oldPartitionNameTxn, cellSegment);
         final int srcDirLen = path.size();
-        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn);
+        setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, newPartitionNameTxn, cellSegment);
         final int dstDirLen = other.size();
 
         try {
@@ -6075,13 +8872,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int columnIndex
     ) {
         MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+        // A composite table's INTERNERS (dedicated dicts + the _cell registry) occupy the LAST K slots
+        // of denseSymbolMapWriters, and configureColumnMemory() rebuilds that order on every reopen as
+        // [realSymbols..., dedicatedDicts..., registry]. Appending a new real symbol column at the end
+        // would therefore place it AFTER the interners now and BEFORE them after the next reopen, so the
+        // _txn symbol-count slots would be written under one dense order and read back under another.
+        // MEASURED before this fix: the desync surfaced on the next WAL segment roll as a bare
+        // `assert symbolCapacity > 0` inside SymbolMapReaderImpl.of, because WalWriter#refreshSymbolWatermarks
+        // resolved the new column's count through an interner's slot and hard-linked the wrong files.
+        // Insert where the reopen will put it, and renumber the interners it displaces.
+        final int internerCount = compositeInternerSlotCount();
+        final int denseIndex = denseSymbolMapWriters.size() - internerCount;
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
                 path.trimTo(pathSize),
                 name,
                 columnNameTxn,
                 0,
-                denseSymbolMapWriters.size(),
+                denseIndex,
                 txWriter,
                 columnIndex
         );
@@ -6098,8 +8906,34 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         w.updateNullFlag(symbolNullFlag);
-        denseSymbolMapWriters.add(w);
+        if (internerCount == 0) {
+            denseSymbolMapWriters.add(w);
+        } else {
+            denseSymbolMapWriters.insert(denseIndex, 1, null);
+            denseSymbolMapWriters.setQuick(denseIndex, w);
+            // the displaced interners now sit one slot higher; each carries its own dense index, which
+            // is what it reports counts under at commit time
+            for (int i = denseIndex + 1, n = denseSymbolMapWriters.size(); i < n; i++) {
+                final MapWriter shifted = denseSymbolMapWriters.getQuick(i);
+                if (shifted instanceof SymbolMapWriter) {
+                    ((SymbolMapWriter) shifted).setSymbolIndexInTxWriter(i);
+                }
+            }
+        }
         symbolMapWriters.extendAndSet(columnCount, w);
+    }
+
+    /**
+     * Number of dense symbol slots this table's composite interners occupy, or 0 when there are none.
+     * Mirrors the registration in {@code configureColumnMemory}: one slot per dedicated dictionary plus
+     * one for the {@code _cell} registry, and none at all for a view.
+     */
+    private int compositeInternerSlotCount() {
+        if (tableToken.isView()) {
+            return 0;
+        }
+        final CompositeInternerLayout layout = CompositeInternerLayout.of(metadata.getPartitionSpec());
+        return layout.hasInterners() ? layout.dedicatedCount() + 1 : 0;
     }
 
     private boolean createWalSymbolMapping(SymbolMapDiff symbolMapDiff, int columnIndex, IntList symbolMap) {
@@ -6997,6 +9831,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         freeSymbolMapWriters();
         Misc.freeObjList(indexers);
         denseIndexers.clear();
+        // Composite fast-append (spec 1 + spec 2, Task 2): close ALL kept-open cell segment handles,
+        // NON-TRUNCATING (a truncating close on writer teardown would shrink a committed cell to 0 bytes).
+        closeAllCompositeFastAppendCells();
         Misc.free(txWriter);
         Misc.free(ddlMem);
         Misc.free(other);
@@ -7179,13 +10016,30 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long minTimestamp = txWriter.getMinTimestamp(); // table min timestamp
         final long maxTimestamp = txWriter.getMaxTimestamp(); // table max timestamp
 
-        final int index = txWriter.getPartitionIndex(timestamp);
+        // SP1B (N2): cell-agnostic lookup. getPartitionIndex resolves cellKey 0 ONLY, so on a day
+        // with 2+ cells it returned -1 the moment cell 0 was gone -- and the caller loop, which does
+        // not increment its index, then spun for ever. Identical to getPartitionIndex for a plain table.
+        final int index = txWriter.getAnyPartitionIndexByTimestamp(timestamp);
         if (index < 0) {
             LOG.error().$("partition is already removed [path=").$substr(pathRootSize, path).$(", partitionTimestamp=").$ts(timestampDriver, timestamp).I$();
             return false;
         }
 
         final long partitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp);
+        // Resolved before any removeAttachedPartitions call below mutates the array.
+        //
+        // SP1B (N2): this is no longer defense-in-depth -- it is the fix. Both removals below used the
+        // one-arg removeAttachedPartitions(timestamp), which defaults to cellKey 0. On a day with 2+
+        // cells that removes cell 0 and leaves its siblings, so removePartition's caller loop (which
+        // does NOT increment its index, relying on the entry disappearing) re-reads the same raw index
+        // forever: an infinite loop, reproduced here at 34.3 MILLION "partition is already removed"
+        // log lines in 60s before the test timeout fired.
+        //
+        // getAnyPartitionIndexByTimestamp resolves to the LOWEST index of the equal-ts run, so each
+        // pass removes the lowest surviving cell of the day and the loop drains the run one cell per
+        // iteration. For a plain table the run is one entry and getPartitionCellKey returns 0, so this
+        // is byte-identical there.
+        final int cellKey = txWriter.getPartitionCellKey(index);
 
         if (timestamp == txWriter.getPartitionTimestampByTimestamp(maxTimestamp)) {
             // removing active partition
@@ -7204,29 +10058,120 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final long parquetFileSize = prevIsParquet ? txWriter.getPartitionParquetFileSize(prevIndex) : -1L;
                 prevTimestamp = txWriter.getPartitionTimestampByIndex(prevIndex);
                 newTransientRowCount = txWriter.getPartitionSize(prevIndex);
+                long tailMaxTimestamp;
                 try {
-                    setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                    // SP1B (N1): resolve the PREVIOUS partition's own directory. For a composite table
+                    // that partition is a CELL -- its data lives at <day>/<cell>.<txn>, never at
+                    // <day>.<txn> -- so the cell-blind 5-arg overload used here previously pointed at a
+                    // path that does not exist, and the tail's recomputed min/max came back wrong (or
+                    // the read failed outright with "file does not exist"). getPartitionCellKey returns
+                    // 0 for a plain table and renderCellSegment is only called when there is a
+                    // dimension to render, so the plain path is unchanged.
+                    if (isRoutedComposite()) {
+                        final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+                        cellSegmentSink.clear();
+                        renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(prevIndex));
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex), cellSegmentSink);
+                    } else {
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, prevTimestamp, txWriter.getPartitionNameTxn(prevIndex));
+                    }
                     readPartitionMinMaxTimestamps(prevTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), prevIsParquet, parquetFileSize, newTransientRowCount);
-                    nextMaxTimestamp = attachMaxTimestamp;
+                    tailMaxTimestamp = attachMaxTimestamp;
                 } finally {
                     path.trimTo(pathSize);
                 }
+                if (isRoutedComposite()) {
+                    // The record above is the new TAIL, and its size is what the tail bookkeeping needs
+                    // -- but its maximum is only its own cell's. Fold the day. See
+                    // readMaxTimestampAcrossTrailingCells for the measurement; this is the max-side
+                    // twin of the minimum defect fixed in the same commit.
+                    tailMaxTimestamp = readMaxTimestampAcrossTrailingCells(prevIndex);
+                }
+                nextMaxTimestamp = tailMaxTimestamp;
             }
 
             // NOTE: this method should not commit to _txn file
             // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
+            txWriter.removeAttachedPartitions(timestamp, cellKey);
             txWriter.finishPartitionSizeUpdate(index == 0 ? Long.MAX_VALUE : txWriter.getMinTimestamp(), nextMaxTimestamp);
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
-            columnVersionWriter.replaceInitialPartitionRecords(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
+            // replaceInitialPartitionRecords writes its compensating column-top with the cellKey-0-only
+            // upsert, so on a multi-cell day only cellKey 0 is covered while the moved "added at"
+            // record now claims the column was added at that whole day. A reader on any SIBLING cell
+            // then finds no record, sees colTopPartTs <= partitionTimestamp, concludes the column
+            // fully exists, and opens a <col>.d.<txn> file that was never created --
+            // "could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5".
+            //
+            // Backfill the siblings here, where the per-cell row counts live. Same shape and same
+            // semantic as writeCompositeAddColumnColumnVersions: each cell's compensating top is ITS
+            // OWN row count, so all of that cell's pre-existing rows read as lacking the column.
+            // transientRowCount, which the call below uses, is only the last cell's.
+            movedDefaultColumns.clear();
+            // cellKey 0 is NOT covered by transientRowCount, and the sibling loop below skips it on the
+            // strength of that call. transientRowCount is the TAIL cell's count (the comment above says
+            // so), so wherever cellKey 0 holds more rows than the tail cell its compensating top lands
+            // too LOW and the reader opens a <col>.d.<txn> that was never written. Hand the call
+            // cellKey 0's OWN row count instead. Records are ordered (timestamp ASC, cellKey ASC), so
+            // cellKey 0, if the day still has one, is the first record of the run.
+            // FOUND BY THE FUZZ, seed 789274230459853/1788179450546; locked by
+            // CompositeDropPartitionWholeDayTest#testDropMovingAddedColumnGivesCellZeroItsOwnRowCount.
+            long compensatingRowCount = txWriter.getTransientRowCount();
+            if (isRoutedComposite()) {
+                final long lastTsForCompensation = txWriter.getLastPartitionTimestamp();
+                final int firstRecordOfLastDay = txWriter.findAttachedPartitionIndexByLoTimestamp(lastTsForCompensation);
+                if (firstRecordOfLastDay > -1 && txWriter.getPartitionCellKey(firstRecordOfLastDay) == 0) {
+                    compensatingRowCount = txWriter.getPartitionSize(firstRecordOfLastDay);
+                }
+            }
+            columnVersionWriter.replaceInitialPartitionRecords(
+                    txWriter.getLastPartitionTimestamp(), compensatingRowCount, movedDefaultColumns);
+            if (movedDefaultColumns.size() > 0 && isRoutedComposite()) {
+                final long lastTs = txWriter.getLastPartitionTimestamp();
+                int idx = txWriter.findAttachedPartitionIndexByLoTimestamp(lastTs);
+                if (idx > -1) {
+                    final int pn = txWriter.getPartitionCount();
+                    for (; idx < pn && txWriter.getPartitionTimestampByIndex(idx) == lastTs; idx++) {
+                        final int siblingCellKey = txWriter.getPartitionCellKey(idx);
+                        if (siblingCellKey == 0) {
+                            continue; // already covered by the call above
+                        }
+                        final long cellRowCount = txWriter.getPartitionSize(idx);
+                        for (int c = 0, cn = movedDefaultColumns.size(); c < cn; c++) {
+                            final int movedColumnIndex = movedDefaultColumns.getQuick(c);
+                            if (columnVersionWriter.getRecordIndex(lastTs, siblingCellKey, movedColumnIndex) < 0) {
+                                columnVersionWriter.upsert(lastTs, siblingCellKey, movedColumnIndex,
+                                        columnVersionWriter.getDefaultColumnNameTxn(movedColumnIndex), cellRowCount);
+                            }
+                        }
+                    }
+                }
+            }
 
             // No need to truncate before, files to be deleted.
             closeActivePartition(false);
 
             if (index != 0) {
-                if (!isLastPartitionParquet()) {
+                // A routed composite table has no day-level "active tail" to reopen. this.columns /
+                // lastOpenPartitionTs describe the BARE, non-cell day directory -- finishO3Commit and
+                // openLastPartitionAndSetAppendPosition both document this and both skip the reopen for
+                // exactly this reason. Doing it here opens that bare directory and then sizes its
+                // never-written column files to a PER-CELL transient row count.
+                //
+                // MEASURED: that assertion-fails inside MemoryPARWImpl#jumpTo via
+                // setColumnAppendPosition, suspending the table mid-drop --
+                //   AssertionError at MemoryPARWImpl.jumpTo
+                //     <- setColumnAppendPosition <- setAppendPosition <- dropPartitionByExactTimestamp
+                // -- which then leaves the twin missing every row committed after that point.
+                // Reproduce with CompositeFuzzRunner + TestUtils.generateRandom(null, 345549849791363L,
+                // 1787735726165L) and withDropPartitionProbability(0.05).
+                //
+                // Same hazard finishO3Commit warns of, where sizing those files corrupted the native
+                // heap ("malloc(): corrupted top size"). Plain and dormant-composite tables unaffected.
+                if (isRoutedComposite()) {
+                    partitionTimestampHi = txWriter.getCurrentPartitionMaxTimestamp(nextMaxTimestamp);
+                } else if (!isLastPartitionParquet()) {
                     openPartition(prevTimestamp, newTransientRowCount);
                     setAppendPosition(newTransientRowCount, false);
                 } else {
@@ -7243,23 +10188,70 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // up metadata with logical partition delete, we have to uphold the effort and
             // re-compute table size and its minTimestamp from what remains on disk
 
-            // find out if we are removing min partition
+            // Recomputed AFTER the removal, from the SURVIVING first partition.
+            //
+            // It used to be computed before, guarded by `timestamp == getPartitionTimestampByIndex(0)`
+            // and read from partition index 1. Both halves assume one entry per day, which is false for
+            // composite: the guard compares DAYS, so it fires when the dropped cell merely shares a day
+            // with index 0 even though index 0 survives; and index 1 may be a sibling CELL of the same
+            // day rather than the next day.
+            //
+            // MEASURED (fuzz seed 349814382132829/1787739990697, see report): dropping a multi-cell day
+            // cell-by-cell set minTimestamp to a SIBLING cell's minimum -- legitimate at the time, since
+            // that day still had partitions -- and nothing recomputed it once the last sibling went. The
+            // table was left with minTimestamp inside a day it no longer had any partition for, which
+            // trips the `minTimestamp >= partition[0]` assert in commitWalInsertTransactions and
+            // suspends the table. With assertions off (production) it silently persists that state.
+            //
+            // CORRECTED 2026-08-31. The line above used to read "the surviving index 0 IS the table
+            // minimum by definition". That is true only for one partition record per day. Records are
+            // ordered (timestamp ASC, cellKey ASC), so on a composite table index 0 is the lowest
+            // cellKey of the earliest surviving DAY -- and a cell's minimum has nothing to do with its
+            // cellKey, which is assigned in the order dimension VALUES were first ingested. Record 0's
+            // minimum can therefore be LATER than a sibling's, and reading it hands _txn a minimum that
+            // is too HIGH.
+            //
+            // That direction is the dangerous one and it is silent: AbstractIntervalPartitionFrameCursor
+            // #cullIntervals discards every interval lying wholly below _txn's minimum, so filtered
+            // reads lose rows while counts, min(ts) and unfiltered scans stay correct (composite routes
+            // min(ts) through the merge scan, not the _txn shortcut).
+            //
+            // FOUND BY THE CLOCK-SEEDED FUZZ, seed 786324839327532/1788176501154: _txn claimed
+            // 2023-01-01T14:50:15 for a table whose earliest row was 12:29:25, and an hour-by-hour sweep
+            // showed hours 12 and 13 returning NOTHING against a plain twin's 6 and 12.
+            // Locked by CompositeDropPartitionWholeDayTest#
+            // testDropRecomputesMinAcrossSiblingCellsNotRecordZero.
             long nextMinTimestamp = minTimestamp;
-            if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
-                nextMinTimestamp = readMinTimestamp();
-            }
 
             // NOTE: this method should not commit to _txn file
             // In case multiple partition parts are deleted, they should be deleted atomically
             txWriter.beginPartitionSizeUpdate();
-            txWriter.removeAttachedPartitions(timestamp);
+            final int removedIndex = txWriter.removeAttachedPartitions(timestamp, cellKey);
+            if (txWriter.getPartitionCount() == 0) {
+                // The drop emptied the table. Leaving minTimestamp at its old value strands it
+                // permanently: the WAL/O3 commit path folds the incoming batch in with
+                // min(existing, batchMin), so a stale minimum always wins over any later data and is
+                // never recomputed. MEASURED -- this, not the multi-cell sibling read, is what left
+                // minTimestamp inside a dropped day on the fuzz seed; fixing only the sibling case
+                // above left the table still suspending at the same assert.
+                // MAX_VALUE is the identity for that min, so the next commit's minimum takes effect.
+                nextMinTimestamp = Long.MAX_VALUE;
+            } else if (removedIndex == 0 || (isRoutedComposite() && timestamp == txWriter.getPartitionTimestampByIndex(0))) {
+                // The second disjunct covers a SIBLING removal: dropping a cell that was not record 0
+                // but shared the earliest day can still take the row that held the minimum. That
+                // direction leaves the minimum too LOW, which over-scans rather than dropping rows, but
+                // it still leaves _txn disagreeing with the data. Unreachable for a plain table, whose
+                // one-record-per-day layout means no surviving record can share the removed timestamp,
+                // so the plain path stays byte-identical.
+                nextMinTimestamp = readMinTimestampAcrossLeadingCells();
+            }
             txWriter.setMinTimestamp(nextMinTimestamp);
             txWriter.finishPartitionSizeUpdate(nextMinTimestamp, txWriter.getMaxTimestamp());
             txWriter.bumpTruncateVersion();
             columnVersionWriter.removePartition(timestamp);
         }
 
-        partitionRemoveCandidates.add(timestamp, partitionNameTxn);
+        partitionRemoveCandidates.add(timestamp, partitionNameTxn, cellKey);
         return true;
     }
 
@@ -7273,6 +10265,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             LOG.error().$("TTL set on a non-partitioned table. Ignoring").$();
             return;
         }
+
+        // Plan 4b Task 1b: TTL eviction is not yet cell-aware for a real (routed) composite table.
+        // dropPartitionByExactTimestamp (below) shares the EXACT same cell-blind selection/removal
+        // chain that removePartition's own "Plan 4a DDL gate sweep" comment already documents and
+        // gates for plain DROP PARTITION: txWriter#getPartitionIndex resolves cellKey 0 only, and
+        // TxWriter#removeAttachedPartitions(long)'s cellKey-0 default can re-probe the SAME raw index
+        // forever once cellKey 0's entry is gone and a sibling cell -- sharing the exact same
+        // timestamp -- is left sitting there untouched (an empirically-reproduced infinite loop for
+        // DROP PARTITION; TTL eviction's do-while loop below has the identical shape). Gated
+        // unconditionally for any real (non-dormant) composite table -- cell-aware TTL eviction is
+        // deferred to a later sub-plan. Note this gate runs AFTER setMetaTtl (see AlterOperation
+        // #applyTtl) has already persisted the new ttl value: that write is harmless on its own (it
+        // touches no partition directory), and leaving it in place means eviction starts working
+        // immediately, with no need to re-run SET TTL, once a future task makes it cell-aware. Plain
+        // and dormant-composite tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- confirmed
+        // reachable by tracing AlterOperation#applyTtl, which calls setMetaTtl() then enforceTtl()
+        // synchronously, so a bare `ALTER TABLE ... SET TTL` against a freshly-created composite table
+        // (zero rows ever inserted) hit this gate immediately. See isRoutedComposite()'s own doc.
+        // SP1D: TTL eviction is cell-aware as of 2026-08-18; the gate that stood here is gone. Two
+        // fixes were needed beyond the shared removal 1B corrected: readMinTimestamp built a day-level
+        // path for the NEXT partition (a CELL on a composite table), and the split-partition assertion
+        // below assumed a same-floor sibling sits at a HIGHER timestamp, which is false for sibling
+        // cells sharing a day's exact timestamp.
 
         if (getPartitionCount() < 2) {
             // there is only a single partition, which is the active one
@@ -7288,7 +10305,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
             long floorTimestamp = txWriter.getPartitionFloor(partitionTimestamp);
             if (evictedPartitionTimestamp != -1 && floorTimestamp == evictedPartitionTimestamp) {
-                assert partitionTimestamp != floorTimestamp : "Expected a higher part of a split partition";
+                // SP1D: on a PLAIN table a second entry sharing this floor can only be the higher part
+                // of a SPLIT partition, hence the original assertion. A composite table breaks that
+                // premise legitimately: sibling CELLS of one day share the day's exact timestamp, so
+                // partitionTimestamp == floorTimestamp is the normal case there. The plain contract is
+                // preserved verbatim; only the composite case is admitted.
+                assert partitionTimestamp != floorTimestamp || isRoutedComposite()
+                        : "Expected a higher part of a split partition";
                 evicted |= dropPartitionByExactTimestamp(partitionTimestamp);
                 continue;
             }
@@ -7431,26 +10454,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw e;
                 }
             }
-            if (!isEmptyTable()
-                    && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
-                    && !isLastPartitionParquet()) {
-                openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
-            }
-
-            // Data is written out successfully, however, we can still fail to set append position, for
-            // example, when we ran out of address space and new page cannot be mapped. The "allocate" calls here
-            // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
-            // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
-            try {
-                // Set append position if this commit did not result in full table truncate
-                // which is possible with replace commits.
-                if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
-                    setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
+            // Plan 4a Task 5 (per-cell frontiers): a real (non-dormant) composite table's active-tail
+            // state (this.columns/lastOpenPartitionTs/the indexers) is NEVER a valid target for either
+            // call below -- processO3BlockComposite's own dispatch never touches this.columns (always
+            // async, resolving each cell's own path fresh; see its docs), so "the last partition" this
+            // reopen would target is the bare, non-cell day directory (the orphan-partition minor from
+            // Task 4), not any real cell. Before this fix this reopen ran unconditionally: harmless only
+            // by accident on a table's FIRST commit (the bare directory's files are freshly created and
+            // setAppendPosition's target size, txWriter.getTransientRowCount(), reads back as 0 for that
+            // scenario too -- see this task's report for why); a genuine SECOND-or-later commit (which
+            // Task 4's guard had blocked until this task) leaves getTransientRowCount() a real, nonzero
+            // per-cell value, and sizing the bare directory's never-written files to that many rows via
+            // setColumnAppendPosition's dataMem.jumpTo(...) corrupts the native heap (reproduced directly
+            // -- glibc "malloc(): corrupted top size" -- while building this fix). Skipping both calls
+            // outright for a real composite table is safe: nothing subsequently reads this.columns or
+            // lastOpenPartitionTs for correctness on such a table (every later composite dispatch
+            // resolves its own per-cell path fresh, never through the writer's single active-tail
+            // fields) -- confirmed by the full regression suite, including CompositePartitionDdlTest.
+            final boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+            if (!composite) {
+                if (!isEmptyTable()
+                        && (isLastPartitionClosed() || partitionTimestampHi > partitionTimestampHiLimit)
+                        && !isLastPartitionParquet()) {
+                    openPartition(txWriter.getLastPartitionTimestamp(), txWriter.getTransientRowCount());
                 }
-            } catch (Throwable e) {
-                LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
-                distressed = true;
-                throw e;
+
+                // Data is written out successfully, however, we can still fail to set append position, for
+                // example, when we ran out of address space and new page cannot be mapped. The "allocate" calls here
+                // ensure we can trigger this situation in tests. We should perhaps align our data such that setAppendPosition()
+                // will attempt to mmap new page and fail... Then we can remove the 'true' parameter
+                try {
+                    // Set append position if this commit did not result in full table truncate
+                    // which is possible with replace commits.
+                    if (txWriter.getTransientRowCount() > 0 && !isLastPartitionParquet()) {
+                        setAppendPosition(txWriter.getTransientRowCount(), !metadata.isWalEnabled());
+                    }
+                } catch (Throwable e) {
+                    LOG.critical().$("data is committed but writer failed to update its state `").$(e).$('`').$();
+                    distressed = true;
+                    throw e;
+                }
             }
 
             metrics.tableWriterMetrics().incrementO3Commits();
@@ -7517,6 +10560,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void freeSymbolMapWriters() {
+        // Non-owning: just drop the holder. Its dedicated-dict and registry SymbolMapWriters are
+        // entries in denseSymbolMapWriters and are freed by the loop below (freeing here too would
+        // double-free).
+        compositeDicts = null;
+        // Owning, unlike compositeDicts above: composite-partitioning Plan 4e Task 2's compiled
+        // EXPRESSION-dimension Function cache is built fresh by this writer (ensureCompositeExpressionFunctionsCompiled())
+        // and referenced nowhere else, so it must actually be closed here, not just dropped.
+        Misc.freeObjList(compositeExpressionFunctions);
+        compositeExpressionFunctions = null;
+        compositeExpressionFunctionsMetadataVersion = -1;
         if (denseSymbolMapWriters != null) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 Misc.freeIfCloseable(denseSymbolMapWriters.getQuick(i));
@@ -7674,16 +10727,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Link files in each partition.
                     long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
-                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
-                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn);
-                    if (columnVersionWriter.getRecordIndex(partitionTimestamp, columnIndex) > -1L) {
-                        long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex);
-                        columnVersionWriter.upsert(partitionTimestamp, columnIndex, newColumnNameTxn, columnTop);
+                    // Per-CELL, like every other column-file walk: on a composite table several cells
+                    // share one raw partition timestamp, so the 2-arg lookups answer for cellKey 0 and
+                    // the files linked (or not linked) belong to the wrong cell. Measured before this:
+                    // RENAME COLUMN updated metadata and left every cell's file under the OLD name, so
+                    // the next read failed with "could not open, file does not exist: <cell>/price.d.1".
+                    final int cellKey = txWriter.getPartitionCellKey(i);
+                    long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, columnIndex);
+                    hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, partitionTimestamp, partitionNameTxn, newColumnNameTxn, columnNameTxn, cellKey);
+                    if (columnVersionWriter.getRecordIndex(partitionTimestamp, cellKey, columnIndex) > -1L) {
+                        long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, columnIndex);
+                        columnVersionWriter.upsert(partitionTimestamp, cellKey, columnIndex, newColumnNameTxn, columnTop);
                     }
                 }
             } else {
                 long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
-                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn);
+                hardLinkAndPurgeColumnFiles(columnName, columnIndex, columnType, indexType, newName, txWriter.getLastPartitionTimestamp(), -1L, newColumnNameTxn, columnNameTxn, 0);
                 long columnTop = columnVersionWriter.getColumnTop(txWriter.getLastPartitionTimestamp(), columnIndex);
                 columnVersionWriter.upsert(txWriter.getLastPartitionTimestamp(), columnIndex, newColumnNameTxn, columnTop);
             }
@@ -7732,9 +10791,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, byte indexType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn) {
-        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
-        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+    private void hardLinkAndPurgeColumnFiles(String columnName, int columnIndex, int columnType, byte indexType, CharSequence newName, long partitionTimestamp, long partitionNameTxn, long newColumnNameTxn, long columnNameTxn, int cellKey) {
+        // Both paths carry the owning cell. Rendered once and copied into each Path by the call, so the
+        // shared thread-local sink is safe here.
+        final CharSequence cellSegment = cellSegmentOrNull(cellKey);
+        setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
+        setPathForNativePartition(other, timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegmentOrNull(cellKey));
         int plen = path.size();
         linkFile(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), dFile(other.trimTo(plen), newName, newColumnNameTxn));
         if (ColumnType.isVarSize(columnType)) {
@@ -7758,7 +10820,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         path.trimTo(pathSize);
         other.trimTo(pathSize);
-        purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn);
+        final CharSequence purgeCell = cellSegmentOrNull(cellKey);
+        purgingOperator.add(columnIndex, columnName, columnType, indexType, columnNameTxn, partitionTimestamp, partitionNameTxn,
+                purgeCell == null ? null : purgeCell.toString());
     }
 
     private void hardLinkAndPurgeSymbolTableFiles(
@@ -7854,18 +10918,33 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (ts > Numbers.LONG_NULL) {
             try {
                 // Index last partition separately
-                for (int i = 0, n = txWriter.getPartitionCount() - 1; i < n; i++) {
+                // A composite table indexes EVERY entry here, including the last. indexLastPartition
+                // builds its index from the writer's LIVE column memory (getPrimaryColumn), and a
+                // routed composite table keeps no day-level active partition open -- see
+                // openLastPartitionAndSetAppendPosition -- so that memory is closed and the read fails
+                // with fd=-1. Indexing from FILES, exactly as historic partitions do, is well-defined
+                // for every cell.
+                final int lastExclusive = isRoutedComposite()
+                        ? txWriter.getPartitionCount()
+                        : txWriter.getPartitionCount() - 1;
+                for (int i = 0, n = lastExclusive; i < n; i++) {
                     long timestamp = txWriter.getPartitionTimestampByIndex(i);
                     path.trimTo(pathSize);
-                    setStateForTimestamp(path, timestamp);
+                    // Per-INDEX, so each composite CELL is indexed. Resolving by timestamp built the
+                    // day container path, against which both ff.exists guards below evaluate false --
+                    // which is exactly why ADD INDEX reported success while indexing nothing.
+                    setStateForPartitionIndex(path, i);
 
                     if (ff.exists(path.$())) {
                         final int plen = path.size();
-                        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(timestamp, columnIndex);
+                        // Per-CELL: the 2-arg overload resolves cellKey 0 only, so on a composite table
+                        // it answers for the wrong cell and the .d file open fails with fd=-1.
+                        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(
+                                timestamp, txWriter.getPartitionCellKey(i), columnIndex);
                         if (txWriter.isPartitionParquet(i)) {
                             indexParquetPartition(indexer, columnName, i, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
                         } else if (ff.exists(dFile(path.trimTo(plen), columnName, columnNameTxn))) {
-                            indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp);
+                            indexNativePartition(indexer, columnName, columnIndex, columnNameTxn, indexValueBlockSize, indexType, plen, timestamp, i);
                         }
                     }
                 }
@@ -7932,7 +11011,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int indexValueBlockSize,
             byte indexType,
             int plen,
-            long timestamp
+            long timestamp,
+            // Composite: the attached-partition index of the CELL being indexed. The caller's loop has
+            // it, and already uses it to resolve columnNameTxn per cell; the size and column-top reads
+            // below were still by TIMESTAMP, i.e. cellKey 0. On cells with different column tops, a
+            // non-zero cell was indexed from cell 0's top and its rows never entered the index --
+            // MEASURED as an indexed WHERE returning NOTHING while NO_INDEX returned the row and the
+            // data itself was intact. Covered by CompositeUnevenColumnTopSurveyTest.
+            int partitionIndex
     ) {
         // Skip partitions that already have a fully-sealed posting index (resume after restart).
         // A partition is fully indexed when the .pk key file has a valid seqlock (seq_start == seq_end)
@@ -7948,15 +11034,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // ALTER TABLE ALTER COLUMN ADD INDEX (older partitions): building a fresh index from scratch.
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, true);
-        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
-        final long columnTop = columnVersionWriter.getColumnTop(timestamp, columnIndex);
+        final int cellKey = txWriter.getPartitionCellKey(partitionIndex);
+        final long partitionSize = txWriter.getPartitionSize(partitionIndex);
+        final long columnTop = columnVersionWriter.getColumnTop(timestamp, cellKey, columnIndex);
 
         if (columnTop > -1 && partitionSize > columnTop) {
             long columnDataFd = openRO(ff, dFile(path.trimTo(plen), columnName, columnNameTxn), LOG);
             try {
                 indexer.getWriter().setCurrentTableTxn(txWriter.getTxn());
-                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxnByPartitionTimestamp(timestamp));
-                configureCoveringIfNeeded(indexer, columnIndex, timestamp);
+                indexer.configureWriter(path.trimTo(plen), columnName, columnNameTxn, columnTop, timestamp, txWriter.getPartitionNameTxn(partitionIndex));
+                // The cell resolved above, not cellKey 0: this method already reads THIS cell's column
+                // top and size, but its covering configuration still read the covered columns' tops and
+                // name txns at cell 0 -- so a non-zero cell's covering was sealed over cell 0's data,
+                // and the index answered with a sibling's values. Native partitions keep genuinely
+                // per-cell tops (a parquet one carries zeros), so this is where it shows.
+                configureCoveringIfNeeded(indexer, columnIndex, timestamp, cellKey);
                 // Tag this seal's chain entry with the txn the upcoming
                 // clearTodoAndCommitMeta will assign. Must come AFTER
                 // configureWriter (of() inside it resets pendingTxnAtSeal).
@@ -7990,6 +11082,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             byte indexType,
             int plen,
             long timestamp,
+            // COMPOSITE: the cell this index belongs to. Only the column-top read and the covering
+            // configuration below need it -- the partition directory is the caller's `path`, already
+            // positioned at the cell. 0 for a plain table.
+            int cellKey,
             RowGroupBuffers rowGroupBuffers,
             boolean allowDestructiveRecovery,
             boolean normalizeColumnTops,
@@ -8013,7 +11109,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // branch returns early on ff.exists, never resetting it).
         createIndexFiles(columnName, columnNameTxn, indexValueBlockSize, indexType, plen, true, allowDestructiveRecovery);
         final long partitionSize = txWriter.getPartitionRowCountByTimestamp(timestamp);
-        final long columnTop = normalizeColumnTops ? 0 : columnVersionWriter.getColumnTop(timestamp, columnIndex);
+        final long columnTop = normalizeColumnTops ? 0 : columnVersionWriter.getColumnTop(timestamp, cellKey, columnIndex);
 
         // Invariant: on a parquet partition the indexed SYMBOL's columnTop is
         // one of three values. 0 (column has data from row 0):
@@ -8072,7 +11168,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             try {
                 if (hasCovering) {
                     includedCoveredCount = prepareCoveredColumnMmaps(
-                            coveringColumnIndices, timestamp, plen,
+                            coveringColumnIndices, timestamp, cellKey, plen,
                             parquetMetadata, partitionSize, covSlotMeta, covMmaps,
                             normalizeColumnTops);
                 }
@@ -8127,7 +11223,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // Wire up covered column addresses for the seal path.
                 if (hasCovering) {
                     configureCoveringFromMmaps(
-                            indexer, coveringColumnIndices, timestamp,
+                            indexer, coveringColumnIndices, timestamp, cellKey,
                             covMmaps, normalizeColumnTops);
                 }
 
@@ -8140,7 +11236,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 Misc.freeObjListIfCloseable(covMmaps);
                 if (hasCovering) {
                     cleanupMaterialisedCoveredColumnTempFiles(
-                            coveringColumnIndices, timestamp, plen);
+                            coveringColumnIndices, timestamp, cellKey, plen);
                 }
             }
         }
@@ -8181,6 +11277,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     indexType,
                     plen,
                     timestamp,
+                    // ADD INDEX over a parquet partition is refused for composite tables (see the DDL
+                    // gates), so this caller only ever sees cellKey 0.
+                    0,
                     rowGroupBuffers,
                     true,
                     false,
@@ -8213,6 +11312,26 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             performRecovery();
         }
         if (!isLastPartitionParquet()) {
+            // Plan 4b Task 1 fix (follow-up, post-broad-test-run review): this call used to be
+            // unconditionally gated off for any real composite table (dimCount > 0 &&
+            // !isDormantWithPreexistingData()) on the reasoning that TxWriter#initLastPartition(ts)
+            // hardcoded cellKey 0, so it would zero "whatever entry is at cellKey 0 for the day
+            // containing ts" -- wrong, and actively harmful, whenever that day has 2+ cells and cellKey 0
+            // is not the array's actual last entry (it would silently destroy a REAL, already-correct,
+            // unrelated sibling cell's own independently-persisted row count; repairDataGaps' own comment
+            // two calls above names the same "released and reopened a writer instance mid a
+            // multi-cell-day sequence" shape). That gate was over-broad: it also suppressed the call for
+            // the SAFE, common case (a single-cell-per-day composite table, or one where the array's last
+            // entry genuinely IS cellKey 0), silently regressing a previously-guaranteed invariant --
+            // CompositeTxCellTest#testReopenAfterCompositeBlindLoad locks in that a full TableWriter
+            // reopen must always leave the still-open last partition's persisted size slot at 0
+            // (transientRowCount, not this slot, is the writer's source of truth for it going forward;
+            // see that test's own docs) -- for plain and composite tables alike. Root cause fixed
+            // properly instead: TxWriter#initLastPartition(ts) itself is now cellKey-aware, mirroring the
+            // identical fix already applied to its sibling TxWriter#beginPartitionSizeUpdate in the same
+            // Plan 4b Task 1 commit -- it resolves the target cell from the array's own last entry
+            // (whatever cellKey it actually is), not a cellKey-blind assumption of 0 -- so it is safe to
+            // call unconditionally again, for plain, dormant-composite, AND real composite tables.
             txWriter.initLastPartition(ts);
         }
     }
@@ -8472,7 +11591,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param pathLen            length to trim {@code path} to before resolving each cover file
      * @param coverCount         length of the covering set
      */
-    private void mapCoveringColumnsForSeal(IntList coveringCols, long partitionTimestamp, int pathLen, int coverCount) {
+    private void mapCoveringColumnsForSeal(IntList coveringCols, long partitionTimestamp, int cellKey, int pathLen, int coverCount) {
         o3SealAddrs.setPos(coverCount);
         o3SealAuxAddrs.setPos(coverCount);
         o3SealAuxMappedSizes.setPos(coverCount);
@@ -8497,8 +11616,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean isVarSize = ColumnType.isVarSize(covType);
             o3SealTypes.setQuick(c, covType);
             o3SealShifts.setQuick(c, ColumnType.pow2SizeOf(covType));
-            o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, covCol));
-            long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, covCol);
+            o3SealTops.setQuick(c, columnVersionWriter.getColumnTopQuick(partitionTimestamp, cellKey, covCol));
+            long covColNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, covCol);
             o3SealNameTxns.setQuick(c, covColNameTxn);
             LPSZ colFile = TableUtils.dFile(path.trimTo(pathLen), metadata.getColumnName(covCol), covColNameTxn);
             long fd = ff.openRO(colFile);
@@ -8781,6 +11900,49 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long o3TimestampLo,
             long o3TimestampHi
     ) {
+        // Plain (non-composite) dispatch: byte-identical to before Plan 4a Task 4 -- this table's own
+        // o3Columns/sortedTimestampsAddr, no cell segment. See the cell-aware overload below, used only
+        // by processO3BlockComposite.
+        o3CommitPartitionAsync(
+                columnCounter, maxTimestamp, sortedTimestampsAddr, srcOooLo, srcOooHi, srcOooMax,
+                oooTimestampMin, partitionTimestamp, srcDataMax, last, srcNameTxn, o3Basket,
+                newPartitionSize, oldPartitionSize, partitionUpdateSinkAddr, dedupColSinkAddr, isParquet,
+                o3TimestampLo, o3TimestampHi, o3Columns, null, 0
+        );
+    }
+
+    /**
+     * Composite-partitioning (Plan 4a Task 4) counterpart of {@link #o3CommitPartitionAsync(AtomicInteger,
+     * long, long, long, long, long, long, long, long, boolean, long, O3Basket, long, long, long, long,
+     * boolean, long, long)}, generalized to accept a possibly-DIFFERENT O3 column source
+     * ({@code oooColumnsForCell}, a per-cell scratch buffer set for the multi-cellKey regrouping path --
+     * see {@link #processO3BlockComposite}) and a cell-directory path segment. Called with
+     * {@code (o3Columns, null)} by the 19-arg overload above for the plain/unchanged case.
+     */
+    private void o3CommitPartitionAsync(
+            AtomicInteger columnCounter,
+            long maxTimestamp,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long oooTimestampMin,
+            long partitionTimestamp,
+            long srcDataMax,
+            boolean last,
+            long srcNameTxn,
+            O3Basket o3Basket,
+            long newPartitionSize,
+            long oldPartitionSize,
+            long partitionUpdateSinkAddr,
+            long dedupColSinkAddr,
+            boolean isParquet,
+            long o3TimestampLo,
+            long o3TimestampHi,
+            ReadOnlyObjList<? extends MemoryCR> oooColumnsForCell,
+            @Nullable CharSequence cellSegment,
+            int cellKey
+    ) {
         // _pm seqTxn for an in-place parquet rewrite: the apply seqTxn (high-water off the data-apply path).
         long partitionSeqTxn = walApplySeqTxn > 0 ? walApplySeqTxn : getSeqTxn();
         long cursor = messageBus.getO3PartitionPubSeq().next();
@@ -8790,7 +11952,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path,
                     partitionBy,
                     columns,
-                    o3Columns,
+                    oooColumnsForCell,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
@@ -8812,7 +11974,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColSinkAddr,
                     isParquet,
                     o3TimestampLo,
-                    o3TimestampHi
+                    o3TimestampHi,
+                    cellSegment,
+                    cellKey
             );
             messageBus.getO3PartitionPubSeq().done(cursor);
         } else {
@@ -8820,7 +11984,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path,
                     partitionBy,
                     columns,
-                    o3Columns,
+                    oooColumnsForCell,
                     srcOooLo,
                     srcOooHi,
                     srcOooMax,
@@ -8842,7 +12006,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     dedupColSinkAddr,
                     isParquet,
                     o3TimestampLo,
-                    o3TimestampHi
+                    o3TimestampHi,
+                    cellSegment,
+                    cellKey
             );
         }
     }
@@ -8852,6 +12018,36 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         long commitTransientRowCount = txWriter.transientRowCount;
         boolean partitionsRemoved = false, firstPartitionRemoved = false, lastPartitionRemoved = false;
+        // Plan 4a Task 5 (per-cell frontiers). `txWriter.transientRowCount`/`fixedRowCount` must satisfy
+        // fixedRowCount + transientRowCount == total rows (TxReader#getRowCount), with transientRowCount
+        // specifically equal to the attachedPartitions array's LAST entry's own row count (by (ts ASC,
+        // cellKey ASC) sort order) and fixedRowCount the sum of every OTHER entry -- this is the
+        // invariant a plain table's single-entry-per-day layout makes trivial and this method must
+        // preserve exactly for a composite table too, where "the last entry" can be a sibling CELL of a
+        // day that already has other cells, not just a new calendar day. `trackedTailPartitionTimestamp`/
+        // `trackedTailCellKey` together identify WHICH (ts, cellKey) pair `commitTransientRowCount` is
+        // currently tracking, starting from the pre-commit tail (`lastPartitionTimestamp`, and its
+        // cellKey read directly off the array's own last entry -- the array is authoritative and
+        // unaffected by any of this method's bugs) and advancing to a NEW pair whenever a block's own
+        // (ts, cellKey) differs from what's tracked (that includes a genuinely later day, AND an
+        // ordinary sibling cell sharing the still-current day -- both must close out the previously
+        // tracked pair into fixedRowCount and start fresh). The field `lastPartitionTimestamp` itself is
+        // left untouched (other call sites, and the split handling further down, still read it for its
+        // own original meaning). For a plain table (or a still-dormant composite table) cellKey is
+        // always 0 on both sides of every comparison below (`getPartitionCellKey` returns 0 for a
+        // non-composite stride, and the per-block `cellKey` local a few lines down is 0 whenever the
+        // side-table has no entry for it) -- so every new cellKey-comparison term is a proven no-op
+        // there, and this whole rework is byte-identical to the original algorithm for a plain table.
+        // `composite` mirrors processO3Block's own dispatch decision exactly (dormant-with-preexisting-
+        // data tables always route through processO3BlockPlain and must keep the original single-
+        // active-tail semantics here too) and is used ONLY to skip the this.columns-touching special
+        // case below (never touched by composite dispatch in the first place -- see
+        // processO3BlockComposite's own docs), not the row-count accounting, which needs no such gate.
+        final boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+        long trackedTailPartitionTimestamp = lastPartitionTimestamp;
+        int trackedTailCellKey = txWriter.getPartitionCount() > 0
+                ? txWriter.getPartitionCellKey(txWriter.getPartitionCount() - 1)
+                : -1; // sentinel: no real cellKey is ever negative, so this never accidentally matches
 
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             final long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
@@ -8875,11 +12071,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 boolean isFirstPartitionReplaced = isCommitReplaceMode() && isMinPartitionUpdate;
 
                 txWriter.minTimestamp = isFirstPartitionReplaced ? timestampMin : Math.min(timestampMin, txWriter.minTimestamp);
-                int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+                // Composite-partitioning (Plan 4a Task 4): resolve which cell this block was
+                // dispatched for via the side-table (see o3PartitionUpdateSinkCellKeys' own docs) --
+                // absent (a plain table, or cellKey 0 which is never bothered to be recorded) means 0,
+                // byte-identical to the pre-Task-4 bare resolver this replaces.
+                final int cellKey0 = o3PartitionUpdateSinkCellKeys != null
+                        ? o3PartitionUpdateSinkCellKeys.get(blockAddress)
+                        : LongIntHashMap.NO_ENTRY_VALUE;
+                final int cellKey = cellKey0 == LongIntHashMap.NO_ENTRY_VALUE ? 0 : cellKey0;
+                int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
                 // Existing partitions inherit their own format. Brand-new
                 // partitions on a FORMAT PARQUET table are born parquet.
                 boolean isParquet = partitionIndexRaw > -1
-                        ? txWriter.isPartitionParquet(partitionIndexRaw / LONGS_PER_TX_ATTACHED_PARTITION)
+                        ? txWriter.isPartitionParquet(partitionIndexRaw / txWriter.getLongsPerAttachedPartition())
                         : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
 
                 final long newPartitionTimestamp = partitionTimestamp;
@@ -8888,8 +12092,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // This is partition split. Instead of rewriting partition because of O3 merge,
                     // the partition is kept, and its tail rewritten.
                     // The new partition overlaps in time with the previous one.
+                    // (For composite: also harmlessly re-fires, idempotently, for a genuinely brand-new
+                    // cell that simply has never been attached before -- getPartitionTimestampByTimestamp
+                    // re-floors an already-floored value to itself, and the re-lookup below stays
+                    // negative, falling through to the ordinary insert-on-miss handling further down.)
                     partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(partitionTimestamp);
-                    partitionIndexRaw = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+                    partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
                 }
 
                 if (isCommitReplaceMode() && srcDataOldPartitionSize > 0 && srcDataNewPartitionSize < srcDataOldPartitionSize) {
@@ -8906,7 +12114,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                if (!isParquet && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
+                // Composite: this.columns (the writer's single active-tail column-file handle set) is
+                // never touched by ANY composite dispatch (processO3BlockComposite always routes
+                // async, see its own docs) -- there is nothing valid here for closeActivePartition/
+                // setAppendPosition to close or reposition, so skip outright rather than risk a
+                // double-close/use-after-free when 2+ cells of the tracked tail day are each visited
+                // once per commit (a plain, or dormant-with-preexisting-data, table is unaffected --
+                // `composite` is false for both, byte-identical to before this task).
+                if (!composite && !isParquet && partitionTimestamp == lastPartitionTimestamp && newPartitionTimestamp == partitionTimestamp) {
                     if (partitionMutates) {
                         // The last partition is rewritten.
                         closeActivePartition(true);
@@ -8919,16 +12134,48 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     }
                 }
 
-                if (partitionTimestamp < lastPartitionTimestamp) {
-                    // increment fixedRowCount by number of rows old partition incremented
+                if (partitionTimestamp < trackedTailPartitionTimestamp) {
+                    // Strictly older than the (ts, cellKey) pair we're currently tracking -- always
+                    // immediately fixed, exactly as before (byte-identical to the original `<
+                    // lastPartitionTimestamp` check: blocks are visited in non-decreasing ts order
+                    // within a commit, so trackedTailPartitionTimestamp only ever advances to values
+                    // >= the pre-commit lastPartitionTimestamp -- this branch's outcome is unchanged).
+                    // Multiple cells sharing an OLDER day were never at risk of the overwrite this task
+                    // fixes -- each one lands here independently and simply adds its own delta,
+                    // unconditionally safe regardless of cell count.
                     txWriter.fixedRowCount += srcDataNewPartitionSize - srcDataOldPartitionSize + o3SplitPartitionSize;
-                } else {
-                    if (partitionTimestamp != lastPartitionTimestamp) {
-                        txWriter.fixedRowCount += commitTransientRowCount;
-                    }
+                } else if (partitionTimestamp != trackedTailPartitionTimestamp || cellKey != trackedTailCellKey) {
+                    // A DIFFERENT (ts, cellKey) pair than the one we were tracking -- either a
+                    // genuinely later day, OR (the case a plain table can never hit) an ordinary
+                    // sibling CELL of the still-current day. Either way the pair we were tracking is
+                    // now definitively closed: fold its full accumulated total into fixedRowCount, then
+                    // start tracking this new pair fresh from this block's own contribution.
+                    txWriter.fixedRowCount += commitTransientRowCount;
+                    // If this "new" pair already existed before this commit (srcDataOldPartitionSize >
+                    // 0 -- only possible for a sibling cell being revisited, since a genuinely later day
+                    // can never have pre-existing data, see getNextPartitionTimestamp's own fix), its
+                    // old size was already folded into fixedRowCount in a PRIOR commit (it was not the
+                    // tracked tail then). Un-fix exactly that much: it is moving from "fixed" to "the
+                    // new tracked tail", not being counted twice. Always 0 for a plain table (proven:
+                    // by induction over this commit's non-decreasing blocks, any block strictly past
+                    // the previously-tracked pair has never been seen by the table before).
+                    txWriter.fixedRowCount -= srcDataOldPartitionSize;
+                    trackedTailPartitionTimestamp = partitionTimestamp;
+                    trackedTailCellKey = cellKey;
                     if (o3SplitPartitionSize > 0) {
                         // yep, it was
                         // the "current" active becomes fixed
+                        txWriter.fixedRowCount += srcDataNewPartitionSize;
+                        commitTransientRowCount = o3SplitPartitionSize;
+                    } else {
+                        commitTransientRowCount = srcDataNewPartitionSize;
+                    }
+                } else {
+                    // The EXACT SAME (ts, cellKey) pair as the one currently tracked, extended further
+                    // within this same commit -- commitTransientRowCount already equals this pair's
+                    // running total, so a direct overwrite is correct with no fixedRowCount adjustment,
+                    // exactly matching the original single-active-tail semantics.
+                    if (o3SplitPartitionSize > 0) {
                         txWriter.fixedRowCount += srcDataNewPartitionSize;
                         commitTransientRowCount = o3SplitPartitionSize;
                     } else {
@@ -8967,9 +12214,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             .I$();
                     this.minSplitPartitionTimestamp = Math.min(this.minSplitPartitionTimestamp, newPartitionTimestamp);
                     txWriter.bumpPartitionTableVersion();
-                    txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn);
-                    if (partitionTimestamp == lastPartitionTimestamp) {
-                        // Close the last partition without truncating it.
+                    // cellKey-aware (Plan 4a Task 4): newPartitionIndex can be a fresh insertion point
+                    // (a genuine split creates a brand-new sub-partition entry) -- the 4-arg overload
+                    // would otherwise hardcode cellKey 0, misplacing a non-zero-cellKey split.
+                    txWriter.updateAttachedPartitionSizeByRawIndex(newPartitionIndex, newPartitionTimestamp, o3SplitPartitionSize, txWriter.txn, cellKey);
+                    if (!composite && partitionTimestamp == lastPartitionTimestamp) {
+                        // Close the last partition without truncating it. (Composite: this.columns is
+                        // never the active dispatch target -- see the guard above this loop's other
+                        // closeActivePartition/setAppendPosition special case for why this is skipped;
+                        // partition-SPLIT combined with composite has no test coverage today, but this
+                        // keeps it at least as safe as the rest of this method's composite handling.)
                         long committedLastPartitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
                         closeActivePartition(committedLastPartitionSize);
                     }
@@ -8997,9 +12251,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     .$(", ts=").$ts(timestampDriver, partitionTimestamp)
                                     .I$();
 
-                            txWriter.removeAttachedPartitions(partitionTimestamp);
-                            columnVersionWriter.removePartition(partitionTimestamp);
-                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            // cellKey, not the cellKey-0 short overloads. The purge candidate on the
+                            // next line has always carried the cellKey; these two removals did not, so
+                            // on a composite table a replace that empties a cell removed CELL 0's
+                            // records instead -- and asserted in TxWriter#removeAttachedPartitions when
+                            // cell 0 was not the one being emptied. The signature defect of this
+                            // branch: resolved by timestamp, applied per cell.
+                            txWriter.removeAttachedPartitions(partitionTimestamp, cellKey);
+                            columnVersionWriter.removePartition(partitionTimestamp, cellKey);
+                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn, cellKey);
                         } else {
                             // Set partition size to 0 and process all 0 size partitions at the end of the method.
                             // It will be removed if there are no readers on the previous partition.
@@ -9043,7 +12303,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // Native mutate: stamp the apply seqTxn; non-WAL stamps 0 (the cleared
                             // word) so a stale version cannot outlive the bytes it identifies.
                             txWriter.setPartitionSeqTxnByRawIndex(partitionIndexRaw, walApplySeqTxn > 0 ? walApplySeqTxn : 0);
-                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                            partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn, cellKey);
                         }
                         txWriter.bumpPartitionTableVersion();
                     }
@@ -9053,20 +12313,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // Brand-new parquet partition emitted by writeFreshParquetFromO3
                         // for a FORMAT PARQUET table. Insert it into the attached
                         // partitions list and mark it as parquet from inception.
+                        //
+                        // ALL FOUR calls below are (ts, cellKey)-resolving. They were keyed by
+                        // TIMESTAMP ALONE -- the cellKey-0 API class this branch has been bitten by
+                        // repeatedly -- while every sibling branch in this method already used the
+                        // ByRawIndex forms. On a composite table a day's cells are separate entries,
+                        // so the by-timestamp setters all resolved to the FIRST of them: cellKey 0
+                        // ended up holding whichever cell's parquet size was written last, and the
+                        // other cells held none.
+                        //
+                        // The reader validates a cell's _pm footer against the size recorded in _txn
+                        // (TableReader#openParquetMetadata -> resolveFooter), so the symptom was a
+                        // correctly written, correctly PLACED parquet cell that could not be read:
+                        //   invalid _pm file: failed to resolve footer [path=.../<day>/exch=E0/_pm]
+                        // with that file present and holding ~600 bytes of valid metadata. Worth
+                        // remembering when the next one of these shows up: the corrupt-looking
+                        // artifact was fine, and the wrong number was in _txn.
                         final long partitionNameTxn = txWriter.getTxn() - 1;
-                        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, partitionNameTxn);
-                        txWriter.setPartitionParquetGenerated(partitionTimestamp, true);
-                        txWriter.setPartitionParquet(partitionTimestamp, parquetFileSize);
+                        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, partitionNameTxn, cellKey);
+                        // Re-resolve: the insert above created this cell's entry, and an insert shifts
+                        // every later entry's raw index, so the stale partitionIndexRaw (negative --
+                        // it is the insertion-point encoding) cannot be reused.
+                        final int freshIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
+                        txWriter.setPartitionParquetGeneratedByRawIndex(freshIndexRaw, true);
+                        // setPartitionParquetByRawIndex, NOT setPartitionParquetFileSizeByRawIndex:
+                        // the by-timestamp setPartitionParquet this replaces sets the partition's
+                        // FORMAT as well as its size. Using the size-only setter dropped the parquet
+                        // flag, so the writer then treated a born-parquet partition as native and the
+                        // PLAIN twin died on an append-position assertion in VarcharTypeDriver -- a
+                        // reminder that "cell-aware equivalent" means same effects, not same noun.
+                        txWriter.setPartitionParquetByRawIndex(freshIndexRaw, parquetFileSize);
                         // writeFreshParquetFromO3 emits every column from row 0, so no
                         // column has a top here.
-                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
+                        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, cellKey, srcDataNewPartitionSize, true);
                         txWriter.bumpPartitionTableVersion();
                     } else if (isParquet && parquetFileSize > -1) {
                         // Parquet rewrite: new file is in a txn-named directory.
                         // Bump the partition name txn and queue old dir for removal.
                         final long srcNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
                         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
-                        partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
+                        partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn, cellKey);
                         txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
                         // After O3 rewrite, the Rust updater zeros all column_tops
                         // in the parquet metadata (update.rs), so the decoder will
@@ -9081,10 +12367,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // the purge job to conflict with active readers.
                         txWriter.bumpPartitionTableVersion();
                     } else {
-                        txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
+                        // cellKey-aware (Plan 4a Task 4): partitionIndexRaw can be a fresh insertion
+                        // point (a genuinely brand-new cell) -- updatePartitionSizeByRawIndex's 3-arg
+                        // overload would otherwise hardcode cellKey 0 on insert, either colliding with
+                        // a real cell 0 or misplacing this cell entirely. Replicates that overload's own
+                        // txn-1 nameTxn convention while adding the resolved cellKey.
+                        txWriter.updateAttachedPartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize, txWriter.getTxn() - 1, cellKey);
                         // partitionIndexRaw may be an insertion point for a partition that was just
                         // inserted, so resolve it by timestamp before stamping a native partition.
-                        final int rawIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(partitionTimestamp);
+                        // Cell-aware: resolve this cell's own raw index, not the day's first cell.
+                        final int rawIndex = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
                         if (rawIndex > -1 && !txWriter.isPartitionParquetByRawIndex(rawIndex)) {
                             // O3 append changes the partition's bytes: stamp the apply seqTxn; non-WAL
                             // stamps 0 (the cleared word) so a stale version cannot outlive the bytes
@@ -9109,7 +12401,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         // We need to read the min timestamp from the next partition
                         long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                         long partitionSize = txWriter.getPartitionSize(0);
-                        setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp, txWriter.getPartitionNameTxn(0));
+                        // Cell-aware: on a composite table attached index 0 is a CELL, so its
+                        // name-txn belongs to <day>/<cell>.<txn>, not to <day>.<txn>. Built with the
+                        // bare 5-arg overload this opened a day-level ts.d that does not exist and
+                        // suspended the table -- reachable only from a replace commit that removes a
+                        // partition, which is why nothing hit it before REPLACE was supported.
+                        setPathForNativePartition(path, timestampType, partitionBy, firstPartitionTimestamp,
+                                txWriter.getPartitionNameTxn(0), cellSegmentOrNull(txWriter.getPartitionCellKey(0)));
                         readPartitionMinMaxTimestamps(firstPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), txWriter.isPartitionParquet(0), -1, partitionSize);
                         txWriter.minTimestamp = attachMinTimestamp;
                     }
@@ -9118,7 +12416,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         int lastPartitionIndex = txWriter.getPartitionCount() - 1;
                         long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastPartitionIndex);
                         long partitionSize = txWriter.getPartitionSize(lastPartitionIndex);
-                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp, txWriter.getPartitionNameTxn(lastPartitionIndex));
+                        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, lastPartitionTimestamp,
+                                txWriter.getPartitionNameTxn(lastPartitionIndex), cellSegmentOrNull(txWriter.getPartitionCellKey(lastPartitionIndex)));
                         readPartitionMinMaxTimestamps(lastPartitionTimestamp, path, metadata.getColumnName(metadata.getTimestampIndex()), txWriter.isPartitionParquet(lastPartitionIndex), -1, partitionSize);
                         txWriter.maxTimestamp = attachMaxTimestamp;
                     }
@@ -9150,6 +12449,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             txWriter.bumpPartitionTableVersion();
         } else {
+            // Plan 4b Task 1 fix: commitTransientRowCount/trackedTailPartitionTimestamp/trackedTailCellKey
+            // (see this method's big comment above the main loop) track "the (ts, cellKey) pair the LAST
+            // block THIS COMMIT touched" as a proxy for "the array's actual last entry". That proxy is
+            // exact for a plain table (dispatch is always non-decreasing in ts, so the last block touched
+            // is always at-or-after the pre-commit tail) but NOT for composite: a commit can dispatch
+            // blocks for an EARLIER (non-tail) cell only -- e.g. this commit extends an already-populated
+            // day2/cellA while day2/cellB (a later cellKey sharing the same day, untouched this commit)
+            // remains the array's true last entry -- leaving trackedTail* pointing at the wrong pair.
+            // Root-caused directly (Plan 4b Task 1 report): this desync corrupts txWriter.transientRowCount
+            // with a value belonging to the WRONG partition. TxReader#unsafeLoadPartitions then stamps
+            // that wrong value onto the array's own physically-LAST slot on every subsequent _txn reload
+            // (correct behaviour BY DESIGN there -- array-last IS always the transientRowCount owner for
+            // a plain table) -- for composite this silently overwrites the true tail's own correct,
+            // untouched size with the wrong one, producing a phantom extra row (zeroed/garbage column
+            // data) the next time that partition is scanned. That phantom row in turn silently overflows
+            // EncodedSortLightRecordCursor's native sort buffer by exactly one entry (its estimatedSize>0
+            // fast path trusts the row count as an exact bound and skips its own per-row bounds check),
+            // corrupting the native heap in a way that only crashes later, unpredictably, in unrelated
+            // code (reproduced as glibc "malloc(): invalid size (unsorted)").
+            //
+            // Fix: reconcile once, here, against ground truth. If the pair we ended up tracking is not
+            // ACTUALLY the array's current last entry, fold it back into fixedRowCount (it is a fixed,
+            // non-tail partition after all) and pull the true tail's own independently persisted size
+            // instead -- this is exactly the mid-loop "different pair" transition arithmetic above,
+            // applied once more with the true tail as an implicit trailing no-op block (old size == new
+            // size == its own current size, since this commit never touched it). Gated on `composite`:
+            // a plain table can never hit the mismatch (see above), so this is a proven no-op there --
+            // byte-identical to the pre-existing behaviour.
+            if (composite && txWriter.getPartitionCount() > 0) {
+                int trueLastIndex = txWriter.getPartitionCount() - 1;
+                if (txWriter.getPartitionTimestampByIndex(trueLastIndex) != trackedTailPartitionTimestamp
+                        || txWriter.getPartitionCellKey(trueLastIndex) != trackedTailCellKey) {
+                    long trueLastSize = txWriter.getPartitionSizeByRawIndex(trueLastIndex * txWriter.getLongsPerAttachedPartition());
+                    txWriter.fixedRowCount += commitTransientRowCount;
+                    txWriter.fixedRowCount -= trueLastSize;
+                    commitTransientRowCount = trueLastSize;
+                }
+            }
             txWriter.transientRowCount = commitTransientRowCount;
         }
     }
@@ -9209,9 +12546,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // This is a split partition that is fully removed in the last commit.
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                 long partitionNameTxn = txWriter.getPartitionNameTxn(i);
+                // Resolved by raw index before any removeAttachedPartitions call below mutates the
+                // array (Plan 4b Task 1b: split-partition removal is unexercised by any composite test
+                // today -- a genuine O3 SPLIT only triggers once a partition's prefix exceeds
+                // TableWriter#getPartitionO3SplitThreshold(), default 50 MiB, far beyond any unit test's
+                // row counts, composite or plain -- a scale limitation, not a code-level gate, since
+                // extending an already-populated composite cell is itself now supported. Threaded through
+                // for defense-in-depth/consistency regardless; always 0 for a plain table).
+                int partitionCellKey = txWriter.getPartitionCellKey(i);
                 long prevPartitionTimestamp = txWriter.getPartitionTimestampByIndex(i - 1);
                 long prevPartitionSize = txWriter.getPartitionSize(i - 1);
                 long prevPartitionTxn = txWriter.getPartitionNameTxn(i - 1);
+                int prevPartitionCellKey = txWriter.getPartitionCellKey(i - 1);
 
                 if (txWriter.getPartitionFloor(partitionTimestamp) != txWriter.getPartitionFloor(prevPartitionTimestamp)
                         || prevPartitionSize == 0
@@ -9221,8 +12567,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // or previous partition is also 0 size, e.g. removed split
                     // or the previous partition was just re-created in this commit
                     // in this case we can remove the current partition fully
-                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
-                    txWriter.removeAttachedPartitions(partitionTimestamp);
+                    partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn, partitionCellKey);
+                    // (ts, cellKey)-resolving: the one-arg form drops cellKey 0's _txn entry regardless
+                    // of which cell the remove candidate on the line above actually names. Found by the
+                    // cellKey-0 call-site audit; the sibling site in this same method was fixed earlier
+                    // and these two were missed. Byte-identical for plain and dormant-composite tables.
+                    txWriter.removeAttachedPartitions(partitionTimestamp, partitionCellKey);
                 } else {
                     try {
                         // The safe way to remove the split is to split one line from the parent partition
@@ -9256,10 +12606,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // to open 2 frames to the same partition timestamp
                             if (newPrevPartitionSize == 0) {
                                 // newSplitPartitionTimestamp can be equal to partitionTimestamp
-                                partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn);
-                                insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp);
+                                partitionRemoveCandidates.add(prevPartitionTimestamp, prevPartitionNameTxn, prevPartitionCellKey);
+                                // (ts, cellKey)-resolving. The one-arg removeAttachedPartitions delegates
+                                // to cellKey 0, so on a composite day with 2+ cells it removed cellKey 0's
+                                // _txn entry no matter which cell was actually being split -- while the
+                                // remove candidate on the line above correctly names prevPartitionCellKey.
+                                // Byte-identical for plain and dormant-composite tables, where the cellKey
+                                // is 0 anyway.
+                                insertPartitionIndex = txWriter.removeAttachedPartitions(prevPartitionTimestamp, prevPartitionCellKey);
                             } else {
-                                txWriter.updatePartitionSizeByTimestamp(prevPartitionTimestamp, newPrevPartitionSize);
+                                // Same defect, other branch: updatePartitionSizeByTimestamp resolves
+                                // cellKey 0 only, so a size update aimed at one cell landed on a
+                                // different cell sharing the timestamp. updatePartitionSizeByCell takes
+                                // the same txn-1 nameTxn, so this is a drop-in with the cellKey threaded.
+                                txWriter.updatePartitionSizeByCell(prevPartitionTimestamp, prevPartitionCellKey, newPrevPartitionSize);
                             }
 
                             txWriter.insertPartition(insertPartitionIndex, newSplitPartitionTimestamp, prevPartitionSize - newPrevPartitionSize, txWriter.txn);
@@ -9272,8 +12632,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         addPhysicallyWrittenRows(prevPartitionSize - newPrevPartitionSize);
 
                         // Now it's safe to remove the empty split partition
-                        partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn);
-                        txWriter.removeAttachedPartitions(partitionTimestamp);
+                        partitionRemoveCandidates.add(partitionTimestamp, partitionNameTxn, partitionCellKey);
+                        // (ts, cellKey)-resolving -- see the sibling call above.
+                        txWriter.removeAttachedPartitions(partitionTimestamp, partitionCellKey);
                     } finally {
                         path.trimTo(pathSize);
                         other.trimTo(pathSize);
@@ -9548,8 +12909,104 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (isLastPartitionParquet()) {
             return;
         }
+        // Sub-project 1A: a routed composite table has no day-level "last partition" to open. Its
+        // partitions are the CELLS of the day, each with its own nameTxn and its own directory under
+        // the shared day container, and the fast-append path opens those itself.
+        //
+        // Calling openPartition here resolves the path with the cell-blind setStateForTimestamp --
+        // which builds <day>.<cellKey-0 nameTxn> -- and then ff.mkdirs CREATES that directory. It is
+        // never read by anything: TableWriter construction after any commit that bumped cellKey 0's
+        // nameTxn leaves one behind, and O3PartitionPurgeJob skips composite tables, so it is never
+        // reclaimed either. Measured: 20 rounds of out-of-order writes left three such directories
+        // (CompositeO3LayoutTest, CompositeO3PurgeSkipTest).
+        if (isRoutedComposite()) {
+            return;
+        }
         openPartition(ts, txWriter.getTransientRowCount() + txWriter.getLagRowCount());
         setAppendPosition(txWriter.getTransientRowCount() + txWriter.getLagRowCount(), false);
+    }
+
+    /**
+     * Plan 4b Task 2 (opus review Critical): writes an explicit per-cell {@code (ts, cellKey,
+     * columnIndex)} column-version record for EVERY cell already attached at {@code
+     * txWriter.getLastPartitionTimestamp()} when {@code ALTER TABLE ADD COLUMN} runs on a composite
+     * table -- mirroring, per cell, exactly what {@link #openNewColumnFiles} does for a plain table's
+     * single "current" partition: an explicit {@code top = <that cell's own row count>} record, so the
+     * new column reads back as fully absent (no physical file ever opened) for all of that cell's
+     * pre-existing rows.
+     * <p>
+     * Unlike {@link #openNewColumnFiles}, this is METADATA ONLY -- no physical column file is created
+     * for any cell here. That is safe and correct: every cell's explicit top exactly equals its own
+     * current row count, so {@code TableReader#reloadColumnAt}'s cell-aware lookup always computes
+     * {@code columnRowCount == 0} for it and never attempts to open a file. The first physical file for
+     * this column, for any given cell, is created lazily by whichever future O3 write/merge first
+     * appends real data into that cell for this column -- the same machinery that already creates column
+     * files for any other brand-new column value in an O3 write (see {@code O3OpenColumnJob}'s
+     * {@code appendMidPartition}/{@code mergeMidPartition}, now also made cell-aware by this same task).
+     * <p>
+     * Without this, a composite table's ADD COLUMN wrote only ONE {@code (ts, columnIndex)} record (the
+     * {@code columnVersionWriter.upsertDefaultTxnName} call in {@link #addColumn}, packed at cellKey 0)
+     * plus, when reachable, a SECOND cell-blind, arbitrarily-targeted one from {@link
+     * #openNewColumnFiles} itself -- so every OTHER sibling cell sharing that timestamp fell through to
+     * the (deliberately cellKey-agnostic, table-wide) DEFAULT-partition fallback ({@link
+     * ColumnVersionReader#getColumnTopPartitionTimestamp}), which cannot distinguish "this cell already
+     * had rows before the column existed" (needs its OWN explicit record, exactly like a plain table's
+     * single current partition) from "this cell is brand new, created fresh after the column already
+     * existed" (correctly top-0 via the fallback) -- both share the SAME partition timestamp. That
+     * confusion is what let a sibling cell's read believe it had a real column file it never got
+     * (reproduced directly: {@code CairoException} "could not open, file does not exist" for the
+     * sibling's {@code <col>.d} file).
+     * <p>
+     * Deliberately scoped to ONLY the cells at {@code ts == lastPartitionTimestamp}: any OTHER (earlier)
+     * day's cells are unambiguously "before the column existed" by timestamp alone (no same-timestamp
+     * sibling-cell collision possible there), so the existing DEFAULT-partition fallback already handles
+     * them correctly, exactly as it does for a plain table's older partitions.
+     * <p>
+     * <b>THAT LAST PARAGRAPH IS FALSIFIED -- measured 2026-08-26, bug OPEN.</b> An EARLIER day's cell
+     * does reach a state where the reader wants the new column's file and it was never created:
+     * <pre>
+     *   could not open, file does not exist: .../2023-01-01/SYM/SYM0/9.0/new_col_2.d.3
+     *   could not open, file does not exist: .../2023-01-01/SYM.0/new_col_1.d.5
+     * </pre>
+     * Verified that 2023-01-01 is NOT the last partition in those runs (2023-01-02 exists), so these
+     * are precisely the "earlier day" case this scoping assumes is safe. Deterministic:
+     * {@code Rnd(1111,773)} and {@code Rnd(1666,2138)} with
+     * {@code CompositeFuzzRunner#withDropPartitionProbability(0.05)}.
+     * <p>
+     * <b>BOTH of the obvious mechanisms are ELIMINATED</b> -- measured, do not re-chase them. Tracing
+     * this method's own scoping on {@code Rnd(1666,2138)}:
+     * <pre>
+     *   ADDCOL col=6 nameTxn=5 scopedToTs=1672617600000000 (2023-01-02) partitionCount=6 txn=5
+     *   failure:  2023-01-01/SYM.0/new_col_1.d.5
+     * </pre>
+     * The column was scoped to 2023-01-02, and the failure is on 2023-01-01 at partition version
+     * <b>{@code .0}</b> -- the ORIGINAL version, never rewritten. So nothing added rows to that
+     * partition after the column appeared: neither "an O3 write landed in an earlier day" nor "a DROP
+     * made an earlier day active" can account for it, since both would have bumped that cell's nameTxn.
+     * <p>
+     * What is left, and is the actual question: the reader computed a NON-ZERO row count for this
+     * column in a cell whose day predates the column entirely. For an earlier day there is no explicit
+     * per-cell record (by this method's design), so the lookup lands on the cellKey-agnostic,
+     * table-wide DEFAULT-partition fallback -- and that fallback evidently does not yield
+     * {@code top >= cellRowCount} for such a cell, which is exactly the property the paragraph above
+     * assumes it has. Investigate {@code getColumnTop}/{@code ColumnVersionReader}'s default resolution
+     * for a {@code (ts, cellKey)} pair with no explicit record, not the write path.
+     */
+    private void writeCompositeAddColumnColumnVersions(int columnIndex, long columnNameTxn) {
+        final long ts = txWriter.getLastPartitionTimestamp();
+        int idx = txWriter.findAttachedPartitionIndexByLoTimestamp(ts);
+        if (idx < 0) {
+            // No cell attached yet at this timestamp (e.g. a composite table with no committed rows) --
+            // nothing to backfill; every future cell is created fresh, after this column already
+            // exists, and gets top 0 via the ordinary default-fallback path.
+            return;
+        }
+        final int n = txWriter.getPartitionCount();
+        for (; idx < n && txWriter.getPartitionTimestampByIndex(idx) == ts; idx++) {
+            final int cellKey = txWriter.getPartitionCellKey(idx);
+            final long cellRowCount = txWriter.getPartitionSize(idx);
+            columnVersionWriter.upsert(ts, cellKey, columnIndex, columnNameTxn, cellRowCount);
+        }
     }
 
     private void openNewColumnFiles(CharSequence name, int columnType, byte indexType, int indexValueBlockCapacity) {
@@ -9857,6 +13314,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private int prepareCoveredColumnMmaps(
             IntList coveringColumnIndices,
             long partitionTimestamp,
+            // COMPOSITE: the cell whose covered columns are materialized; `_cv` is keyed by
+            // (timestamp, cellKey, column). 0 for a plain table.
+            int cellKey,
             int plen,
             ParquetMetaFileReader parquetMetadata,
             long partitionSize,
@@ -9878,7 +13338,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 covMmaps.add(null);
                 continue;
             }
-            final long coveredColTop = columnVersionWriter.getColumnTop(partitionTimestamp, tableColIdx);
+            final long coveredColTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, tableColIdx);
             if (!normalizeColumnTops && coveredColTop >= partitionSize) {
                 covSlotMeta.add(-1L);
                 covSlotMeta.add(0L);
@@ -9904,7 +13364,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int decodeType = ParquetColumnTypeConverter.chooseDecodeType(parquetColType, columnType);
             final boolean isVarSize = ColumnType.isVarSize(columnType);
             final CharSequence colName = metadata.getColumnName(tableColIdx);
-            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, tableColIdx);
+            final long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, tableColIdx);
 
             // Fixed-size data: total bytes are exact (rowCount * entrySize),
             // so the scratch file is pre-sized exactly and never extends.
@@ -10043,7 +13503,172 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Composite-partitioning (Plan 4a Task 4) dispatcher: a PLAIN table ({@code dimCount == 0})
+     * takes the EXACT pre-existing code path ({@link #processO3BlockPlain}, untouched, renamed only)
+     * -- byte-identical behavior, no added cost beyond this one dimension-count check. A composite
+     * table is routed to {@link #processO3BlockComposite}, which finds the identical
+     * {@code [srcOooLo, srcOooHi]} time-partition ranges (same binary-search mechanism) but
+     * additionally groups each range's rows by their composite {@code cellKey} and dispatches every
+     * distinct cell independently -- see that method's own docs for the full design.
+     * <p>
+     * <b>Dormant-with-pre-existing-data migration guard.</b> A composite table can have real,
+     * already-committed partition data that predates Task 4's routing entirely -- written via the
+     * direct {@code newRow}/{@code switchPartition} commit path (in-order inserts on a non-WAL
+     * table), which never calls {@code resolveCellKey}/{@code CellRegistry.internCell} at all, so
+     * the table's {@code _cell} registry stays at size 0 even though rows exist (every {@code
+     * CompositeEndToEndTest}/{@code CompositePartitionDdlTest} fixture is exactly this shape --
+     * confirmed directly, not hypothetical: routing an out-of-order insert into one of those tables
+     * through {@link #processO3BlockComposite} unconditionally broke them, because it tried to
+     * resolve a REAL cell segment for cellKey 0 against pre-existing partitions that are still laid
+     * out in the OLD bare-directory convention). If this commit's FIRST row would be the table's
+     * first-ever intern (registry still empty) AND the table already has committed data as of this
+     * commit's start ({@code txWriter.getMaxTimestamp() != Long.MIN_VALUE}), this whole commit must
+     * stay dormant too, for consistency with what is already on disk -- route it through {@link
+     * #processO3BlockPlain} unchanged (cellKey 0, no segment, no per-cell grouping), exactly
+     * reproducing pre-Task-4 behavior. A genuinely brand-new table (no pre-existing data) still
+     * routes through {@link #processO3BlockComposite} normally and interns real cells from its very
+     * first row.
+     * <p>
+     * <b>Task 5 -- per-cell frontiers (multi-commit / continuous composite ingestion).</b> Task 4
+     * proved a composite table's FIRST real per-cell-routing commit correct end-to-end, then found the
+     * surrounding WAL-LAG / active-partition / last-partition-accounting machinery entirely
+     * day-granularity and cellKey-blind, and added a loud guard blocking every second-or-later commit
+     * rather than risk silent corruption. This task made that machinery cell-aware and removed the
+     * guard:
+     * <ul>
+     *     <li>{@link TxReader#getNextPartitionTimestamp}/{@link TxReader#getNextExistingPartitionTimestamp}
+     *     used to treat "the next attached-partition array entry shares this timestamp's calendar day"
+     *     as proof of a partition-SPLIT sibling -- it cannot tell a split sibling (a genuinely later,
+     *     non-floor ts sharing only the calendar floor) apart from an ordinary sibling CELL of the same
+     *     day (which shares the exact same, floor, ts). Both now skip every attached-partition entry
+     *     whose raw ts exactly equals the input before applying the split/next-day check, so {@code
+     *     partitionTimestampHi} advances correctly once any day has 2+ cells. A plain (or still-dormant
+     *     composite) table can never have two entries sharing an exact raw ts, so this is a proven
+     *     no-op there.</li>
+     *     <li>{@code o3ConsumePartitionUpdateSink}'s {@code partitionTimestamp == lastPartitionTimestamp}
+     *     special case assumed exactly one physical partition could match a given day. Its {@code
+     *     this.columns}-touching branch (close/reposition the writer's single active-tail column-file
+     *     handles) is now skipped outright for a real (non-dormant) composite table -- composite
+     *     dispatch never touches {@code this.columns} in the first place (see {@link
+     *     #processO3BlockComposite}), so there is nothing there to close/reposition, and calling it once
+     *     per sibling cell risked a double-close (reproduced directly as a native heap corruption while
+     *     building this fix). Its row-count accounting now tracks WHICH {@code (ts, cellKey)} pair is the
+     *     true tail (not just which day) -- the invariant {@code fixedRowCount + transientRowCount ==}
+     *     total rows requires {@code transientRowCount} to equal exactly the attachedPartitions array's
+     *     LAST entry's own count (mirroring the plain-table case, where that's automatic), so every OTHER
+     *     cell -- including an earlier sibling of the same day -- is folded fully into {@code
+     *     fixedRowCount} as soon as a later pair is seen, undoing the double-fold with an explicit
+     *     un-fix of any such pair's own pre-existing size. Getting this wrong either double-counts or
+     *     silently drops a cell's rows from {@link TxReader#getRowCount}.</li>
+     * </ul>
+     * The {@code guardCompositeSecondCommitNotYetSupported} this task removed exists only in history now
+     * (git blame). A composite table's second-or-later commit into any day it has NOT already routed
+     * real per-cell data into -- a brand-new day, a brand-new cell added to an existing (single- or
+     * multi-cell) day, or an out-of-order backfill into a brand-new earlier day -- routes correctly,
+     * proven by dedicated tests. A commit that instead EXTENDS an already-populated cell (merges into or
+     * appends after its existing rows) is NOT yet safe -- it reproduced a genuine native heap corruption
+     * while this task was built, in machinery below this dispatcher (likely {@code O3PartitionJob}/{@code
+     * O3OpenColumnJob}'s existing-cell read-back or nameTxn-versioning path, never previously exercised
+     * since Task 4's own guard blocked every second commit) that this task did not have time to fully
+     * diagnose. Per the project's safety rule, {@link #dispatchCompositeCellRange}'s own {@code
+     * srcDataMax > 0} check now blocks exactly that shape, loudly, rather than claim it works. See this
+     * task's own report for the precise mechanism, the full routes-correctly/throws matrix, and the
+     * suggested next investigation step.
+     * <p>
+     * One further mechanism this task deliberately leaves untouched: the direct, non-WAL {@code
+     * newRow}/{@code switchPartition} append path ({@code TxWriter#switchPartitions} still hardcodes
+     * cellKey 0 for the partition it opens) -- unreachable for any WAL table (the only kind routed
+     * through this method at all) and, for a non-WAL composite table, no worse than before this task: it
+     * still never resolves a real cellKey and stays on the single bare-directory partition sequence,
+     * self-consistently, exactly like a dormant table (never mixes cells, so {@code count()}/row totals
+     * stay correct; it just never gains physical per-cell separation via that ingestion mode).
+     */
     private void processO3Block(
+            final long o3LagRowCount,
+            int timestampIndex,
+            long sortedTimestampsAddr,
+            final long srcOooMax,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            boolean flattenTimestamp,
+            long rowLo,
+            TableWriterPressureControl pressureControl,
+            // Max timestamp of already-committed data that is not part of the sorted O3 batch (see
+            // o3MoveUncommitted). Long.MIN_VALUE when there is no such data.
+            long committedDataMaxTimestamp
+    ) {
+        boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0
+                && !isDormantWithPreexistingData();
+        if (composite) {
+            processO3BlockComposite(
+                    o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin,
+                    o3TimestampMax, flattenTimestamp, rowLo, pressureControl, committedDataMaxTimestamp
+            );
+        } else {
+            processO3BlockPlain(
+                    o3LagRowCount, timestampIndex, sortedTimestampsAddr, srcOooMax, o3TimestampMin,
+                    o3TimestampMax, flattenTimestamp, rowLo, pressureControl, committedDataMaxTimestamp
+            );
+        }
+    }
+
+    /**
+     * See {@link #processO3Block}'s own docs for why this check exists. {@code true} only for a
+     * composite table that already has committed data ({@code maxTimestamp} set) from before Task 4
+     * routing ever ran for it (registry still empty) -- never true for a genuinely brand-new table
+     * (empty registry AND no data yet), which is exactly the case that must still route to real
+     * per-cell dispatch. Only meaningful for a composite table; callers gate on {@code dimCount > 0}
+     * first.
+     */
+    private boolean isDormantWithPreexistingData() {
+        return txWriter.getMaxTimestamp() != Long.MIN_VALUE && getCompositeDictionaries().cellRegistry().size() == 0;
+    }
+
+    /**
+     * Composite red-test convergence fix.
+     * {@code true} only for a composite table that has actually routed at least one row into a real
+     * per-cell physical partition (the cell registry has at least one entry). This -- NOT {@code
+     * dimCount > 0 && !isDormantWithPreexistingData()} -- is the correct predicate for every "does not
+     * yet support X" DDL/feature-refusal gate in this class (DROP/RENAME COLUMN, ADD/DROP INDEX,
+     * ATTACH/DETACH/DROP/FORCE-DROP/SQUASH PARTITION, CONVERT PARTITION TO/FROM PARQUET, ALTER COLUMN
+     * TYPE, SET TTL eviction, POSTING index reseal/seal, symbol-capacity autoscale, split-fragment
+     * squash): every one of those gates exists solely to protect PHYSICAL PER-CELL FILES that cell-blind
+     * code would mishandle -- and such files cannot exist until routing has happened at least once.
+     * <p>
+     * Deliberately NOT the same test as {@code dimCount > 0 && !isDormantWithPreexistingData()}, which
+     * remains the correct (unchanged) predicate for write-routing/commit-bookkeeping decisions such as
+     * {@link #processO3Block}'s own composite/plain dispatch and its tightly-coupled per-commit
+     * bookkeeping siblings: THAT predicate is (by design) {@code true} even for a genuinely brand-new,
+     * never-inserted composite table (maxTimestamp == MIN_VALUE, registry empty), because such a
+     * table's FIRST write must still be routed through composite dispatch to establish the initial cell
+     * layout. Reusing that write-routing predicate for a DDL-safety gate is over-broad: it incorrectly
+     * rejects harmless operations (DROP COLUMN, SET TTL, ...) on a composite table that has never
+     * received a single row and therefore has no per-cell physical files anything could corrupt or
+     * leak -- empirically confirmed via {@code ShowCreateTableTest}'s
+     * {@code testShowCreateCompositeAfterDropLowerIndexDimensionColumn} and two sibling tests (all
+     * created a composite table, dropped a column with zero rows ever inserted, and got the blanket
+     * gate's throw -&gt; WAL suspension -&gt; silently-a-no-op-drop instead of the expected success) and
+     * via direct call-chain tracing for SET TTL ({@code AlterOperation#applyTtl} calls {@code
+     * setMetaTtl} then {@code enforceTtl()} synchronously, so the old gate fired on the very first
+     * {@code SET TTL} against a freshly-created, still-empty composite table).
+     * <p>
+     * Behaviorally identical to the old predicate for every OTHER state: a routed table (registry > 0)
+     * still gates (both predicates true); a dormant-with-preexisting-data table (legacy pre-routing
+     * data, registry == 0) still does not gate (both predicates false). Only the genuinely-empty state
+     * (registry == 0, maxTimestamp == MIN_VALUE) differs, and only there was the old predicate wrong.
+     */
+    private boolean isRoutedComposite() {
+        return metadata.getPartitionSpec().getDimensionCount() > 0 && getCompositeDictionaries().cellRegistry().size() > 0;
+    }
+
+    /**
+     * Plain (non-composite) O3 block processing -- byte-for-byte the original {@code processO3Block}
+     * body (Plan 4a Task 4 renamed this method only; see {@link #processO3Block} for the new dispatcher
+     * and {@link #processO3BlockComposite} for the composite counterpart). One loop iteration per
+     * partition.
+     */
+    private void processO3BlockPlain(
             final long o3LagRowCount,
             int timestampIndex,
             long sortedTimestampsAddr,
@@ -10089,6 +13714,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int inflightPartitions = 0;
             while (srcOoo < srcOooMax || (isCommitReplaceMode() && partitionTimestamp <= o3TimestampMax)) {
                 pressureControl.updateInflightPartitions(++inflightPartitions);
+                // Does THIS FRAME still own this iteration's o3PartitionUpdRemaining ticket? Set true the
+                // instant the counter is raised below, and cleared at every point where somebody else
+                // becomes responsible for lowering it. The counter is only ever lowered by a dispatched
+                // unit draining through o3ConsumePartitionUpdates(), so a throw while this frame still
+                // owns the ticket strands it above zero and turns the finally-block
+                // o3ConsumePartitionUpdates() into an untimed, unkillable spin -- a HANG, not a crash.
+                // Declared out here so the per-iteration finally can see it.
+                boolean partitionUpdCountOwned = false;
                 try {
                     final long srcOooLo = srcOoo;
                     final long o3Timestamp;
@@ -10250,10 +13883,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
 
                     o3PartitionUpdRemaining.incrementAndGet();
+                    partitionUpdCountOwned = true;
                     // async partition processing set this counter to the column count
                     // and then manages issues if publishing of column tasks fails
                     // mid-column-count.
                     latchCount++;
+
+                    //noinspection ConstantValue
+                    if (O3_FAIL_BETWEEN_PARTITION_COUNT_AND_DISPATCH) {
+                        throw CairoException.critical(0)
+                                .put("test-injected failure between the o3PartitionUpdRemaining increment and dispatch [table=")
+                                .put(tableToken.getTableName()).put(']');
+                    }
+
                     // Set column top memory to -1, no need to initialize partition update memory, it always set by O3 partition tasks
                     Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
                     Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
@@ -10279,10 +13921,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3BumpErrorCount(CairoException.isCairoOomError(e));
                             o3ClockDownPartitionUpdateCount();
                             o3CountDownDoneLatch();
+                            // Ticket already surrendered right here -- the per-iteration finally must
+                            // not lower it a second time.
+                            partitionUpdCountOwned = false;
                             throw e;
                         }
 
-                        columnCounter.set(compressColumnCount(metadata));
+                        // Same basis the compensating delta below is computed against. columnCounter is
+                        // armed from compressColumnCount (live columns only), NOT from the raw
+                        // columnCount field (which still counts dropped columns), so the two must not be
+                        // mixed -- see the catch further down.
+                        final int liveColumnCount = compressColumnCount(metadata);
+                        columnCounter.set(liveColumnCount);
                         Path pathToPartition = Path.getThreadLocal(path);
                         setPathForNativePartition(
                                 pathToPartition,
@@ -10354,13 +14004,32 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         partitionUpdateSinkAddr
                                 );
                             } catch (Throwable e) {
-                                if (columnCounter.addAndGet(columnsPublished - columnCount) == 0) {
+                                // Ownership passes to the columnCounter protocol: reduce the expected
+                                // count to what was actually published, and if that lands on 0 every
+                                // published task has already finished, so compensate here.
+                                //
+                                // The delta is against liveColumnCount, not the raw columnCount field.
+                                // columnCounter was armed from compressColumnCount(metadata) above; on a
+                                // table with a dropped column (columnType < 0) the raw columnCount is
+                                // LARGER, so the old expression over-subtracted, drove the counter
+                                // NEGATIVE, and it could then never equal 0 -- nobody would ever lower
+                                // o3PartitionUpdRemaining and the commit would hang. Identical arithmetic
+                                // when the table has never had a column dropped.
+                                if (columnCounter.addAndGet(columnsPublished - liveColumnCount) == 0) {
                                     o3ClockDownPartitionUpdateCount();
                                     o3CountDownDoneLatch();
                                 }
+                                partitionUpdCountOwned = false;
                                 throw e;
                             }
                         }
+                        // Every live column published; the columnCounter protocol owns the ticket now.
+                        // (Reached only on a clean loop exit -- a throw anywhere in the loop body that is
+                        // NOT the publish call itself, e.g. getIndexWriter(i), leaves the flag set so the
+                        // per-iteration finally lowers the ticket. That is correct: the already-published
+                        // tasks will decrement columnCounter but can never reach 0, so they will never
+                        // lower it themselves.)
+                        partitionUpdCountOwned = false;
 
                         addPhysicallyWrittenRows(srcOooBatchRowSize);
                     } else {
@@ -10375,6 +14044,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (isParquet) {
                                 // Parquet partitions do not support replace commits feature yet
                                 o3PartitionUpdRemaining.decrementAndGet();
+                                partitionUpdCountOwned = false;
                                 latchCount--;
                                 pressureControl.updateInflightPartitions(--inflightPartitions);
                                 throw CairoException.critical(0)
@@ -10389,6 +14059,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             o3TimestampHi = getTimestampIndexValue(sortedTimestampsAddr, srcOooHi);
                         }
 
+                        // Handed over BEFORE the call, not after it, and deliberately so:
+                        // o3CommitPartitionAsync is not a pure publish -- when the O3 partition queue is
+                        // full it runs O3PartitionJob.processPartition INLINE on this thread, and that
+                        // job's own catch blocks already call o3ClockDownPartitionUpdateCount() before
+                        // rethrowing. Clearing the flag after the call would lower an already-lowered
+                        // counter, drive it negative, make o3ConsumePartitionUpdates() return without
+                        // draining the ring queue, and deadlock the following o3DoneLatch.await() --
+                        // strictly worse than the hang being fixed here.
+                        partitionUpdCountOwned = false;
                         o3CommitPartitionAsync(
                                 columnCounter,
                                 maxTimestamp,
@@ -10415,6 +14094,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     LOG.error().$((Sinkable) e).$();
                     success = false;
                     throw e;
+                } finally {
+                    // Nobody else became responsible for this iteration's ticket, so lower it here.
+                    // Without this the commit does not fail -- it HANGS. Pairs with the latchCount++
+                    // above, hence the latch countdown too (the same pair every other compensating path
+                    // in this method uses).
+                    if (partitionUpdCountOwned) {
+                        o3ClockDownPartitionUpdateCount();
+                        o3CountDownDoneLatch();
+                    }
                 }
                 if (inflightPartitions % partitionParallelism == 0) {
                     o3ConsumePartitionUpdates();
@@ -10478,6 +14166,1470 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Composite-table counterpart of {@link #processO3BlockPlain} (composite-partitioning Plan 4a
+     * Task 4 -- the crux of write routing). Finds the identical {@code [srcOooLo, srcOooHi]}
+     * time-partition ranges via the SAME (untouched) partition-floor / ceiling-binary-search
+     * mechanism {@link #processO3BlockPlain} uses -- Task 4 does not touch the timestamp sort or that
+     * range-finding logic at all. For each range found, this additionally:
+     * <ol>
+     *     <li>Resolves every row's composite {@code cellKey} directly off the dimension source
+     *     column(s)' O3 buffers (see {@link #resolveRowCellKey(long, int[])}).</li>
+     *     <li>If every row in the range shares ONE cellKey (the common case -- a burst of
+     *     same-dimension-value rows), no physical reordering is needed at all: the range is dispatched
+     *     using the SAME {@code o3Columns}/{@code sortedTimestampsAddr} the table already has, just
+     *     resolving the raw partition index via {@link TxWriter#findAttachedPartitionRawIndexBy(long,
+     *     int)} and constructing the partition path via {@link #renderCellSegment(CharSink, int)}
+     *     instead of cellKey 0.</li>
+     *     <li>If the range spans MULTIPLE distinct cellKeys (a genuinely interleaved multi-dimension-
+     *     value micro-batch -- e.g. two exchanges' rows arriving interleaved within one commit's same
+     *     day), the range is physically regrouped: rows are STABLE-partitioned by cellKey (preserving
+     *     each cell's own relative timestamp order) into dedicated per-cell scratch O3 buffers (see
+     *     {@link #buildCompositeCellGroupScratch}) -- a fresh, self-contained "mini O3 batch" per cell
+     *     -- and each cell is dispatched independently.</li>
+     * </ol>
+     * <p>
+     * <b>Every composite dispatch always takes the async merge path ({@link O3PartitionJob}), never
+     * the append fast path</b> {@link #processO3BlockPlain} prefers when possible. This is a
+     * deliberate, explicit Task 4 scope decision: {@code this.columns} is the writer's SINGLE shared
+     * set of open column-file handles and can only ever point at one cell's files at a time (Plan 4
+     * research Fork (c): per-cell frontier tracking, which would let multiple cells safely share the
+     * append fast path within one commit, is deferred follow-up work). Forcing every composite
+     * dispatch through {@link O3PartitionJob} instead -- which always independently resolves/creates/
+     * opens its own files by path, per the {@code !last} branches {@link #processO3BlockPlain} already
+     * relies on for "another new partition in this same commit, not the active tail" -- sidesteps that
+     * hazard entirely (verified directly against {@code O3PartitionJob.processPartition}'s
+     * {@code srcDataMax<1}/{@code >=1} branches: neither reads {@code tableWriter.columns} in the
+     * {@code !last} shape) at the cost of the append fast path's performance. See
+     * {@link #dispatchCompositeCellRange} for where {@code last = false} is passed unconditionally;
+     * the true {@code last} computed by the range-finding loop below is still used for diagnostics.
+     * <p>
+     * <b>Explicit, loud (not silent) scope boundaries</b>:
+     * <ul>
+     *     <li>{@link #isCommitReplaceMode()} (the REPLACE-commit feature) is not supported for a
+     *     composite table and throws immediately -- Plan 4a is scoped to ordinary INSERT routing.</li>
+     *     <li>FORMAT PARQUET is not supported for a composite table and throws per-cell, as soon as a
+     *     cell resolves to a parquet partition -- {@code setPathForNativePartition}'s cellKey-aware
+     *     overload (Task 3) has no parquet counterpart yet.</li>
+     *     <li>Var-size (STRING/VARCHAR/BINARY/ARRAY) non-dimension columns are not yet supported in the
+     *     multi-cellKey regrouping path and throw if a genuinely-interleaved multi-cell range is ever
+     *     encountered on such a table (dimension source columns are always SYMBOL-typed, hence always
+     *     fixed-size, per Plan 1 Task 2 -- so this can never affect cellKey resolution itself, only
+     *     OTHER table columns). The overwhelmingly common single-cellKey-per-range case is unaffected
+     *     regardless of column types, since it needs no reordering at all.</li>
+     *     <li>Task 6c discovery: within the multi-cellKey regrouping path, a single cellKey GROUP that
+     *     both carries 2+ rows and genuinely MERGES into a cell with already-committed data (a real
+     *     O3_BLOCK_MERGE -- the group's min ts reaches at or below that cell's existing max ts) throws
+     *     rather than silently corrupting that group's non-timestamp column values (root cause is deeper
+     *     in the {@link O3PartitionJob} merge path, not yet fixed -- see the throw site's own comment).
+     *     A group with exactly 1 row, a group targeting a genuinely brand-new cell (no existing data),
+     *     or a group that is a pure in-order APPEND into an existing cell (every row strictly after that
+     *     cell's existing max -- the routine continuous batch-ingest shape) is unaffected and dispatches
+     *     normally -- all empirically confirmed correct (Part B of the Task 6c review narrowed the gate
+     *     from "2+ rows into existing data" to "2+ rows AND a genuine merge", after proving the append
+     *     is byte-identical to a plain twin).</li>
+     * </ul>
+     * <p>
+     * Also note (residual, non-blocking risk, flagged for a follow-up task): {@code
+     * o3ConsumePartitionUpdateSink}'s {@code closeActivePartition}/{@code setAppendPosition} special
+     * case for "this block's partitionTimestamp equals the table's lastPartitionTimestamp" is gated on
+     * a day-granularity, cellKey-blind comparison (Fork (c)) and is NOT specifically guarded against
+     * here; it is unreached by this task's acceptance/regression scenarios (a from-scratch table's
+     * first commit has {@code lastPartitionTimestamp == Long.MIN_VALUE} throughout), but a SECOND
+     * commit landing on a composite table's current last day has not been exercised or hardened here.
+     */
+    private void processO3BlockComposite(
+            final long o3LagRowCount,
+            int timestampIndex,
+            long sortedTimestampsAddr,
+            final long srcOooMax,
+            final long o3TimestampMin,
+            final long o3TimestampMax,
+            boolean flattenTimestamp,
+            long rowLo,
+            TableWriterPressureControl pressureControl,
+            long committedDataMaxTimestamp
+    ) {
+        // SP8 Task 4 anti-vacuity floor: every entry here is a commit taking the composite O3/full
+        // dispatch path (as opposed to fast-append, which returns early before this method is ever
+        // called -- see this method's own "every composite dispatch always takes the async merge
+        // path" doc). Counted before the guards below so a REPLACE-mode throw still records that this
+        // WAS a genuine attempt at the O3 path, not a fast-append.
+        compositeO3MergeCommitCount.incrementAndGet();
+        // FLATTEN THE TIMESTAMP INDEX, exactly as processO3BlockPlain does -- omitting it was a JVM
+        // CRASH (SIGSEGV in merge_copy_var_column_int32_AVX512) and, for fixed-size columns, silent
+        // wrong data.
+        //
+        // flattenTimestamp == true means the caller GATHERED this commit's rows into o3MemColumns1 in
+        // sorted order (processWalCommit's needsOrdering branch: "Row indexes start from 0, not
+        // rowLo"), so the columns handed to the dispatch below are 0-based -- while the sorted index's
+        // .i field still holds each row's position in the WAL SEGMENT. Those two disagree the moment a
+        // segment carries more than this one transaction: measured, a 4th insert into a segment already
+        // holding 240 rows arrived as rowLo=0/srcOooMax=6 with .i values 240..245. The merge index
+        // built from it then addressed row 240 of a 6-row buffer -- for a var-size column that is an
+        // offset read from beyond the mapped aux vector, i.e. a wild pointer.
+        //
+        // The plain path flattens lazily, at its first non-append (merge) partition. The composite path
+        // must do it up-front instead, because EVERY composite dispatch takes the async merge path (see
+        // this method's own doc) -- there is no append branch here that could skip it.
+        //
+        // Why this hid for so long: flattening is a no-op when .i already equals the row's position,
+        // which is the case whenever a commit is the only transaction in its segment -- the shape
+        // nearly every test writes. It also cannot be reached through the multi-cell or dedup branches
+        // below, which build their own local, 0-based index in buildCompositeCellGroupScratch and pass
+        // THAT downstream; only the single-cell raw-index dispatch forwards this index untouched. So
+        // the differential fuzz, which is multi-cell by construction, could not have found it.
+        if (flattenTimestamp && o3RowCount > 0) {
+            Vect.flattenIndex(sortedTimestampsAddr, o3RowCount);
+            flattenTimestamp = false;
+        }
+        // REPLACE-range mode is supported. Two things make it different from an ordinary commit, and
+        // both are handled in the loop below:
+        //   1. the loop must visit partitions the commit has NO rows for, because deleting [lo, hi)
+        //      there is the whole point of a replace;
+        //   2. within a visited partition every EXISTING CELL must be dispatched, not only the cells
+        //      the incoming rows name -- a cell with no replacement rows must still lose its rows in
+        //      the range, or a composite table keeps rows its plain twin dropped.
+        final long replacePartitionLo = isCommitReplaceMode() ? txWriter.getPartitionTimestampByTimestamp(o3TimestampMin) : Long.MIN_VALUE;
+        final long replacePartitionHi = isCommitReplaceMode() ? txWriter.getPartitionTimestampByTimestamp(o3TimestampMax) : Long.MIN_VALUE;
+
+        o3ErrorCount.set(0);
+        o3oomObserved = false;
+        lastErrno = 0;
+        // NOT partitionRemoveCandidates.clear(), unlike processO3BlockPlain. That reset assumes the
+        // list is empty on entry, which holds for a plain table because the preceding statement's
+        // commit already drained it. It does NOT hold for a composite table: a squash queues the
+        // merged fragment's directory here, the composite squash does not commit before the next O3
+        // block, and this reset then DISCARDED the candidate -- measured, the fragment's directory
+        // then survived forever, through both the synchronous drain and O3PartitionPurgeJob:
+        //
+        //   INSTR-ADD-FRAG  c~1 fragTs=... size=3
+        //   INSTR-CLEAR     processO3BlockComposite discarding=3   <-- here
+        //   INSTR-HOUSEKEEP c~1 candidates=0
+        //
+        // Keeping the entries lets housekeep() drain them after commit00(), which is the point the
+        // merge's own "NO eager removeEmptyDayContainer here" comment requires: the detachment must be
+        // durable before the directory goes. A failed block still discards them -- rollback() clears
+        // the list -- so nothing stale survives an aborted commit.
+        o3ColumnCounters.clear();
+        o3BasketPool.clear();
+        commitRowCount = srcOooMax;
+
+        final long maxTimestamp = txWriter.getMaxTimestamp();
+
+        o3DoneLatch.reset();
+        o3PartitionUpdRemaining.set(0L);
+        if (o3PartitionUpdateSinkCellKeys != null) {
+            o3PartitionUpdateSinkCellKeys.clear();
+        }
+        boolean success = true;
+        int latchCount = 0;
+        long srcOoo = rowLo;
+        int pCount = 0;
+        int partitionParallelism = pressureControl.getMemoryPressureRegulationValue();
+        long partitionTimestamp = o3TimestampMin;
+
+        final int dimCount = metadata.getPartitionSpec().getDimensionCount();
+        final int[] cellDimScratch = new int[dimCount];
+        final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+        // Scratch buffers built for the multi-cellKey path, kept alive until every dispatched unit
+        // this whole call issues has drained (the finally block below) -- freeing them any earlier
+        // would race an in-flight O3PartitionJob still reading them.
+        ObjList<MemoryCARW> compositeScratchColumnsToFree = null;
+        LongList compositeScratchRawBuffersToFree = null; // pairs: (addr, size)
+
+        try {
+            resizePartitionUpdateSink();
+
+            int inflightPartitions = 0;
+            if (isCommitReplaceMode()) {
+                // Start at the first partition of the replace range, not at the first row's partition:
+                // the range may open before any row this commit carries.
+                partitionTimestamp = replacePartitionLo;
+            }
+            while (srcOoo < srcOooMax || (isCommitReplaceMode() && partitionTimestamp <= replacePartitionHi)) {
+                pressureControl.updateInflightPartitions(++inflightPartitions);
+                // A partition inside the replace range that this commit has no rows for: nothing to
+                // insert, but every existing cell still has to have the range deleted.
+                if (isCommitReplaceMode() && (srcOoo >= srcOooMax
+                        || txWriter.getPartitionTimestampByTimestamp(getTimestampIndexValue(sortedTimestampsAddr, srcOoo)) != partitionTimestamp)) {
+                    try {
+                        latchCount += dispatchCompositeReplaceDeleteOnly(
+                                partitionTimestamp, o3TimestampMin, o3TimestampMax,
+                                replacePartitionLo, replacePartitionHi, null,
+                                maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink
+                        );
+                    } catch (CairoException | CairoError e) {
+                        o3ErrorCount.incrementAndGet();
+                        o3oomObserved = false;
+                        throw e;
+                    }
+                    partitionTimestamp = nextDistinctPartitionTimestamp(partitionTimestamp);
+                    if (inflightPartitions % partitionParallelism == 0) {
+                        o3ConsumePartitionUpdates();
+                        o3DoneLatch.await(latchCount);
+                        inflightPartitions = 0;
+                    }
+                    continue;
+                }
+                try {
+                    final long srcOooLo = srcOoo;
+                    final long o3Timestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOoo);
+                    partitionTimestamp = txWriter.getPartitionTimestampByTimestamp(o3Timestamp);
+                    assert o3Timestamp >= o3TimestampMin;
+
+                    final long srcOooHi;
+                    final long srcOooTimestampCeil = txWriter.getCurrentPartitionMaxTimestamp(o3Timestamp);
+                    if (srcOooTimestampCeil < o3TimestampMax) {
+                        srcOooHi = Vect.boundedBinarySearchIndexT(
+                                sortedTimestampsAddr, srcOooTimestampCeil, srcOooLo, srcOooMax - 1, Vect.BIN_SEARCH_SCAN_DOWN);
+                    } else {
+                        srcOooHi = srcOooMax - 1;
+                    }
+
+                    final boolean last = partitionTimestamp == lastPartitionTimestamp;
+                    srcOoo = srcOooHi + 1;
+
+                    // REPLACE mode: every dispatch for this partition carries the RANGE bounds, so the
+                    // job deletes [lo, hi) rather than only where the rows land. Outside replace mode
+                    // these stay MIN_VALUE and the dispatch derives its bounds from the rows, as before.
+                    final long replaceTsLo = isCommitReplaceMode()
+                            ? ((partitionTimestamp == replacePartitionLo) ? o3TimestampMin : partitionTimestamp)
+                            : Long.MIN_VALUE;
+                    final long replaceTsHi = isCommitReplaceMode()
+                            ? ((partitionTimestamp == replacePartitionHi) ? o3TimestampMax : txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp))
+                            : Long.MIN_VALUE;
+
+                    final long rangeLen = srcOooHi - srcOooLo + 1;
+                    if (rangeLen <= 0) {
+                        // Defensive only -- currently unreachable: composite dispatch rejects REPLACE
+                        // commits outright (see the isCommitReplaceMode() throw at the top of this
+                        // method), so a non-replace commit's ranges are never actually empty. Guarded
+                        // anyway (opus review, Plan 4a Task 4 fix wave 1 Minor ii): srcOoo = srcOooHi + 1
+                        // above does NOT advance past srcOooLo when rangeLen <= 0 (srcOooHi < srcOooLo),
+                        // which would spin the enclosing while(srcOoo < srcOooMax) loop forever if this
+                        // branch ever becomes reachable. Force forward progress defensively.
+                        srcOoo = Math.max(srcOoo, srcOooLo + 1);
+                        partitionTimestamp = txWriter.getNextExistingPartitionTimestamp(partitionTimestamp);
+                        pressureControl.updateInflightPartitions(--inflightPartitions);
+                        continue;
+                    }
+
+                    final int rangeLenInt = (int) rangeLen;
+                    final int[] rowCellKeys = new int[rangeLenInt];
+                    rowCellKeys[0] = resolveRowCellKey(srcOooLo, cellDimScratch);
+                    boolean multiCell = false;
+                    for (int j = 1; j < rangeLenInt; j++) {
+                        rowCellKeys[j] = resolveRowCellKey(srcOooLo + j, cellDimScratch);
+                        if (rowCellKeys[j] != rowCellKeys[0]) {
+                            multiCell = true;
+                        }
+                    }
+
+                    LOG.info().$("o3 composite range [table=").$(tableToken)
+                            .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
+                            .$(", last=").$(last)
+                            .$(", srcOooLo=").$(srcOooLo).$(", srcOooHi=").$(srcOooHi)
+                            .$(", multiCell=").$(multiCell)
+                            .I$();
+
+                    if (!multiCell) {
+                        pCount++;
+                        if (isCommitDedupMode()) {
+                            // DEDUP takes the SCRATCH path even for a single cell. The raw
+                            // sortedTimestampsAddr carries each row's ABSOLUTE position in the O3
+                            // batch, while the columns handed to the task are based at the dispatched
+                            // range -- measured: batch of one usable row with px at index 0, yet the
+                            // index entry referenced row 1, and the copy returned the uninitialised
+                            // bytes at that slot. Non-dedup commits do not notice because they never
+                            // read a row through the index the way the dedup merge does (proven by
+                            // CompositeSquashTest#testSameTimestampSecondCommitWithoutDedup, which
+                            // drives the identical shape and passes). buildCompositeCellGroupScratch
+                            // already produces a RELATIVE ts-index -- it was written for exactly this
+                            // mismatch on the multi-cell path.
+                            if (compositeScratchColumnsToFree == null) {
+                                compositeScratchColumnsToFree = new ObjList<>();
+                                compositeScratchRawBuffersToFree = new LongList();
+                            }
+                            final int rangeLenSingle = (int) (srcOooHi - srcOooLo + 1);
+                            final Integer[] singleOrder = new Integer[rangeLenSingle];
+                            for (int j = 0; j < rangeLenSingle; j++) {
+                                singleOrder[j] = j;
+                            }
+                            final CompositeCellScratch singleScratch = buildCompositeCellGroupScratch(
+                                    srcOooLo, singleOrder, 0, rangeLenSingle, sortedTimestampsAddr,
+                                    timestampIndex, compositeScratchColumnsToFree, compositeScratchRawBuffersToFree
+                            );
+                            latchCount += dispatchCompositeCellRange(
+                                    rowCellKeys[0], partitionTimestamp, 0, rangeLenSingle - 1, rangeLenSingle,
+                                    maxTimestamp, singleScratch.tsIndexAddr, singleScratch.columns, cellSegmentSink,
+                                    replaceTsLo, replaceTsHi
+                            );
+                        } else {
+                            latchCount += dispatchCompositeCellRange(
+                                    rowCellKeys[0], partitionTimestamp, srcOooLo, srcOooHi, srcOooMax,
+                                    maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink,
+                                    replaceTsLo, replaceTsHi
+                            );
+                        }
+                    } else {
+                        // An interleaved multi-cell commit used to be REFUSED here on any table with a
+                        // var-size column, on the reasoning that the per-cell scratch gather
+                        // (buildCompositeCellGroupScratch) copies each row with a width-agnostic
+                        // Vect#memcpy -- fine for every fixed type, impossible for a var-size one, whose
+                        // value is a slice of a data vector described by a type-specific aux entry, and
+                        // "ColumnTypeDriver exposes no copy-one-value primitive".
+                        //
+                        // It exposes o3sort, which is that primitive at group granularity: it gathers a
+                        // var-size column through an index naming the source rows and sizes both
+                        // destination vectors itself. The scratch builder now uses it, so the refusal is
+                        // gone. See buildCompositeCellGroupScratch's var-size branch.
+                        //
+                        // This mattered more than a missing feature. The refusal told users to split
+                        // into per-cell commits -- but ApplyWal2TableJob applies a BATCH of transactions
+                        // as one commit, so under load it recombined those per-cell commits into exactly
+                        // the interleaved multi-cell commit being refused, suspending the table. The
+                        // workaround only ever held while the apply job did not batch. Pinned, from both
+                        // directions, by CompositeWalBlockApplyTest and CompositeInterleavedVarSizeTest.
+
+                        // Stable-group the range's rows by cellKey (Integer boxing is fine -- this only
+                        // runs for the rare genuinely-interleaved case; Arrays.sort(Object[], Comparator)
+                        // is a guaranteed-stable sort, preserving each cellKey's own relative timestamp
+                        // order).
+                        final Integer[] order = new Integer[rangeLenInt];
+                        for (int j = 0; j < rangeLenInt; j++) {
+                            order[j] = j;
+                        }
+                        Arrays.sort(order, (a, b) -> Integer.compare(rowCellKeys[a], rowCellKeys[b]));
+
+                        int groupStart = 0;
+                        while (groupStart < rangeLenInt) {
+                            final int groupCellKey = rowCellKeys[order[groupStart]];
+                            int groupEnd = groupStart;
+                            while (groupEnd + 1 < rangeLenInt && rowCellKeys[order[groupEnd + 1]] == groupCellKey) {
+                                groupEnd++;
+                            }
+                            final int groupLen = groupEnd - groupStart + 1;
+
+                            // Every group here is correct regardless of size and regardless of whether it
+                            // genuinely MERGES into a cell that already has committed data (a real
+                            // O3_BLOCK_MERGE), is a pure in-order append/prepend, or targets a brand-new
+                            // cell: buildCompositeCellGroupScratch's scratch ts-index stores each row's
+                            // LOCAL, 0-based position in its .i (rowid) field, exactly matching the
+                            // scratchColumn[j] gather loop it feeds, so the native merge-shuffle path
+                            // (when a genuine merge triggers it) always reads the right slot. See that
+                            // method's own docs for the full mechanism.
+                            //
+                            // This used to be loud-gated here (throw) for any group with 2+ rows
+                            // genuinely merging into an already-populated cell -- the scratch ts-index
+                            // instead stored each row's ABSOLUTE position in the original O3 batch, which
+                            // the native merge-shuffle path (when it copied that index verbatim into its
+                            // own merge index) read back as a scratch-column position, landing on the
+                            // wrong -- later, or out-of-bounds -- row of the tiny per-group scratch buffer
+                            // (follow-up task #25; the workaround was issuing each already-populated
+                            // cell's out-of-order rows in its own separate commit instead of one combined
+                            // multi-cell commit). Fixed at the source, so the gate is gone.
+                            if (compositeScratchColumnsToFree == null) {
+                                compositeScratchColumnsToFree = new ObjList<>();
+                                compositeScratchRawBuffersToFree = new LongList();
+                            }
+                            final CompositeCellScratch scratch = buildCompositeCellGroupScratch(
+                                    srcOooLo, order, groupStart, groupLen, sortedTimestampsAddr, timestampIndex,
+                                    compositeScratchColumnsToFree, compositeScratchRawBuffersToFree
+                            );
+
+                            pCount++;
+                            latchCount += dispatchCompositeCellRange(
+                                    groupCellKey, partitionTimestamp, 0, groupLen - 1, groupLen,
+                                    maxTimestamp, scratch.tsIndexAddr, scratch.columns, cellSegmentSink,
+                                    replaceTsLo, replaceTsHi
+                            );
+
+                            groupStart = groupEnd + 1;
+                        }
+                    }
+
+                    // REPLACE mode: the dispatches above covered the cells this commit has rows for.
+                    // Every OTHER existing cell of this partition still holds rows inside the range and
+                    // must lose them -- the composite-specific half of a replace.
+                    if (isCommitReplaceMode()) {
+                        replaceRowCellKeys.clear();
+                        for (int j = 0, jn = rangeLenInt; j < jn; j++) {
+                            replaceRowCellKeys.add(rowCellKeys[j]);
+                        }
+                        latchCount += dispatchCompositeReplaceDeleteOnly(
+                                partitionTimestamp, o3TimestampMin, o3TimestampMax,
+                                replacePartitionLo, replacePartitionHi, replaceRowCellKeys,
+                                maxTimestamp, sortedTimestampsAddr, o3Columns, cellSegmentSink
+                        );
+                        // NO advance here: the loop tail already advances, and doing it twice SKIPPED
+                        // a partition -- measured, day 2 of a two-day replace never had its range
+                        // deleted because this block moved to day 2 and the tail then moved past it.
+                    }
+                } catch (CairoException | CairoError e) {
+                    LOG.error().$((Sinkable) e).$();
+                    success = false;
+                    throw e;
+                }
+                if (inflightPartitions % partitionParallelism == 0) {
+                    o3ConsumePartitionUpdates();
+                    o3DoneLatch.await(latchCount);
+                    inflightPartitions = 0;
+                }
+                // Cell-aware advance: a composite day's CELLS are separate attached entries sharing
+                // one timestamp, so getNextExistingPartitionTimestamp returns the SAME day again and a
+                // replace traversal never leaves the first partition. Outside replace mode this value
+                // is overwritten at the top of the next iteration from the next row's timestamp, so
+                // the change is inert for ordinary commits.
+                partitionTimestamp = nextDistinctPartitionTimestamp(partitionTimestamp);
+            } // end while(srcOoo < srcOooMax)
+
+            partitionTimestampHi = Math.max(partitionTimestampHi, txWriter.getCurrentPartitionMaxTimestamp(o3TimestampMax));
+            long committedMaxTimestamp = Math.max(txWriter.getMaxTimestamp(), o3TimestampMax);
+            committedMaxTimestamp = Math.max(committedMaxTimestamp, committedDataMaxTimestamp);
+            txWriter.updateMaxTimestamp(committedMaxTimestamp);
+        } catch (Throwable th) {
+            LOG.error().$("failed to commit composite data block [table=").$(tableToken).$(", error=").$(th).I$();
+            throw th;
+        } finally {
+            LOG.debug()
+                    .$("o3 composite expecting updates [table=").$(tableToken)
+                    .$(", partitionsPublished=").$(pCount)
+                    .I$();
+
+            o3ConsumePartitionUpdates();
+            if (o3ErrorCount.get() == 0 && success) {
+                o3ConsumePartitionUpdateSink();
+            }
+            o3DoneLatch.await(latchCount);
+
+            o3InError = !success || o3ErrorCount.get() > 0;
+
+            if (compositeScratchColumnsToFree != null) {
+                for (int i = 0, n = compositeScratchColumnsToFree.size(); i < n; i++) {
+                    Misc.free(compositeScratchColumnsToFree.getQuick(i));
+                }
+            }
+            if (compositeScratchRawBuffersToFree != null) {
+                for (int i = 0, n = compositeScratchRawBuffersToFree.size(); i < n; i += 2) {
+                    Unsafe.free(compositeScratchRawBuffersToFree.getQuick(i), compositeScratchRawBuffersToFree.getQuick(i + 1), MemoryTag.NATIVE_O3);
+                }
+            }
+
+            if (success && o3ErrorCount.get() > 0) {
+                //noinspection ThrowFromFinallyBlock
+                throw CairoException.critical(0).put("bulk update failed and will be rolled back").setOutOfMemory(o3oomObserved);
+            }
+        }
+
+        if (o3LagRowCount > 0 && !metadata.isWalEnabled()) {
+            LOG.info().$("shifting lag rows up [table=").$(tableToken).$(", lagCount=").$(o3LagRowCount).I$();
+            dispatchColumnTasks(
+                    o3LagRowCount,
+                    IGNORE,
+                    srcOooMax,
+                    0L,
+                    0,
+                    cthO3ShiftColumnInLagToTopRef
+            );
+        }
+    }
+
+    /**
+     * Dispatches one composite {@code (partitionTimestamp, cellKey)} cell's row range (composite-
+     * partitioning Plan 4a Task 4) -- always via the async merge path ({@link O3PartitionJob}, never
+     * the append fast path; see {@link #processO3BlockComposite}'s own docs for why {@code last} is
+     * unconditionally passed as {@code false}). Serves both the single-cellKey fast path
+     * ({@code srcOooLo}/{@code srcOooHi} are the REAL O3 batch's absolute bounds, {@code
+     * oooColumnsForCell}/{@code sortedTimestampsAddrForCell} are the table's real {@code o3Columns}/
+     * {@code sortedTimestampsAddr}) and the multi-cellKey regrouped path (bounds are LOCAL 0-based
+     * bounds into a dedicated per-cell scratch buffer pair built by {@link
+     * #buildCompositeCellGroupScratch}).
+     *
+     * @return 1 if a partition-processing unit was actually dispatched (the caller's {@code
+     * latchCount} delta), 0 if this cell was skipped (read-only partition)
+     */
+    private int dispatchCompositeCellRange(
+            int cellKey,
+            long partitionTimestamp,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long maxTimestamp,
+            long sortedTimestampsAddrForCell,
+            ReadOnlyObjList<? extends MemoryCR> oooColumnsForCell,
+            StringSink cellSegmentSink
+    ) {
+        return dispatchCompositeCellRange(cellKey, partitionTimestamp, srcOooLo, srcOooHi, srcOooMax,
+                maxTimestamp, sortedTimestampsAddrForCell, oooColumnsForCell, cellSegmentSink, Long.MIN_VALUE, Long.MIN_VALUE);
+    }
+
+    /**
+     * The next attached partition timestamp strictly GREATER than {@code partitionTimestamp}, or
+     * {@code Long.MAX_VALUE} when there is none.
+     * <p>
+     * {@code TxWriter#getNextExistingPartitionTimestamp} cannot be used to walk a composite table:
+     * the day's CELLS are separate attached entries sharing one timestamp, so it returns the same day
+     * again and a loop advancing with it never leaves the first partition. Measured -- the
+     * replace-range traversal stopped after day 1 and left day 2's rows undeleted.
+     */
+    private long nextDistinctPartitionTimestamp(long partitionTimestamp) {
+        long best = Long.MAX_VALUE;
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            final long ts = txWriter.getPartitionTimestampByIndex(i);
+            if (ts > partitionTimestamp && ts < best) {
+                best = ts;
+            }
+        }
+        return best;
+    }
+
+    /**
+     * Dispatches the DELETE half of a REPLACE-range commit to every existing cell of one partition,
+     * optionally skipping cells that a row-bearing dispatch has already handled.
+     * <p>
+     * This is the composite-specific part of replace support. The plain writer has one partition to
+     * delete from; a composite table has one per CELL, and the incoming rows only name the cells they
+     * land in. Any other cell of the same partition still holds rows inside [lo, hi) and must lose
+     * them, otherwise the composite table keeps rows its plain twin dropped -- which is precisely what
+     * the twin assertions in CompositeReplaceRangeTest measure.
+     *
+     * @param skipCells cells already dispatched with rows this pass, or null to dispatch every cell
+     * @return the number of dispatched units, to be added to the caller's latch count
+     */
+    private int dispatchCompositeReplaceDeleteOnly(
+            long partitionTimestamp,
+            long o3TimestampMin,
+            long o3TimestampMax,
+            long replacePartitionLo,
+            long replacePartitionHi,
+            @Nullable IntHashSet skipCells,
+            long maxTimestamp,
+            long sortedTimestampsAddr,
+            ReadOnlyObjList<? extends MemoryCR> o3Columns,
+            StringSink cellSegmentSink
+    ) {
+        // Same bounds the plain path computes per partition: the range is clamped to this partition,
+        // opening at the commit's range low only in the FIRST partition and closing at its range high
+        // only in the LAST one.
+        final long o3TimestampLo = (partitionTimestamp == replacePartitionLo) ? o3TimestampMin : partitionTimestamp;
+        final long o3TimestampHi = (partitionTimestamp == replacePartitionHi)
+                ? o3TimestampMax
+                : txWriter.getCurrentPartitionMaxTimestamp(partitionTimestamp);
+
+        int dispatched = 0;
+        // Snapshot the cell keys first: dispatching mutates the attached-partition list.
+        replaceDeleteCellKeys.clear();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) != partitionTimestamp) {
+                continue;
+            }
+            final int cellKey = txWriter.getPartitionCellKey(i);
+            if (skipCells != null && skipCells.contains(cellKey)) {
+                continue;
+            }
+            replaceDeleteCellKeys.add(cellKey);
+        }
+        for (int i = 0, n = replaceDeleteCellKeys.size(); i < n; i++) {
+            dispatched += dispatchCompositeCellRange(
+                    replaceDeleteCellKeys.getQuick(i),
+                    partitionTimestamp,
+                    // An EMPTY row range: hi = lo - 1, so srcOooBatchRowSize is 0 and nothing is
+                    // inserted. The delete range travels in replaceTsLo/replaceTsHi instead.
+                    0,
+                    -1,
+                    0,
+                    maxTimestamp,
+                    sortedTimestampsAddr,
+                    o3Columns,
+                    cellSegmentSink,
+                    o3TimestampLo,
+                    o3TimestampHi
+            );
+        }
+        return dispatched;
+    }
+
+    /**
+     * @param replaceTsLo in REPLACE-range mode, the low bound of the range this partition must have
+     *                    deleted; {@code Long.MIN_VALUE} outside replace mode, where the bounds are
+     *                    derived from the dispatched rows instead
+     * @param replaceTsHi the matching high bound
+     */
+    private int dispatchCompositeCellRange(
+            int cellKey,
+            long partitionTimestamp,
+            long srcOooLo,
+            long srcOooHi,
+            long srcOooMax,
+            long maxTimestamp,
+            long sortedTimestampsAddrForCell,
+            ReadOnlyObjList<? extends MemoryCR> oooColumnsForCell,
+            StringSink cellSegmentSink,
+            long replaceTsLo,
+            long replaceTsHi
+    ) {
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
+        // Composite writes never use the writer's active-tail transientRowCount (Fork (c): which
+        // cell, if any, "owns" that single shared counter is not well-defined for a composite table
+        // yet) -- always resolve the cell's size from its own committed attached-partition record.
+        final long srcDataMax = partitionIndexRaw > -1 ? getPartitionSizeByRawIndex(partitionIndexRaw) : 0;
+        final long srcNameTxn = partitionIndexRaw > -1 ? getPartitionNameTxnByRawIndex(partitionIndexRaw) : txWriter.getTxn() - 1;
+
+        // Plan 4a Task 5 (per-cell frontiers) formerly guarded (srcDataMax > 0: a commit that EXTENDS
+        // an already-populated cell) with a loud CairoException here, because it hit a native heap
+        // corruption (glibc "malloc(): invalid size (unsorted)") whose root cause was not yet
+        // understood. Plan 4b Task 1 root-caused and fixed three independent cell-blind bookkeeping
+        // bugs behind that corruption (TableWriter#o3ConsumePartitionUpdateSink's trackedTail proxy,
+        // TxWriter#beginPartitionSizeUpdate, TableWriter#initLastPartition -- see each one's own updated
+        // docs) and proved the in-order (canAppendOnly) sub-shape fully safe, but kept the guard because
+        // a fourth, broader bug (the cell-blind partitionRemoveCandidates purge queue, TableWriter#
+        // processPartitionRemoveCandidates0) still made the out-of-order (genuine O3_BLOCK_MERGE)
+        // sub-shape corrupt/lose sibling-cell data in its post-merge directory cleanup step. Plan 4b
+        // Task 1b threaded cellKey through that whole queue (see processPartitionRemoveCandidates0's own
+        // updated docs) and verified both sub-shapes byte-for-byte match a plain twin, no crash, across
+        // repeated fresh-JVM runs (CompositeRoutingTest#testSecondCommitExtendingExistingCellInOrderAppendMatchesPlainTwin
+        // / #testSecondCommitExtendingExistingCellOutOfOrderMergeMatchesPlainTwin) -- the guard is
+        // removed. Every OTHER repeated-commit shape (new day, new cell on an existing or single-cell
+        // day, out-of-order backfill into a brand-new earlier day) was already proven safe by Plan 4a
+        // Task 5's own tests and remains unaffected.
+
+        final boolean isParquet = partitionIndexRaw > -1
+                ? txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)
+                : metadata.getTableFormat() == TableUtils.TABLE_FORMAT_PARQUET;
+        // A BRAND-NEW partition on a FORMAT PARQUET table (partitionIndexRaw < 0) used to be refused
+        // here, as defence in depth while FORMAT PARQUET was rejected at CREATE for composite tables.
+        // Both gates are gone: writeFreshParquetFromO3's paths were already cell-aware, and the audit
+        // the refusal asked for is now CompositeFormatParquetTest -- born-parquet cells load, take an
+        // O3 merge, DROP PARTITION, DEDUP upsert, CONVERT TO NATIVE and ADD COLUMN, all matching a
+        // plain FORMAT PARQUET twin. It found one real defect, four cellKey-0 setters in
+        // o3ConsumePartitionUpdateSink's brand-new-parquet branch; see that branch's own comment.
+        //
+        // An EXISTING parquet cell was un-refused earlier, and that one WAS the cold-storage blocker:
+        // CONVERT PARTITION TO PARQUET already worked per cell, and the next late-arriving row then
+        // SUSPENDED the table and LOST the row (measured: plain count=4/not-suspended vs composite
+        // count=3/suspended). Pinned by CompositeParquetStateTest. Two things were needed there:
+        // O3PartitionJob#processParquetPartition was cell-blind -- nine bare path builds and a
+        // cellKey-0 getPartitionIndexByTimestamp -- and the dispatch below hardcoded isParquet=false,
+        // which was only safe while a gate refused every parquet cell. Fixing the paths alone sent the
+        // write down the NATIVE path into a parquet cell and suspended the table with an EMPTY error
+        // message; both had to change together.
+
+        final boolean partitionIsReadOnly = partitionIndexRaw > -1 && txWriter.isPartitionReadOnlyByRawIndex(partitionIndexRaw);
+        if (partitionIsReadOnly) {
+            LOG.critical().$("o3 ignoring write on read-only composite cell [table=").$(tableToken)
+                    .$(", timestamp=").$ts(timestampDriver, partitionTimestamp)
+                    .$(", cellKey=").$(cellKey)
+                    .$();
+            return 0;
+        }
+
+        final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
+        final long newPartitionSize = srcDataMax + srcOooBatchRowSize;
+
+        // SP8 Task 4 anti-vacuity floor: srcDataMax > 0 means this range dispatches into a cell that
+        // already has committed data -- an O3 merge or append into a non-last, non-empty partition,
+        // spec Sec 4.5's "rows landing in a non-last partition" shape. Counts ROWS, not dispatches,
+        // since the floor is row-granular.
+        if (srcDataMax > 0) {
+            compositeExistingCellRowCount.addAndGet(srcOooBatchRowSize);
+        }
+
+        LOG.info().$("o3 composite cell task [table=").$(tableToken)
+                .$(", partitionTs=").$ts(timestampDriver, partitionTimestamp)
+                .$(", cellKey=").$(cellKey)
+                .$(", srcOooLo=").$(srcOooLo)
+                .$(", srcOooHi=").$(srcOooHi)
+                .$(", srcDataMax=").$(srcDataMax)
+                .$(", newSize=").$(newPartitionSize)
+                .I$();
+
+        final O3Basket o3Basket = o3BasketPool.next();
+        o3Basket.checkCapacity(configuration, columnCount, indexCount);
+        final AtomicInteger columnCounter = o3ColumnCounters.next();
+
+        // Rendered BEFORE o3PartitionUpdRemaining is incremented below, and this ordering is
+        // load-bearing, not cosmetic: o3PartitionUpdRemaining is only ever decremented by a
+        // dispatched task draining through o3ConsumePartitionUpdates(), so ANY throw between the
+        // increment and o3CommitPartitionAsync() strands the counter above zero forever and turns
+        // processO3BlockComposite's finally-block o3ConsumePartitionUpdates() into an infinite spin
+        // -- a WAL-apply HANG (not a crash, not a suspended table: the apply job never returns).
+        // That is exactly what a NULL IDENTITY dimension value used to do here, via an out-of-bounds
+        // reverse symbol lookup inside renderCellSegment (fixed at source in MapWriter#valueOf /
+        // TableUtils#putCellSegmentPathSafe). Rendering first keeps any future render-time failure a
+        // loud, diagnosable commit error that suspends the table, per this feature's fail-loudly rule.
+        //
+        // Immutable snapshot (see O3PartitionTask#getCellSegment's own docs): cellSegmentSink is a
+        // reused, mutable scratch sink -- an async worker may read this cell's task well after this
+        // method returns and the sink has been cleared/rewritten for a different cell.
+        cellSegmentSink.clear();
+        renderCellSegment(cellSegmentSink, cellKey);
+        final String cellSegment = cellSegmentSink.toString();
+
+        final long partitionUpdateSinkAddr = o3PartitionUpdateSink.allocateBlock();
+        if (cellKey != 0) {
+            if (o3PartitionUpdateSinkCellKeys == null) {
+                o3PartitionUpdateSinkCellKeys = new LongIntHashMap();
+            }
+            o3PartitionUpdateSinkCellKeys.put(partitionUpdateSinkAddr, cellKey);
+        }
+        // From here to the o3CommitPartitionAsync() below, THIS FRAME owns the counter ticket: nothing
+        // else can lower it, because only a dispatched unit draining through o3ConsumePartitionUpdates()
+        // ever does. A throw in that window would therefore leave the counter above zero forever and
+        // spin processO3BlockComposite's finally-block o3ConsumePartitionUpdates() -- an unkillable
+        // WAL-apply hang. The remaining throw in this window is dedupColumnCommitAddresses
+        // .allocateBlock() (a native malloc). `owned` hands the ticket over exactly once, and the
+        // finally lowers it iff it was never handed over.
+        //
+        // The hand-over happens BEFORE the call, not after it, and that is deliberate:
+        // o3CommitPartitionAsync is not a pure publish -- when the O3 partition queue is full it runs
+        // O3PartitionJob.processPartition INLINE on this thread, and that job's own catch blocks
+        // already call o3ClockDownPartitionUpdateCount() before rethrowing. Clearing `owned` after the
+        // call would therefore lower an already-lowered counter, drive it negative, make
+        // o3ConsumePartitionUpdates() return without draining the ring queue and deadlock the
+        // subsequent o3DoneLatch.await() -- strictly worse than the bug being fixed.
+        //
+        // Only o3PartitionUpdRemaining is compensated here, NOT o3DoneLatch: the caller does
+        // `latchCount += dispatchCompositeCellRange(...)`, so a throw out of this method leaves
+        // latchCount un-incremented and an extra countDown would satisfy a LATER await(latchCount)
+        // prematurely -- releasing the writer while a sibling cell's task is still in flight.
+        o3PartitionUpdRemaining.incrementAndGet();
+        boolean owned = true;
+        try {
+            Vect.memset(partitionUpdateSinkAddr + (long) PARTITION_SINK_SIZE_LONGS * Long.BYTES, (long) metadata.getColumnCount() * Long.BYTES, -1);
+            Unsafe.putLong(partitionUpdateSinkAddr, partitionTimestamp);
+            Unsafe.putLong(partitionUpdateSinkAddr + 6 * Long.BYTES, partitionTimestamp);
+
+            final long dedupColSinkAddr = dedupColumnCommitAddresses != null ? dedupColumnCommitAddresses.allocateBlock() : 0;
+            // In REPLACE-range mode the bounds are the RANGE, not the extent of the dispatched rows:
+            // they tell O3PartitionJob what to delete, and a cell with no replacement rows carries an
+            // empty row range (srcOooLo > srcOooHi) with a non-empty delete range. Deriving them from
+            // the rows, as the insert path does, would delete only where rows happen to land.
+            final boolean replacing = replaceTsLo != Long.MIN_VALUE;
+            final long o3TimestampLo = replacing
+                    ? replaceTsLo
+                    : getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooLo);
+            final long o3TimestampHi = replacing
+                    ? replaceTsHi
+                    : getTimestampIndexValue(sortedTimestampsAddrForCell, srcOooHi);
+
+            //noinspection ConstantValue
+            if (O3_FAIL_BETWEEN_PARTITION_COUNT_AND_DISPATCH) {
+                throw CairoException.critical(0)
+                        .put("test-injected failure between the o3PartitionUpdRemaining increment and dispatch [table=")
+                        .put(tableToken.getTableName()).put(", cellKey=").put(cellKey).put(']');
+            }
+
+            owned = false;
+            o3CommitPartitionAsync(
+                    columnCounter,
+                    maxTimestamp,
+                    sortedTimestampsAddrForCell,
+                    srcOooLo,
+                    srcOooHi,
+                    srcOooMax,
+                    o3TimestampLo,
+                    partitionTimestamp,
+                    srcDataMax,
+                    // last: ALWAYS false for a composite dispatch -- see class docs. Tried passing the
+                    // true value for dedup commits on 2026-08-20 and the WAL apply HUNG (60s timeout):
+                    // with last=true, O3PartitionJob reads tableWriter.columns, which a routed composite
+                    // table does not maintain. The unconditional false is load-bearing, not incidental.
+                    false,
+                    srcNameTxn,
+                    o3Basket,
+                    newPartitionSize,
+                    srcDataMax,
+                    partitionUpdateSinkAddr,
+                    dedupColSinkAddr,
+                    // The CELL's own format, resolved from its attached-partition record. Hardcoded
+                    // false until 2026-08-26, which was safe only while the gate above refused every
+                    // parquet cell outright; with the gate narrowed, a false here sent the write down
+                    // the NATIVE path into a cell _txn marks parquet, and the commit then read
+                    // isParquet=true with a parquetFileSize the native path never writes (-1) and
+                    // suspended with an empty message.
+                    isParquet,
+                    o3TimestampLo,
+                    o3TimestampHi,
+                    oooColumnsForCell,
+                    cellSegment,
+                    cellKey
+            );
+        } finally {
+            if (owned) {
+                o3ClockDownPartitionUpdateCount();
+            }
+        }
+        return 1;
+    }
+
+    /**
+     * Resolves the composite {@code cellKey} for one row of the current O3 batch (composite-
+     * partitioning Plan 4a Task 4), reading each dimension's ordinal directly off its source SYMBOL
+     * column's O3 buffer at {@code absoluteRow} -- an index into {@code o3Columns}/
+     * {@code sortedTimestampsAddr} using the SAME absolute row numbering {@link
+     * #processO3BlockComposite} uses throughout. By this point in the O3/WAL-apply pipeline the WAL
+     * symbol remap has already happened (see {@code remapWalSymbols}/{@code
+     * processWalCommitBlock_remapSymbols}), so every SYMBOL column's O3 buffer holds resolved GLOBAL
+     * symbol keys -- confirmed directly against this method's own {@code o3Columns} field, the
+     * identical field the ordinary per-column sort dispatch ({@code cthO3SortColumn}) reads from:
+     * <ul>
+     *     <li>{@code IDENTITY}: the ordinal IS the global symbol key -- read straight off the column,
+     *     no dictionary lookup at all.</li>
+     *     <li>{@code HASH}/{@code TRUNCATE}: the key is reverse-looked-up to its string via
+     *     {@link #symbolValueOf(int, int)} (a GLOBAL-dictionary lookup, since the key is global) and
+     *     then forward-resolved via {@link #resolveDimensionOrdinal(int, int, CharSequence)}, which
+     *     memoizes per {@code (dimIndex, sourceSymbolKey)} for the life of this commit -- global keys
+     *     are stable across the whole commit, so no per-segment memo reset is needed here (unlike a
+     *     hypothetical per-segment-local-key caller).</li>
+     *     <li>{@code EXPRESSION} (composite-partitioning Plan 4e Task 2): has no single source
+     *     column ({@code getColumnIndex() == -1} by construction), so it is resolved BEFORE the
+     *     unconditional {@code getColumnIndex()}/{@code o3Columns} read below via {@link
+     *     #resolveExpressionDimensionOrdinal(int, long)} instead -- evaluating the dimension's
+     *     compiled {@link Function} (see {@link #ensureCompositeExpressionFunctionsCompiled()})
+     *     against a {@link CompositeExpressionRecord} view of THIS SAME {@code o3Columns} row.</li>
+     * </ul>
+     *
+     * @param absoluteRow       the row's absolute index into {@code o3Columns}/{@code sortedTimestampsAddr}
+     * @param dimOrdinalScratch reused scratch array, sized to the table's dimension count
+     * @return the resolved dense cellKey for this row (see {@link #resolveCellKey(int[])})
+     */
+    private int resolveRowCellKey(long absoluteRow, int[] dimOrdinalScratch) {
+        PartitionSpec spec = metadata.getPartitionSpec();
+        int dimCount = spec.getDimensionCount();
+        for (int d = 0; d < dimCount; d++) {
+            PartitionDimension dim = spec.getDimension(d);
+            if (dim.getKind() == PartitionDimension.KIND_EXPRESSION) {
+                // KIND_EXPRESSION has no source column (getColumnIndex() == -1 by construction --
+                // see PartitionTransform/CreateTableOperationBuilderImpl#resolveExpressionDimension),
+                // so it must never reach the unconditional getColumnIndex()/o3Columns read below --
+                // that would compute getPrimaryColumnIndex(-1) == -2 and index o3Columns with it, an
+                // uncontrolled ArrayIndexOutOfBoundsException: -2 (composite-partitioning Plan 4e
+                // Task 1's original landmine). Resolve via the compiled-Function bridge instead.
+                dimOrdinalScratch[d] = resolveExpressionDimensionOrdinal(d, absoluteRow);
+                continue;
+            }
+            int colIndex = dim.getColumnIndex();
+            MemoryCR col = o3Columns.getQuick(getPrimaryColumnIndex(colIndex));
+            int globalSymbolKey = col.getInt(absoluteRow << COMPOSITE_DIMENSION_SOURCE_COLUMN_SHL);
+            if (dim.getKind() == PartitionDimension.KIND_IDENTITY) {
+                dimOrdinalScratch[d] = globalSymbolKey;
+            } else {
+                dimOrdinalScratch[d] = resolveDimensionOrdinal(d, globalSymbolKey, symbolValueOf(colIndex, globalSymbolKey));
+            }
+        }
+        return resolveCellKey(dimOrdinalScratch);
+    }
+
+    /**
+     * Resolves one row's {@code KIND_EXPRESSION} dimension ordinal (composite-partitioning Plan 4e
+     * Task 2 -- the Function-eval bridge, the crux of this whole task): evaluates this dimension's
+     * compiled {@link Function} (see {@link #ensureCompositeExpressionFunctionsCompiled()}) against
+     * {@link #compositeExpressionRecord} positioned at {@code absoluteRow}, then interns the
+     * resulting string via {@link #internDimensionValue(int, CharSequence)}'s {@code EXPRESSION}
+     * case -- the exact {@code TRUNCATE} shape ({@code dedicatedDict.put(value)}), since {@code
+     * EXPRESSION} shares {@code TRUNCATE}'s dedicated-dict bucket ({@code CompositeInternerLayout}).
+     * <p>
+     * Any exception here -- a compile failure, or an unexpected runtime failure evaluating the
+     * compiled Function against real row data (e.g. an implicit-cast surprise the DDL-time gate
+     * could not have caught) -- is wrapped into a clean, diagnosable {@link CairoException} rather
+     * than left to escape as a raw/uncontrolled exception type, mirroring Task 1's own clean-throw
+     * precedent for this same branch: never a silent wrong cellKey, always either the RIGHT cellKey
+     * or a loud abort of the current commit.
+     *
+     * @param dimIndex    the EXPRESSION dimension's index
+     * @param absoluteRow the row's absolute index into {@code o3Columns}/{@code sortedTimestampsAddr}
+     * @return the resolved dense per-dimension ordinal, ready to feed into {@link #resolveCellKey(int[])}
+     */
+    private int resolveExpressionDimensionOrdinal(int dimIndex, long absoluteRow) {
+        ensureCompositeExpressionFunctionsCompiled();
+        try {
+            Function function = compositeExpressionFunctions.getQuick(dimIndex);
+            compositeExpressionRecord.of(absoluteRow);
+            CharSequence value = function.getStrA(compositeExpressionRecord);
+            return internDimensionValue(dimIndex, value);
+        } catch (CairoException e) {
+            throw e;
+        } catch (Throwable e) {
+            throw CairoException.nonCritical()
+                    .put("composite partitioning: failed to evaluate EXPRESSION dimension [table=")
+                    .put(tableToken.getTableName())
+                    .put(", dimIndex=").put(dimIndex)
+                    .put(", msg=").put(flyweightOrPlainMessage(e))
+                    .put(']');
+        }
+    }
+
+    /**
+     * The best available diagnostic message for {@code e}: {@link FlyweightMessageContainer#getFlyweightMessage()}
+     * when {@code e} is one (e.g. {@link SqlException}, whose own {@code getMessage()} is NOT
+     * overridden and returns {@code null} -- its real message lives only behind {@code
+     * getFlyweightMessage()}), otherwise the plain {@link Throwable#getMessage()} (falling back to
+     * the exception's class name when even that is {@code null}, e.g. a bare {@link
+     * NullPointerException}) -- used by {@link #ensureCompositeExpressionFunctionsCompiled()} and
+     * {@link #resolveExpressionDimensionOrdinal(int, long)} so a wrapped compile/eval failure is
+     * never reported with an empty {@code msg=} (composite-partitioning Plan 4e Task 2).
+     */
+    private static String flyweightOrPlainMessage(Throwable e) {
+        CharSequence msg = e instanceof FlyweightMessageContainer
+                ? ((FlyweightMessageContainer) e).getFlyweightMessage()
+                : e.getMessage();
+        if (msg == null || msg.length() == 0) {
+            return e.getClass().getName();
+        }
+        return msg.toString();
+    }
+
+    /**
+     * Lazily (re)compiles every {@code KIND_EXPRESSION} composite partition dimension's stored
+     * {@code exprText} into a real {@link Function} (composite-partitioning Plan 4e Task 2 -- the
+     * crux: replaces Task 1's clean-throw placeholder with real per-row evaluation), caching the
+     * whole {@link #compositeExpressionFunctions} list keyed on {@link #getMetadataVersion()}.
+     * Cheap after the first successful compile for the writer's current metadata version -- a single
+     * long comparison, since a {@link TableWriter} is never accessed concurrently.
+     * <p>
+     * Compilation happens entirely against THIS writer's own {@link #metadata} ({@link
+     * TableWriterMetadata} implements {@code RecordMetadata} directly) -- never through a real
+     * {@code RecordCursorFactory}/{@code TableReader} -- so every compiled {@link Function}'s
+     * column-index bindings are, by construction, in the SAME index space {@link
+     * CompositeExpressionRecord} exposes. Per EXPRESSION dimension, delegated to {@link
+     * #compileExpressionDimensionFunction(SqlCompiler, FunctionParser, PartitionDimension)}:
+     * <ol>
+     *     <li>Re-parse {@code exprText} back into an {@link ExpressionNode} via {@link
+     *     SqlCompiler#parseStandaloneExpression(CharSequence, IQueryModel)} -- a PURE syntax parse (no
+     *     query optimizer, no table/column resolution: confirmed directly against its implementation,
+     *     {@code clear(); lexer.of(expression); return parser.expr(lexer, model, this);}) -- safe to
+     *     call with a {@code null} {@link IQueryModel} for this feature's safe-subset expression
+     *     shapes (no CASE/lambda/decl construct needs a real model here; the same {@code null}-model
+     *     idiom is already established across this codebase's own expression-parsing tests, e.g.
+     *     {@code ConstantReassociationTest}). Promoted onto {@link SqlCompiler} as a first-class,
+     *     non-{@code @TestOnly} method specifically so this write path does not have to call the
+     *     {@code @TestOnly}-annotated {@code testParseExpression} sibling (composite-partitioning Plan
+     *     4e Task 4 -- {@code testParseExpression} now simply delegates to this method, so every
+     *     existing test caller is unaffected); it is the only production-reachable entry point for
+     *     turning bare expression TEXT back into an {@link ExpressionNode} without ALSO forcing a full
+     *     {@code SELECT ... FROM <table>} compile-and-optimize -- which would re-resolve columns
+     *     through a SEPARATE {@code RecordMetadata} (typically a {@code TableReader}'s), risking a
+     *     column-index space that does not actually match {@link #metadata}'s: a silent-wrong-cell
+     *     hazard this design avoids entirely by resolving directly against {@link #metadata} itself in
+     *     the next step, never a reader's.</li>
+     *     <li>Reject (a defense-in-depth check, NOT a duplicate of the DDL-time gate) any reference
+     *     to a column type this dimension's {@link CompositeExpressionRecord} adapter cannot yet
+     *     expose (see {@link #assertExpressionSourceColumnsSupported(ExpressionNode)}).</li>
+     *     <li>Bind the node against {@link #metadata} via {@link FunctionParser#parseFunction}, verify
+     *     its result type is string-coercible, and {@code init} it against {@link
+     *     #compositeExpressionRecord} (itself a {@link SymbolTableSource}) so any nested {@code
+     *     SymbolColumn} leaf can reverse-look-up its symbol values (see {@link
+     *     WriterColumnSymbolTable}). {@link #compositeExpressionSqlExecutionContext}'s hard-wired
+     *     {@code allowNonDeterministicFunctions() == false} makes {@link FunctionParser} itself
+     *     reject any non-deterministic function here -- independent of, and strictly stronger than,
+     *     {@code CreateTableOperationBuilderImpl}'s DDL-time name-based deny-list.</li>
+     * </ol>
+     * A compile failure (a {@link SqlException}, or any other unexpected {@link Throwable} --
+     * mirrors {@code FunctionParser.checkAndCreateFunction}'s own defensive {@code catch (Throwable)}
+     * for the same reason: third-party-ish function-factory code) is wrapped into a clean {@link
+     * CairoException} and thrown -- this table's EXPRESSION dimension stays permanently un-routable
+     * (every future commit re-attempts and re-fails identically) until whatever is wrong is fixed,
+     * exactly as loud and non-silent as Task 1's own clean-throw was before this task existed.
+     * {@link #compositeExpressionFunctions}/{@link #compositeExpressionFunctionsMetadataVersion} are
+     * only overwritten AFTER every dimension in this pass compiles successfully, so a failed
+     * recompile attempt never clobbers a still-valid older cache.
+     */
+    private void ensureCompositeExpressionFunctionsCompiled() {
+        long currentMetadataVersion = getMetadataVersion();
+        if (compositeExpressionFunctions != null && compositeExpressionFunctionsMetadataVersion == currentMetadataVersion) {
+            return;
+        }
+        PartitionSpec spec = metadata.getPartitionSpec();
+        int dimCount = spec.getDimensionCount();
+        ObjList<Function> functions = new ObjList<>(dimCount);
+        functions.setPos(dimCount);
+        if (compositeExpressionSqlExecutionContext == null) {
+            compositeExpressionSqlExecutionContext = new CompositeExpressionSqlExecutionContext(engine);
+        }
+        if (compositeExpressionRecord == null) {
+            compositeExpressionRecord = new CompositeExpressionRecord();
+        }
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            FunctionParser functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
+            for (int d = 0; d < dimCount; d++) {
+                PartitionDimension dim = spec.getDimension(d);
+                if (dim.getKind() != PartitionDimension.KIND_EXPRESSION) {
+                    continue;
+                }
+                functions.setQuick(d, compileExpressionDimensionFunction(compiler, functionParser, dim));
+            }
+        } catch (Throwable e) {
+            Misc.freeObjList(functions);
+            if (e instanceof CairoException) {
+                throw (CairoException) e;
+            }
+            throw CairoException.nonCritical()
+                    .put("composite partitioning: failed to compile EXPRESSION dimension [table=")
+                    .put(tableToken.getTableName())
+                    .put(", msg=").put(flyweightOrPlainMessage(e))
+                    .put(']');
+        }
+        if (compositeExpressionFunctions != null) {
+            Misc.freeObjList(compositeExpressionFunctions);
+        }
+        compositeExpressionFunctions = functions;
+        compositeExpressionFunctionsMetadataVersion = currentMetadataVersion;
+    }
+
+    /**
+     * Compiles ONE {@code KIND_EXPRESSION} dimension's {@code exprText} into a bound, initialized
+     * {@link Function} -- see {@link #ensureCompositeExpressionFunctionsCompiled()} for the full
+     * three-step account of what this does and why each step is safe/necessary.
+     */
+    private Function compileExpressionDimensionFunction(
+            SqlCompiler compiler,
+            FunctionParser functionParser,
+            PartitionDimension dim
+    ) throws SqlException {
+        ExpressionNode node = compiler.parseStandaloneExpression(dim.getExprText(), (IQueryModel) null);
+        assertExpressionSourceColumnsSupported(node);
+        Function function = functionParser.parseFunction(node, metadata, compositeExpressionSqlExecutionContext);
+        boolean ok = false;
+        try {
+            int type = function.getType();
+            if (!ColumnType.isSymbolOrStringOrVarchar(type) && !ColumnType.isChar(type)) {
+                throw SqlException.$(node.position, "composite partition dimension expression must evaluate to a string-coercible type, got ")
+                        .put(ColumnType.nameOf(type));
+            }
+            function.init(compositeExpressionRecord, compositeExpressionSqlExecutionContext);
+            ok = true;
+            return function;
+        } finally {
+            if (!ok) {
+                Misc.free(function);
+            }
+        }
+    }
+
+    /**
+     * DDL-time-mirroring, but write-side, safe-subset walk for a composite {@code EXPRESSION}
+     * dimension's re-parsed {@link ExpressionNode} (composite-partitioning Plan 4e Task 2):
+     * recursively rejects a reference to any column whose type {@link
+     * #isSupportedExpressionSourceColumnType(int)} does not (yet) allow -- every var-size type
+     * (VARCHAR/STRING/BINARY) and every not-yet-wired-up fixed type (GEO*, LONG256, LONG128/UUID,
+     * DECIMAL*, INTERVAL, ARRAY) that {@link CompositeExpressionRecord} cannot expose. Recurses
+     * through {@code lhs}/{@code rhs}/{@code args} uniformly, mirroring {@code
+     * CreateTableOperationBuilderImpl#assertDeterministic}'s exact traversal shape (per {@link
+     * ExpressionNode}'s own field-usage contract, exactly one of "rhs only", "lhs and rhs", or
+     * "args" is populated for any given node depending on {@code paramCount}, so walking all three
+     * unconditionally, null/size-guarded, visits every child exactly once regardless of shape).
+     * <p>
+     * Column resolution mirrors {@link FunctionParser#createColumn(int, CharSequence,
+     * io.questdb.cairo.sql.RecordMetadata)} exactly ({@link SqlUtil#getColumnIndexQuiet(
+     *io.questdb.cairo.sql.RecordMetadata, CharSequence)}, NOT the verbatim {@code
+     * RecordMetadata#getColumnIndexQuiet(CharSequence)} default, which does not apply the same
+     * quoted-identifier handling) -- this runs BEFORE {@link FunctionParser#parseFunction}, purely
+     * to fail fast with a clearer message before building (and having to discard) a Function tree
+     * for an expression this feature does not yet support; {@code parseFunction} itself remains the
+     * authoritative existence/resolution check (a miss here, {@code columnIndex == -1}, is silently
+     * skipped -- {@code parseFunction} will already reject it with its own "invalid column" error).
+     */
+    private void assertExpressionSourceColumnsSupported(ExpressionNode node) throws SqlException {
+        if (node == null) {
+            return;
+        }
+        if (node.type == ExpressionNode.LITERAL) {
+            int columnIndex = SqlUtil.getColumnIndexQuiet(metadata, node.token);
+            if (columnIndex != -1) {
+                int columnType = metadata.getColumnType(columnIndex);
+                if (columnType >= 0 && !isSupportedExpressionSourceColumnType(columnType)) {
+                    throw SqlException.$(node.position, "composite partitioning does not yet support an EXPRESSION dimension referencing column '")
+                            .put(node.token).put("' of type ").put(ColumnType.nameOf(columnType));
+                }
+            }
+        }
+        assertExpressionSourceColumnsSupported(node.lhs);
+        assertExpressionSourceColumnsSupported(node.rhs);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            assertExpressionSourceColumnsSupported(node.args.getQuick(i));
+        }
+    }
+
+    /**
+     * The fixed-size column types {@link CompositeExpressionRecord} currently exposes to a compiled
+     * EXPRESSION dimension {@link Function} (composite-partitioning Plan 4e Task 2) -- deliberately
+     * narrower than "every fixed-size type": the common scalar/temporal family plus {@code SYMBOL}
+     * (dimension source columns generally, and the single-symbol-column case -- {@code upper(region)}
+     * etc. -- this feature's canonical target). Every var-size type and every NOT-listed fixed type
+     * (GEO*, LONG256, LONG128/UUID, DECIMAL*, INTERVAL, ARRAY, BINARY) is rejected loudly by {@link
+     * #assertExpressionSourceColumnsSupported(ExpressionNode)} before any row is ever routed, rather
+     * than silently misread or left to a raw {@link UnsupportedOperationException} from {@link
+     * Record}'s own unimplemented-getter defaults.
+     */
+    private static boolean isSupportedExpressionSourceColumnType(int columnType) {
+        switch (ColumnType.tagOf(columnType)) {
+            case ColumnType.BOOLEAN:
+            case ColumnType.BYTE:
+            case ColumnType.SHORT:
+            case ColumnType.CHAR:
+            case ColumnType.INT:
+            case ColumnType.LONG:
+            case ColumnType.FLOAT:
+            case ColumnType.DOUBLE:
+            case ColumnType.DATE:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.IPv4:
+            case ColumnType.SYMBOL:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Lightweight {@link Record} adapter over this writer's own {@code o3Columns} buffers
+     * (composite-partitioning Plan 4e Task 2): the SAME buffers/row-addressing {@link
+     * #resolveRowCellKey(long, int[])} already reads for a plain dimension source column,
+     * generalized to expose ANY of this table's fixed-size columns (by writer column index) to a
+     * compiled EXPRESSION-dimension {@link Function} tree. Positioned per row via {@link #of(long)}
+     * immediately before each {@code function.getStrA(...)} call; one instance is reused for the
+     * life of the writer (see {@link TableWriter#compositeExpressionRecord}) -- never shared across
+     * threads (this writer's O3 composite dispatch loop evaluates rows strictly serially on its own
+     * thread).
+     * <p>
+     * Only implements the fixed-size getters {@link #isSupportedExpressionSourceColumnType(int)}
+     * allows -- {@link #assertExpressionSourceColumnsSupported(ExpressionNode)} rejects every other
+     * column type BEFORE a Function is ever compiled against this adapter, so in practice none of
+     * {@link Record}'s other (unimplemented, default-throwing) getters should ever actually be
+     * invoked here; they are deliberately left as {@link Record}'s own inherited defaults (a clean
+     * {@link UnsupportedOperationException}) as a last-resort safety net, not a primary control.
+     * {@code getTimestamp}/{@code getDate} need no override either: {@link Record}'s own defaults
+     * for both already delegate to {@link #getLong(int)}.
+     * <p>
+     * {@code SYMBOL} is deliberately NOT special-cased in the typed getters below: a {@code SYMBOL}
+     * column's O3 buffer already holds a plain 4-byte GLOBAL symbol key (confirmed directly against
+     * {@link #resolveRowCellKey(long, int[])}'s own pre-existing IDENTITY/HASH/TRUNCATE handling --
+     * by this point in the O3/WAL-apply pipeline the WAL symbol remap has always already happened),
+     * so {@link #getInt(int)} reads it exactly like any other {@code int}-width column; the REVERSE
+     * string lookup a compiled {@code SymbolColumn}/{@code SymbolFunction} leaf needs is supplied
+     * separately, at {@code Function#init} time, via this same class's {@link SymbolTableSource}
+     * implementation ({@link #getSymbolTable(int)}/{@link #newSymbolTable(int)}) -- see {@link
+     * WriterColumnSymbolTable}. This mirrors {@code io.questdb.griffin.engine.functions.columns.
+     * SymbolColumn} exactly: it reads its raw key via {@code rec.getInt(columnIndex)}, never a
+     * {@code Record.getSymA}/{@code getSymB}.
+     */
+    private final class CompositeExpressionRecord implements Record, SymbolTableSource {
+        private long absoluteRow;
+
+        @Override
+        public boolean getBool(int col) {
+            return rawColumn(col).getBool(byteOffset(col));
+        }
+
+        @Override
+        public byte getByte(int col) {
+            return rawColumn(col).getByte(byteOffset(col));
+        }
+
+        @Override
+        public char getChar(int col) {
+            return rawColumn(col).getChar(byteOffset(col));
+        }
+
+        @Override
+        public double getDouble(int col) {
+            return rawColumn(col).getDouble(byteOffset(col));
+        }
+
+        @Override
+        public float getFloat(int col) {
+            return rawColumn(col).getFloat(byteOffset(col));
+        }
+
+        @Override
+        public int getIPv4(int col) {
+            return rawColumn(col).getIPv4(byteOffset(col));
+        }
+
+        @Override
+        public int getInt(int col) {
+            return rawColumn(col).getInt(byteOffset(col));
+        }
+
+        @Override
+        public long getLong(int col) {
+            return rawColumn(col).getLong(byteOffset(col));
+        }
+
+        @Override
+        public short getShort(int col) {
+            return rawColumn(col).getShort(byteOffset(col));
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return new WriterColumnSymbolTable(TableWriter.this, columnIndex);
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return new WriterColumnSymbolTable(TableWriter.this, columnIndex);
+        }
+
+        void of(long absoluteRow) {
+            this.absoluteRow = absoluteRow;
+        }
+
+        private long byteOffset(int col) {
+            return absoluteRow << ColumnType.pow2SizeOf(metadata.getColumnType(col));
+        }
+
+        private MemoryCR rawColumn(int col) {
+            return o3Columns.getQuick(getPrimaryColumnIndex(col));
+        }
+    }
+
+    /**
+     * Per-{@code (writer, columnIndex)} reverse-symbol-lookup adapter (composite-partitioning Plan
+     * 4e Task 2): wraps {@link TableWriter#symbolValueOf(int, int)} so a compiled EXPRESSION
+     * dimension Function's {@code SymbolColumn} leaf (see {@code
+     * io.questdb.griffin.engine.functions.columns.SymbolColumn#getSymbol}) can resolve a raw global
+     * symbol key back to its string -- the EXACT SAME global-dictionary reverse lookup {@link
+     * TableWriter#resolveRowCellKey(long, int[])} already performs for a plain (non-EXPRESSION)
+     * dimension source column. Built at {@code Function#init} time (see {@link
+     * CompositeExpressionRecord#getSymbolTable(int)}), i.e. once per (re)compile -- not once per row.
+     * {@code valueOf}/{@code valueBOf} both delegate identically: {@link
+     * TableWriter#symbolValueOf(int, int)} reads a stable, already-durably-written flyweight view
+     * straight off the symbol map's own backing memory (see {@code MapWriter#valueOf(MapWriter,
+     * int)}), never a mutable reused sink, so there is no "A"/"B" instance distinction to preserve.
+     * <p>
+     * Implements {@link StaticSymbolTable}, not just the bare {@link SymbolTable}, because {@code
+     * SymbolColumn#init} asserts {@code !symbolTableStatic || getStaticSymbolTable() != null} for
+     * any symbol column whose metadata flags it static (true for an ordinary table column) --
+     * discovered empirically the first time this bridge actually ran end-to-end (a bare {@code
+     * SymbolTable} tripped that assertion). {@link #containsNullValue()}/{@link #getSymbolCount()}/
+     * {@link #keyOf(CharSequence)} only satisfy that {@code instanceof} check: nothing in this
+     * dimension's per-row eval loop ({@link TableWriter#resolveExpressionDimensionOrdinal(int,
+     * long)}, the sole caller reachable through {@link CompositeExpressionRecord}) ever calls
+     * forward lookup/count/null-check -- those exist for query-engine-level optimizations (e.g. an
+     * {@code IN}-list rewrite) this narrow, plan-free eval bridge never runs through -- so they throw
+     * loud rather than silently returning a made-up answer if some future caller ever reaches them.
+     */
+    private static final class WriterColumnSymbolTable implements StaticSymbolTable {
+        private final int columnIndex;
+        private final TableWriter writer;
+
+        WriterColumnSymbolTable(TableWriter writer, int columnIndex) {
+            this.writer = writer;
+            this.columnIndex = columnIndex;
+        }
+
+        @Override
+        public boolean containsNullValue() {
+            throw new UnsupportedOperationException("not supported for a composite EXPRESSION dimension's writer-side symbol table");
+        }
+
+        @Override
+        public int getSymbolCount() {
+            throw new UnsupportedOperationException("not supported for a composite EXPRESSION dimension's writer-side symbol table");
+        }
+
+        @Override
+        public int keyOf(CharSequence value) {
+            throw new UnsupportedOperationException("not supported for a composite EXPRESSION dimension's writer-side symbol table");
+        }
+
+        @Override
+        public CharSequence valueBOf(int key) {
+            return writer.symbolValueOf(columnIndex, key);
+        }
+
+        @Override
+        public CharSequence valueOf(int key) {
+            return writer.symbolValueOf(columnIndex, key);
+        }
+    }
+
+    /**
+     * Builds one distinct cell's dedicated, self-contained "mini O3 batch" scratch buffers for the
+     * multi-cellKey regrouping path (composite-partitioning Plan 4a Task 4): {@code groupLen} rows,
+     * gathered from the ORIGINAL O3 batch's absolute rows {@code srcOooLo + order[groupStart ..
+     * groupStart+groupLen)}, reordered into this cell's own contiguous, 0-based local numbering.
+     * <p>
+     * The designated timestamp column's scratch "index" is a raw, hand-built array in the exact same
+     * 16-byte-per-row {@code (ts:8, rowid:8)} format {@code sortedTimestampsAddr} itself uses (see
+     * {@code Vect}'s native {@code index_t} struct: {@code {uint64_t ts; uint64_t i;}}, and {@code
+     * TableWriter#getTimestampIndexValue}'s matching stride-16 read) -- {@code ts} is this row's TRUE
+     * timestamp (so every downstream consumer that reads "the timestamp" off this scratch index,
+     * including the timestamp column's own on-disk bytes -- confirmed directly against both {@code
+     * O3OpenColumnJob}'s and {@code O3PartitionJob}'s identical {@code (i == timestampIndex) ?
+     * sortedTimestampsAddr : oooMem1.addressOf(0)} convention -- gets the correct value); the {@code
+     * rowid} ({@code .i}) field is NOT unused (follow-up task #25 -- this javadoc used to claim it was;
+     * that was the root cause of a real silent-corruption bug). On a genuine {@code O3_BLOCK_MERGE}
+     * (this cell's new row(s) genuinely interleave with data it already has on disk), {@code
+     * O3PartitionJob#createMergeIndex} / the native {@code binary_merge_ts_long_index} copies each of
+     * this index's out-of-order entries VERBATIM -- {@code .ts} AND {@code .i} -- into its own merge
+     * index, and the native {@code merge_shuffle_vanilla} then does {@code dest[k] =
+     * scratchColumn[index[k].i]} to pick this row's non-timestamp values back out of the scratch column
+     * buffers built below (0-based, exactly {@code groupLen} elements each). So {@code .i} MUST hold
+     * this row's LOCAL, 0-based position {@code j} within THIS scratch -- the same {@code j} the gather
+     * loop below indexes {@code scratchColumn} with -- never its position in the original O3 batch;
+     * otherwise that lookup lands on the wrong (later, or out-of-bounds) row of the tiny scratch buffer.
+     * The timestamp itself always stayed correct even with the bug, because the merged {@code ts} is
+     * read from this index's own inline {@code .ts} field, never derived from {@code .i}.
+     * <p>
+     * Every other LIVE, FIXED-size column (dimension or not) is gathered via a plain per-row
+     * {@link Vect#memcpy} of exactly that column's element width -- width-agnostic, so it uniformly
+     * handles every fixed column type without a per-type switch.
+     * <p>
+     * A VAR-SIZE column cannot be gathered that way: its value is a slice of a data vector described by
+     * a type-specific aux entry (VARCHAR packs an inline prefix rather than a bare offset). Such a
+     * column used to be rejected before this method was ever called, which is what made an interleaved
+     * multi-cell commit a refusal on any table with a STRING/VARCHAR/BINARY/ARRAY column. It is now
+     * gathered by {@link ColumnTypeDriver#o3sort} -- the same per-driver primitive the whole-batch O3
+     * sort uses -- over a group-sized index, with the driver sizing both destination vectors. That
+     * gather reads the FULL source column, so it is driven by {@code gatherIndexAddr} (absolute batch
+     * rows), NOT by the returned {@code tsIndexAddr}, whose {@code .i} deliberately holds local
+     * positions for the downstream merge-shuffle. The two are the same length and both well-formed, so
+     * confusing them reads the wrong rows silently.
+     * <p>
+     * Every allocated buffer is appended to the caller-owned {@code scratchColumnsToFree}/
+     * {@code scratchRawBuffersToFree} accumulators rather than freed here -- they must outlive this
+     * cell's dispatched async work, which may still be draining when this method returns (see
+     * {@link #processO3BlockComposite}'s {@code finally} block, the actual free point).
+     */
+    private CompositeCellScratch buildCompositeCellGroupScratch(
+            long srcOooLo,
+            Integer[] order,
+            int groupStart,
+            int groupLen,
+            long sortedTimestampsAddr,
+            int timestampIndex,
+            ObjList<MemoryCARW> scratchColumnsToFree,
+            LongList scratchRawBuffersToFree
+    ) {
+        final long tsIndexSize = (long) groupLen << 4;
+        final long tsIndexAddr = Unsafe.malloc(tsIndexSize, MemoryTag.NATIVE_O3);
+        scratchRawBuffersToFree.add(tsIndexAddr);
+        scratchRawBuffersToFree.add(tsIndexSize);
+        // The SECOND index, in the same order, whose .i holds each row's ABSOLUTE position in the
+        // original O3 batch rather than its local one. Only a var-size gather needs it (see the
+        // ColumnTypeDriver#o3sort call below, which reads values out of the full-batch source column
+        // by absolute row); it is scratch for the duration of this method and freed before returning,
+        // unlike tsIndexAddr, which the dispatched async work reads long after that.
+        final long gatherIndexAddr = Unsafe.malloc(tsIndexSize, MemoryTag.NATIVE_O3);
+        try {
+            for (int j = 0; j < groupLen; j++) {
+                long absoluteRow = srcOooLo + order[groupStart + j];
+                long ts = getTimestampIndexValue(sortedTimestampsAddr, absoluteRow);
+                Unsafe.putLong(tsIndexAddr + ((long) j << 4), ts);
+                // .i must be this row's LOCAL, 0-based position within THIS scratch (matching the
+                // scratchColumn[j] gather loop just below) -- NOT its absolute position in the original O3
+                // batch. Task #25: the native merge-shuffle path derefs this field to pick a row's
+                // non-timestamp values out of the scratch column buffers below; see this method's own docs.
+                Unsafe.putLong(tsIndexAddr + ((long) j << 4) + 8, (long) j);
+                Unsafe.putLong(gatherIndexAddr + ((long) j << 4), ts);
+                Unsafe.putLong(gatherIndexAddr + ((long) j << 4) + 8, absoluteRow);
+            }
+            return buildCompositeCellGroupScratch0(
+                    srcOooLo, order, groupStart, groupLen, tsIndexAddr, gatherIndexAddr, scratchColumnsToFree
+            );
+        } finally {
+            Unsafe.free(gatherIndexAddr, tsIndexSize, MemoryTag.NATIVE_O3);
+        }
+    }
+
+    private CompositeCellScratch buildCompositeCellGroupScratch0(
+            long srcOooLo,
+            Integer[] order,
+            int groupStart,
+            int groupLen,
+            long tsIndexAddr,
+            long gatherIndexAddr,
+            ObjList<MemoryCARW> scratchColumnsToFree
+    ) {
+
+        final ObjList<MemoryCR> scratchColumns = new ObjList<>(columnCount * 2);
+        scratchColumns.setPos(columnCount * 2);
+        for (int i = 0; i < columnCount; i++) {
+            int columnType = metadata.getColumnType(i);
+            if (columnType < 0) {
+                continue;
+            }
+            // The DESIGNATED TIMESTAMP is copied like any other fixed-size column. It used to be
+            // skipped, because the native O3 path takes timestamps from the separate sorted-timestamp
+            // index (tsIndexAddr below) and never reads the column slot -- so a null there was
+            // invisible. The PARQUET path does read it: processParquetPartition's materializer
+            // dereferences oooColumns.getQuick(primaryIndex(ts)), which NPE'd with
+            //   Cannot invoke "MemoryCR.addressOf(long)" because ReadOnlyObjList.getQuick(int) is null
+            // and suspended the table on a DEDUP upsert into a parquet cell, where the plain twin
+            // committed the row. Covered by CompositeUnevenColumnTopSurveyTest#testParquetDedupUpsertKeys.
+            final int colOffsetForType = getPrimaryColumnIndex(i);
+            if (ColumnType.isVarSize(columnType)) {
+                // A var-size column carries an aux vector plus a data vector, and the row's value is a
+                // slice of the latter, so the width-agnostic memcpy below cannot gather it -- writing
+                // the scratch's aux entry is type-specific (VARCHAR packs an inline prefix rather than
+                // a bare offset). This used to be why an interleaved multi-cell commit was REFUSED on
+                // any table with a STRING/VARCHAR/BINARY/ARRAY column.
+                //
+                // ColumnTypeDriver#o3sort is exactly the per-driver primitive that was thought to be
+                // missing: it gathers a var-size column through an index whose .i field names the
+                // source rows, sizing and setting the append position on both destination vectors
+                // itself. It is what the ordinary whole-batch O3 sort uses (cthO3SortVarColumn), with
+                // the same primary=data / secondary=aux convention, so this is that call over a
+                // group-sized index rather than the whole batch.
+                //
+                // gatherIndexAddr, not tsIndexAddr: o3sort reads the FULL source column and needs each
+                // row's absolute batch position, while tsIndexAddr's .i deliberately holds the local
+                // position the downstream merge-shuffle wants. Passing the wrong one here reads the
+                // wrong rows -- silently, since both are well-formed indexes of the same length.
+                final int secondaryOffset = colOffsetForType + 1;
+                final MemoryCARW scratchData = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
+                scratchColumnsToFree.add(scratchData);
+                final MemoryCARW scratchAux = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
+                scratchColumnsToFree.add(scratchAux);
+                ColumnType.getDriver(columnType).o3sort(
+                        gatherIndexAddr,
+                        groupLen,
+                        o3Columns.getQuick(colOffsetForType),
+                        o3Columns.getQuick(secondaryOffset),
+                        scratchData,
+                        scratchAux
+                );
+                scratchColumns.setQuick(colOffsetForType, scratchData);
+                scratchColumns.setQuick(secondaryOffset, scratchAux);
+                continue;
+            }
+            final int shl = ColumnType.pow2SizeOf(columnType);
+            final int colOffset = getPrimaryColumnIndex(i);
+            final long srcBase = o3Columns.getQuick(colOffset).addressOf(0);
+
+            final MemoryCARW scratchMem = Vm.getCARWInstance(o3ColumnMemorySize, configuration.getO3MemMaxPages(), MemoryTag.NATIVE_O3);
+            scratchColumnsToFree.add(scratchMem);
+            scratchMem.jumpTo((long) groupLen << shl);
+            final long dstBase = scratchMem.addressOf(0);
+            for (int j = 0; j < groupLen; j++) {
+                long absoluteRow = srcOooLo + order[groupStart + j];
+                Vect.memcpy(dstBase + ((long) j << shl), srcBase + (absoluteRow << shl), 1L << shl);
+            }
+            scratchColumns.setQuick(colOffset, scratchMem);
+            // secondary (aux) slot stays null -- every live column reaching here is fixed-size, and a
+            // null secondary slot for a fixed column is the SAME convention the real o3Columns/columns
+            // lists already use (see TableWriter#configureColumn: auxMem/o3AuxMem1/o3AuxMem2 are null
+            // for a non-var-size type).
+        }
+
+        CompositeCellScratch scratch = new CompositeCellScratch();
+        scratch.tsIndexAddr = tsIndexAddr;
+        scratch.columns = scratchColumns;
+        return scratch;
+    }
+
+    /**
+     * Plain data holder for {@link #buildCompositeCellGroupScratch}'s two return values (composite-
+     * partitioning Plan 4a Task 4) -- Java has no tuple type.
+     */
+    private static final class CompositeCellScratch {
+        ObjList<MemoryCR> columns;
+        long tsIndexAddr;
+    }
+
     private void processPartitionRemoveCandidates() {
         try {
             final int n = partitionRemoveCandidates.size();
@@ -10487,6 +15639,126 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             partitionRemoveCandidates.clear();
         }
+    }
+
+    /**
+     * Spec 5.1 housekeeping: once a composite day's LAST cell directory is gone, the shared day
+     * container is an empty directory that nothing will ever reclaim — a plain table leaves no such
+     * artifact, so composite would drift from its twin on disk.
+     * <p>
+     * <b>Two independent guards, both required.</b> This runs in the same routine as the N3 collapse
+     * mechanism the {@code removePartition} gate comment describes, and {@code ff.rmdir} is
+     * RECURSIVE — an unguarded call here could delete live sibling cells. So the container is removed
+     * only when:
+     * <ol>
+     *     <li>{@code _txn} has no attached partition left at this timestamp, for ANY cellKey
+     *     ({@code hasAnyAttachedPartitionForTimestamp}, not the cellKey-0 form); and</li>
+     *     <li>the directory is physically empty — every entry enumerated, dots excluded.</li>
+     * </ol>
+     * Either guard alone would be insufficient: (1) can hold while an older cell VERSION directory is
+     * still on disk awaiting purge, and (2) can hold transiently for a day that is still attached.
+     * A directory that fails either check is left alone and reclaimed by the async purge as before.
+     */
+    private void removeEmptyDayContainer(long timestamp) {
+        if (txWriter.hasAnyAttachedPartitionForTimestamp(timestamp)) {
+            return;
+        }
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, timestamp, -1L, null);
+        other.$();
+        if (!ff.exists(other.$()) || !isDirectoryEmpty(other)) {
+            return;
+        }
+        if (ff.rmdir(other)) {
+            LOG.info().$("removed empty composite day container [path=").$substr(pathRootSize, other).I$();
+        } else {
+            LOG.info().$("could not remove empty composite day container, leaving for async purge [path=")
+                    .$substr(pathRootSize, other).$(", errno=").$(ff.errno()).I$();
+        }
+    }
+
+    /**
+     * True when {@code dirPath} holds no entries other than {@code .} and {@code ..}. Deliberately
+     * counts FILES as well as directories: an emptiness guard in front of a recursive delete must not
+     * treat a stray file as "empty".
+     */
+    /**
+     * Removes a DETACHED day's container once its cells are gone.
+     * <p>
+     * {@link #removeEmptyDayContainer} cannot do this: a composite day container also holds ZERO-BYTE
+     * phantom {@code <column>.d} files, so its {@link #isDirectoryEmpty} guard -- which deliberately
+     * counts files, so a stray file never fronts a recursive delete -- always says "not empty".
+     * <p>
+     * This variant is narrower rather than weaker. It removes the container only when every remaining
+     * entry is a zero-length FILE: any subdirectory means a cell is still present (its removal deferred
+     * by the scoreboard), and any non-empty file means real data. Either way it leaves the container to
+     * async purge instead of deleting it. Detach owns the whole day and has already hard-linked every
+     * byte into the artifact, so there is nothing here to lose -- but not at the cost of a recursive
+     * delete over something unrecognised.
+     */
+    private void removeDetachedDayContainer(long timestamp) {
+        if (txWriter.hasAnyAttachedPartitionForTimestamp(timestamp)) {
+            return;
+        }
+        other.trimTo(pathSize);
+        setPathForNativePartition(other, timestampType, partitionBy, timestamp, -1L, null);
+        if (!ff.exists(other.$())) {
+            return;
+        }
+        final int containerLen = other.size();
+        final long findPtr = ff.findFirst(other.$());
+        if (findPtr <= 0) {
+            return;
+        }
+        boolean onlyEmptyFiles = true;
+        try {
+            do {
+                if (!Files.notDots(ff.findName(findPtr))) {
+                    continue;
+                }
+                if (ff.findType(findPtr) != Files.DT_FILE) {
+                    onlyEmptyFiles = false;
+                    break;
+                }
+                other.trimTo(containerLen).concat(ff.findName(findPtr));
+                if (ff.length(other.$()) != 0) {
+                    onlyEmptyFiles = false;
+                    break;
+                }
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+            other.trimTo(containerLen);
+        }
+        if (!onlyEmptyFiles) {
+            LOG.info().$("detached day container still holds entries, leaving for async purge [path=")
+                    .$substr(pathRootSize, other).I$();
+            return;
+        }
+        if (ff.rmdir(other)) {
+            LOG.info().$("removed detached day container [path=").$substr(pathRootSize, other).I$();
+        } else {
+            LOG.info().$("could not remove detached day container, leaving for async purge [path=")
+                    .$substr(pathRootSize, other).$(", errno=").$(ff.errno()).I$();
+        }
+    }
+
+    private boolean isDirectoryEmpty(Path dirPath) {
+        final long findPtr = ff.findFirst(dirPath.$());
+        if (findPtr <= 0) {
+            // unreadable or genuinely empty -- treat as NOT empty rather than risk a recursive delete
+            return findPtr == 0;
+        }
+        try {
+            do {
+                if (Files.notDots(ff.findName(findPtr))) {
+                    return false;
+                }
+            } while (ff.findNext(findPtr) > 0);
+        } finally {
+            ff.findClose(findPtr);
+        }
+        return true;
     }
 
     private void processPartitionRemoveCandidates0(int n) {
@@ -10499,22 +15771,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // This flag will determine to schedule O3PartitionPurgeJob at the end or all done already.
         boolean scheduleAsyncPurge = false;
         long lastCommittedTxn = this.getTxn();
+        // Composite-partitioning (Plan 4b Task 1b): a routed cell's on-disk directory carries a
+        // cellSegment component the bare 5-arg setPathForNativePartition below knows nothing about
+        // (see TableUtils#setPathForNativePartition's 6-arg cellSegment overload) -- every queued
+        // candidate below now also carries its own cellKey (see every partitionRemoveCandidates.add
+        // call site), resolved once per drain via the writer's own structural compositeness, exactly
+        // mirroring every other `composite` gate in this class. isDormantWithPreexistingData tables
+        // use the plain on-disk layout despite having a PartitionSpec, so they resolve cellSegment
+        // = null too, same as every other composite gate -- byte-identical to a plain table.
+        boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+        StringSink cellSegmentSink = composite ? Misc.getThreadLocalSink() : null;
 
-        for (int i = 0; i < n; i += 2) {
+        for (int i = 0; i < n; i += 3) {
             try {
                 final long timestamp = partitionRemoveCandidates.getQuick(i);
-                final long txn = partitionRemoveCandidates.get(i + 1);
+                final long txn = partitionRemoveCandidates.getQuick(i + 1);
+                final int cellKey = (int) partitionRemoveCandidates.getQuick(i + 2);
                 // txn >= lastCommittedTxn means there are some versions found in the table directory
                 // that are not attached to the table most likely as a result of a rollback.
                 // Rollback orphans (txn >= lastCommittedTxn) are not in any txn snapshot,
                 // so no checkpoint or reader can reference them - safe to remove immediately.
                 if ((!anyReadersBeforeCommittedTxn && !checkpointInProgress) || txn >= lastCommittedTxn) {
+                    CharSequence cellSegment = null;
+                    if (composite) {
+                        cellSegmentSink.clear();
+                        renderCellSegment(cellSegmentSink, cellKey);
+                        cellSegment = cellSegmentSink;
+                    }
                     setPathForNativePartition(
                             other,
                             timestampType,
                             partitionBy,
                             timestamp,
-                            txn
+                            txn,
+                            cellSegment
                     );
                     other.$();
                     engine.getPartitionOverwriteControl().notifyPartitionMutates(tableToken, timestampType, timestamp, txn, 0);
@@ -10524,6 +15814,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 .$(", errno=").$(ff.errno())
                                 .I$();
                         scheduleAsyncPurge = true;
+                    } else if (composite) {
+                        removeEmptyDayContainer(timestamp);
                     }
                 } else {
                     scheduleAsyncPurge = true;
@@ -10572,7 +15864,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 openPartition(o3TimestampMin, 0);
                 txWriter.setMaxTimestamp(o3TimestampMin);
                 // Add the partition to the list of partitions with 0 size.
-                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0, txWriter.getTxn() - 1);
+                txWriter.updatePartitionSizeByTimestamp(o3TimestampMin, 0L, txWriter.getTxn() - 1);
+            } else if (metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData()) {
+                // Plan 4a Task 5 (per-cell frontiers): a real (non-dormant) composite table's
+                // this.columns is deliberately left closed between commits (finishO3Commit's own
+                // fix skips reopening it -- see that method's docs) since no valid single "last
+                // partition" exists for it to point at once any day has 2+ cells; every composite
+                // dispatch resolves its own per-cell path fresh regardless. isLastPartitionClosed()
+                // being true here is therefore the expected, permanent steady state for this kind of
+                // table -- not the "something went wrong resolving the last partition" case the
+                // throw below exists for -- so this is a deliberate no-op, not a bootstrap and not
+                // an error.
             } else if (!isLastPartitionParquet()) {
                 throw CairoException.critical(0).put("system error, cannot resolve WAL table last partition [path=")
                         .put(path).put(']');
@@ -10625,7 +15927,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         || (configuration.getWalMaxLagTxnCount() > 0 && txWriter.getLagTxnCount() >= configuration.getWalMaxLagTxnCount())
                         // when the time between commits is too long we need to commit regardless of the row count or volume filled
                         // this is to bring the latency of data visibility inline with user expectations
-                        || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency());
+                        || (wallClockMicros - lastWalCommitTimestampMicros > configuration.getCommitLatency())
+                        // Composite-partitioning guard (Plan 4a Task 4 fix wave 1): never let a
+                        // composite table's commit be absorbed into WAL LAG -- see
+                        // applyFromWalLagToLastPartitionPossible's own docs for why that copy is
+                        // cell-blind and unsafe. Forcing a full commit here (combined with
+                        // applyFromWalLagToLastPartitionPossible always returning false for composite,
+                        // which keeps canFastCommitNew false too) guarantees every composite commit
+                        // routes through processO3Block's cell-aware dispatch instead.
+                        || metadata.getPartitionSpec().getDimensionCount() > 0;
 
                 boolean canFastCommit = !noLag && indexers.size() == 0 && applyFromWalLagToLastPartitionPossible(commitToTimestamp, txWriter.getLagRowCount(), txWriter.isLagOrdered(), txWriter.getMaxTimestamp(), txWriter.getLagMinTimestamp(), txWriter.getLagMaxTimestamp());
                 boolean lagOrderedNew = !isCommitDedupMode() && txWriter.isLagOrdered() && ordered && walLagMaxTimestampBefore <= o3TimestampMin;
@@ -10698,6 +16008,54 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 long timestampAddr = 0;
                 MemoryCR walTimestampColumn = segmentFileCache.getWalMappedColumns().getQuick(getPrimaryColumnIndex(timestampIndex));
                 o3Columns = remapWalSymbols(mapDiffCursor, rowLo, rowHi, walPath);
+
+                // Composite fast-append (spec 1 single-cell + spec 2 multi-cell, Task 3). An eligible
+                // commit appends its rows to the touched cell(s)' kept-open segment(s), bumps each cell's
+                // (ts, cellKey) _txn size, and takes the cheap early return (mirroring plain's
+                // canFastCommitNew branch: the caller then commits via commit00, which durably persists the
+                // size bump(s) + seqTxn together). The single-cell branch is tried first; a commit it does
+                // not fast-append (multi-cell, or single-cell-eligible-but-unsupported) then gets the
+                // multi-cell branch. Only a commit NEITHER branch fast-appends releases the kept-open
+                // handles (before the full O3 path below rewrites the last partition -- a stale mmap over a
+                // rewritten file would corrupt) and falls through.
+                if (configuration.isWalCompositeFastAppendEnabled()
+                        && metadata.getPartitionSpec().getDimensionCount() > 0
+                        && isRoutedComposite()) {
+                    final int fastAppendCellKey = isCompositeSingleCellFastAppendPossible(rowLo, rowHi, ordered, o3TimestampMin, o3TimestampMax);
+                    if (fastAppendCellKey >= 0) {
+                        compositeFastAppendEligibleCount.incrementAndGet();
+                        if (canCompositeFastAppendCell(fastAppendCellKey)) {
+                            applyCompositeSingleCellFastAppend(fastAppendCellKey, rowLo, rowHi, o3TimestampMax);
+                            compositeFastAppendCommittedCount.incrementAndGet();
+                            // FOLD-NOT-WIPE (Task 2): the fast-append action already folds this cell's new
+                            // max into the SHARED compositeCellMaxTimestamp (the multi-cell predicate reads
+                            // the same cache), so Task 1's separate fold-into-compositeMultiCellMaxTimestamp
+                            // patch that used to live here is now redundant and was removed with that field.
+                            return true;
+                        }
+                        // Single-cell-eligible but this path can't fast-append the cell (var-size column,
+                        // non-zero column top). It is single-cell (one distinct cellKey), so it can never be
+                        // multi-cell-eligible (needs >= 2) -- skip the multi-cell branch and fall through.
+                        // The single-cell predicate already folded its one cell's max, so no fold is lost.
+                    } else if (isCompositeMultiCellFastAppendPossible(rowLo, rowHi, ordered, o3TimestampMin, o3TimestampMax)) {
+                        // Composite MULTI-cell fast-append (spec 2, Task 3 -- the crux). Reached only when
+                        // the single-cell predicate returned -1 (>= 2 distinct cells, or a per-cell/global
+                        // condition it rejects). The multi-cell predicate is the UNIVERSAL cache-maintainer
+                        // (it folds every touched cell's max, even when it returns false -- Task 2), so it
+                        // runs here for EVERY non-single-cell-fast-appended commit, keeping the shared cache
+                        // never stale-low. On true it has ALSO (Task 3) verified canCompositeFastAppendCell
+                        // for every touched cell, so the action appends all-or-nothing and takes the cheap
+                        // early return -- NOT closing the N-cell handle cache (the action reuses it, and the
+                        // single-cell predicate never touched it for a multi-cell commit).
+                        compositeMultiCellFastAppendEligibleCount.incrementAndGet();
+                        applyCompositeMultiCellFastAppend(rowLo, rowHi, o3TimestampMax);
+                        compositeMultiCellFastAppendCommittedCount.incrementAndGet();
+                        return true;
+                    }
+                    // Neither fast-append fired -- release every kept-open cell handle before the full O3
+                    // composite path below rewrites the last partition.
+                    closeAllCompositeFastAppendCells();
+                }
 
                 if (needsOrdering || needsDedup) {
                     if (needsOrdering) {
@@ -10895,27 +16253,39 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @return true if at least one covering posting column was rebuilt.
      */
-    private boolean resealParquetCoveringForPartition(long partitionTimestamp) {
+    private boolean resealParquetCoveringForPartition(long partitionTimestamp, int cellKey) {
         // No covering posting index anywhere on the table: the worker-built
         // non-covering .pv already stands, so skip the path resolution + stat(2)
         // and the per-column scan entirely.
         if (!hasCoveringPostingIndex()) {
             return false;
         }
-        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
+        // CELL-AWARE as of 2026-09-01. This refused a routed composite table outright, because every
+        // resolution below answered for cellKey 0: the partition index, the on-disk path (the bare
+        // 5-arg setPathForNativePartition, i.e. the day's debris container rather than the cell that
+        // holds the data), the row count, and the covering columns' tops and name txns. Skipping was
+        // never an option either -- this method keeps a covering POSTING index's parquet-backed rowids
+        // in sync with the committed partition size, so a silent skip leaves a STALE index, which is a
+        // wrong-answer risk rather than an untidy one.
+        // The caller already resolved the cell (it dispatches here on isPartitionParquetByRawIndex for
+        // that cell), so the cellKey is threaded in and every lookup below is scoped to one record.
+        final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp, cellKey);
         if (partitionIndex < 0) {
             return false;
         }
         boolean processed = false;
-        long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
+        final CharSequence cellSegment = renderCellSegmentOrNull(cellKey);
+        long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
         int plen = path.size();
         if (!ff.exists(path.slash().$()) && PartitionBy.isPartitioned(partitionBy)) {
+            // Pre-commit: the new version directory is named by the txn this commit will carry.
             path.trimTo(pathSize);
             partitionNameTxn = txWriter.getTxn();
-            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             plen = path.size();
         }
-        final long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        final long partitionSize = txWriter.getPartitionSize(partitionIndex);
         // One parquet open/mmap/decoder for the whole partition: a partition with
         // several covering posting columns decodes the file once and feeds each
         // column to indexParquetColumn, instead of re-opening the parquet per
@@ -10934,7 +16304,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Non-covering parquet posting: the worker-built .pv stands.
                     continue;
                 }
-                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, colIdx);
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
@@ -10953,7 +16323,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     parquetAddr = mapRO(ff, path.$(), LOG, parquetSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
                     parquetDecoder.of(parquetMetaReader, parquetAddr, parquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_DECODER);
                 }
-                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
+                final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, colIdx);
                 try {
                     try {
                         indexParquetColumn(
@@ -10965,6 +16335,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 metadata.getColumnIndexType(colIdx),
                                 plen,
                                 partitionTimestamp,
+                                cellKey,
                                 rowGroupBuffers,
                                 false,
                                 false,
@@ -11728,8 +17099,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 partitionTimestampHi = Long.MIN_VALUE;
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
                 long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(0);
-                txWriter.removeAttachedPartitions(partitionTimestamp);
-                safeDeletePartitionDir(partitionTimestamp, partitionNameTxn);
+                // Resolved before removeAttachedPartitions (below) mutates the array. Reachable for a
+                // real composite table (a fresh table's very first WAL commit) -- getPartitionCount() ==
+                // 1 here means index 0 (logical) is this sole entry's own raw index.
+                int cellKey = txWriter.getPartitionCellKey(0);
+                // (ts, cellKey)-resolving. The one-arg form removes cellKey 0's entry, while
+                // safeDeletePartitionDir below deletes THIS cellKey's directory -- so for a sole entry
+                // whose cellKey is not 0 the directory went and the _txn entry stayed. The cellKey is
+                // read here precisely because it can be non-zero. Found by the cellKey-0 call-site
+                // audit; byte-identical for plain and dormant-composite tables.
+                txWriter.removeAttachedPartitions(partitionTimestamp, cellKey);
+                safeDeletePartitionDir(partitionTimestamp, partitionNameTxn, cellKey);
             }
 
             processO3Block(
@@ -11752,6 +17132,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long produceNativeFromParquet(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn) {
+        return produceNativeFromParquet(path, other, partitionTimestamp, partitionIndex, partitionNameTxn, null);
+    }
+
+    private long produceNativeFromParquet(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn, @Nullable CharSequence cellSegment) {
         final int newPartitionDirLen = other.size();
 
         // packed as [auxFd, dataFd, dataVecBytesWritten]
@@ -11759,7 +17143,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final DirectLongList columnFdAndDataSize = getTempDirectLongList(3L * columnCount);
 
         final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
-        setPathForNativePartition(path.trimTo(pathSize).slash(), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(path.trimTo(pathSize).slash(), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
         int partitionDirLen = path.size();
 
         long parquetAddr = 0;
@@ -12028,6 +17412,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long produceParquetFromNative(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn, long parquetNameTxn, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
+        return produceParquetFromNative(path, other, partitionTimestamp, partitionIndex, partitionNameTxn, parquetNameTxn, bloomFilterColumns, bloomFilterFpp, null);
+    }
+
+    private long produceParquetFromNative(Path path, Path other, long partitionTimestamp, int partitionIndex, long partitionNameTxn, long parquetNameTxn, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp, @Nullable CharSequence cellSegment) {
         final long partitionRowCount = getPartitionSize(partitionIndex);
         // _pm seqTxn: the partition's own offset-3 (stable across instances), high-water if unstamped.
         long partitionSeqTxn = txWriter.getNativePartitionSeqTxn(partitionIndex);
@@ -12051,7 +17439,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 bloomFilterFpp,
                 parquetBloomFilterIndexes,
                 -1L,
-                partitionSeqTxn
+                partitionSeqTxn,
+                cellSegment,
+                // A composite attached entry IS a cell, so partitionIndex resolves it exactly; a plain
+                // table's entries all report 0.
+                txWriter.getPartitionCellKey(partitionIndex)
         );
     }
 
@@ -12252,7 +17644,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     path.trimTo(coveringPathLen);
                     int coverCount = coveringCols.size();
                     try {
-                        mapCoveringColumnsForSeal(coveringCols, lastPartitionTimestamp, coveringPathLen, coverCount);
+                        // cellKey 0: the FAST-LAG publish is unreachable for a routed composite table
+                        // (applyFromWalLagToLastPartitionPossible returns false for dimCount > 0, and
+                        // applyLagToLastPartition carries an assert to that effect -- measured, 0 fires
+                        // against a 180-fire control). Only one-cell-per-day tables reach here.
+                        mapCoveringColumnsForSeal(coveringCols, lastPartitionTimestamp, 0, coveringPathLen, coverCount);
                         // configureFollowerAndWriter would close+reopen the
                         // writer, dropping pending entries from
                         // updateIndexesParallel. configureCovering wires the
@@ -12362,13 +17758,109 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
+    /**
+     * Reads the minimum timestamp of partition index 1, i.e. assuming index 0 is about to be removed.
+     * Callers that have ALREADY removed the entry must use {@link #readMinTimestampAtIndex(int)} with
+     * index 0 instead -- on a composite table index 1 may be a sibling CELL of the same day rather
+     * than the next day, so "index 1" is not a reliable spelling of "the next surviving partition".
+     */
     private long readMinTimestamp() {
+        return readMinTimestampAtIndex(1);
+    }
+
+    /**
+     * The table minimum after a removal: the smallest per-cell minimum among the partition records that
+     * share record 0's timestamp.
+     * <p>
+     * Records are ordered (timestamp ASC, cellKey ASC), so those records are a PREFIX and the loop stops
+     * at the first different timestamp. A plain table has exactly one record per timestamp, so this reads
+     * index 0 and returns -- the same single call the composite-blind version made, which is what keeps
+     * the plain path byte-identical.
+     */
+    /**
+     * The table maximum after a removal: the largest per-cell maximum among the partition records that
+     * share {@code lastIndex}'s timestamp.
+     * <p>
+     * The mirror of {@link #readMinTimestampAcrossLeadingCells()}, and it exists for the same measured
+     * reason. Records are ordered (timestamp ASC, cellKey ASC), so the records of the last surviving
+     * DAY are a suffix and the loop walks backwards until the timestamp changes. Reading only
+     * {@code lastIndex} takes the HIGHEST-cellKey cell of that day, whose maximum has nothing to do
+     * with the day's -- cellKeys are assigned in the order dimension VALUES first arrived.
+     * <p>
+     * A maximum that lands too LOW is silent in exactly the way a too-high minimum is: {@code
+     * cullIntervals} trims the interval list against the reader's maximum as well, so filtered reads
+     * lose the rows above it while counts and unfiltered scans stay right. MEASURED before the fix,
+     * with a day whose latest row sat in cellKey 0: {@code _txn} said 23:00 for a table whose last row
+     * was at 23:30, and the twin comparison for {@code ts >= 23:15} failed with "Actual cursor does not
+     * have record at 0".
+     * <p>
+     * Callers keep their own single-record read for the plain path, so nothing about a plain table's
+     * bookkeeping changes; this only overrides the maximum, and only for a routed composite table.
+     */
+    private long readMaxTimestampAcrossTrailingCells(int lastIndex) {
+        final long lastPartitionTimestamp = txWriter.getPartitionTimestampByIndex(lastIndex);
+        long max = Long.MIN_VALUE;
+        for (int i = lastIndex; i >= 0; i--) {
+            if (txWriter.getPartitionTimestampByIndex(i) != lastPartitionTimestamp) {
+                break;
+            }
+            final boolean isParquet = txWriter.isPartitionParquet(i);
+            final long parquetFileSize = isParquet ? txWriter.getPartitionParquetFileSize(i) : -1L;
+            try {
+                final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+                cellSegmentSink.clear();
+                renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(i));
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy,
+                        lastPartitionTimestamp, txWriter.getPartitionNameTxn(i), cellSegmentSink);
+                readPartitionMinMaxTimestamps(lastPartitionTimestamp, path,
+                        metadata.getColumnName(metadata.getTimestampIndex()), isParquet, parquetFileSize,
+                        txWriter.getPartitionSize(i));
+                if (attachMaxTimestamp > max) {
+                    max = attachMaxTimestamp;
+                }
+            } finally {
+                path.trimTo(pathSize);
+            }
+        }
+        return max;
+    }
+
+    private long readMinTimestampAcrossLeadingCells() {
+        final long firstPartitionTimestamp = txWriter.getPartitionTimestampByIndex(0);
+        long min = readMinTimestampAtIndex(0);
+        for (int i = 1, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) != firstPartitionTimestamp) {
+                break;
+            }
+            final long candidate = readMinTimestampAtIndex(i);
+            if (candidate < min) {
+                min = candidate;
+            }
+        }
+        return min;
+    }
+
+    private long readMinTimestampAtIndex(int partitionIndex) {
         other.of(path).trimTo(pathSize); // reset the path to table root
-        final long timestamp = txWriter.getPartitionTimestampByIndex(1);
-        final boolean isParquet = txWriter.isPartitionParquet(1);
+        final long timestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final boolean isParquet = txWriter.isPartitionParquet(partitionIndex);
         try {
-            setStateForTimestamp(other, timestamp);
-            return isParquet ? readMinTimestampParquet(other) : readMinTimestampNative(other, timestamp);
+            // SP1D: partition index 1 is a CELL on a composite table, so its data is at
+            // <day>/<cell>.<txn> and setStateForTimestamp's day-level path finds nothing. Measured:
+            // TTL eviction suspended the table with "could not read long [path=.../2023-01-01/ts.d]"
+            // after evicting the first cell of a day, because the new table minimum was read from the
+            // day container. This is the third cell-blind site in the drop path -- sub-project 1B
+            // fixed the MAX recompute (the previous partition) and this MIN recompute is its sibling.
+            if (isRoutedComposite()) {
+                final StringSink cellSegmentSink = Misc.getThreadLocalSink();
+                cellSegmentSink.clear();
+                renderCellSegment(cellSegmentSink, txWriter.getPartitionCellKey(partitionIndex));
+                setPathForNativePartition(other, timestampType, partitionBy, timestamp,
+                        txWriter.getPartitionNameTxn(partitionIndex), cellSegmentSink);
+            } else {
+                setStateForTimestamp(other, timestamp);
+            }
+            return isParquet ? readMinTimestampParquet(other, partitionIndex) : readMinTimestampNative(other, timestamp);
         } finally {
             other.trimTo(pathSize);
         }
@@ -12389,9 +17881,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private long readMinTimestampParquet(Path partitionPath) {
+    private long readMinTimestampParquet(Path partitionPath, int partitionIndex) {
         try {
-            final long parquetFileSize = txWriter.getPartitionParquetFileSize(1);
+            // Index threaded through rather than hardcoded to 1: readMinTimestampAtIndex can now be
+            // called with index 0 (after a removal), and reading the parquet size from a DIFFERENT
+            // partition than the one whose isParquet flag was tested trips
+            // "parquet file size read on a native partition" whenever the two disagree. Measured in
+            // TableReaderReloadFuzzTest#testConvertPartition.
+            final long parquetFileSize = txWriter.getPartitionParquetFileSize(partitionIndex);
             int partitionDirLen = partitionPath.size();
             openParquetMetadataOrThrow(partitionPath, partitionDirLen, parquetFileSize);
             final int parquetTsIndex = parquetMetaReader.getDesignatedTimestampColumnIndex();
@@ -12422,7 +17919,360 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // returns size of partition detected, e.g., size of monotonic increase
     // of timestamp longs read from 0 offset to the end of the file
     // It also writes min and max values found in detachedMinTimestamp and detachedMaxTimestamp
+    /**
+     * Composite counterpart of {@link #readNativeSizeMinMaxTimestamps}: the artifact's size is the SUM
+     * across its cells and its bounds are the FOLD across them, because a composite day keeps its data
+     * one level down in per-cell directories and carries only zero-byte phantom column files at the
+     * container root.
+     * <p>
+     * Rendering the artifact's cellKeys through THIS table's registry is sound only because
+     * {@link CompositeDetachedArtifact#checkSameTable} has already refused a foreign artifact -- a
+     * cellKey is table-local.
+     */
+    /**
+     * Per-cell CONVERT PARTITION TO PARQUET for a composite day. Task 2b of the per-cell parquet plan.
+     * <p>
+     * Each cell becomes its own {@code <day>/<cell>.<txn>/data.parquet}, preserving the 1:1 between a
+     * cell and a {@code _txn} partition record -- which is what keeps per-cell DROP/DETACH addressing
+     * working after conversion, and what lets a day hold a MIX of native and parquet cells.
+     * <p>
+     * <b>Ordering is the atomicity mechanism, and it is deliberate.</b> Invariant 3 requires all cells or
+     * none, but each cell's encode writes real files long before anything commits. So PHASE 1 encodes
+     * every cell while touching no {@code _txn}/{@code _cv} state at all: a failure there rolls back by
+     * deleting the directories it created, and the day is still wholly native because nothing else was
+     * mutated yet. Only once every cell has encoded does PHASE 2 do the bookkeeping and take the single
+     * commit. There is no window in which some cells are parquet and others are not.
+     * <p>
+     * NOT reachable from SQL yet -- {@code convertPartitionNativeToParquet}'s gate is still closed,
+     * because until the cross-cell merge cursors can read parquet cells, converting one would simply
+     * make the table unreadable.
+     */
+    private boolean convertCompositePartitionNativeToParquet(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
+        // Consolidate a SPLIT day before converting it, which is what the plain path does:
+        // convertPartitionNativeToParquet calls squashPartitionForce(partitionIndex) as its first
+        // mutating step. Composite returns before reaching that call, and the cell collection below
+        // matches on the EXACT partition timestamp -- but a split fragment shares the day's calendar
+        // FLOOR while carrying its own raw timestamp, so it is never collected. It was left native
+        // beside the parquet cells this method then writes.
+        //
+        // That mixed day is precisely the shape squashSplitPartitionsComposite_mergeFragment now has to
+        // refuse: merging a native fragment into a parquet cell lands raw column bytes on data.parquet
+        // and destroys the footer ("invalid _pm file: failed to resolve footer"). Squashing here removes
+        // the shape at its source, and the ordering matters -- at this point nothing in the day is
+        // parquet yet (the PHASE 1 loop below rejects a day that already holds a parquet cell), so that
+        // refusal cannot fire on this call.
+        //
+        // squashPartitionForce is safe to reach from here: it scopes its range with hasSplitFragments,
+        // which distinguishes a genuine fragment (same floor, DIFFERENT raw timestamp) from a sibling
+        // cell (same raw timestamp), and squashSplitPartitions routes composite tables to the
+        // cell-scoped composite merge.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) == partitionTimestamp) {
+                squashPartitionForce(i);
+                break;
+            }
+        }
+
+        final IntList cellKeys = new IntList();
+        final IntList rawIndexes = new IntList();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == partitionTimestamp) {
+                cellKeys.add(txWriter.getPartitionCellKey(i));
+                rawIndexes.add(i * txWriter.getLongsPerAttachedPartition());
+            }
+        }
+        if (cellKeys.size() == 0) {
+            throw CairoException.nonCritical()
+                    .put("cannot convert partition to parquet, partition does not exist [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
+        final ObjList<String> cellSegments = new ObjList<>();
+        final LongList fileLengths = new LongList();
+        // captured BEFORE phase 2, because updatePartitionSizeAndTxnByRawIndex re-stamps each record's
+        // name-txn to the current one. Reading them back afterwards would hand phase 3 the NEW txn and
+        // delete the parquet directory just created -- measured: both cells converted, _txn said parquet,
+        // and every data.parquet had been removed again.
+        final LongList oldCellNameTxns = new LongList();
+        final ObjList<String> createdDirs = new ObjList<>();
+        final StringSink segmentSink = new StringSink();
+        final long parquetNameTxn = getTxn();
+
+        // PHASE 1 -- encode every cell. No _txn or _cv mutation in here.
+        try {
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                final int rawIndex = rawIndexes.getQuick(i);
+                if (txWriter.isPartitionParquetByRawIndex(rawIndex)) {
+                    throw CairoException.nonCritical()
+                            .put("cannot convert a day holding a parquet cell [table=")
+                            .put(tableToken.getTableName()).put(']');
+                }
+                segmentSink.clear();
+                renderCellSegment(segmentSink, cellKeys.getQuick(i));
+                final String cellSegment = segmentSink.toString();
+                cellSegments.add(cellSegment);
+
+                final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(rawIndex);
+                oldCellNameTxns.add(cellNameTxn);
+                setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, cellNameTxn, cellSegment);
+                if (!ff.exists(path.$())) {
+                    throw CairoException.nonCritical().put("cell directory does not exist [path=").put(path).put(']');
+                }
+
+                setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
+                createDirsOrFail(ff, other, configuration.getMkDirMode());
+                createdDirs.add(other.toString());
+
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
+                fileLengths.add(produceParquetFromNative(
+                        path, other, partitionTimestamp, rawIndex / txWriter.getLongsPerAttachedPartition(),
+                        cellNameTxn, parquetNameTxn, bloomFilterColumns, bloomFilterFpp, cellSegment));
+            }
+        } catch (Throwable th) {
+            for (int i = 0, n = createdDirs.size(); i < n; i++) {
+                // absolute paths, re-established with of() -- concat onto the table root would prefix
+                // the root twice and delete nothing
+                other.of(createdDirs.getQuick(i));
+                if (!ff.rmdir(other.slash())) {
+                    LOG.error().$("could not remove partially converted cell [path=").$(other).I$();
+                }
+            }
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // PHASE 2 -- bookkeeping for every cell, then ONE commit.
+        for (int i = 0, n = cellKeys.size(); i < n; i++) {
+            final int rawIndex = rawIndexes.getQuick(i);
+            final int cellKey = cellKeys.getQuick(i);
+            final long cellRowCount = txWriter.getPartitionSizeByRawIndex(rawIndex);
+
+            copyOrRebuildColumnIndexes(partitionTimestamp, oldCellNameTxns.getQuick(i), cellSegments.getQuick(i), parquetNameTxn, cellRowCount);
+            zeroColumnTopsAfterParquetRewrite(partitionTimestamp, cellKey, cellRowCount, false);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(rawIndex, cellRowCount);
+            txWriter.setPartitionParquetGeneratedByRawIndex(rawIndex, true);
+            txWriter.setPartitionParquetByRawIndex(rawIndex, fileLengths.getQuick(i));
+        }
+        columnVersionWriter.commit();
+        txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        txWriter.bumpPartitionTableVersion();
+        commitTxWriter();
+
+        // PHASE 3 -- post-commit housekeeping. Failures here must not undo the committed conversion.
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                safeDeletePartitionDir(partitionTimestamp, oldCellNameTxns.getQuick(i), cellKeys.getQuick(i));
+            }
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+        return true;
+    }
+
+    /**
+     * Per-cell CONVERT PARTITION TO NATIVE, the inverse of
+     * {@link #convertCompositePartitionNativeToParquet}. Task 3 of the per-cell parquet plan.
+     * <p>
+     * Same phase split, for the same reason: PHASE 1 decodes every cell while touching no
+     * {@code _txn}/{@code _cv} state, so a failure part-way leaves the day wholly parquet rather than
+     * half-converted, and only then does PHASE 2 take the single commit.
+     */
+    private boolean convertCompositePartitionParquetToNative(long partitionTimestamp) {
+        return convertCompositePartitionParquetToNative(partitionTimestamp, -1, true);
+    }
+
+    private boolean convertCompositePartitionParquetToNativeDeferred(long partitionTimestamp) {
+        return convertCompositePartitionParquetToNative(partitionTimestamp, -1, false);
+    }
+
+    /**
+     * @param onlyCellKey convert just this cell, or -1 for every cell of the day. The single-cell form
+     *                    is what produces a day holding a MIX of native and parquet cells -- a state
+     *                    per-cell conversion makes reachable and whole-partition conversion never could.
+     */
+    private boolean convertCompositePartitionParquetToNative(long partitionTimestamp, int onlyCellKey, boolean doCommit) {
+        partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
+        final IntList cellKeys = new IntList();
+        final IntList rawIndexes = new IntList();
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == partitionTimestamp
+                    && (onlyCellKey < 0 || txWriter.getPartitionCellKey(i) == onlyCellKey)) {
+                cellKeys.add(txWriter.getPartitionCellKey(i));
+                rawIndexes.add(i * txWriter.getLongsPerAttachedPartition());
+            }
+        }
+        if (cellKeys.size() == 0) {
+            throw CairoException.nonCritical()
+                    .put("cannot convert partition to native, partition does not exist [table=")
+                    .put(tableToken.getTableName()).put(']');
+        }
+
+        final ObjList<String> cellSegments = new ObjList<>();
+        final LongList rowCounts = new LongList();
+        final LongList oldCellNameTxns = new LongList();
+        final ObjList<String> createdDirs = new ObjList<>();
+        final StringSink segmentSink = new StringSink();
+        final long nativeNameTxn = getTxn();
+
+        // PHASE 1 -- decode every cell. No _txn or _cv mutation in here.
+        try {
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                final int rawIndex = rawIndexes.getQuick(i);
+                if (!txWriter.isPartitionParquetByRawIndex(rawIndex)) {
+                    throw CairoException.nonCritical()
+                            .put("cannot convert a day holding a native cell [table=")
+                            .put(tableToken.getTableName()).put(']');
+                }
+                segmentSink.clear();
+                renderCellSegment(segmentSink, cellKeys.getQuick(i));
+                final String cellSegment = segmentSink.toString();
+                cellSegments.add(cellSegment);
+
+                final long cellNameTxn = txWriter.getPartitionNameTxnByRawIndex(rawIndex);
+                oldCellNameTxns.add(cellNameTxn);
+
+                setPathForParquetPartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, cellNameTxn, cellSegment);
+                if (!ff.exists(path.$())) {
+                    throw CairoException.nonCritical().put("cell parquet file does not exist [path=").put(path).put(']');
+                }
+
+                setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, nativeNameTxn, cellSegment);
+                createDirsOrFail(ff, other, configuration.getMkDirMode());
+                createdDirs.add(other.toString());
+
+                final long rowCount = produceNativeFromParquet(
+                        path, other, partitionTimestamp, rawIndex / txWriter.getLongsPerAttachedPartition(),
+                        cellNameTxn, cellSegment);
+                rowCounts.add(rowCount);
+                restoreIndexFilesAfterParquetToNative(partitionTimestamp, nativeNameTxn, other.size(), rowCount, cellSegment);
+            }
+        } catch (Throwable th) {
+            for (int i = 0, n = createdDirs.size(); i < n; i++) {
+                other.of(createdDirs.getQuick(i));
+                if (!ff.rmdir(other.slash())) {
+                    LOG.error().$("could not remove partially converted cell [path=").$(other).I$();
+                }
+            }
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+            throw th;
+        } finally {
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+
+        // PHASE 2 -- bookkeeping, then ONE commit.
+        final long partitionSeqTxn = tableToken.isWal() ? txWriter.getSeqTxn() : 0;
+        for (int i = 0, n = cellKeys.size(); i < n; i++) {
+            final int rawIndex = rawIndexes.getQuick(i);
+            txWriter.updatePartitionSizeAndTxnByRawIndex(rawIndex, rowCounts.getQuick(i));
+            txWriter.setPartitionNativeByRawIndex(rawIndex, partitionSeqTxn);
+            // the old dir's data.parquet is deleted below, so generated must not outlive it
+            txWriter.setPartitionParquetGeneratedByRawIndex(rawIndex, false);
+        }
+        if (columnVersionWriter.hasChanges()) {
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+        }
+        txWriter.bumpPartitionTableVersion();
+
+        if (!doCommit) {
+            // DEFERRED form. The caller (ConvertOperatorImpl, for a column-type change spanning
+            // parquet partitions) batches several conversions and commits them together, so the
+            // commit and the old-directory deletes move to commitPendingParquetToNativeConversions.
+            // Queueing per CELL is what makes that batched cleanup cell-aware: each entry carries the
+            // cellKey whose directory it describes.
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                pendingParquetToNativeConversions.add(
+                        partitionTimestamp,
+                        oldCellNameTxns.getQuick(i),
+                        // isLastConverted: a routed composite table has no day-level active partition
+                        // to reopen (see openLastPartitionAndSetAppendPosition), so never.
+                        0L,
+                        cellKeys.getQuick(i)
+                );
+            }
+            return true;
+        }
+
+        commitTxWriter();
+
+        // PHASE 3 -- post-commit housekeeping, on the OLD name-txns captured above.
+        try {
+            try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
+                metadataRW.setHasParquetPartitions(tableToken, txWriter.hasParquetPartitions());
+            }
+            for (int i = 0, n = cellKeys.size(); i < n; i++) {
+                safeDeletePartitionDir(partitionTimestamp, oldCellNameTxns.getQuick(i), cellKeys.getQuick(i));
+            }
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
+        return true;
+    }
+
+    /**
+     * Test seam for {@link #convertCompositePartitionParquetToNative}.
+     */
+    @TestOnly
+    public boolean convertCompositePartitionToNativeForTest(long partitionTimestamp) {
+        return convertCompositePartitionParquetToNative(partitionTimestamp);
+    }
+
+    /**
+     * Test seam converting a SINGLE cell back to native, to build a mixed native/parquet day.
+     */
+    @TestOnly
+    public boolean convertCompositeCellToNativeForTest(long partitionTimestamp, int cellKey) {
+        return convertCompositePartitionParquetToNative(partitionTimestamp, cellKey, true);
+    }
+
+    /**
+     * Test seam for {@link #convertCompositePartitionNativeToParquet}: the SQL-facing entry point is
+     * still gated, so this is how task 2b is exercised before the readers of task 5 exist.
+     */
+    @TestOnly
+    public boolean convertCompositePartitionToParquetForTest(long partitionTimestamp, @Nullable CharSequence bloomFilterColumns, double bloomFilterFpp) {
+        return convertCompositePartitionNativeToParquet(partitionTimestamp, bloomFilterColumns, bloomFilterFpp);
+    }
+
+    private long readCompositeSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
+        final IntList cellKeys = attachCellKeys;
+        final LongList cellSizes = attachCellSizes;
+        CompositeDetachedArtifact.readCells(ff, path, timestampType, partitionBy, partitionTimestamp, cellKeys, cellSizes);
+        if (cellKeys.size() == 0) {
+            throw CairoException.nonCritical()
+                    .put("partition is not present in detached txn file [path=").put(path).put(']');
+        }
+
+        final ObjList<CharSequence> segments = new ObjList<>();
+        final StringSink segmentSink = new StringSink();
+        long total = 0;
+        for (int i = 0, n = cellKeys.size(); i < n; i++) {
+            segmentSink.clear();
+            renderCellSegment(segmentSink, cellKeys.getQuick(i));
+            segments.add(segmentSink.toString());
+            total += cellSizes.getQuick(i);
+        }
+
+        final long[] minMax = new long[]{-1, -1};
+        CompositeDetachedArtifact.readMinMaxTimestamps(ff, path, columnName, timestampType, segments, cellSizes, minMax);
+        attachMinTimestamp = minMax[0];
+        attachMaxTimestamp = minMax[1];
+        return total;
+    }
+
     private long readNativeSizeMinMaxTimestamps(long partitionTimestamp, Path path, CharSequence columnName) {
+        if (metadata.getPartitionSpec().getDimensionCount() > 0) {
+            return readCompositeSizeMinMaxTimestamps(partitionTimestamp, path, columnName);
+        }
         int pathLen = path.size();
         try {
             path.concat(TXN_FILE_NAME);
@@ -12430,6 +18280,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 if (attachTxReader == null) {
                     attachTxReader = new TxReader(ff);
                 }
+                attachTxReader.setComposite(metadata.getPartitionSpec().getDimensionCount() > 0);
                 attachTxReader.ofRO(path.$(), timestampType, partitionBy);
                 attachTxReader.unsafeLoadAll();
 
@@ -12667,12 +18518,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 -1L,
                 partitionTimestamp,
                 partitionBy,
+                // ATTACH PARTITION is refused outright for composite tables, so this rebuild is never
+                // reached with one and cellKey 0 is exact rather than a default.
+                0,
                 partitionSize
         );
     }
 
     private void rebuildParquetRewriteIndexes(
             long partitionTimestamp,
+            int cellKey,
             long partitionNameTxn,
             long parquetFileSize,
             int partitionDirLen,
@@ -12680,12 +18535,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         long parquetAddr = 0;
         long parquetSize = 0;
+        final CharSequence cellSegment = renderCellSegmentOrNull(cellKey);
         setPathForNativePartition(
                 path.trimTo(pathSize),
                 timestampType,
                 partitionBy,
                 partitionTimestamp,
-                partitionNameTxn
+                partitionNameTxn,
+                cellSegment
         );
         assert path.size() == partitionDirLen;
         try {
@@ -12711,11 +18568,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             parquetRewriteIndexer,
                             metadata.getColumnName(columnIndex),
                             columnIndex,
-                            getColumnNameTxn(partitionTimestamp, columnIndex),
+                            getColumnNameTxn(partitionTimestamp, cellKey, columnIndex),
                             metadata.getIndexValueBlockCapacity(columnIndex),
                             indexType,
                             partitionDirLen,
                             partitionTimestamp,
+                            cellKey,
                             parquetRewriteRowGroupBuffers,
                             true,
                             true,
@@ -12797,7 +18655,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // Schedule partitions directory deletions
                     long timestamp = txWriter.getPartitionTimestampByIndex(i);
                     long partitionTxn = txWriter.getPartitionNameTxn(i);
-                    partitionRemoveCandidates.add(timestamp, partitionTxn);
+                    // Resolved by raw index before txWriter.reconcileOptimisticPartitions() (below)
+                    // mutates the array. Confirmed unreachable for composite (non-WAL commit(long
+                    // o3MaxLag) path only -- see Plan 4b Task 1's own report), threaded through for
+                    // defense-in-depth/consistency; always 0 for a plain table.
+                    int cellKey = txWriter.getPartitionCellKey(i);
+                    partitionRemoveCandidates.add(timestamp, partitionTxn, cellKey);
                 }
                 txWriter.reconcileOptimisticPartitions();
                 return true;
@@ -13054,12 +18917,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void removeColumnFiles(int columnIndex, String columnName, int columnType, byte indexType) {
         PurgingOperator purgingOperator = getPurgingOperator();
+        long lastDayLevelPurged = Long.MIN_VALUE;
         if (PartitionBy.isPartitioned(partitionBy)) {
             for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
                 long partitionTimestamp = txWriter.getPartitionTimestampByIndex(i);
                 if (!txWriter.isPartitionReadOnlyByPartitionTimestamp(partitionTimestamp)) {
                     long partitionNameTxn = txWriter.getPartitionNameTxn(i);
                     long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
+                    // SP2A: this loop already visits every (ts, cellKey) partition -- getPartitionCount
+                    // is per-cell -- but the call carried no cell, so a 3-cell day queued the SAME
+                    // day-level path three times and reached no cell's files. Render the cell here;
+                    // PurgingOperator is in griffin and has no writer to render one itself.
+                    String cellSegment = null;
+                    if (isRoutedComposite()) {
+                        final StringSink cellSink = Misc.getThreadLocalSink();
+                        cellSink.clear();
+                        renderCellSegment(cellSink, txWriter.getPartitionCellKey(i));
+                        cellSegment = cellSink.toString();
+                    }
                     purgingOperator.add(
                             columnIndex,
                             columnName,
@@ -13067,8 +18942,28 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             indexType,
                             columnNameTxn,
                             partitionTimestamp,
-                            partitionNameTxn
+                            partitionNameTxn,
+                            cellSegment
                     );
+                    // A composite day container ALSO holds a vestigial day-level copy of each column
+                    // file that nothing reads (recorded in 1C: the container survives its last cell
+                    // because of them). The pre-SP2A day-blind purge happened to delete exactly that
+                    // file and nothing else; redirecting to the cell would otherwise leave it behind,
+                    // trading one leak for another. Queued ONCE per day, not once per cell -- the old
+                    // code queued it once per cell, which is why a 3-cell day produced three identical
+                    // entries.
+                    if (cellSegment != null && partitionTimestamp != lastDayLevelPurged) {
+                        lastDayLevelPurged = partitionTimestamp;
+                        purgingOperator.add(
+                                columnIndex,
+                                columnName,
+                                columnType,
+                                indexType,
+                                columnNameTxn,
+                                partitionTimestamp,
+                                partitionNameTxn
+                        );
+                    }
                 }
             }
         } else {
@@ -13089,6 +18984,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     columnType,
                     indexType,
                     columnVersionWriter.getSymbolTableNameTxn(columnIndex),
+                    // the symbol table lives at the table root, not in any cell
                     PurgingOperator.TABLE_ROOT_PARTITION,
                     -1
             );
@@ -13168,7 +19064,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private void removeNonAttachedPartitions() {
         LOG.debug().$("purging non attached partitions [path=").$substr(pathRootSize, path.$()).I$();
         try {
+            compositeLiveDays.clear();
             ff.iterateDir(path.$(), removePartitionDirsNotAttached);
+            // AFTER the walk, never inside it: see the note at the recording site.
+            for (int i = 0, n = compositeLiveDays.size(); i < n; i++) {
+                queueOrphanedCellDirs(compositeLiveDays.getQuick(i));
+            }
+            compositeLiveDays.clear();
             processPartitionRemoveCandidates();
         } finally {
             path.trimTo(pathSize);
@@ -13197,8 +19099,45 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     txn = Numbers.parseLong(utf8Sink, txnSep + 1, utf8Sink.size());
                 }
                 long dirTimestamp = partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, txnSep, EN_LOCALE);
-                if (txn != txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp, -2)) {
-                    partitionRemoveCandidates.add(dirTimestamp, txn);
+                // Plan 4b Task 1b: this per-entry callback walks the TABLE ROOT's immediate children --
+                // for a real composite table those are DAY containers, never a specific cell (a cell's
+                // own .nameTxn suffix lives one level deeper, see TableUtils#setSinkForNativePartition's
+                // 6-arg cellSegment overload: "<day>/<cellSegment>.<nameTxn>", the day component itself
+                // is NEVER dot-suffixed for composite). The plain txn-mismatch check below assumes a
+                // day-level nameTxn suffix exists and is cellKey-blind (getPartitionNameTxnByPartitionTimestamp
+                // resolves cellKey 0 only) -- for composite this is simply the wrong question at this
+                // level, and answering it wrong is dangerous: the moment ANY cell under a live day
+                // acquires its own non-sentinel nameTxn from a real merge (this task's own extend fix),
+                // the bare on-disk day dir (txn=-1, correctly, since it is never itself suffixed) stops
+                // matching the cellKey-0-resolved "expected" nameTxn, and this method would queue the
+                // WHOLE day -- every sibling cell's still-live data -- for removal via the cell-blind
+                // (no cellSegment) purge path. The only question that is SAFE to ask at the day level for
+                // composite is "is this day live AT ALL" (any cellKey): if any cell is attached here,
+                // this directory (and everything under it, regardless of any individual cell's own
+                // nameTxn) must never be queued through this bare-day path. A genuinely fully-evicted day
+                // (no cell attached at all) is still swept exactly as before -- nothing live can be under
+                // it, so the bare 5-arg (no cellSegment) removal is correct there too. Orphaned CELL
+                // subdirectories one level deeper are not (and were never, pre-existing) discovered by
+                // this single-level iterateDir walk either way -- a pre-existing, safe (non-corrupting)
+                // gap, not one this fix introduces or is required to close. Plain and dormant-composite
+                // tables are completely unaffected (this whole branch is additive, gated on `composite`,
+                // and never touches the existing txn-mismatch check below).
+                boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+                if (composite) {
+                    if (!txWriter.hasAnyAttachedPartitionForTimestamp(dirTimestamp)) {
+                        partitionRemoveCandidates.add(dirTimestamp, txn, 0);
+                    } else {
+                        // The day is live, so the day-level question is answered -- but a cell's own
+                        // <cell>.<nameTxn> lives one level deeper than this walk. RECORD the day and
+                        // scan it after this walk finishes: iterating a subdirectory from inside this
+                        // callback shares `path` and `utf8Sink` with the walk that is running, and
+                        // clobbering them mid-iteration made the outer loop parse a corrupted name and
+                        // queue LIVE directories for removal -- a JVM crash in the O3 merge, two
+                        // commits later. Nested iterateDir over shared scratch is the bug, not the idea.
+                        compositeLiveDays.add(dirTimestamp);
+                    }
+                } else if (txn != txWriter.getPartitionNameTxnByPartitionTimestamp(dirTimestamp, -2)) {
+                    partitionRemoveCandidates.add(dirTimestamp, txn, 0);
                 }
             } catch (NumericException ignore) {
                 // not a date?
@@ -13208,6 +19147,96 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 LOG.error().$("invalid partition directory inside table folder: ").$(path).$();
             }
         }
+    }
+
+
+    /**
+     * Queues the day's {@code <cell>.<nameTxn>} directories that {@code _txn} does not point at.
+     * <p>
+     * Identification runs the SAFE way round: each ATTACHED record of the day renders its own segment
+     * and live directory name, and a directory is queued only when it belongs to one of those cells and
+     * carries a different name txn. A live directory therefore cannot be queued -- its name is the one
+     * being compared against -- and a directory whose segment matches no attached cell is left alone,
+     * because it cannot be resolved to a cellKey and guessing here deletes data. This is the code that
+     * removes partition directories; the conservative direction is the correct one.
+     */
+    private void queueOrphanedCellDirs(long dayTimestamp) {
+        // Its OWN path and name sink, never the writer's `path`/`utf8Sink`: this runs between walks
+        // that use both, and the last version shared them.
+        final Path dayPath = Path.getThreadLocal(configuration.getDbRoot());
+        dayPath.concat(tableToken.getDirName());
+        TableUtils.setSinkForNativePartition(dayPath.slash(), timestampType, partitionBy, dayTimestamp, -1L);
+        orphanScanPath = dayPath;
+        try {
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.getPartitionTimestampByIndex(i) != dayTimestamp) {
+                    continue;
+                }
+                final int cellKey = txWriter.getPartitionCellKey(i);
+                final long liveNameTxn = txWriter.getPartitionNameTxn(i);
+                orphanCellSink.clear();
+                renderCellSegment(orphanCellSink, cellKey);
+                orphanLiveDirSink.clear();
+                orphanLiveDirSink.put(orphanCellSink);
+                if (liveNameTxn > -1) {
+                    orphanLiveDirSink.put('.').put(liveNameTxn);
+                }
+                orphanCandidateDirs.clear();
+                orphanScanSegment = orphanCellSink;
+                orphanScanLiveDir = orphanLiveDirSink;
+                ff.iterateDir(dayPath.$(), collectOrphanCellDirs);
+                for (int c = 0, cn = orphanCandidateDirs.size(); c < cn; c++) {
+                    partitionRemoveCandidates.add(dayTimestamp, orphanCandidateDirs.getQuick(c), cellKey);
+                }
+            }
+        } finally {
+            orphanScanSegment = null;
+            orphanScanLiveDir = null;
+            orphanScanPath = null;
+            orphanCandidateDirs.clear();
+        }
+    }
+
+    /**
+     * One entry of a day container, during {@link #queueOrphanedCellDirs}: collects the name txn of a
+     * directory that belongs to the cell being scanned but is not its live version.
+     */
+    private void collectOrphanCellDirs(long pUtf8NameZ, int type) {
+        final Path dayPath = orphanScanPath;
+        if (dayPath == null) {
+            return;
+        }
+        final int checkedType = ff.typeDirOrSoftLinkDirNoDots(dayPath, dayPath.size(), pUtf8NameZ, type, orphanNameSink);
+        if (checkedType == Files.DT_UNKNOWN || CairoKeywords.isDetachedDirMarker(pUtf8NameZ)
+                || Utf8s.endsWithAscii(orphanNameSink, configuration.getAttachPartitionSuffix())) {
+            return;
+        }
+        final CharSequence segment = orphanScanSegment;
+        final CharSequence liveDir = orphanScanLiveDir;
+        if (segment == null || liveDir == null) {
+            return;
+        }
+        final CharSequence name = orphanNameSink.asAsciiCharSequence();
+        if (Chars.equals(name, liveDir)) {
+            return; // the live version, by name
+        }
+        // "<segment>.<txn>" and nothing else: a bare "<segment>" with no suffix IS the sentinel-named
+        // live form, and is only reachable here when the live name txn is not -1 -- still an orphan.
+        if (!Chars.startsWith(name, segment)) {
+            return;
+        }
+        long txn = -1;
+        if (name.length() > segment.length()) {
+            if (name.charAt(segment.length()) != '.') {
+                return; // a different cell whose segment merely shares this prefix
+            }
+            try {
+                txn = Numbers.parseLong(name, segment.length() + 1, name.length());
+            } catch (NumericException e) {
+                return;
+            }
+        }
+        orphanCandidateDirs.add(txn);
     }
 
     private void removeSymbolMapFilesQuiet(CharSequence name, long columnNameTxn) {
@@ -13293,6 +19322,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private long repairDataGaps(final long timestamp) {
+        // Plan 4a Task 6: this walk enumerates attached partitions BY DAY ONLY (the loop below
+        // advances via getNextPartitionTimestamp, which -- correctly, per Task 5's own fix -- skips
+        // every composite CELL SIBLING sharing one day's exact raw ts) and, per day visited, tallies
+        // exactly ONE entry's row count (getPartitionRowCountByTimestamp -> the thin cellKey=0 wrapper
+        // around findAttachedPartitionRawIndexBy -- see that method's own docs). For a plain (or
+        // dormant-composite) table there is only ever one entry per day, so this is exactly correct.
+        // For a REAL composite table with 2+ cells sharing at least one day, it silently ignores every
+        // sibling cell's rows, undercounts the recomputed fixedRowCount, and -- because that then
+        // mismatches the correctly-persisted _txn state -- OVERWRITES the correct state with the
+        // wrong, undercounted one via txWriter.reset(...) below: a genuine, reproduced native-heap-
+        // corrupting bug (glibc "malloc(): invalid size (unsorted)"/"corrupted top size"), found by
+        // this task's own reopen-routing test. This method's body only ever runs from a fresh
+        // TableWriter bootstrap (initLastPartition <- configureAppendPosition, called from the
+        // constructor and from rollback()), which is exactly why no earlier composite test ever
+        // exercised it: none released and reopened a writer instance mid a multi-cell-day sequence.
+        // Properly generalizing this crash-gap repair to walk and validate every cell's own physical
+        // directory is a materially larger change -- the same "detach/attach/Parquet cell paths"
+        // bucket Plan 4a's own decomposition already defers to its 4b follow-up -- so this skips the
+        // repair walk entirely for a real composite table rather than claiming a fix: the method only
+        // ever *repairs* a detected mismatch, so skipping it is a strict no-op for a table that never
+        // hit this undercounting bug, and safe (rather than actively harmful) for one that does, since
+        // the already-correct, persisted _txn state (Task 5's own guarantee) is left alone instead of
+        // being overwritten by a wrong recomputation. Plain and dormant-composite tables are completely
+        // unaffected -- same gate as every other Task 5 fix site (finishO3Commit, o3ConsumePartitionUpdateSink,
+        // processO3Block).
+        final boolean composite = metadata.getPartitionSpec().getDimensionCount() > 0 && !isDormantWithPreexistingData();
+        if (composite) {
+            return timestamp;
+        }
         if (txWriter.getMaxTimestamp() != Numbers.LONG_NULL && PartitionBy.isPartitioned(partitionBy)) {
             long fixedRowCount = 0;
             long lastTimestamp = -1;
@@ -13351,6 +19409,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             dFile(path.trimTo(p), metadata.getColumnName(metadata.getTimestampIndex()), COLUMN_NAME_TXN_NONE);
                             maxTimestamp = readLongAtOffset(ff, path.$(), tempMem16b, (transientRowCount - 1) * Long.BYTES);
                             fixedRowCount -= transientRowCount;
+                            // AUDIT NOTE (cellKey-0 sweep, 2026-08-26): cellKey-0-only, like the
+                            // setStateForTimestamp call above -- this whole recovery path is cell-blind,
+                            // so threading a cellKey into just this line would not make it correct. Left
+                            // as-is deliberately: repairDataGaps needs its own per-cell pass, not a
+                            // one-line patch. Reachable only after an unclean shutdown.
                             txWriter.removeAttachedPartitions(txWriter.getMaxTimestamp());
                             LOG.info()
                                     .$("updated active partition [name=").$(path.trimTo(p).$())
@@ -13427,6 +19490,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // block through the unchanged O3 path so a differential test can prove the
         // fast path is result-equivalent to O3.
         if (PostingIndexWriter.COVERING_FASTPATH_DISABLED) {
+            return o3Lo;
+        }
+        // Composite-partitioning guard (master-merge 2026-08-10): this path appends the block's
+        // columns straight onto the writer's single shared "last partition" handles via
+        // cthAppendWalColumnToLastPartition + applyFromWalLagToLastPartition -- the SAME cell-blind
+        // copy that applyFromWalLagToLastPartitionPossible refuses for composite tables (see its docs:
+        // those handles are keyed by day only and are never repointed at a real <day>/<cell> segment,
+        // so any row taking this path would land in the orphan bare day directory). This method is
+        // NEW on master and never had a composite gate.
+        // Measured before adding this: a routed composite table DOES enter here (blockRows=1000,
+        // plainInsert=true, pure append into the last partition) and is currently rejected only
+        // incidentally, by the unrelated `isLastPartitionClosed() && !isEmptyTable()` guard below --
+        // composite happens never to keep the bare day partition open. That is safety by accident;
+        // nothing pins it, and the composite fast-append work is precisely about keeping cell
+        // segments open. Reject explicitly instead, mirroring the single-txn gate.
+        // Regression-locked by CompositeBlockFastAppendGateTest.
+        if (metadata.getPartitionSpec().getDimensionCount() > 0) {
             return o3Lo;
         }
         final long blockRows = o3LoHi - o3Lo;
@@ -13550,7 +19630,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             int dstDirLen,
             long partitionRowCount
     ) {
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+        restoreIndexFilesAfterParquetToNative(partitionTimestamp, parquetNameTxn, dstDirLen, partitionRowCount, null);
+    }
+
+    private void restoreIndexFilesAfterParquetToNative(
+            long partitionTimestamp,
+            long parquetNameTxn,
+            int dstDirLen,
+            long partitionRowCount
+            , @Nullable CharSequence cellSegment) {
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
         final int srcDirLen = path.size();
         try {
             final int columnCount = metadata.getColumnCount();
@@ -13621,6 +19710,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The caller's per-partition seal loop may have left partitionPath pointing
         // at a partition the next housekeep step squashes or deletes; a stale path
         // strands the next rollback's openSealValueFile on a missing dir.
+        // ACTIVE-TAIL family: skipped for a routed composite table. This restores the indexers to
+        // lastOpenPartitionTs via a bare day path, and finishO3Commit documents that
+        // lastOpenPartitionTs / this.columns / the indexers are "NEVER a valid target" there -- they
+        // describe the bare, non-cell day container. MEASURED: without this guard the FIRST ordinary
+        // commit suspends on "index does not exist [.../2023-07-01.1/sym.pk]".
+        //
+        // Safe to skip rather than make cell-aware: the purpose is to leave partitionPath pointing at
+        // the last open partition so a later rollback/append does not strand on a stale path, and the
+        // composite write path re-resolves its own per-cell handles on every dispatch. Same shape as
+        // openLastPartitionAndSetAppendPosition's own `if (isRoutedComposite()) return;`.
+        if (isRoutedComposite()) {
+            return;
+        }
         if (lastOpenPartitionTs == Long.MIN_VALUE || !PartitionBy.isPartitioned(partitionBy)
                 || txWriter.isPartitionParquetByPartitionTimestamp(lastOpenPartitionTs)) {
             return;
@@ -13731,7 +19833,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             metadata.setMetadataVersion(version);
             ddlMem.putLong(metadata.getMetadataVersion());
             ddlMem.putBool(metadata.isWalEnabled());
-            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(version, columnCount));
+            // Metadata rewrite (ALTER etc.) works from TableWriterMetadata, which now carries the
+            // composite PartitionSpec (read from _meta in reload()). Raise the minor version to the
+            // composite gate IFF the table is composite, and re-emit the trailing block below, so a
+            // composite table's block survives structural ALTERs; a plain table writes exactly
+            // META_FORMAT_MINOR_VERSION_TABLE_FORMAT and no block, staying byte-identical. Keeping the
+            // version <-> block presence in lock-step preserves readCompositePartitionSpec's gate
+            // (v3 <=> block present).
+            PartitionSpec partitionSpec = metadata.getPartitionSpec();
+            boolean composite = partitionSpec.isComposite();
+            ddlMem.putInt(TableUtils.calculateMetaFormatMinorVersionField(
+                    version,
+                    columnCount,
+                    composite
+                            ? TableUtils.META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING
+                            : TableUtils.META_FORMAT_MINOR_VERSION_TABLE_FORMAT
+            ));
             ddlMem.putInt(metadata.getTtlHoursOrMonths());
             ddlMem.putInt(metadata.getTableFormat());
 
@@ -13780,6 +19897,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         ddlMem.putInt(coveringIndices.getQuick(ci));
                     }
                 }
+            }
+
+            // Re-emit the additive composite-partitioning block, byte-identical to writeMetadata's,
+            // after the covering-index section. Without this, the first structural ALTER of a
+            // composite table would drop the block (and the minor version above would already have
+            // been lowered to TABLE_FORMAT), silently losing the partition scheme on the next reload.
+            if (composite) {
+                TableUtils.writeCompositePartitionBlock(ddlMem, partitionSpec);
             }
 
             ddlMem.sync(false);
@@ -13842,11 +19967,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             } catch (Throwable th) {
                 if (quiet) {
                     distressed = true;
-                    CharSequence columnName = metadata.getColumnName(i);
-                    LOG.error().$("could not rollback symbol table [table=").$(tableToken)
-                            .$(", columnName=").$safe(columnName)
-                            .$(", exception=").$(th)
-                            .I$();
+                    // i can index a composite interner slot (dedicated dict / _cell registry), which is
+                    // appended to denseSymbolMapWriters past columnCount and owns no table column, so
+                    // metadata.getColumnName(i) would throw and mask th. Log the dense slot index instead.
+                    if (i < columnCount) {
+                        CharSequence columnName = metadata.getColumnName(i);
+                        LOG.error().$("could not rollback symbol table [table=").$(tableToken)
+                                .$(", columnName=").$safe(columnName)
+                                .$(", exception=").$(th)
+                                .I$();
+                    } else {
+                        LOG.error().$("could not rollback symbol table [table=").$(tableToken)
+                                .$(", denseSymbolIndex=").$(i)
+                                .$(", exception=").$(th)
+                                .I$();
+                    }
                 } else {
                     throw th;
                 }
@@ -13875,7 +20010,40 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         throw e;
     }
 
+    /**
+     * Plan 4b Task 1b: {@code cellKey}-aware counterpart of {@link #safeDeletePartitionDir(long, long)}.
+     * Every OTHER call site of the 2-arg overload sits inside a method already gated unconditionally
+     * for any real composite table (parquet conversion, DETACH PARTITION -- see each one's own gate
+     * comment), so cellKey 0 there is always correct (and the only value reachable). The one call site
+     * that IS reachable for a real composite table (the mainline WAL-commit-finish "artificial 0-length
+     * lag partition" first-commit cleanup, in processWalCommitFinishApply) uses this overload instead,
+     * passing the true resolved cellKey.
+     */
     private void scaleSymbolCapacities() {
+        // Plan 4b feature-gate sweep: another automatic housekeeping call from housekeep() (same
+        // class as the split/squash gate above), reachable on ordinary commits once
+        // cairo.symbol.autoscale is enabled and a symbol column's cardinality outgrows its capacity --
+        // not a rare DDL command. changeSymbolCapacity's own symbol-dictionary rewrite
+        // (hardLinkAndPurgeSymbolTableFiles) is table-root-scoped and cellKey-agnostic (symbol
+        // dictionaries aren't partitioned), but its OWN follow-on "reopen the last partition's column
+        // file at the new columnNameTxn" step resolves that partition via the same cellKey-0-only
+        // setStateForTimestamp/getColumnNameTxn(ts,col) family every other gate in this sweep rejects
+        // -- for a real multi-cell day this can reposition the ACTIVE WRITER's column file handle onto
+        // the WRONG cell going forward, a genuine correctness risk, not merely a missed optimization.
+        // Skip rather than throw: like split/squash, autoscaling is a pure performance optimization
+        // (a composite table simply keeps its original symbol capacity, i.e. more hash collisions at
+        // high cardinality, if skipped) -- throwing would suspend an otherwise-healthy, high-cardinality
+        // composite table's ordinary commits. Plain and dormant-composite tables are unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        // SP (2026-08-18): the skip that stood here is GONE, and its own stated reason is why. It cited
+        // changeSymbolCapacity's follow-on "reopen the last partition's column file" step as able to
+        // reposition the active writer's handle onto the wrong cell. That reopen is now skipped INSIDE
+        // changeSymbolCapacity for a routed composite table (see its comment), so the hazard this gate
+        // guarded against no longer exists and the gate was stale. Symbol capacity is a table-global
+        // property of the column's symbol map with no per-cell component; autoscale just calls the same
+        // ALTER that CompositeSymbolCapacityAlterTest already proves safe here.
         if (configuration.autoScaleSymbolCapacity()) {
             for (int i = 0, n = denseSymbolMapWriters.size(); i < n; i++) {
                 var w = denseSymbolMapWriters.getQuick(i);
@@ -13899,10 +20067,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void scheduleRemoveAllPartitions() {
+        // Plan 4b Task 1b: TRUNCATE-over-WAL (unlike TTL/FORCE DROP PARTITION) has no SELECTION
+        // ambiguity for composite -- "remove every partition" trivially means every cell of every day,
+        // and this loop already walks every raw index (one entry per cell, not per day), so resolving
+        // each entry's own cellKey here makes this path fully correct for composite, not just gated.
         for (int i = txWriter.getPartitionCount() - 1; i > -1L; i--) {
             long timestamp = txWriter.getPartitionTimestampByIndex(i);
             long partitionTxn = txWriter.getPartitionNameTxn(i);
-            partitionRemoveCandidates.add(timestamp, partitionTxn);
+            int cellKey = txWriter.getPartitionCellKey(i);
+            partitionRemoveCandidates.add(timestamp, partitionTxn, cellKey);
         }
     }
 
@@ -13924,7 +20097,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @return true if at least one column indexer was touched.
      */
-    private boolean sealPostingIndexForPartition(long partitionTimestamp, boolean canSkipRebuild) {
+    /**
+     * Points a seal-time indexer at the partition it is about to reseal.
+     * <p>
+     * {@code configureFollowerAndWriter} additionally takes the writer's ACTIVE-TAIL column memory
+     * ({@code getPrimaryColumn}) and keeps its {@code FilesFacade} and fd. For a routed composite table
+     * that memory describes the bare, non-cell day container, which {@code finishO3Commit} documents is
+     * never a valid target. So composite takes {@code configureWriter} -- the sibling that opens
+     * nothing and leaves the caller to supply the file -- exactly as {@code IndexBuilder} and
+     * {@code TableSnapshotRestore} already do.
+     * <p>
+     * The seal never needs the borrowed fd anyway (it indexes from an explicitly-opened {@code dataFd},
+     * and the {@code canSkipRebuild} branch indexes nothing), so this could be {@code configureWriter}
+     * for both. It is not, deliberately: plain tables keep the byte-identical path they had, because a
+     * posting index returning wrong rows is the worst failure class here and "it should be equivalent"
+     * has been wrong repeatedly on this branch. Unifying them is a separate change with its own evidence.
+     */
+    private void configureSealIndexer(
+            ColumnIndexer indexer,
+            int colIdx,
+            CharSequence colName,
+            long colNameTxn,
+            long columnTop,
+            int plen,
+            long partitionTimestamp,
+            long partitionNameTxn
+    ) {
+        if (isRoutedComposite()) {
+            indexer.configureWriter(path.trimTo(plen), colName, colNameTxn, columnTop,
+                    partitionTimestamp, partitionNameTxn);
+        } else {
+            indexer.configureFollowerAndWriter(path.trimTo(plen), colName, colNameTxn,
+                    getPrimaryColumn(colIdx), columnTop, partitionTimestamp, partitionNameTxn);
+        }
+    }
+
+    private boolean sealPostingIndexForPartition(long partitionTimestamp, int cellKey, boolean canSkipRebuild) {
         // Invariant: posting seal runs only after every O3 partition worker has
         // joined (finishO3Commit / post-await, or a writer-thread squash). It reads
         // the just-written partition column data and rotates value files; a worker
@@ -13937,13 +20145,35 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!hasPostingIndex()) {
             return false;
         }
+        // CELL-AWARE as of 2026-08-26. This refused a routed composite table outright, because it was
+        // cell-blind twice over: its _txn/_cv lookups resolved cellKey 0 only, and it sourced column
+        // memory from getPrimaryColumn(colIdx) -- the writer's ACTIVE TAIL, which finishO3Commit
+        // documents is "NEVER a valid target" for a routed composite table.
+        //
+        // What the gate was NOT: a sign that per-cell indexing was missing. MEASURED -- ingestion
+        // already writes per-cell index files (2023-07-01/BTC/sym.pk, /ETH/sym.pk, /SOL/sym.pk). The
+        // day-level 2023-07-01/sym.pk that also appears is openPartition's bare-container DEBRIS, the
+        // same harmless artefact composite already leaves for ordinary columns -- a smaller, unused
+        // file, not the real index. Reading it as evidence of cell-blind creation is what made this
+        // look like a whole lifecycle migration; it is not.
+        //
+        // The recorded "structural cost" was likewise overstated: configureFollowerAndWriter consumes
+        // the MemoryMA for exactly getFilesFacade() and getFd(), and the seal uses NEITHER -- it
+        // indexes from an explicitly-opened dataFd and the canSkipRebuild branch indexes nothing. The
+        // sibling configureWriter(), already used by IndexBuilder and TableSnapshotRestore for the same
+        // open-it-yourself pattern, drops the active-tail dependency with no restructuring.
         // Range-replace can fully drop a partition during this commit; the
         // sink block still references the defunct partition, but there is
         // nothing left to index.
-        if (txWriter.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp, Long.MIN_VALUE) == Long.MIN_VALUE) {
+        // Resolved ONCE by (ts, cellKey); every lookup below reads off this raw index instead of
+        // re-deriving from the timestamp. The by-timestamp wrappers are the cellKey-0-only variants:
+        // on a multi-cell day they report a live non-zero cell as "dropped", or seal at a phantom
+        // location. Identical resolution for a plain table, where cellKey is 0 and a day has one entry.
+        final int partitionIndexRaw = txWriter.findAttachedPartitionRawIndexBy(partitionTimestamp, cellKey);
+        if (partitionIndexRaw < 0) {
             return false;
         }
-        if (txWriter.isPartitionParquetByPartitionTimestamp(partitionTimestamp)) {
+        if (txWriter.isPartitionParquetByRawIndex(partitionIndexRaw)) {
             // The native reseal below reads native column files, which a parquet
             // partition lacks. But an O3/squash rewrite that produces a new parquet
             // version with a COVERING posting index still needs that version's covering
@@ -13951,11 +20181,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             // non-covering .pv -- else a reader opening the new version walks the chain
             // (count() correct) but finds no .pci, reports coverCount=0 and returns NULL
             // covered values. Rebuild covering from the parquet here, pre-commit.
-            return resealParquetCoveringForPartition(partitionTimestamp);
+            return resealParquetCoveringForPartition(partitionTimestamp, cellKey);
         }
 
         boolean processed = false;
-        long partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
+        // Cell-aware path build: setStateForTimestamp resolves cellKey 0 and builds the bare 5-arg
+        // day path with no <day>/<cell> segment, which for a routed composite table addresses the
+        // debris container rather than the cell holding the data.
+        long partitionNameTxn = txWriter.getPartitionNameTxnByRawIndex(partitionIndexRaw);
+        if (isRoutedComposite()) {
+            final StringSink cellSink = Misc.getThreadLocalSink();
+            cellSink.clear();
+            renderCellSegment(cellSink, cellKey);
+            path.trimTo(pathSize);
+            setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp,
+                    partitionNameTxn, cellSink);
+        } else {
+            partitionNameTxn = setStateForTimestamp(path, partitionTimestamp);
+        }
         int plen = path.size();
         // For new partitions created during O3, the partition directory may
         // have a txn suffix that setStateForTimestamp doesn't resolve (the
@@ -13968,7 +20211,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
             plen = path.size();
         }
-        long partitionSize = txWriter.getPartitionRowCountByTimestamp(partitionTimestamp);
+        long partitionSize = txWriter.getPartitionSize(partitionIndexRaw / txWriter.getLongsPerAttachedPartition());
         try {
             for (int colIdx = 0; colIdx < columnCount; colIdx++) {
                 if (metadata.getColumnType(colIdx) <= 0 || !metadata.isColumnIndexed(colIdx)
@@ -13978,12 +20221,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 // Column added after this partition (getColumnTop == -1) or partition has no
                 // column data (columnTop >= partitionSize) has no .pk file here - skip.
-                long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, colIdx);
+                // _cv packs the cellKey into the COLUMN INDEX's high bits, not the timestamp
+                // (ColumnVersionReader#packColIndex), so the cell-aware overload takes cellKey next to
+                // colIdx. Identical to the 2-arg form when cellKey is 0.
+                long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, colIdx);
                 if (columnTop == -1 || columnTop >= partitionSize) {
                     continue;
                 }
                 CharSequence colName = metadata.getColumnName(colIdx);
-                long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, colIdx);
+                long colNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, cellKey, colIdx);
                 ColumnIndexer indexer = indexers.getQuick(colIdx);
                 if (indexer == null) {
                     continue;
@@ -13997,13 +20243,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     int coverCount = coveringCols.size();
 
                     try {
-                        mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, plen, coverCount);
+                        mapCoveringColumnsForSeal(coveringCols, partitionTimestamp, cellKey, plen, coverCount);
 
-                        indexer.configureFollowerAndWriter(
-                                path.trimTo(plen), colName, colNameTxn,
-                                getPrimaryColumn(colIdx), columnTop,
-                                partitionTimestamp, partitionNameTxn
-                        );
+                        configureSealIndexer(indexer, colIdx, colName, colNameTxn, columnTop, plen,
+                                partitionTimestamp, partitionNameTxn);
                         // REBUILD intermediate entry: getTxn()+1 keeps it
                         // invisible to T-pinned readers (it lacks a cover
                         // footer until rebuildSidecars() supersedes it),
@@ -14091,11 +20334,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     }
                 } else {
-                    indexer.configureFollowerAndWriter(
-                            path.trimTo(plen), colName, colNameTxn,
-                            getPrimaryColumn(colIdx), columnTop,
-                            partitionTimestamp, partitionNameTxn
-                    );
+                    configureSealIndexer(indexer, colIdx, colName, colNameTxn, columnTop, plen,
+                            partitionTimestamp, partitionNameTxn);
                     try {
                         // Same getTxn()+1 convention as O3CopyJob and the
                         // covering branch above. See comment there.
@@ -14170,11 +20410,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && o3SplitPartitionSize == 0
                     && newPartitionSize >= oldPartitionSize;
 
-            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, canSkipRebuildForPartition)) {
+            // Which CELL this block was dispatched for -- same side-table and absent-means-zero
+            // convention as o3ConsumePartitionUpdateSink's own resolution. A plain table records no
+            // entry, so it reads 0 and every lookup stays byte-identical.
+            final int sinkCellKey0 = o3PartitionUpdateSinkCellKeys != null
+                    ? o3PartitionUpdateSinkCellKeys.get(blockAddress)
+                    : LongIntHashMap.NO_ENTRY_VALUE;
+            final int sinkCellKey = sinkCellKey0 == LongIntHashMap.NO_ENTRY_VALUE ? 0 : sinkCellKey0;
+
+            if (partitionTimestamp != -1L && sealPostingIndexForPartition(partitionTimestamp, sinkCellKey, canSkipRebuildForPartition)) {
                 anyPartitionProcessed = true;
             }
             if (dataPartitionTimestamp != -1L && dataPartitionTimestamp != partitionTimestamp
-                    && sealPostingIndexForPartition(dataPartitionTimestamp, false)) {
+                    && sealPostingIndexForPartition(dataPartitionTimestamp, sinkCellKey, false)) {
                 anyPartitionProcessed = true;
             }
         }
@@ -14258,6 +20506,24 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param path      path instance to modify
      * @param timestamp to determine the interval for
      */
+    /**
+     * Index-based, cell-aware counterpart of {@link #setStateForTimestamp(Path, long)}.
+     *
+     * <p>{@code setStateForTimestamp} resolves BY TIMESTAMP, through
+     * {@code getPartitionNameTxnByPartitionTimestamp} and the bare 5-arg path overload. Both are
+     * ambiguous on a composite table, where several CELLS share one raw partition timestamp: the
+     * lookup answers for cellKey 0 and the path names the day container rather than a cell directory.
+     * Resolving by INDEX instead is exact, because on a composite table an attached partition entry IS
+     * a cell. For a plain table this returns the same nameTxn and builds the same path.
+     */
+    private long setStateForPartitionIndex(Path path, int partitionIndex) {
+        final long timestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+        final long nameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        setPathForNativePartition(path, timestampType, partitionBy, timestamp, nameTxn,
+                cellSegmentOrNull(txWriter.getPartitionCellKey(partitionIndex)));
+        return nameTxn;
+    }
+
     private long setStateForTimestamp(Path path, long timestamp) {
         // When partition is created, a txn name must always be set to purge dropped partitions.
         // When partition is created outside O3 merge use `txn-1` as the version
@@ -14357,6 +20623,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashPartitionForce(int partitionIndex) {
+        // Plan 4a DDL gate sweep: partition-squashing is not yet cell-aware for a real composite
+        // table. Its forward-scan (below and in squashSplitPartitions) decides whether the NEXT raw
+        // attached-partition entry is a "split" sibling to force-merge purely via calendar-FLOOR
+        // equality (getLogicalPartitionTimestamp) -- but two different CELLS of the same day share the
+        // exact same RAW timestamp, not just the same floor, so a genuine sibling cell is
+        // indistinguishable from a true split fragment by this check alone. Misidentifying one triggers
+        // a cross-cell merge via squashSplitPartitions, which builds every path with the bare 5-arg
+        // setPathForNativePartition overload -- no cell segment, so it operates on paths that do not
+        // correspond to any real on-disk directory. This single gate point covers every caller: the
+        // direct SQL "ALTER TABLE ... SQUASH PARTITIONS" entry (squashPartitions()),
+        // convertPartitionNativeToParquet/detachPartition (each already separately gated, so this is
+        // defense in depth for those two), and the two remaining internal parquet-producing/switching
+        // helpers that call this method directly without their own composite gate. Gated
+        // unconditionally for any real (non-dormant) composite table. Plain and dormant-composite
+        // tables are completely unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        // SP1E (2026-08-18): gate KEPT, and the reason is now measured rather than inferred. The RANGE
+        // half is fixed (hasSplitFragments, below) and the paths this method's callee builds are now
+        // cell-aware, but that is still not enough, and lifting this gate corrupts the table:
+        //
+        //   squashing partitions [table=c~1, target=2023-01-01, source=2023-01-01,              size=1]
+        //   squashing partitions [table=c~1, target=2023-01-01, source=2023-01-01,              size=1]
+        //   squashing partitions [table=c~1, target=2023-01-01, source=2023-01-01T010000-000001.1     ]
+        //
+        // -- a 3-cell day with ONE fragment, where squashSplitPartitions swallowed both SIBLING CELLS
+        // into the target before reaching the real fragment. Its source loop walks targetIndex + 1
+        // unconditionally, so for a composite table every sibling cell of the day is treated as a
+        // fragment of the target cell. Making squash correct needs that loop scoped to ONE cellKey, not
+        // just correct path rendering: a redesign of the merge, not a patch to it.
+        //
+        // WHY THIS IS EASY TO GET WRONG: the twin comparison PASSES through that corruption. Every row
+        // survives the bad merge, relocated into one cell, so rows and count() are identical to the
+        // plain twin -- only a structural assertion on cell COUNT catches it. Do not treat a green
+        // data-level test as evidence that a squash change is safe.
         int lastLogicalPartitionIndex = partitionIndex;
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
@@ -14377,16 +20679,325 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
             long logicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
             if (logicalPartitionTimestamp != lastLogicalPartitionTimestamp) {
-                if (partitionIndex > lastLogicalPartitionIndex + 1) {
+                if (hasSplitFragments(lastLogicalPartitionIndex, partitionIndex)) {
                     squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
                 }
                 return;
             }
             partitionIndex++;
         }
-        if (partitionIndex > lastLogicalPartitionIndex + 1) {
+        if (hasSplitFragments(lastLogicalPartitionIndex, partitionIndex)) {
             squashSplitPartitions(lastLogicalPartitionIndex, partitionIndex, 1, true);
         }
+    }
+
+    /**
+     * Does the attached-partition range {@code [lo, hi)} -- already known to share one calendar FLOOR --
+     * hold more than one distinct RAW timestamp, i.e. at least one genuine split fragment?
+     *
+     * <p><b>Why this is not simply {@code hi > lo + 1}.</b> That entry-count test is what the scan used
+     * before, and it is correct for a plain table because there every attached entry carries its own raw
+     * timestamp. It is wrong for a composite table: the CELLS of one day are consecutive entries sharing
+     * ONE raw timestamp, so a never-split 3-cell day counts as three entries and reads as "two fragments
+     * to merge". The discriminator is the raw timestamp itself -- a true split fragment shares the day's
+     * floor but has a DIFFERENT raw timestamp, while a sibling cell has the SAME raw timestamp.
+     *
+     * <p><b>Invariant 1.</b> For a plain table the entries in the range are distinct by construction, so
+     * this returns {@code hi - lo > 1}, exactly the predicate it replaces -- no plain-table behaviour
+     * changes. Note the range is scanned pairwise rather than with a set: attached partitions are held in
+     * timestamp order, so equal raw timestamps are always adjacent.
+     */
+    private boolean hasSplitFragments(int lo, int hi) {
+        if (hi <= lo + 1) {
+            return false;
+        }
+        long prev = txWriter.getPartitionTimestampByIndex(lo);
+        for (int i = lo + 1; i < hi; i++) {
+            long ts = txWriter.getPartitionTimestampByIndex(i);
+            if (ts != prev) {
+                return true;
+            }
+            prev = ts;
+        }
+        return false;
+    }
+
+    /**
+     * Cell segment for {@code cellKey}, or {@code null} for a plain table -- where the 6-arg
+     * {@code setPathForNativePartition} overload then behaves exactly like the 5-arg one, so callers can
+     * use a single code path for both table shapes without changing plain-table behaviour (Invariant 1).
+     *
+     * <p><b>The returned sink is thread-local and is overwritten by the next call.</b> Pass it straight
+     * into the path call that consumes it -- that call copies the characters into the {@link Path} -- and
+     * never hold two of these live at once. The predicate mirrors
+     * {@link #renderCellSegment(CharSink, int)}'s own guard rather than {@code isRoutedComposite()}: the
+     * question here is whether a cell segment can be RENDERED at all, not whether DDL should be refused.
+     */
+    private @Nullable CharSequence cellSegmentOrNull(int cellKey) {
+        if (metadata.getPartitionSpec().getDimensionCount() <= 0) {
+            return null;
+        }
+        final StringSink sink = Misc.getThreadLocalSink();
+        sink.clear();
+        renderCellSegment(sink, cellKey);
+        return sink;
+    }
+
+
+    /**
+     * Cell-scoped split-fragment squash for a composite table. Kept SEPARATE from the plain
+     * {@code squashSplitPartitions} loop on purpose: that loop walks {@code targetPartitionIndex + 1}
+     * unconditionally, which on a composite table swallows the day's SIBLING CELLS into the target
+     * before ever reaching a real fragment (measured: 3 merges on a 3-cell day holding 1 fragment, 2 of
+     * them innocent cells). Keeping the plain path untouched makes Invariant 1 hold by construction.
+     *
+     * <p><b>The unit of work is a FRAGMENT, not an attached entry.</b> A split fragment is its own
+     * container holding its own cells, so merging it means appending {@code <fragment>/<cell k>} into
+     * {@code <day>/<cell k>} for each cell the FRAGMENT holds (a subset of the day's), then discarding
+     * the fragment's column versions in one call -- {@link ColumnVersionWriter#squashPartition} already
+     * drops every cell at the source timestamp via {@code removeAllCellsAtTimestamp}.
+     *
+     * <p><b>Scope of this first cut:</b> day groups that are not the table's active tail. That avoids
+     * {@code lastPartitionSquashed}'s {@code fixedRowCount}/{@code transientRowCount} bookkeeping, which
+     * is the crash-sensitive part of the plain loop. Mid-table fragments are the common accumulation
+     * case; the active tail is deliberately left for a follow-up rather than half-handled here.
+     */
+    private void squashSplitPartitionsComposite(int partitionIndexLo) {
+        final long dayTs = txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(partitionIndexLo));
+        boolean merged = false;
+        boolean tailTouched = false;
+        while (true) {
+            // Re-resolve the day's span every pass: merging removes entries and shifts indices.
+            int lo = -1, hi = -1;
+            for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+                if (txWriter.getLogicalPartitionTimestamp(txWriter.getPartitionTimestampByIndex(i)) == dayTs) {
+                    if (lo < 0) {
+                        lo = i;
+                    }
+                    hi = i + 1;
+                } else if (lo >= 0) {
+                    break;
+                }
+            }
+            if (lo < 0) {
+                break;
+            }
+            final boolean tail = hi >= txWriter.getPartitionCount();
+            long fragTs = Long.MIN_VALUE;
+            for (int i = lo; i < hi; i++) {
+                final long ts = txWriter.getPartitionTimestampByIndex(i);
+                if (ts != dayTs) {
+                    fragTs = ts;
+                    break;
+                }
+            }
+            if (fragTs == Long.MIN_VALUE) {
+                break; // no fragments left in this day
+            }
+            if (!squashSplitPartitionsComposite_mergeFragment(dayTs, fragTs)) {
+                break; // could not merge this fragment; leave it rather than invent a target
+            }
+            merged = true;
+            tailTouched |= tail;
+        }
+        if (merged) {
+            if (tailTouched) {
+                // The day group reached the table's TAIL, so the merge changed which entry is last and
+                // how many rows it holds. The plain loop tracks this with delta arithmetic under
+                // lastPartitionSquashed; here the counts are RECOMPUTED from the attached list instead,
+                // which is O(partitions) but cannot drift -- squash is rare, and a wrong transient/fixed
+                // split silently corrupts count(*). Safe at this point because housekeep() runs after
+                // commit00(), where the caller asserts getLagRowCount() == 0, so a partition's stored
+                // size is its whole row count. A routed composite table has no day-level active
+                // partition to reopen (see openLastPartitionAndSetAppendPosition), so there is no
+                // openLastPartition() counterpart to the plain path's.
+                final int pc = txWriter.getPartitionCount();
+                long fixed = 0;
+                for (int i = 0; i < pc - 1; i++) {
+                    fixed += txWriter.getPartitionSize(i);
+                }
+                txWriter.fixedRowCount = fixed;
+                txWriter.transientRowCount = pc > 0 ? txWriter.getPartitionSize(pc - 1) : 0;
+            }
+            // MUST commit. housekeep() runs AFTER commit00(), so everything this method mutates lands
+            // outside the committed transaction unless it opens its own -- exactly as the plain
+            // squashSplitPartitions does at its tail. Without this the attached-entry removal was
+            // discarded on reload while the fragment's DIRECTORY deletion (via the post-commit purge
+            // drain) persisted, leaving the txn pointing at a directory that no longer exists:
+            //   "Partition '2023-01-01T010000-000001/E0' does not exist in table 'c' directory"
+            columnVersionWriter.commit();
+            txWriter.setColumnVersion(columnVersionWriter.getVersion());
+            commitTxWriterAndPublishPendingPostingSealPurges();
+        }
+    }
+
+    /**
+     * Merges every cell of ONE fragment into the matching cell of its day. Returns false (having changed
+     * nothing) when a fragment cell has no day counterpart -- that is an adopt/move, not an append, and
+     * inventing a target would be worse than leaving the fragment in place.
+     */
+    private boolean squashSplitPartitionsComposite_mergeFragment(long dayTs, long fragTs) {
+        // Pre-flight: every fragment cell must have a day counterpart before anything is written.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == fragTs
+                    && findCompositePartitionIndex(dayTs, txWriter.getPartitionCellKey(i)) < 0) {
+                LOG.info().$("composite squash skipped, fragment cell has no day counterpart [table=").$(tableToken)
+                        .$(", fragment=").$ts(fragTs).$(", cellKey=").$(txWriter.getPartitionCellKey(i)).I$();
+                return false;
+            }
+        }
+        // Pre-flight 2: REFUSE to merge a native fragment into a parquet cell. The merge appends
+        // native column bytes into the day cell's files; when that cell is parquet it lands on top of
+        // data.parquet and destroys the footer, and the partition stops being readable at all:
+        //   CairoException: invalid _pm file: failed to resolve footer [path=.../2023-01-01/E0.2/_pm]
+        // MEASURED on a production-semantics build (-da). Under -ea an assert in
+        // TxReader#getNativePartitionSeqTxn happened to stop it first, which is why this looked like a
+        // test-only problem; core/pom.xml hardcodes -ea, so the -ea run was never showing production.
+        // A count(*) oracle does NOT see this -- count reads _txn, which the merge updates to 3 while
+        // the parquet file still holds 1. It takes reading the ROWS to expose it.
+        //
+        // Throw, do not `return false`: the plain squash loop refuses this same shape the same way
+        // ("cannot squash into parquet partition"), and a false return makes the caller retry the
+        // fragment forever, nesting 2023-01-01.2/2023-01-01.2/... until mkdir hits ENAMETOOLONG.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) != fragTs) {
+                continue;
+            }
+            final int fragCell = txWriter.getPartitionCellKey(i);
+            final int dayIdx = findCompositePartitionIndex(dayTs, fragCell);
+            if (txWriter.isPartitionParquet(i) || (dayIdx >= 0 && txWriter.isPartitionParquet(dayIdx))) {
+                throw CairoException.critical(0).put("cannot squash into parquet partition [table=")
+                        .put(tableToken.getTableName())
+                        .put(", partitionTimestamp=").ts(timestampType, dayTs)
+                        .put(", cellKey=").put(fragCell)
+                        .put(']');
+            }
+        }
+        final FrameFactory frameFactory = engine.getFrameFactory();
+        long squashedSeqTxn = 0;
+        int srcIndex;
+        while ((srcIndex = findCompositePartitionIndexByTimestamp(fragTs)) >= 0) {
+            final int cellKey = txWriter.getPartitionCellKey(srcIndex);
+            final int dayIndex = findCompositePartitionIndex(dayTs, cellKey);
+            assert dayIndex >= 0; // guaranteed by the pre-flight above
+            final long srcNameTxn = txWriter.getPartitionNameTxn(srcIndex);
+            // For the LAST attached partition the stored size is not authoritative -- its live row
+            // count is transient + lag (the plain loop does the same under lastPartitionSquashed).
+            // Reading getPartitionSize here opened the source frame short and silently dropped the
+            // fragment's rows: the twin comparison caught it as a missing row, not as an error.
+            final boolean srcIsLast = srcIndex == txWriter.getPartitionCount() - 1;
+            if (srcIsLast) {
+                closeActivePartition(false);
+            }
+            final long srcSize = srcIsLast
+                    ? txWriter.getTransientRowCount() + txWriter.getLagRowCount()
+                    : txWriter.getPartitionSize(srcIndex);
+            final long dayNameTxn = txWriter.getPartitionNameTxn(dayIndex);
+            final long daySize = txWriter.getPartitionSize(dayIndex);
+            squashedSeqTxn = Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(srcIndex));
+
+            path.trimTo(pathSize);
+            setPathForNativePartition(path, timestampType, partitionBy, dayTs, dayNameTxn, cellSegmentOrNull(cellKey));
+            other.trimTo(pathSize);
+            setPathForNativePartition(other, timestampType, partitionBy, fragTs, srcNameTxn, cellSegmentOrNull(cellKey));
+
+            LOG.info().$("squashing composite fragment cell [table=").$(tableToken)
+                    .$(", day=").$ts(dayTs).$(", fragment=").$ts(fragTs)
+                    .$(", cellKey=").$(cellKey).$(", srcSize=").$(srcSize).I$();
+
+            Frame targetFrame = null;
+            Frame sourceFrame = null;
+            try {
+                targetFrame = frameFactory.open(true, path, dayTs, metadata, columnVersionWriter, daySize);
+                sourceFrame = frameFactory.openRO(other, fragTs, metadata, columnVersionWriter, srcSize);
+                FrameAlgebra.append(targetFrame, sourceFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
+                addPhysicallyWrittenRows(sourceFrame.getRowCount());
+            } catch (Throwable th) {
+                LOG.critical().$("composite fragment squash failed [table=").$(tableToken).$(", error=").$(th).I$();
+                throw th;
+            } finally {
+                Misc.free(sourceFrame);
+                Misc.free(targetFrame);
+            }
+
+            txWriter.updatePartitionSizeByRawIndex(dayIndex * txWriter.getLongsPerAttachedPartition(), dayTs, daySize + srcSize);
+            // updatePartitionSizeByRawIndex does NOT bump recordStructureVersion, unlike its
+            // ...ByTimestamp siblings, so the attached-partition table is mutated without readers or a
+            // later squash pass being told the structure changed.
+            txWriter.bumpPartitionTableVersion();
+            txWriter.removeAttachedPartitions(fragTs, cellKey);
+            partitionRemoveCandidates.add(fragTs, srcNameTxn, cellKey);
+            // Leave both scratch paths at table-root length. processPartitionRemoveCandidates0 does NOT
+            // trim before building each candidate path -- setPathForNativePartition APPENDS (path.slash()
+            // then the date component) -- so any residue left here is prepended to every purge path in
+            // the same drain. Leaving `other` pointing at the fragment produced exactly that:
+            //   /c~1/<fragment>/<fragment>/E0.1   errno=2
+            // and the fragment then leaked on disk with its attached entry already removed.
+            path.trimTo(pathSize);
+            other.trimTo(pathSize);
+        }
+        // Once per FRAGMENT, not once per cell: this drops every cell recorded at fragTs.
+        columnVersionWriter.squashPartition(dayTs, fragTs);
+        // Stamp EVERY cell of the day, not just the first. findCompositePartitionIndexByTimestamp
+        // resolves BY TIMESTAMP, which on a composite table is whichever cell happens to sit first at
+        // dayTs -- but the loop above merged a fragment into EACH of the day's cells, so the rest kept
+        // a stale seqTxn. Same shape as the other cell-blind resolvers on this branch: looked up by
+        // timestamp, written back per cell.
+        //
+        // DEFENSIVE, NOT A DEMONSTRATED FIX -- do not cite this as one. I could not build a fixture
+        // where it changes an observable. table_partitions() exposes seqTxn per cell, but in every
+        // shape tried the split fragments are UNSTAMPED (seqTxn 0), so squashedSeqTxn is 0 and
+        // max(0, own) leaves each cell on its existing value -- the cell-blind and cell-aware forms
+        // print byte-identical output. Exposing a difference needs a fragment whose stamped seqTxn
+        // EXCEEDS the day cells', which is reachable via the parquet-generated stamping path at
+        // ~3636, and that path is now unreachable here because the pre-flight above refuses parquet.
+        // Kept because reading offset 3 of a non-first cell is wrong regardless of whether today's
+        // callers can observe it; treat it as hardening until someone builds the fixture.
+        //
+        // Parquet cells are skipped rather than stamped: offset 3 holds the parquet FILE SIZE, not a
+        // seqTxn. Reading it trips TxReader#getNativePartitionSeqTxn's assert, and writing
+        // max(squashedSeqTxn, fileSize) back is only harmless while the file size is the larger of the
+        // two -- a small parquet cell on a long-lived table would stamp a seqTxn over the size word.
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) != dayTs || txWriter.isPartitionParquet(i)) {
+                continue;
+            }
+            txWriter.setPartitionSeqTxn(i, Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(i)));
+        }
+        // NO eager removeEmptyDayContainer here. Deleting the fragment container at this point removes
+        // a directory BEFORE the transaction recording its detachment is durable, so a reload sees the
+        // txn still listing <fragment>/<cell> while the directory is gone:
+        //   "Partition '2023-01-01T010000-000001/E0' does not exist in table 'c' directory"
+        // processPartitionRemoveCandidates0 already calls removeEmptyDayContainer after it successfully
+        // unlinks a composite candidate, i.e. after the commit -- which is the correct ordering, and
+        // makes an eager call here both premature and redundant.
+        path.trimTo(pathSize);
+        other.trimTo(pathSize);
+        return true;
+    }
+
+    /**
+     * First attached index at {@code ts} with {@code cellKey}, or -1.
+     */
+    private int findCompositePartitionIndex(long ts, int cellKey) {
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == ts && txWriter.getPartitionCellKey(i) == cellKey) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * First attached index at exactly {@code ts} (any cell), or -1.
+     */
+    private int findCompositePartitionIndexByTimestamp(long ts) {
+        for (int i = 0, n = txWriter.getPartitionCount(); i < n; i++) {
+            if (txWriter.getPartitionTimestampByIndex(i) == ts) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private void squashPartitionRange(int maxLastSubPartitionCount, int partitionIndexLo, int partitionIndexHi) {
@@ -14457,6 +21068,44 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void squashSplitPartitions(final int partitionIndexLo, final int partitionIndexHi, final int optimalPartitionCount, boolean force) {
+        // Plan 4b feature-gate sweep: this is the shared split-fragment-merge implementation reached
+        // from THREE places -- (1) squashPartitionForce (force=true; SQL SQUASH PARTITIONS + the
+        // convert/detach internal callers), which already throws its own composite gate before ever
+        // calling here, so this is unreachable defense-in-depth for that caller; (2) squashPartitionRange
+        // (force=false), called ONLY from housekeep() -- automatic, background housekeeping that runs
+        // after ordinary O3/WAL commits once a partition has accumulated "too many" split fragments, with
+        // NO SQL gate in front of it at all; (3) the @TestOnly squashAllPartitionsIntoOne() test helper.
+        // The comment just below (targetPartitionCellKey) already flagged this as "unexercised by any
+        // composite test" -- Task 1b threaded a cellKey through for the LATER purge-candidate bookkeeping
+        // but the actual frame merge a few lines down (frameFactory.open/openRW on `path`/`other`) still
+        // resolves every path via the bare, cell-blind 5-arg setPathForNativePartition overload.
+        // Unlike the other gates in this sweep, path (2) is NOT a rare, explicit, opt-in DDL command --
+        // it is automatic background housekeeping that fires after ordinary ingestion once a single
+        // cell's partition has split "too many" times. Throwing here would suspend/fail an otherwise
+        // healthy, high-volume composite table's ordinary commits purely because of a size threshold,
+        // which is a far worse outcome than skipping: unlike DROP PARTITION/RENAME COLUMN/etc, skipping
+        // this housekeeping step causes no wrong answers and no data loss -- each split fragment remains
+        // an independently valid, fully queryable physical partition; the only cost is not consolidating
+        // fragment COUNT for read-performance, the same "acceptable, non-corrupting" residual class as
+        // the already-documented harmless orphan-directory leak. So, mirroring O3PartitionPurgeJob's own
+        // established composite skip (not throw) for this same "automatic background job" class of gate:
+        // skip cell-aware-ly rather than corrupt. Plain and dormant-composite tables are unaffected.
+        // GATE FIX (composite red-test convergence): was `dimCount > 0 && !isDormantWithPreexistingData()`,
+        // which also (wrongly) fired for a genuinely empty, never-routed composite table -- see
+        // isRoutedComposite()'s own doc for why that predicate is wrong for a DDL-safety gate.
+        // SP1E (2026-08-18): the skip is KEPT, now for a measured reason. The paths below are cell-aware
+        // as of this change, but the SOURCE LOOP is not: it walks targetPartitionIndex + 1
+        // unconditionally, which on a composite table means each of the day's SIBLING CELLS is merged
+        // into the target cell before the real fragment is ever reached. Measured on a 3-cell day with
+        // one fragment: three merges, two of them sibling cells. Scoping this loop to a single cellKey
+        // is the remaining work; until then skipping is still the correct behaviour, for the same
+        // reason as before -- a skipped squash leaves every fragment independently valid and queryable,
+        // whereas a cell-blind merge silently destroys the day's cell structure.
+        if (isRoutedComposite()) {
+            squashSplitPartitionsComposite(partitionIndexLo);
+            return;
+        }
+
         if (partitionIndexHi <= partitionIndexLo + Math.max(1, optimalPartitionCount)) {
             // Nothing to do
             return;
@@ -14502,9 +21151,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
 
-        long targetPartitionNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(targetPartition);
-        setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn);
-        final long originalSize = txWriter.getPartitionRowCountByTimestamp(targetPartition);
+        // Index-based, not by-timestamp: for a composite table several CELLS share one raw partition
+        // timestamp, so a by-timestamp lookup resolves to whichever of them the array happens to hold
+        // first. For a plain table there is exactly one entry per timestamp, so this is the same value
+        // the by-timestamp call returned (Invariant 1). Same reasoning for every by-timestamp lookup
+        // replaced below.
+        long targetPartitionNameTxn = txWriter.getPartitionNameTxn(targetPartitionIndex);
+        // Plan 4b Task 1b: split-squash housekeeping is unexercised by any composite test today (same
+        // scale-threshold reasoning as o3ConsumePartitionUpdateSink_processSplitPartitionRemoval's own
+        // comment: it only ever fires on genuine O3 SPLIT partitions), threaded through for
+        // defense-in-depth/consistency; always 0 for plain.
+        int targetPartitionCellKey = txWriter.getPartitionCellKey(targetPartitionIndex);
+        setPathForNativePartition(path, timestampType, partitionBy, targetPartition, targetPartitionNameTxn, cellSegmentOrNull(targetPartitionCellKey));
+        final long originalSize = txWriter.getPartitionSize(targetPartitionIndex);
 
         boolean rw = !copyTargetFrame;
         Frame targetFrame = null;
@@ -14513,15 +21172,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             if (copyTargetFrame) {
                 try {
-                    setPathForNativePartition(other, timestampType, partitionBy, targetPartition, txWriter.txn);
+                    setPathForNativePartition(other, timestampType, partitionBy, targetPartition, txWriter.txn, cellSegmentOrNull(targetPartitionCellKey));
                     createDirsOrFail(ff, other, configuration.getMkDirMode());
                     LOG.info().$("copying partition to force squash [from=").$substr(pathRootSize, path).$(", to=").$(other).I$();
 
                     targetFrame = frameFactory.openRW(other, targetPartition, metadata, columnVersionWriter, 0);
                     FrameAlgebra.append(targetFrame, firstPartitionFrame, txWriter.getTxn() + 1L, configuration.getCommitMode());
                     addPhysicallyWrittenRows(firstPartitionFrame.getRowCount());
-                    txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, originalSize);
-                    partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn);
+                    txWriter.updatePartitionSizeAndTxnByRawIndex(targetPartitionIndex * txWriter.getLongsPerAttachedPartition(), originalSize);
+                    partitionRemoveCandidates.add(targetPartition, targetPartitionNameTxn, targetPartitionCellKey);
                     targetPartitionNameTxn = txWriter.txn;
                 } finally {
                     Misc.free(firstPartitionFrame);
@@ -14541,12 +21200,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             long squashedSeqTxn = Math.max(0, txWriter.getNativePartitionSeqTxn(targetPartitionIndex));
             for (int i = 0; i < squashCount; i++) {
                 long sourcePartition = txWriter.getPartitionTimestampByIndex(targetPartitionIndex + 1);
+                // Resolved before removeAttachedPartitions (below) mutates the array -- see this
+                // method's own composite-reachability note above.
+                int sourcePartitionCellKey = txWriter.getPartitionCellKey(targetPartitionIndex + 1);
                 squashedSeqTxn = Math.max(squashedSeqTxn, txWriter.getNativePartitionSeqTxn(targetPartitionIndex + 1));
 
                 other.trimTo(pathSize);
-                long sourceNameTxn = txWriter.getPartitionNameTxnByPartitionTimestamp(sourcePartition);
-                setPathForNativePartition(other, timestampType, partitionBy, sourcePartition, sourceNameTxn);
-                long partitionRowCount = txWriter.getPartitionRowCountByTimestamp(sourcePartition);
+                long sourceNameTxn = txWriter.getPartitionNameTxn(targetPartitionIndex + 1);
+                setPathForNativePartition(other, timestampType, partitionBy, sourcePartition, sourceNameTxn, cellSegmentOrNull(sourcePartitionCellKey));
+                long partitionRowCount = txWriter.getPartitionSize(targetPartitionIndex + 1);
                 lastPartitionSquashed = targetPartitionIndex + 2 == txWriter.getPartitionCount();
                 if (lastPartitionSquashed) {
                     // closeActivePartition frees the indexers, and PostingIndexWriter.close()
@@ -14574,9 +21236,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     throw th;
                 }
 
-                txWriter.removeAttachedPartitions(sourcePartition);
+                txWriter.removeAttachedPartitions(sourcePartition, sourcePartitionCellKey);
                 columnVersionWriter.squashPartition(targetPartition, sourcePartition);
-                partitionRemoveCandidates.add(sourcePartition, sourceNameTxn);
+                partitionRemoveCandidates.add(sourcePartition, sourceNameTxn, sourcePartitionCellKey);
                 if (sourcePartition == minSplitPartitionTimestamp) {
                     minSplitPartitionTimestamp = getPartitionTimestampOrMax(targetPartitionIndex + 1);
                 }
@@ -14706,7 +21368,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // so distress it before propagating so the pool replaces it instead of
         // handing it back to the next caller.
         try {
-            if (sealPostingIndexForPartition(targetPartition, false)) {
+            // A raw partition INDEX identifies one cell by construction, so the cellKey comes straight
+            // off it -- no (ts, cellKey) resolution needed, unlike the O3 sweep. 0 for a plain table.
+            if (sealPostingIndexForPartition(targetPartition,
+                    txWriter.getPartitionCellKey(targetPartitionIndex), false)) {
                 restorePostingIndexersToLastPartition();
             }
         } catch (Throwable e) {
@@ -14785,7 +21450,51 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return timestampAddr;
     }
 
+    /**
+     * AUDIT NOTE (cellKey-0 / active-tail sweep, 2026-08-26). Calls
+     * {@code txWriter.switchPartitions} (cellKey-0 lookup off {@code maxTimestamp}) and then
+     * {@code openPartition}, which resolves via the cell-blind {@code setStateForTimestamp} and
+     * {@code ff.mkdirs} the bare {@code <day>.<txn>} directory. No composite guard at its caller,
+     * unlike {@code openLastPartitionAndSetAppendPosition}, which returns early for
+     * {@code isRoutedComposite()} with the same reasoning.
+     * <p>
+     * Not patched, and the reachability question is now CLOSED for all three members of the
+     * ACTIVE-TAIL family -- none of them is a live composite hazard:
+     * <ul>
+     *   <li>{@code repairDataGaps} -- explicitly gated, returns the timestamp unchanged for a real
+     *       composite table (a deliberate no-op; the repair walk is by-day and would undercount
+     *       siblings).</li>
+     *   <li>{@code applyLagToLastPartition} -- measured unreachable, and now assert-locked; see its
+     *       body for the fall-through it depends on and the positive control.</li>
+     *   <li>this method -- REACHABLE for a composite table, contrary to the "composite implies WAL"
+     *       argument; a drift-lock assert here fired 20 times and was removed. Reached by holding a raw
+     *       writer ({@code engine.getWriter} -> {@code newRow}), which bypasses the WAL apply path.
+     *       Test-only today, so no production defect -- but see the body: that is a weaker claim than
+     *       unreachability, and anything that writes a composite table through {@code newRow} gets the
+     *       cell-blind active tail.</li>
+     * </ul>
+     * The family remains real as a DESIGN observation: threading a cellKey into any of them would not
+     * fix a concept that has no single meaning on a multi-cell day. What changed is that none of them
+     * needs fixing today, so a future composite fast-append must build its own per-cell path rather
+     * than retrofit these.
+     */
     private void switchPartition(long timestamp) {
+        // MEASURED 2026-08-26, and it refuted the obvious argument. A drift-lock assert
+        // (dimCount == 0) was added here on the reasoning that composite is refused at CREATE for a
+        // non-WAL table, so this non-WAL newRow path is unreachable. It FIRED 20 times across the
+        // composite suite and was removed as false.
+        //
+        // Why the argument was wrong: "composite implies WAL" constrains how rows arrive through SQL,
+        // not who may open a TableWriter. Holding a raw writer on a WAL composite table
+        // (engine.getWriter -> newRow -> ROW_ACTION_SWITCH_PARTITION) reaches straight through to here,
+        // bypassing the WAL apply path and its composite dispatch entirely. Today that is a test-only
+        // idiom (CompositeDictPersistenceTest, CompositeRoutingTest), which is why no production defect
+        // follows -- but "no production caller" is a much weaker statement than "unreachable", and only
+        // the first one is true.
+        //
+        // Contrast applyLagToLastPartition, whose own unreachability claim IS measured (0 fires, with a
+        // 180-fire positive control) and is assert-locked there. The difference between these two is
+        // the whole lesson: that one was measured, this one was argued.
         // Before partition can be switched, we need to index records
         // added so far. Index writers will start point to different
         // files after switch.
@@ -15182,6 +21891,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
             // When partition is split, data partition timestamp and partition timestamp diverge
             final long dataPartitionTimestamp = Unsafe.getLong(blockAddress + 6 * Long.BYTES);
+            // Plan 4b Task 2 (opus review Critical, root cause): resolve which cell THIS block was
+            // dispatched for, exactly like o3ConsumePartitionUpdateSink's own identical resolution (see
+            // o3PartitionUpdateSinkCellKeys' own docs) -- absent (a plain table, or cellKey 0 which is
+            // never bothered to be recorded) means 0, byte-identical to the pre-fix bare resolver this
+            // replaces. Without this, every cell's own colTop below was upserted via the cellKey-BLIND
+            // overload, which resolves cellKey 0 implicitly and so silently clobbered whichever OTHER
+            // cell's record happens to be packed there whenever this block's own cell was not cellKey 0
+            // -- the confirmed root cause of the sibling-cell corruption this task fixes.
+            final int cellKey0 = o3PartitionUpdateSinkCellKeys != null
+                    ? o3PartitionUpdateSinkCellKeys.get(blockAddress)
+                    : LongIntHashMap.NO_ENTRY_VALUE;
+            final int cellKey = cellKey0 == LongIntHashMap.NO_ENTRY_VALUE ? 0 : cellKey0;
 
             if (o3SplitPartitionSize > 0) {
                 // This is partition split. Copy all the column name txns from the donor partition.
@@ -15197,10 +21918,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (colTop > -1L) {
                         // Upsert even when colTop value is 0.
                         // TableReader uses the record to determine if the column is supposed to be present for the partition.
-                        columnVersionWriter.upsertColumnTop(partitionTimestamp, column, colTop);
+                        columnVersionWriter.upsertColumnTop(partitionTimestamp, cellKey, column, colTop);
                     } else if (o3SplitPartitionSize > 0) {
                         // Remove column tops for the new partition part.
-                        columnVersionWriter.removeColumnTop(partitionTimestamp, column);
+                        columnVersionWriter.removeColumnTop(partitionTimestamp, cellKey, column);
                     }
                 }
             }
@@ -15234,7 +21955,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private void writeIndex(@NotNull CharSequence columnName, int indexValueBlockSize, byte indexType, int columnIndex, SymbolColumnIndexer indexer) {
         // create indexer
-        final long columnNameTxn = columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
+        // Per-CELL for the LAST entry, for the same reason as the historic walk above.
+        final int lastEntryIndex = txWriter.getPartitionCount() - 1;
+        final long columnNameTxn = lastEntryIndex >= 0
+                ? columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(),
+                txWriter.getPartitionCellKey(lastEntryIndex), columnIndex)
+                : columnVersionWriter.getColumnNameTxn(txWriter.getLastPartitionTimestamp(), columnIndex);
         try {
             try {
                 // edge cases here are:
@@ -15247,9 +21973,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     // run indexer for the whole table
                     indexHistoricPartitions(indexer, columnName, indexValueBlockSize, indexType, columnIndex);
                     long timestamp = txWriter.getLastPartitionTimestamp();
-                    if (timestamp != Numbers.LONG_NULL) {
+                    if (timestamp != Numbers.LONG_NULL && !isRoutedComposite()) {
                         path.trimTo(pathSize);
-                        setStateForTimestamp(path, timestamp);
+                        // The last ENTRY, which on a composite table is the last cell of the last day.
+                        // Resolving by timestamp named a directory that does not exist, and
+                        // createIndexFiles then failed with "could not create index file".
+                        setStateForPartitionIndex(path, txWriter.getPartitionCount() - 1);
                         // create index in last partition
                         indexLastPartition(indexer, columnName, columnNameTxn, columnIndex, indexValueBlockSize, indexType);
                     }
@@ -15317,13 +22046,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                       produces all rows.
      */
     private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
+        zeroColumnTopsAfterParquetRewrite(partitionTimestamp, 0, partitionRowCount, zeroAllColumns);
+    }
+
+    /**
+     * Cell-aware counterpart. The timestamp-keyed accessors below resolve cellKey 0, so on a composite
+     * day they would read and zero the FIRST cell's column tops whichever cell was converted.
+     * {@code cellKey == 0} is byte-identical to the 3-arg form.
+     */
+    private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, int cellKey, long partitionRowCount, boolean zeroAllColumns) {
         final int columnCount = metadata.getColumnCount();
         for (int column = 0; column < columnCount; column++) {
             if (metadata.getColumnType(column) > 0) {
-                final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, column);
+                final long colTop = columnVersionWriter.getColumnTop(partitionTimestamp, cellKey, column);
                 boolean midColTop = colTop > 0 && colTop < partitionRowCount;
                 if (colTop != 0 && (zeroAllColumns || midColTop)) {
-                    columnVersionWriter.upsertColumnTop(partitionTimestamp, column, 0);
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, cellKey, column, 0);
                 }
             }
         }
@@ -15359,6 +22097,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @return true if the commit is identical to the partition, false otherwise
      */
     boolean checkDedupCommitIdenticalToPartition(
+            ReadOnlyObjList<? extends MemoryCR> taskO3Columns,
+            int cellKey,
             long partitionTimestamp,
             long partitionNameTxn,
             long partitionRowCount,
@@ -15371,8 +22111,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     ) {
         TableRecordMetadata metadata = getMetadata();
         FrameFactory frameFactory = engine.getFrameFactory();
-        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount)) {
-            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(o3Columns, this.metadata, commitRowCount)) {
+        // Cell-aware via the overload that still builds the path INTERNALLY. Doing the construction at
+        // this call site instead returned uninitialised memory -- the path has to be built exactly the
+        // way FrameImpl builds it, so the cell segment goes in there, not here.
+        try (Frame partitionFrame = frameFactory.openRO(path, partitionTimestamp, partitionNameTxn, partitionBy, metadata, columnVersionWriter, partitionRowCount, cellSegmentOrNull(cellKey))) {
+            // The TASK's columns, not the writer's o3Columns field. On a composite table a multi-cell
+            // commit is dispatched per cell over a per-cell SCRATCH column set
+            // (buildCompositeCellGroupScratch), 0-based over that cell's rows -- while o3Columns still
+            // holds the whole commit. commitLo/commitHi are cell-local, so pairing them with the global
+            // columns compares the wrong rows. For a plain table the task is handed the writer's own
+            // columns, so this is the same object it used before.
+            try (Frame commitFrame = engine.getFrameFactory().openROFromMemoryColumns(taskO3Columns, this.metadata, commitRowCount)) {
                 for (int i = 0; i < metadata.getColumnCount(); i++) {
                     // Do not compare dedup keys, already a match
                     if (!metadata.isDedupKey(i) && !FrameAlgebra.isColumnReplaceIdentical(

@@ -68,6 +68,19 @@ public class AlterOperationBuilder implements Mutable {
         extraInfo.add(columnNamePosition);
     }
 
+    /**
+     * SP1C: appends {@code (timestamp, position, cellKey)} for {@link AlterOperation#DROP_PARTITION_CELL}.
+     * Kept separate from {@link #addPartitionToList(long, int)} because the strides differ per command
+     * -- DROP_PARTITION writes pairs, FORCE_DROP_PARTITION writes bare timestamps, and this writes
+     * triples. That variation is pre-existing; see DROP_PARTITION_CELL for why a new command was
+     * chosen over widening an existing one.
+     */
+    public void addPartitionCellToList(long timestamp, int timestampPosition, int cellKey) {
+        extraInfo.add(timestamp);
+        extraInfo.add(timestampPosition);
+        extraInfo.add(cellKey);
+    }
+
     public void addPartitionToList(long timestamp, int timestampPosition) {
         extraInfo.add(timestamp);
         if (command != FORCE_DROP_PARTITION) {
@@ -216,6 +229,14 @@ public class AlterOperationBuilder implements Mutable {
 
     public AlterOperationBuilder ofDropPartition(int tableNamePosition, TableToken tableToken, int tableId) {
         this.command = DROP_PARTITION;
+        this.tableNamePosition = tableNamePosition;
+        this.tableToken = tableToken;
+        this.tableId = tableId;
+        return this;
+    }
+
+    public AlterOperationBuilder ofDropPartitionCell(int tableNamePosition, TableToken tableToken, int tableId) {
+        this.command = DROP_PARTITION_CELL;
         this.tableNamePosition = tableNamePosition;
         this.tableToken = tableToken;
         this.tableId = tableId;

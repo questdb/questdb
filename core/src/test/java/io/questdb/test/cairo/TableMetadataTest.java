@@ -73,7 +73,7 @@ public class TableMetadataTest extends AbstractCairoTest {
                 for (int i = 0; i < 65_536; i++) {
                     int columnCount = rnd.nextInt(1000);
                     long metadataVersion = rnd.nextLong(100);
-                    int metaFormatMinorVersion = TableUtils.calculateMetaFormatMinorVersionField(metadataVersion, columnCount);
+                    int metaFormatMinorVersion = TableUtils.calculateMetaFormatMinorVersionField(metadataVersion, columnCount, TableUtils.META_FORMAT_MINOR_VERSION_LATEST);
                     int garbageMetaFormatMinorVersion = rnd.nextInt();
 
                     metaMem.putInt(TableUtils.META_OFFSET_COUNT, columnCount);

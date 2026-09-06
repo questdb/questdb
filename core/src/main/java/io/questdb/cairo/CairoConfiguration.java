@@ -1098,6 +1098,16 @@ public interface CairoConfiguration {
     long getWalApplyTableTimeQuota();
 
     /**
+     * Composite multi-cell fast-append (spec 2, Task 1 -- detection only): the cap {@code K_max} on
+     * the number of DISTINCT cells a single commit may touch and still be considered multi-cell
+     * fast-append-eligible ({@link io.questdb.cairo.TableWriter#isCompositeMultiCellFastAppendPossible}).
+     * A commit spanning more distinct cells than this is never eligible, regardless of ordering/
+     * append-only-ness. Configured via {@code cairo.wal.composite.fastappend.max.open.cells}
+     * (default 64).
+     */
+    int getWalCompositeFastAppendMaxOpenCells();
+
+    /**
      * Whether WAL-apply-suspended tables (see {@link #getWalApplySuspendedTables()} and
      * {@code ALTER TABLE ... SUSPEND WAL}) also deny WAL writes, rejecting commits like a dropped
      * table but with a distinct exception. When false, suspension only excludes the table from WAL
@@ -1363,6 +1373,8 @@ public interface CairoConfiguration {
     boolean isWalApplyEnabled();
 
     boolean isWalApplyParallelSqlEnabled();
+
+    boolean isWalCompositeFastAppendEnabled();
 
     boolean isWalSupported();
 

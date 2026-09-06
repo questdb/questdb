@@ -176,6 +176,16 @@ public class VacuumColumnVersions implements Closeable {
             long columnVersion = tableFiles.get(i + 2);
             long latestColumnNameTxn = columnIndex > -1 ? columnVersionReader.getColumnNameTxn(partitionTs, writerIndex) : reader.getTxn();
             // Do not delete if columnVersion >= reader.getTxn(), this may be the transaction not committed yet
+            //
+            // Composite interner files (dedicated dimension dictionaries and the _cell registry) use
+            // reserved column-name txns allocated near Long.MAX_VALUE -- see
+            // CompositeInternerLayout.COMPOSITE_DICT_TXN_BASE / dictColumnNameTxn(int) / REGISTRY_TXN --
+            // which are always >= reader.getTxn() (a real, small txn counter). The `columnVersion <
+            // reader.getTxn()` half of this guard is therefore also what keeps interner files out of
+            // this vacuum path entirely, not just genuinely-uncommitted ones: they are intentionally
+            // never deleted here. If the reserved-txn scheme ever changes (e.g. txns no longer
+            // guaranteed to exceed any real reader.getTxn()), this exemption would silently break --
+            // revisit this guard together with CompositeInternerLayout if that allocation changes.
             if (columnVersion != latestColumnNameTxn && columnVersion < reader.getTxn()) {
                 // Has to be deleted. Columns can have multiple files e.g. .i, .d, .k, .v
                 if (!versionSetToDelete(purgeTask, partitionTs, columnVersion)) {

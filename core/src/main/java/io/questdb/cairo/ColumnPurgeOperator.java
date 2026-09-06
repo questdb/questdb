@@ -138,7 +138,53 @@ public class ColumnPurgeOperator implements Closeable {
         return purge0(task);
     }
 
-    private static boolean couldNotRemove(FilesFacade ff, LPSZ path) {
+    /**
+     * Is {@code path} inside a composite CELL directory, i.e. does it address live per-cell data?
+     * <p>
+     * Every path this operator deletes is built by {@link #setUpPartitionPath}, which appends the
+     * partition directory ONLY -- never a cell segment -- so the answer is structurally always "no".
+     * This turns that structural property into an ENFORCED one: a composite table's live column files
+     * live at {@code <table>/<day>/<cell>.<nameTxn>/<file>}, one directory deeper than anything this
+     * operator can name, so counting separators past the table directory distinguishes them.
+     * {@code /<day>/<file>} has two; {@code /<day>/<cell>/<file>} has three.
+     * <p>
+     * Without this the "the cell-blind purge is harmless" claim rests on the current shape of the
+     * path-building code, which a future change could alter silently. With it, such a change is
+     * refused and logged instead of deleting a live cell's column data.
+     */
+    private boolean pathAddressesCellData(LPSZ path) {
+        final int len = path.size();
+        if (len <= pathTableLen) {
+            return false;
+        }
+        int separators = 0;
+        for (int i = pathTableLen; i < len; i++) {
+            final byte b = path.byteAt(i);
+            if (b == (byte) '/' || b == (byte) '\\') {
+                separators++;
+            }
+        }
+        return exceedsDayDepth(separators);
+    }
+
+    /**
+     * The depth rule behind {@link #pathAddressesCellData}, separated so it can be tested directly:
+     * a day-level file sits at {@code /<day>/<file>} (two separators past the table directory) while a
+     * composite cell's file sits at {@code /<day>/<cell>/<file>} (three).
+     */
+    public static boolean exceedsDayDepth(int separatorsPastTableDir) {
+        return separatorsPastTableDir > 2;
+    }
+
+    private boolean couldNotRemove(FilesFacade ff, LPSZ path) {
+        // GUARANTEE: never unlink a file inside a composite cell directory. See
+        // pathAddressesCellData -- this operator cannot construct such a path today, and this makes
+        // that a checked invariant rather than a property of the current code shape.
+        if (pathAddressesCellData(path)) {
+            LOG.critical().$("column purge refused: path addresses composite cell data, refusing to unlink [path=")
+                    .$(path).$(']').$();
+            return true;
+        }
         if (ff.removeQuiet(path)) {
             return false;
         }

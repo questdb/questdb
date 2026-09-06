@@ -48,6 +48,16 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         super(configuration, intervalModel, timestampIndex);
     }
 
+    /**
+     * NOTE on the composite sibling-cell handling below, mirrored from {@link #next(long)}: no COMPOSITE
+     * query reaches this method today. The composite cross-cell merge cursor wraps this one and counts by
+     * iterating {@code next()} rather than delegating here -- measured, by instrumenting this method and
+     * finding that {@code SELECT count()} with a timestamp filter reaches it on a PLAIN table and on no
+     * composite query tried. The mirrored logic is kept deliberately rather than left out: counting by
+     * iteration is an obvious thing to optimise later, and a delegation added then would silently
+     * reintroduce the dropped-rows defect this fix exists for. It is unreachable-for-composite
+     * futureproofing, NOT a live fix -- the live fix is in {@code next()}.
+     */
     @Override
     public void calculateSize(RecordCursor.Counter counter) {
         int intervalsLo1 = this.intervalsLo;
@@ -57,7 +67,42 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
         long partitionLimit1 = this.partitionLimit;
         long size = this.sizeSoFar;
 
-        while (intervalsLo1 < intervalsHi1 && partitionLo1 < partitionHi1) {
+        // 9A: this method must not mutate cursor state, so it carries its own copies of the run fields.
+        // Note the sentinel asymmetry with next(): "no residual limit" is -1 here and 0 there. That is
+        // pre-existing and deliberately preserved; unifying it is a separate change.
+        int runHi1 = -1;
+        int runIntervalLo1 = 0;
+        int runResume1 = 0;
+
+        while (partitionLo1 < partitionHi1 && (intervalsLo1 < intervalsHi1 || partitionLo1 < runHi1)) {
+            if (partitionLo1 >= runHi1) {
+                runHi1 = forwardRunEnd(partitionLo1, partitionHi1);
+                runIntervalLo1 = intervalsLo1;
+                runResume1 = intervalsHi1;
+            }
+            // this cell has consumed every interval -- hand the run on to its next cell
+            if (intervalsLo1 >= intervalsHi1) {
+                if (intervalsLo1 < runResume1) {
+                    runResume1 = intervalsLo1;
+                }
+                partitionLimit1 = -1;
+                partitionLo1++;
+                intervalsLo1 = partitionLo1 >= runHi1 ? runResume1 : runIntervalLo1;
+                continue;
+            }
+            // Task 5b: a cell excluded by a composite dimension predicate is skipped WITHOUT consuming
+            // the current interval, so a sibling cell of the SAME day still gets its own chance against
+            // it. isCellAllowed() short-circuits true (zero cost) when no pruning is in effect, so this
+            // is a no-op for a plain table or an un-pruned composite query.
+            if (!isCellAllowed(partitionLo1)) {
+                if (intervalsLo1 < runResume1) {
+                    runResume1 = intervalsLo1;
+                }
+                partitionLimit1 = -1;
+                partitionLo1++;
+                intervalsLo1 = partitionLo1 >= runHi1 ? runResume1 : runIntervalLo1;
+                continue;
+            }
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
             final long rowCount = reader.getPartitionRowCountFromMetadata(partitionLo1);
@@ -68,17 +113,21 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 final long intervalHi = intervals.getQuick(intervalsLo1 * 2 + 1);
 
                 final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
-                // interval is wholly below partition, skip interval
+                // Interval is wholly above partition, retire the interval FOR THIS CELL. 9A dropped the
+                // sibling fall-through: siblings walk intervals from runIntervalLo1 themselves.
                 if (partitionTimestampLoApprox > intervalHi) {
                     intervalsLo1++;
                     continue;
                 }
 
                 final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
-                // interval is wholly above partition, skip partition
+                // Interval is wholly below partition: this cell's max ts is under the current interval's
+                // lo, therefore under every LATER interval's lo -- the CELL is exhausted.
                 if (partitionTimestampHiApprox < intervalLo) {
-                    partitionLimit1 = -1;
-                    partitionLo1++;
+                    if (intervalsLo1 < runResume1) {
+                        runResume1 = intervalsLo1;
+                    }
+                    intervalsLo1 = intervalsHi1;
                     continue;
                 }
 
@@ -86,17 +135,19 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 timestampFinder.prepare();
 
                 final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
-                // interval is wholly above partition, skip interval
+                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
+                // interval is wholly above partition, skip interval (for THIS cell only)
                 if (partitionTimestampLoExact > intervalHi) {
                     intervalsLo1++;
                     continue;
                 }
 
-                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
-                // interval is wholly below partition, skip partition
+                // interval is wholly below partition -- cell exhausted, see the approx twin above
                 if (partitionTimestampHiExact < intervalLo) {
-                    partitionLimit1 = -1;
-                    partitionLo1++;
+                    if (intervalsLo1 < runResume1) {
+                        runResume1 = intervalsLo1;
+                    }
+                    intervalsLo1 = intervalsHi1;
                     continue;
                 }
 
@@ -117,22 +168,31 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                     // we do have whole partition of fragment?
                     if (hi == rowCount) {
-                        // whole partition, will need to skip to next one
-                        partitionLimit1 = -1;
-                        partitionLo1++;
+                        // Whole partition consumed, so the CELL is exhausted -- but the INTERVAL is not.
+                        // It may reach into the next day, so it survives via runResume1.
+                        if (intervalsLo1 < runResume1) {
+                            runResume1 = intervalsLo1;
+                        }
+                        intervalsLo1 = intervalsHi1;
                     } else {
-                        // only fragment, need to skip to next interval
+                        // Fragment: the interval's hi bound fell inside this cell, so the interval is
+                        // finished FOR THIS CELL. 9A deleted the sibling special-case and its gate.
                         partitionLimit1 = hi;
                         intervalsLo1++;
                     }
                     continue;
                 }
-                // interval yielded empty partition frame
+                // Interval yielded an empty frame for this cell -- retire it for this cell only.
                 partitionLimit1 = hi;
                 intervalsLo1++;
             } else {
-                // partition was empty, just skip to next
+                // Partition was empty, just skip to next. partitionLimit1 is deliberately NOT reset
+                // here, matching the pre-9A walk exactly.
+                if (intervalsLo1 < runResume1) {
+                    runResume1 = intervalsLo1;
+                }
                 partitionLo1++;
+                intervalsLo1 = partitionLo1 >= runHi1 ? runResume1 : runIntervalLo1;
             }
         }
 
@@ -143,7 +203,33 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
     public PartitionFrame next(long skipTarget) {
         // order of logical operations is important
         // we are not calculating partition ranges when intervals are empty
-        while (intervalsLo < intervalsHi && partitionLo < partitionHi) {
+        // 9A: "partitionLo < runHi" is the disjunct that makes the cell-major walk work -- it keeps the
+        // loop alive for a cell that has consumed every interval so it can reach advanceForwardCell()
+        // and hand the run on to its next cell. Without it the loop would exit the moment the FIRST
+        // cell of a day finished its intervals, silently dropping every later cell of that day. It also
+        // terminates the walk promptly once a run completes with nothing left (partitionLo >= runHi and
+        // intervalsLo == intervalsHi) rather than opening empty runs over every remaining partition.
+        while (partitionLo < partitionHi && (intervalsLo < intervalsHi || partitionLo < runHi)) {
+            // 9A: open a day-run on entry and whenever the previous one completed. Every cell of the run
+            // is walked from runIntervalLo, so each cell sees EVERY interval. A PLAIN table's run is a
+            // single partition, so this collapses to a no-op there.
+            if (partitionLo >= runHi) {
+                beginForwardRun();
+            }
+            // this cell has consumed every interval -- hand the run on to its next cell
+            if (intervalsLo >= intervalsHi) {
+                partitionLimit = 0;
+                advanceForwardCell();
+                continue;
+            }
+            // Task 5b: see calculateSize()'s identical comment -- this method's own "no residual limit"
+            // sentinel is 0 (not -1; see toTop()), matching every other advance-partitionLo-alone branch
+            // below.
+            if (!isCellAllowed(partitionLo)) {
+                partitionLimit = 0;
+                advanceForwardCell();
+                continue;
+            }
             // We don't need to worry about column tops and null column because we
             // are working with timestamp. Timestamp column cannot be added to existing table.
             long rowCount = reader.getPartitionRowCountFromMetadata(partitionLo);
@@ -154,17 +240,34 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 final long intervalHi = intervals.getQuick(intervalsLo * 2 + 1);
 
                 final long partitionTimestampLoApprox = timestampFinder.minTimestampApproxFromMetadata();
-                // interval is wholly above partition, skip interval
+                // Interval is wholly above partition, skip interval -- UNLESS a sibling cell of the same
+                // day follows (composite table). Retiring the interval here would abandon every later
+                // sibling, and a sibling is an independent cell whose rows may well fall inside this
+                // interval even though THIS cell's do not. Fall through to the exact checks below, which
+                // handle the sibling case uniformly. MEASURED, so nobody re-optimises it on a hunch:
+                // 400 cells in one day, point query, 447 us/query with this fall-through vs 449 us for a
+                // variant that dismisses the cell from approx metadata without opening it -- no
+                // difference, because the reader already holds those partitions open. The fall-through is
+                // also the safer of the two: it guards using EXACT timestamps rather than conservative
+                // approximations, which would throw "unsupported" on queries that actually work.
+                // Unreachable for a plain table: its partitionLo + 1 is always the NEXT day.
+                //
+                // 9A REPLACED ALL OF THE ABOVE with the plain approx check. The sibling fall-through
+                // existed only because a retired interval could never be revisited by a later cell of
+                // the same day. Cells now walk intervals independently, so retiring this interval FOR
+                // THIS CELL abandons nothing -- every sibling gets its own pass from runIntervalLo.
                 if (partitionTimestampLoApprox > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
                 final long partitionTimestampHiApprox = timestampFinder.maxTimestampApproxFromMetadata();
-                // interval is wholly below partition, skip partition
+                // Interval is wholly below partition. This cell's max ts is below the current interval's
+                // lo, therefore below every LATER interval's lo too -- the CELL is exhausted, not merely
+                // this interval.
                 if (partitionTimestampHiApprox < intervalLo) {
                     partitionLimit = 0;
-                    partitionLo++;
+                    advanceForwardCell();
                     continue;
                 }
 
@@ -181,17 +284,17 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
                 timestampFinder.prepare();
 
                 final long partitionTimestampLoExact = timestampFinder.minTimestampExact();
-                // interval is wholly above partition, skip interval
+                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
+                // interval is wholly above partition, skip interval (for THIS cell only)
                 if (partitionTimestampLoExact > intervalHi) {
                     intervalsLo++;
                     continue;
                 }
 
-                final long partitionTimestampHiExact = timestampFinder.maxTimestampExact();
-                // interval is wholly below partition, skip partition
+                // interval is wholly below partition -- cell exhausted, see the approx twin above
                 if (partitionTimestampHiExact < intervalLo) {
                     partitionLimit = 0;
-                    partitionLo++;
+                    advanceForwardCell();
                     continue;
                 }
 
@@ -233,26 +336,56 @@ public class IntervalFwdPartitionFrameCursor extends AbstractIntervalPartitionFr
 
                     // we do have whole partition of fragment?
                     if (hi == rowCount) {
-                        // whole partition, will need to skip to next one
+                        // Whole partition consumed, so the CELL is exhausted -- but the INTERVAL is not.
+                        // It may reach into the next day, so it stays live via runResume rather than
+                        // being retired here.
                         partitionLimit = 0;
-                        partitionLo++;
+                        advanceForwardCell();
                     } else {
-                        // only fragment, need to skip to next interval
+                        // Fragment: the interval's HIGH bound fell inside this cell, so this interval is
+                        // finished FOR THIS CELL. 9A deleted the sibling special-case that used to sit
+                        // here, along with the gate it carried: a sibling no longer depends on this cell
+                        // declining to retire the interval, because it walks intervals from runIntervalLo
+                        // itself.
                         partitionLimit = hi;
                         intervalsLo++;
                     }
 
                     return frame;
                 }
-                // interval yielded empty partition frame
+                // Interval yielded an empty frame for this cell -- retire the interval FOR THIS CELL
+                // only. Siblings walk intervals from runIntervalLo, so nothing is abandoned.
                 partitionLimit = hi;
                 intervalsLo++;
             } else {
-                // partition was empty, just skip to next
-                partitionLo++;
+                // Partition was empty, just skip to next. partitionLimit is deliberately NOT reset here,
+                // matching the pre-9A walk exactly.
+                advanceForwardCell();
             }
         }
         return null;
+    }
+
+    /**
+     * Ends the current cell and moves to the next one, folding this cell's reached interval index into
+     * the run's resume point.
+     * <p>
+     * {@code runResume} is the MINIMUM index any cell of the run reached, and becomes the global
+     * {@code intervalsLo} once the run completes. The minimum, not the last cell's: an interval that
+     * reaches past this day must stay live for the next one, and taking the last cell's index would
+     * retire it early and silently drop its rows -- the exact defect class 9A exists to end.
+     * <p>
+     * Deliberately does NOT touch {@code partitionLimit}; callers set it, because the empty-partition
+     * branch has to leave it alone to stay byte-identical with the pre-9A walk.
+     */
+    private void advanceForwardCell() {
+        if (intervalsLo < runResume) {
+            runResume = intervalsLo;
+        }
+        partitionLo++;
+        // run complete -> publish the resume point; otherwise the next cell of the SAME day restarts at
+        // this run's first interval
+        intervalsLo = partitionLo >= runHi ? runResume : runIntervalLo;
     }
 
     @Override

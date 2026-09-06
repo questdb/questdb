@@ -191,6 +191,17 @@ public final class ExtraNullColumnCursorFactory extends AbstractRecordCursorFact
     }
 
     @Override
+    public boolean supportsPageFrameCursorForUnorderedAggregation() {
+        return base.supportsPageFrameCursorForUnorderedAggregation();
+    }
+
+    @Override
+    public boolean supportsConcurrentTimeFrameCursor() {
+        // Delegate so a composite (no concurrent twin) stays off the async join path through this wrapper.
+        return base.supportsConcurrentTimeFrameCursor();
+    }
+
+    @Override
     public boolean supportsTimeFrameCursor() {
         return base.supportsTimeFrameCursor();
     }

@@ -32,6 +32,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Parquet partition decoder that decode row-groups from `data.parquet`
@@ -279,7 +280,14 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
         }
     }
 
-    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, int memoryTag) {
+    /**
+     * Identity-carrying bind. The base ignores the identity: it exists for a subclass that resolves the
+     * partition's bytes from somewhere other than the local mmap (the enterprise cold decoder builds an
+     * object-store key from it). {@code cellSegment} is the COMPOSITE cell this partition record is,
+     * rendered as the dimension values, or {@code null} on a plain table -- without it a day's N cells
+     * all address one key.
+     */
+    public void of(long parquetMetaAddr, long parquetMetaSize, long parquetAddr, long parquetSize, TableToken table, int partitionBy, int timestampType, long timestamp, @Nullable CharSequence cellSegment, int memoryTag) {
         of(parquetMetaAddr, parquetMetaSize, parquetAddr, parquetSize, memoryTag);
     }
 

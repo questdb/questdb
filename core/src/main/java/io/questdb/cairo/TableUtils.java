@@ -108,6 +108,38 @@ public final class TableUtils {
     public static final String CHECKPOINT_SEQ_TXN_FILE_NAME = "_txn";
     public static final long COLUMN_NAME_TXN_NONE = -1L;
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
+    // Initial symbol-capacity hint for composite dedicated-dictionary and cell-registry symbol maps
+    // (see CompositeInternerLayout). This is only a hash-index sizing hint -- the map auto-grows --
+    // and these interners are dormant infrastructure in this plan (populated by later tasks), so a
+    // modest default is fine here and can be tuned once real workloads exist.
+    public static final int COMPOSITE_INTERNER_DEFAULT_SYMBOL_CAPACITY = 256;
+    /**
+     * Reserved on-disk directory-name token for a composite partition dimension whose value is NULL.
+     * Injective against every real value because {@link #putPathSafe} escapes a literal {@code '%'}
+     * to {@code "%25"} -- see {@link #putCellSegmentPathSafe(CharSink, int, CharSequence)} for the
+     * full argument. Must never change once a table has been written with it: it IS the directory name.
+     */
+    public static final String COMPOSITE_NULL_DIMENSION_TOKEN = "%NULL";
+    /**
+     * Reserved on-disk directory-name token for a composite partition dimension whose value is the
+     * EMPTY STRING -- a real, non-NULL symbol value that {@link #putPathSafe} would otherwise render
+     * as nothing at all.
+     * <p>
+     * Without it an empty value produces an EMPTY path component, and under {@code LAYOUT PLAIN}
+     * (which, unlike HIVE mode, has no {@code "col="} prefix to keep the component non-empty) the
+     * cell then has no directory of its own: measured, a two-cell day holding {@code ''} and
+     * {@code 'BTC'} produced a single directory, {@code [BTC]}. Two distinct cells collapsing onto one
+     * directory is the same injectivity failure {@link #COMPOSITE_NULL_DIMENSION_TOKEN} exists to
+     * prevent, and it is reachable from ordinary SQL: {@code INSERT} preserves {@code ''} as a
+     * non-NULL symbol (verified), so this needs no exotic writer-API path.
+     * <p>
+     * Injective for the same reason as the NULL token: {@code putPathSafe} escapes a literal
+     * {@code '%'} to {@code "%25"}, so no real value can ever render a name containing a bare
+     * {@code '%'}. A table holding the literal symbol {@code "%EMPTY"} renders {@code "%25EMPTY"} and
+     * stays a distinct cell. Must never change once a table has been written with it: it IS the
+     * directory name.
+     */
+    public static final String COMPOSITE_EMPTY_DIMENSION_TOKEN = "%EMPTY";
     public static final String DEFAULT_PARTITION_NAME = "default";
     public static final String DETACHED_DIR_MARKER = ".detached";
     public static final long ESTIMATED_VAR_COL_SIZE = 28;
@@ -116,10 +148,19 @@ public final class TableUtils {
     public static final int INITIAL_TXN = 0;
     public static final String LEGACY_CHECKPOINT_DIRECTORY = "snapshot";
     public static final int LONGS_PER_TX_ATTACHED_PARTITION = 4;
+    // Stride for a COMPOSITE table's attached-partition record: cellKey lives at slot 4 (slots 5-7
+    // reserved); forced to 8 (not 5) because LongList.binarySearchBlock needs a power-of-2 block
+    // size. Plain tables keep stride 4 / byte-identical layout -- see TxReader.longsPerAttachedPartition.
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE = 8;
+    public static final int LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE);
     public static final int LONGS_PER_TX_ATTACHED_PARTITION_MSB = Numbers.msb(LONGS_PER_TX_ATTACHED_PARTITION);
     public static final long META_COLUMN_DATA_SIZE = 32;
     public static final String META_FILE_NAME = "_meta";
-    public static final short META_FORMAT_MINOR_VERSION_LATEST = 2;
+    // Version-gate for the additive trailing composite-partitioning block (Task 5). Written into the
+    // minor-version high short ONLY for composite tables; plain tables keep writing
+    // META_FORMAT_MINOR_VERSION_TABLE_FORMAT so their _meta bytes stay byte-identical to before.
+    public static final short META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING = 3;
+    public static final short META_FORMAT_MINOR_VERSION_LATEST = 3;
     public static final short META_FORMAT_MINOR_VERSION_PARQUET_ENCODING_CONFIG = 1;
     public static final short META_FORMAT_MINOR_VERSION_TABLE_FORMAT = 2;
     public static final short META_FORMAT_MINOR_VERSION_TTL = 1;
@@ -205,6 +246,18 @@ public final class TableUtils {
     public static final long TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 = TX_BASE_OFFSET_B_32 + 4;
     public static final long TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 = TX_BASE_OFFSET_SYMBOLS_SIZE_B_32 + 4;
     public static final int TX_BASE_HEADER_SIZE = (int) Math.max(TX_BASE_OFFSET_PARTITIONS_SIZE_B_32 + 4 + TX_BASE_HEADER_SECTION_PADDING, 64);
+    // Plan 3b Task 1: self-describing attached-partition record stride for this table, a GLOBAL
+    // (non-A/B, non-versioned) property written at the same fixed offset on every base-header write --
+    // it does not swap with the A/B parity because compositeness never changes across a table's
+    // lifetime. Lives in what was pure zero padding (part of the tail introduced by the Math.max(.., 64)
+    // above, not part of either per-section TX_BASE_HEADER_SECTION_PADDING block) so a plain table's
+    // on-disk bytes are unaffected: 0 (== today's zero padding) means plain/stride-4, 8 means
+    // COMPOSITE/stride-8 -- see LONGS_PER_TX_ATTACHED_PARTITION / LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE.
+    // Read by TxReader#unsafeLoadBaseOffset(); written by TxReader#dumpTo(), TableUtils#createTxn(),
+    // TxWriter#finishABHeader() and, plain/stride-4 only (that CLI tool structurally cannot represent
+    // composite -- it refuses to read one and always writes the plain marker),
+    // io.questdb.cliutil.TxSerializer#serializeJson().
+    public static final long TX_BASE_OFFSET_PARTITION_STRIDE_32 = 56;
     public static final long TX_OFFSET_MAP_WRITER_COUNT_32 = 128;
     public static final long TX_OFFSET_TXN_64 = 0;
     public static final long TX_OFFSET_TRANSIENT_ROW_COUNT_64 = TX_OFFSET_TXN_64 + 8;
@@ -288,15 +341,22 @@ public final class TableUtils {
         allocateDiskSpace(ff, fd, size);
     }
 
-    public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount) {
+    public static int calculateMetaFormatMinorVersionField(long metadataVersion, int columnCount, short minorVersion) {
         // Metadata Format Minor Version field is 2 shorts:
         // - Low short is a checksum that changes with every update to _meta
-        // - High short is TableUtils.META_FORMAT_MINOR_VERSION_LATEST
+        // - High short is the effective minor format version for THIS table. Callers pass the
+        //   minimum version that describes what they actually wrote: the highest always-present
+        //   feature version (META_FORMAT_MINOR_VERSION_TABLE_FORMAT) for a table without any
+        //   version-gated, conditionally-written feature, raised (e.g. to
+        //   META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING) only when such a feature is present.
+        //   Writing the minimum keeps the _meta bytes of tables lacking the newer feature
+        //   byte-identical across releases, while old readers still validate via the checksum
+        //   (which does NOT depend on the version value) and then gate on their own required version.
         // When reading the Metadata Format Minor Version field from the metadata record, use the checksum
         // to decide whether to trust the version stored in this field.
         return Numbers.encodeLowHighShorts(
                 checksumForMetaFormatMinorVersionField(metadataVersion, columnCount),
-                META_FORMAT_MINOR_VERSION_LATEST
+                minorVersion
         );
     }
 
@@ -721,6 +781,42 @@ public final class TableUtils {
                     }
                 }
 
+                // Composite dimension dictionaries + cell registry: dormant infrastructure in this
+                // plan (later tasks open and populate them). Gate on hasInterners(), NOT
+                // isComposite() -- a cluster-only table (ORDER BY only, zero partition dimensions) is
+                // composite but has no dimension tuple, so it needs neither a registry nor dictionaries.
+                PartitionSpec partitionSpec = structure.getPartitionSpec();
+                CompositeInternerLayout compositeLayout = CompositeInternerLayout.of(partitionSpec);
+                if (compositeLayout.hasInterners()) {
+                    for (int i = 0, n = partitionSpec.getDimensionCount(); i < n; i++) {
+                        if (compositeLayout.needsDedicatedDict(i)) {
+                            createSymbolMapFiles(
+                                    ff,
+                                    mem,
+                                    path.trimTo(rootLen),
+                                    compositeLayout.dictName(i),
+                                    compositeLayout.dictColumnNameTxn(i),
+                                    COMPOSITE_INTERNER_DEFAULT_SYMBOL_CAPACITY,
+                                    false
+                            );
+                        }
+                    }
+                    createSymbolMapFiles(
+                            ff,
+                            mem,
+                            path.trimTo(rootLen),
+                            CompositeInternerLayout.REGISTRY_NAME,
+                            CompositeInternerLayout.REGISTRY_TXN,
+                            COMPOSITE_INTERNER_DEFAULT_SYMBOL_CAPACITY,
+                            false
+                    );
+                    // The dedicated dicts + the registry are first-class _txn symbol maps: count
+                    // them so createTxn(mem, symbolMapCount, ...) below reserves a zero-count slot
+                    // for each (dedicatedCount() dicts + 1 registry). The writer registers matching
+                    // SymbolMapWriters into denseSymbolMapWriters at open, keeping
+                    // _txn.symbolColumnCount == denseSymbolMapWriters.size().
+                    symbolMapCount += compositeLayout.dedicatedCount() + 1;
+                }
 
                 mem.smallFile(ff, path.trimTo(rootLen).concat(COLUMN_VERSION_FILE_NAME).$(), MemoryTag.MMAP_DEFAULT);
                 createColumnVersionFile(mem);
@@ -765,7 +861,13 @@ public final class TableUtils {
 
             // Create TXN file last, it is used to determine if table exists
             mem.smallFile(ff, path.trimTo(rootLen).concat(txnFileName).$(), MemoryTag.MMAP_DEFAULT);
-            createTxn(mem, symbolMapCount, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
+            // Plan 3b Task 3: composite-ness is known right here, from the same PartitionSpec the
+            // interner-dictionary setup above already consulted -- mirrors the exact predicate
+            // TableWriter/TableReader use for their own setComposite(...) calls
+            // (metadata.getPartitionSpec().getDimensionCount() > 0), so createTxn's marker always agrees
+            // with what this table's first real commit (TxWriter#finishABHeader) will derive too.
+            boolean composite = structure.getPartitionSpec().getDimensionCount() > 0;
+            createTxn(mem, symbolMapCount, composite, 0L, 0L, INITIAL_TXN, 0L, 0L, 0L, 0L);
             mem.sync(false);
         } finally {
             if (dirFd > 0) {
@@ -777,6 +879,7 @@ public final class TableUtils {
     public static void createTxn(
             MemoryMW txMem,
             int symbolMapCount,
+            boolean composite,
             long txn,
             long seqTxn,
             long dataVersion,
@@ -788,6 +891,18 @@ public final class TableUtils {
         txMem.putInt(TX_BASE_OFFSET_A_32, TX_BASE_HEADER_SIZE);
         txMem.putInt(TX_BASE_OFFSET_SYMBOLS_SIZE_A_32, symbolMapCount * 8);
         txMem.putInt(TX_BASE_OFFSET_PARTITIONS_SIZE_A_32, 0);
+        // Plan 3b Task 3: this is genuinely-fresh physical file creation, before any TxWriter object
+        // exists -- but the caller (the CREATE TABLE path) already knows composite-ness from the
+        // table's own PartitionSpec at this point, so the marker is written correctly from the start:
+        // 0 (byte-identical to the legacy zero padding) for a plain table, 8 for a composite one. This
+        // closes the create-time window where the marker used to read 0 for an as-yet-uncommitted
+        // composite table (Task 1's rationale for making the read upgrade-only); TxWriter#finishABHeader
+        // keeps writing the same marker (derived the same way, from its own longsPerAttachedPartition)
+        // on every subsequent commit, so the two never disagree.
+        txMem.putInt(
+                TX_BASE_OFFSET_PARTITION_STRIDE_32,
+                partitionStrideMarker(composite ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : LONGS_PER_TX_ATTACHED_PARTITION)
+        );
         resetTxn(
                 txMem,
                 TX_BASE_HEADER_SIZE,
@@ -801,6 +916,14 @@ public final class TableUtils {
                 truncateVersion
         );
         txMem.setTruncateSize(TX_BASE_HEADER_SIZE + TX_RECORD_HEADER_SIZE);
+    }
+
+    // Derives the self-describing TX_BASE_OFFSET_PARTITION_STRIDE_32 marker value from a table's
+    // attached-partition record stride: LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE (8) for composite,
+    // 0 (byte-identical to the legacy zero padding) for plain. Single source of truth shared by
+    // TableUtils#createTxn (Plan 3b Task 3), TxReader#dumpTo and TxWriter#finishABHeader.
+    public static int partitionStrideMarker(int longsPerAttachedPartition) {
+        return longsPerAttachedPartition == LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE ? LONGS_PER_TX_ATTACHED_PARTITION_COMPOSITE : 0;
     }
 
     public static LPSZ dFile(Path path, @NotNull CharSequence columnName, long columnTxn) {
@@ -1878,18 +2001,58 @@ public final class TableUtils {
             long squashTracker,
             long seqTxn
     ) {
+        return produceParquetFromNative(path, other, pathSize, partitionTimestamp, partitionNameTxn, parquetNameTxn,
+                tableName, partitionRowCount, metadata, columnVersionReader, symbolTableProvider, configuration,
+                // No cellSegment => no cell => cellKey 0. This overload is the PLAIN-table entry point;
+                // a composite table always goes through the cellSegment-carrying form.
+                bloomFilterColumns, bloomFilterFpp, bloomFilterIndexes, squashTracker, seqTxn, null, 0);
+    }
+
+    /**
+     * Cell-aware counterpart, for converting ONE cell of a composite day to its own parquet file.
+     * <p>
+     * This method rebuilds both the source and destination paths from the timestamp and name-txns,
+     * overwriting whatever the caller had set, so a cell-aware caller cannot simply pre-position the
+     * paths -- the segment has to be threaded in. A {@code null} {@code cellSegment} renders exactly as
+     * before, so plain tables are untouched.
+     */
+    public static long produceParquetFromNative(
+            Path path,
+            Path other,
+            int pathSize,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long parquetNameTxn,
+            String tableName,
+            long partitionRowCount,
+            TableMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            SymbolTableProvider symbolTableProvider,
+            CairoConfiguration configuration,
+            @Nullable CharSequence bloomFilterColumns,
+            double bloomFilterFpp,
+            DirectIntList bloomFilterIndexes,
+            long squashTracker,
+            long seqTxn,
+            @Nullable CharSequence cellSegment,
+            // Composite: the CELL being encoded. _cv is keyed by (timestamp, cellKey, column), so the
+            // 2-arg getRecordIndex below answered for cellKey 0 -- every cell of a day was encoded with
+            // cell 0's column top and name txn. Where the tops differ, a non-zero cell's values were
+            // encoded as absent and read back NULL. 0 for a plain table.
+            int cellKey
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
         final int timestampType = metadata.getTimestampType();
 
-        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+        setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
         if (!ff.exists(path.$())) {
             throw CairoException.nonCritical().put("partition directory does not exist [path=").put(path).put(']');
         }
         final int partitionDirLen = path.size();
         final int pathRootSize = configuration.getDbRoot().length();
 
-        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+        setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
         if (ff.exists(other.$())) {
             LOG.info().$("parquet for native partition already present [path=").$substr(pathRootSize, path).I$();
             return ff.length(other.$());
@@ -1928,7 +2091,7 @@ public final class TableUtils {
                     // column is dropped or re-keyed by ALTER COLUMN TYPE. Mirror TableReader.
                     final int writerIndex = tableColumnMetadata.getWriterIndex();
 
-                    final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, writerIndex);
+                    final int versionRecordIndex = columnVersionReader.getRecordIndex(partitionTimestamp, cellKey, writerIndex);
                     long columnNameTxn = columnVersionReader.getColumnNameTxnByIndex(versionRecordIndex);
                     if (columnNameTxn == -1) {
                         columnNameTxn = columnVersionReader.getDefaultColumnNameTxn(writerIndex);
@@ -1985,7 +2148,7 @@ public final class TableUtils {
                             ff.madvise(columnSecondaryAddr, columnSecondarySize, Files.POSIX_MADV_SEQUENTIAL);
 
                             // recover the partition path
-                            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+                            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
                         } else if (ColumnType.isVarSize(columnType)) {
                             partitionDescriptor.addColumn(columnName, columnType, columnId, columnTop, parquetEncodingConfig);
 
@@ -2058,7 +2221,7 @@ public final class TableUtils {
                 double fpp = Double.isNaN(bloomFilterFpp) ? configuration.getPartitionEncoderParquetBloomFilterFpp() : bloomFilterFpp;
 
                 // Open _pm file for the Rust encoder to write simultaneously.
-                setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
                 parquetMetaFd = TableUtils.openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
 
                 bloomFilterIndexes.clear();
@@ -2075,7 +2238,7 @@ public final class TableUtils {
                 }
 
                 // Restore parquet file path for encoding.
-                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
 
                 PartitionEncoder.encodeWithOptions(
                         partitionDescriptor,
@@ -2102,7 +2265,7 @@ public final class TableUtils {
                 if (commitMode != CommitMode.NOSYNC) {
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
-                        setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                        setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
                         // Drop the trailing /_pm component to fsync the partition dir itself.
                         other.parent();
                         final long dirFd = TableUtils.openRONoCache(ff, other.$(), LOG);
@@ -2111,7 +2274,7 @@ public final class TableUtils {
                         }
                     }
                 }
-                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+                setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
                 return ff.length(other.$());
             }
         } catch (CairoException e) {
@@ -2128,11 +2291,11 @@ public final class TableUtils {
                 ff.close(parquetMetaFd);
                 parquetMetaFd = -1;
             }
-            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+            setPathForParquetPartitionMetadata(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
             if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
                 LOG.error().$("could not remove parquet _pm on rollback [path=").$(other).I$();
             }
-            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
+            setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn, cellSegment);
             if (ff.exists(other.$()) && !ff.removeQuiet(other.$())) {
                 LOG.error().$("could not remove parquet file on rollback [path=").$(other).I$();
             }
@@ -2168,6 +2331,37 @@ public final class TableUtils {
             ParquetConversionContext conversionContext,
             long seqTxn
     ) {
+        // No cellSegment => no cell => cellKey 0. The PLAIN-table entry point; a composite table
+        // always goes through the cell-carrying form below.
+        return produceParquetFromParquetWithConversions(path, other, pathSize, partitionTimestamp, partitionNameTxn,
+                sourceParquetFileSize, candidateParquetFileName, candidateParquetMetaFileName, metadata,
+                columnVersionReader, symbolTableProvider, configuration, conversionContext, seqTxn, null, 0);
+    }
+
+    /**
+     * Cell-aware counterpart, for re-encoding ONE cell of a composite day. {@code cellSegment} places
+     * the source and the two candidate files inside that cell's directory; {@code cellKey} keys the
+     * column tops the materializer reads (`_cv` is keyed by (timestamp, cellKey, column)). A null
+     * segment with cellKey 0 is byte-identical to the form above.
+     */
+    public static long produceParquetFromParquetWithConversions(
+            Path path,
+            Path other,
+            int pathSize,
+            long partitionTimestamp,
+            long partitionNameTxn,
+            long sourceParquetFileSize,
+            CharSequence candidateParquetFileName,
+            CharSequence candidateParquetMetaFileName,
+            TableMetadata metadata,
+            ColumnVersionReader columnVersionReader,
+            SymbolTableProvider symbolTableProvider,
+            CairoConfiguration configuration,
+            ParquetConversionContext conversionContext,
+            long seqTxn,
+            @Nullable CharSequence cellSegment,
+            int cellKey
+    ) {
         final FilesFacade ff = configuration.getFilesFacade();
         final int partitionBy = metadata.getPartitionBy();
         final int timestampType = metadata.getTimestampType();
@@ -2197,7 +2391,7 @@ public final class TableUtils {
         final PartitionUpdater partitionUpdater = conversionContext.getPartitionUpdater();
 
         try {
-            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             final int partitionDirLen = path.size();
             path.concat(PARQUET_METADATA_FILE_NAME).$();
             parquetMetaAddr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
@@ -2217,7 +2411,7 @@ public final class TableUtils {
             mappedParquetSize = sourceParquetSize;
             decoder.of(parquetMetaReader, parquetAddr, sourceParquetSize, MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER);
 
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             other.concat(candidateParquetFileName).$();
             ff.removeQuiet(other.$());
             writerFd = openRW(ff, other.$(), LOG, configuration.getWriterFileOpenOpts());
@@ -2293,6 +2487,7 @@ public final class TableUtils {
                         metadata,
                         columnVersionReader,
                         partitionTimestamp,
+                        cellKey,
                         tableToParquetIdx,
                         symbolTableProvider
                 );
@@ -2304,7 +2499,7 @@ public final class TableUtils {
         } catch (Throwable th) {
             // Close Rust-owned descriptors before removing candidates, especially on Windows.
             conversionContext.releaseResources();
-            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            setPathForNativePartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn, cellSegment);
             final int partitionDirLen = other.size();
             other.concat(candidateParquetFileName);
             ff.removeQuiet(other.$());
@@ -2664,6 +2859,30 @@ public final class TableUtils {
     }
 
     /**
+     * Sets the path to the directory of a native partition, additionally inserting a per-cell
+     * directory segment between the date component and the {@code .nameTxn} version suffix -- the
+     * composite-partitioning counterpart of {@link #setPathForNativePartition(Path, int, int, long, long)},
+     * which this delegates to unchanged (byte-identical: same date component, same {@code .nameTxn}
+     * placement right after it) whenever {@code cellSegment} is {@code null}.
+     * <p>
+     * {@code cellSegment} must already be fully rendered (e.g. by {@link TableWriter#renderCellSegment})
+     * -- this method is pure path plumbing with no notion of {@code PartitionSpec}, dimension kinds,
+     * or how to resolve a {@code cellKey}; it just places an opaque, already-path-safe component. The
+     * {@code .nameTxn} suffix attaches to the cell segment, not the shared day directory (composite
+     * on-disk versioning is per-cell -- see {@code TxReader.getPartitionNameTxn}).
+     *
+     * @param path          Set to the root directory for a table, this will be updated to the root directory of the partition
+     * @param timestampType type (resolution) of the timestamp column
+     * @param partitionBy   Partitioning scheme
+     * @param timestamp     A timestamp in the partition
+     * @param nameTxn       Partition txn suffix, attached after the cell segment (or after the date, if {@code cellSegment} is null)
+     * @param cellSegment   Already-rendered cell directory segment (e.g. {@code "exch=BTC"} or {@code "BTC"}), or {@code null} for a plain (non-composite) partition
+     */
+    public static void setPathForNativePartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn, @Nullable CharSequence cellSegment) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn, cellSegment);
+    }
+
+    /**
      * Sets the path to the file of a Parquet partition taking into account the timestamp, the partitioning scheme
      * and the partition version.
      *
@@ -2674,7 +2893,19 @@ public final class TableUtils {
      * @param nameTxn       Partition txn suffix
      */
     public static void setPathForParquetPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
+        // delegate rather than duplicate: the two forms cannot drift apart if only one renders
+        setPathForParquetPartition(path, timestampType, partitionBy, timestamp, nameTxn, null);
+    }
+
+    /**
+     * Cell-aware counterpart, for a composite table's per-cell parquet file. A parquet partition is
+     * {@code <partitionDir>/data.parquet}, and the cell segment nests inside the day exactly as it does
+     * for a native partition, so this yields {@code <day>/<cell>.<nameTxn>/data.parquet}.
+     * <p>
+     * A {@code null} {@code cellSegment} renders byte-identically to the 5-arg form -- invariant 1.
+     */
+    public static void setPathForParquetPartition(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn, @Nullable CharSequence cellSegment) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn, cellSegment);
         path.concat(PARQUET_PARTITION_NAME);
     }
 
@@ -2689,7 +2920,16 @@ public final class TableUtils {
      * @param nameTxn       Partition txn suffix
      */
     public static void setPathForParquetPartitionMetadata(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn) {
-        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn);
+        setPathForParquetPartitionMetadata(path, timestampType, partitionBy, timestamp, nameTxn, null);
+    }
+
+    /**
+     * Cell-aware counterpart of {@link #setPathForParquetPartitionMetadata(Path, int, int, long, long)},
+     * yielding {@code <day>/<cell>.<nameTxn>/_pm}. A {@code null} {@code cellSegment} is byte-identical
+     * to the 5-arg form.
+     */
+    public static void setPathForParquetPartitionMetadata(Path path, int timestampType, int partitionBy, long timestamp, long nameTxn, @Nullable CharSequence cellSegment) {
+        setSinkForNativePartition(path.slash(), timestampType, partitionBy, timestamp, nameTxn, cellSegment);
         path.concat(PARQUET_METADATA_FILE_NAME);
     }
 
@@ -2707,6 +2947,170 @@ public final class TableUtils {
         PartitionBy.setSinkForPartition(sink, timestampType, partitionBy, timestamp);
         if (nameTxn > -1L) {
             sink.put('.').put(nameTxn);
+        }
+    }
+
+    /**
+     * Sets the sink to the directory of a native partition, additionally inserting a per-cell
+     * directory segment between the date component and the {@code .nameTxn} version suffix. See
+     * {@link #setPathForNativePartition(Path, int, int, long, long, CharSequence)} for the full
+     * contract. The existing 5-arg {@link #setSinkForNativePartition(CharSink, int, int, long, long)}
+     * is untouched and remains byte-identical for a plain (non-composite) partition.
+     */
+    public static void setSinkForNativePartition(CharSink<?> sink, int timestampType, int partitionBy, long timestamp, long nameTxn, @Nullable CharSequence cellSegment) {
+        PartitionBy.setSinkForPartition(sink, timestampType, partitionBy, timestamp);
+        if (cellSegment != null) {
+            sink.put('/').put(cellSegment);
+        }
+        if (nameTxn > -1L) {
+            sink.put('.').put(nameTxn);
+        }
+    }
+
+    /**
+     * Writes {@code value} into {@code sink}, percent-escaping every character that would be unsafe
+     * as a single path/directory-name component: {@code /} and {@code \} (path separators on
+     * POSIX/Windows), {@code .} (ambiguous with the {@code .<nameTxn>} version-suffix separator and
+     * with the special {@code .}/{@code ..} directory names), {@code %} itself (keeps the escaping
+     * unambiguous/self-delimiting), and C0 control characters / DEL ({@code U+0000..U+001F, U+007F}).
+     * <p>
+     * Composite-partition cell-directory segments (Plan 4a Task 3) are rendered from arbitrary
+     * user-supplied data -- SYMBOL column values (IDENTITY) and TRUNCATE dedicated-dictionary
+     * prefixes -- which, unlike table/column identifiers ({@link #isValidTableName}/
+     * {@link #isValidColumnName}), carry no existing restriction against filesystem-unsafe
+     * characters: a symbol value of {@code "A/../B"} is perfectly legal SQL data. Escaping here is
+     * what stops such a value from silently producing a broken path, or one that escapes the
+     * partition directory entirely.
+     * <p>
+     * This is a narrow, forward (encode)-only escape: it does not defend against platform-reserved
+     * names (e.g. Windows {@code CON}/{@code PRN}) and provides no decode/reverse-parse path back to
+     * the original value -- reverse-parsing an on-disk cell directory name is not needed by this
+     * task and is left for whichever later task needs it, at the same validation bar the existing
+     * identifier validators above already accept.
+     */
+    public static void putPathSafe(CharSink<?> sink, CharSequence value) {
+        final int n = value.length();
+        // A Windows RESERVED DEVICE NAME cannot be a directory name whatever its characters are, so
+        // escaping characters does not help -- the name itself is the problem. CON, PRN, AUX and NUL
+        // are entirely plausible SYMBOL values (real ticker and sensor names), and this is invisible
+        // to OSS CI, which is Linux-only.
+        //
+        // Escaping the FIRST character is enough to clear the reservation, and stays injective for
+        // the same reason every other escape here does: a real value can never render a BARE '%',
+        // so "%43ON" can only have come from this transform -- the literal value "%43ON" renders
+        // "%2543ON". Checking the INPUT is equivalent to checking the output, because a reserved
+        // name is all ASCII letters and digits, none of which the loop below escapes.
+        int start = 0;
+        if (isWindowsReservedDeviceName(value)) {
+            final char c = value.charAt(0);
+            sink.put('%').put(Numbers.hexDigits[(c >> 4) & 0xF]).put(Numbers.hexDigits[c & 0xF]);
+            start = 1;
+        }
+        for (int i = start; i < n; i++) {
+            char c = value.charAt(i);
+            // Windows silently STRIPS a trailing space, so "a" and "a " would land on one directory --
+            // the same non-injectivity %NULL and %EMPTY exist to prevent, arriving via the filesystem
+            // rather than the renderer. Only the trailing one: an interior space is legal, and
+            // escaping those would rename every two-word value for nothing.
+            if (c == ' ' && i == n - 1) {
+                sink.put('%').put(Numbers.hexDigits[(c >> 4) & 0xF]).put(Numbers.hexDigits[c & 0xF]);
+                continue;
+            }
+            // Windows additionally forbids * ? : | " < > in a filename. A cell segment is rendered
+            // from arbitrary user data (a SYMBOL value or TRUNCATE prefix), so without these a
+            // value like "a?b" names a directory Windows cannot create -- invisible to OSS CI,
+            // which is Linux-only. Escaping preserves injectivity for the same reason the %NULL
+            // and %EMPTY tokens do: '%' is itself escaped, so no real value collides with an
+            // escaped form.
+            if (c == '/' || c == '\\' || c == '.' || c == '%' || c < 0x20 || c == 0x7f
+                    || c == '*' || c == '?' || c == ':' || c == '|' || c == '"' || c == '<' || c == '>') {
+                sink.put('%').put(Numbers.hexDigits[(c >> 4) & 0xF]).put(Numbers.hexDigits[c & 0xF]);
+            } else {
+                sink.put(c);
+            }
+        }
+    }
+
+    /**
+     * Whether {@code value} is a Windows reserved device name: CON, PRN, AUX, NUL, COM1-9, LPT1-9.
+     * Case-insensitive, because the reservation is.
+     * <p>
+     * Only the EXACT name is reserved, so "CONSOLE" and "COM10" are fine and must not be mangled --
+     * otherwise every value merely starting with one of these pays for the handful that matter.
+     * <p>
+     * The {@code NAME.ext} form Windows also reserves cannot arise here: {@code putPathSafe} escapes
+     * every '.', so a rendered segment never contains a bare dot.
+     */
+    private static boolean isWindowsReservedDeviceName(CharSequence value) {
+        final int len = value.length();
+        if (len != 3 && len != 4) {
+            return false;
+        }
+        final char c0 = Character.toUpperCase(value.charAt(0));
+        final char c1 = Character.toUpperCase(value.charAt(1));
+        final char c2 = Character.toUpperCase(value.charAt(2));
+        if (len == 3) {
+            return (c0 == 'C' && c1 == 'O' && c2 == 'N')
+                    || (c0 == 'P' && c1 == 'R' && c2 == 'N')
+                    || (c0 == 'A' && c1 == 'U' && c2 == 'X')
+                    || (c0 == 'N' && c1 == 'U' && c2 == 'L');
+        }
+        final char c3 = value.charAt(3);
+        if (c3 < '1' || c3 > '9') {
+            return false;
+        }
+        return (c0 == 'C' && c1 == 'O' && c2 == 'M') || (c0 == 'L' && c1 == 'P' && c2 == 'T');
+    }
+
+    /**
+     * {@link #putPathSafe(CharSink, CharSequence)}, plus the one thing a composite-partition cell
+     * segment needs that a raw value escape cannot express: a NULL dimension value.
+     * <p>
+     * A NULL SYMBOL is ordinary data (the plain, day-only twin of a composite table stores and
+     * returns such rows), so a NULL dimension value must route to its own cell and therefore needs
+     * its own on-disk directory-name token. That token must be INJECTIVE against every possible
+     * real value, or two genuinely different cells would silently share one directory.
+     * {@link #COMPOSITE_NULL_DIMENSION_TOKEN} is {@code "%NULL"}: {@code putPathSafe} escapes a
+     * literal {@code '%'} to {@code "%25"}, so no real value can ever render to a name containing a
+     * BARE {@code '%'} -- a table holding the literal symbol {@code "%NULL"} renders
+     * {@code "%25NULL"} and stays a distinct cell. (A token like {@code "__NULL__"} would NOT be
+     * injective: the literal symbol value {@code __NULL__} renders identically.)
+     * <p>
+     * Used by both render sides -- {@code TableWriter#renderDimensionSegment} and
+     * {@code TableReader#renderCellSegment} -- which must agree byte-for-byte or a cell written
+     * under one name would be looked for under another.
+     * <p>
+     * The NULL-token decision is driven by {@code ordinalKey} itself
+     * ({@code == SymbolTable.VALUE_IS_NULL}), NOT by whether {@code value} happens to be null.
+     * Those are not the same question: the reverse lookup that produces {@code value} (a
+     * {@code SymbolMapReader}/{@code MapWriter} {@code valueOf}) can return null for other
+     * out-of-range keys too, and silently mistaking one of those for a NULL dimension value would
+     * be exactly the kind of composite-vs-plain-twin divergence this feature must never allow --
+     * before {@link #COMPOSITE_NULL_DIMENSION_TOKEN} existed, that same state threw an uncontrolled
+     * NPE inside {@link #putPathSafe}, which was at least loud. So: an {@code ordinalKey} that is
+     * NOT {@code VALUE_IS_NULL} but whose {@code value} is null anyway is treated as an unexpected
+     * reverse-lookup failure and throws, rather than being guessed to mean NULL.
+     *
+     * @param ordinalKey the per-dimension ordinal {@code value} was reverse-looked-up FROM; drives
+     *                   the NULL-token decision
+     * @param value      the reverse lookup's result for {@code ordinalKey}, or null
+     * @throws CairoException if {@code ordinalKey != SymbolTable.VALUE_IS_NULL} but {@code value}
+     *                        is null
+     */
+    public static void putCellSegmentPathSafe(CharSink<?> sink, int ordinalKey, @Nullable CharSequence value) {
+        if (ordinalKey == SymbolTable.VALUE_IS_NULL) {
+            sink.put(COMPOSITE_NULL_DIMENSION_TOKEN);
+        } else if (value == null) {
+            throw CairoException.critical(0)
+                    .put("composite dimension ordinal does not resolve to a value [ordinal=").put(ordinalKey)
+                    .put(']');
+        } else if (value.length() == 0) {
+            // An EMPTY but non-NULL value. putPathSafe would emit nothing, giving this cell an empty
+            // path component -- and under LAYOUT PLAIN, which has no "col=" prefix to pad it, no
+            // directory of its own at all. See COMPOSITE_EMPTY_DIMENSION_TOKEN for the measurement.
+            sink.put(COMPOSITE_EMPTY_DIMENSION_TOKEN);
+        } else {
+            putPathSafe(sink, value);
         }
     }
 
@@ -2943,7 +3347,16 @@ public final class TableUtils {
         mem.putLong(tableStruct.getO3MaxLag());
         mem.putLong(0); // Metadata version.
         mem.putBool(tableStruct.isWalEnabled());
-        mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(0, count));
+        // Raise the minor version to the composite gate ONLY for composite tables, so that a plain
+        // table writes exactly META_FORMAT_MINOR_VERSION_TABLE_FORMAT (today's value) and its _meta
+        // bytes stay byte-identical. Old readers still validate via the (unchanged) checksum.
+        mem.putInt(TableUtils.calculateMetaFormatMinorVersionField(
+                0,
+                count,
+                tableStruct.getPartitionSpec().isComposite()
+                        ? META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING
+                        : META_FORMAT_MINOR_VERSION_TABLE_FORMAT
+        ));
         mem.putInt(tableStruct.getTtlHoursOrMonths());
         mem.putInt(tableStruct.getTableFormat());
 
@@ -2987,6 +3400,193 @@ public final class TableUtils {
                 }
             }
         }
+
+        // Additive composite-partitioning block, appended ONLY for composite tables and gated by
+        // META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING written above. The write is shared with
+        // TableWriter.rewriteMetadata (the ALTER re-emit path) so both are byte-identical, and it is
+        // read back symmetrically by readCompositePartitionSpec().
+        PartitionSpec partitionSpec = tableStruct.getPartitionSpec();
+        if (partitionSpec.isComposite()) {
+            writeCompositePartitionBlock(mem, partitionSpec);
+        }
+    }
+
+    /**
+     * Reads the additive composite-partitioning block written by {@link #writeCompositePartitionBlock}
+     * back into {@code dest}, or leaves {@code dest} an empty (non-composite) spec when the table is
+     * not composite. Symmetric with the writer; the block layout is:
+     * <pre>
+     *   [i8 namingMode][i32 dimensionCount]
+     *     {[i8 kind][i32 columnIndex][i32 param][str alias][str exprText]} x dimensionCount
+     *   [i32 clusterColumnCount]{[i32 columnIndex]} x clusterColumnCount
+     * </pre>
+     * appended immediately after the covering-index section. Strings are standard length-prefixed
+     * (a {@code -1} length marker reads back as {@code null}); the null-string storage length is
+     * {@code 4 + (len < 0 ? 0 : len*2)} bytes -- do NOT use {@link Vm#getStorageLength(int)} here,
+     * which assumes a non-negative length and is wrong by 2 bytes for a null string.
+     * <p>
+     * NOTE: the {@code columnIndex} read back for each dimension/cluster column is the column's
+     * stable WRITER index (its physical index at create time), not a dense position -- it is
+     * written verbatim from {@link PartitionDimension#getColumnIndex()}/{@link
+     * PartitionSpec#getClusterColumn(int)} and never renumbered on {@code DROP COLUMN} (dropped
+     * columns are tombstoned in place). Callers that are dense-keyed (e.g. {@link CairoTable})
+     * must translate writer index to name/position themselves; this reader and the persisted
+     * format are intentionally writer-indexed and must not change to "fix" that at this layer.
+     * <p>
+     * FORWARD-COMPAT INVARIANT: this gates purely on {@code minorVersion >= COMPOSITE_PARTITIONING (3)}.
+     * That is correct ONLY because {@link #writeMetadata} / {@link #writeCompositePartitionBlock}
+     * raise the minor version to 3 IFF the table is composite (v3 if and only if the block is present). A future,
+     * always-written feature that bumps the metadata baseline to >= 3 MUST preserve this property
+     * (write v3 only when the composite block is actually present) or introduce an explicit presence
+     * flag; otherwise this reader would parse a block that was never written. As a safety net every
+     * read below is bounds-checked against the mapped size and the dimension/cluster counts are
+     * sanity-bounded, so a mis-gated or truncated file degrades to an empty spec rather than an
+     * out-of-bounds read.
+     */
+    public static void readCompositePartitionSpec(MemoryR mem, PartitionSpec dest) {
+        dest.clear();
+        if (!isMetaFormatAtLeast(mem, META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING)) {
+            return;
+        }
+        final long memSize = mem.size();
+        final int columnCount = mem.getInt(META_OFFSET_COUNT);
+        if (columnCount <= 0) {
+            return;
+        }
+        // Walk to the start of the composite block: past the fixed column entries + names, then past
+        // the covering-index section -- exactly mirroring writeMetadata's tail layout.
+        long offset = getColumnNameOffset(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
+            offset += Vm.getStorageLength(mem.getInt(offset)); // column names are never null here
+        }
+        for (int i = 0; i < columnCount; i++) {
+            if (!isColumnCovering(mem, i)) {
+                continue;
+            }
+            if (offset + Integer.BYTES > memSize) {
+                return;
+            }
+            int includeCount = mem.getInt(offset);
+            offset += Integer.BYTES;
+            if (includeCount > 0) {
+                if (offset + (long) includeCount * Integer.BYTES > memSize) {
+                    return;
+                }
+                offset += (long) includeCount * Integer.BYTES;
+            }
+        }
+
+        // [i8 namingMode][i32 dimensionCount]
+        if (offset + Byte.BYTES + Integer.BYTES > memSize) {
+            return;
+        }
+        final byte namingMode = mem.getByte(offset);
+        offset += Byte.BYTES;
+        final int dimensionCount = mem.getInt(offset);
+        offset += Integer.BYTES;
+        // Sanity bound: a dimension is at least 1(kind)+4(colIdx)+4(param)+4(alias len)+4(expr len)
+        // = 17 bytes, so reject a count that cannot possibly fit in the remaining mapped memory.
+        if (dimensionCount < 0 || (long) dimensionCount * 17L > memSize - offset) {
+            return;
+        }
+        for (int i = 0; i < dimensionCount; i++) {
+            // [i8 kind][i32 columnIndex][i32 param]
+            if (offset + Byte.BYTES + 2L * Integer.BYTES > memSize) {
+                dest.clear();
+                return;
+            }
+            final byte kind = mem.getByte(offset);
+            offset += Byte.BYTES;
+            final int columnIndex = mem.getInt(offset);
+            offset += Integer.BYTES;
+            final int param = mem.getInt(offset);
+            offset += Integer.BYTES;
+            // [str alias] -- convert to String immediately: getStrA returns a reused flyweight that
+            // the next getStrA (exprText) would clobber.
+            if (offset + Integer.BYTES > memSize) {
+                dest.clear();
+                return;
+            }
+            long aliasStorage = compositeStrStorageLen(mem.getInt(offset));
+            if (offset + aliasStorage > memSize) {
+                dest.clear();
+                return;
+            }
+            CharSequence aliasCs = mem.getStrA(offset);
+            String alias = aliasCs == null ? null : Chars.toString(aliasCs);
+            offset += aliasStorage;
+            // [str exprText] -- null for identity/hash/truncate
+            if (offset + Integer.BYTES > memSize) {
+                dest.clear();
+                return;
+            }
+            long exprStorage = compositeStrStorageLen(mem.getInt(offset));
+            if (offset + exprStorage > memSize) {
+                dest.clear();
+                return;
+            }
+            CharSequence exprCs = mem.getStrA(offset);
+            String exprText = exprCs == null ? null : Chars.toString(exprCs);
+            offset += exprStorage;
+            dest.addDimension(new PartitionDimension(kind, columnIndex, param, alias, exprText));
+        }
+
+        // [i32 clusterColumnCount]{ [i32 columnIndex] }
+        if (offset + Integer.BYTES > memSize) {
+            dest.clear();
+            return;
+        }
+        final int clusterColumnCount = mem.getInt(offset);
+        offset += Integer.BYTES;
+        if (clusterColumnCount < 0 || (long) clusterColumnCount * Integer.BYTES > memSize - offset) {
+            dest.clear();
+            return;
+        }
+        for (int i = 0; i < clusterColumnCount; i++) {
+            dest.addClusterColumn(mem.getInt(offset));
+            offset += Integer.BYTES;
+        }
+        dest.setNamingMode(namingMode);
+        // The time unit is not stored in the block; it lives in the standard partition-by field.
+        dest.setTimeUnit(mem.getInt(META_OFFSET_PARTITION_BY));
+    }
+
+    /**
+     * Writes the additive composite-partitioning block for {@code partitionSpec} at the current
+     * append offset. Shared by {@link #writeMetadata} (CREATE) and TableWriter.rewriteMetadata
+     * (ALTER re-emit) so the two are byte-identical, and read back by
+     * {@link #readCompositePartitionSpec}. Fixed-width ints (matching the covering-index section)
+     * and standard length-prefixed strings: {@code putStr(null)} writes a {@code -1} length marker
+     * that {@code getStr/getStrA} reads back as null, so exprText (null for identity/hash/truncate)
+     * round-trips symmetrically. Callers MUST have already raised the minor version to
+     * {@link #META_FORMAT_MINOR_VERSION_COMPOSITE_PARTITIONING} and gated on {@code isComposite()}.
+     */
+    public static void writeCompositePartitionBlock(MemoryA mem, PartitionSpec partitionSpec) {
+        mem.putByte(partitionSpec.getNamingMode());
+        int dimensionCount = partitionSpec.getDimensionCount();
+        mem.putInt(dimensionCount);
+        for (int i = 0; i < dimensionCount; i++) {
+            PartitionDimension dimension = partitionSpec.getDimension(i);
+            mem.putByte(dimension.getKind());
+            mem.putInt(dimension.getColumnIndex());
+            mem.putInt(dimension.getParam());
+            mem.putStr(dimension.getAlias());
+            mem.putStr(dimension.getExprText());
+        }
+        int clusterColumnCount = partitionSpec.getClusterColumnCount();
+        mem.putInt(clusterColumnCount);
+        for (int i = 0; i < clusterColumnCount; i++) {
+            mem.putInt(partitionSpec.getClusterColumn(i));
+        }
+    }
+
+    // Storage length of a length-prefixed string given its length prefix, handling the null marker
+    // (len == -1 -> 4 bytes, no payload). Vm.getStorageLength(int) is WRONG for null (returns 2).
+    private static long compositeStrStorageLen(int len) {
+        return Integer.BYTES + (len < 0 ? 0L : (long) len * 2L);
     }
 
     private static int exists(FilesFacade ff, Path path) {
