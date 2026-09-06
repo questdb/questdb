@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
+import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
 
@@ -87,6 +88,13 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     // cheap scan saves too little triangle work to matter, and staying on the
     // plain path keeps small-range selections bit-identical to classic LTTB.
     private static final int PRESELECT_MIN_SHRINK = 2;
+    // Exact power-of-two rescale applied to the value axis when a bucket's
+    // area arithmetic leaves the finite range on finite inputs. |y| * 2^-100
+    // stays below 2^924 and unsigned timestamp deltas below 2^64, so both
+    // cross-product terms stay below 2^991 and their difference below 2^992:
+    // finite for every finite input. Power-of-two scaling never touches
+    // mantissas, so it introduces no rounding and preserves area ordering.
+    private static final int AREA_RESCALE_EXP = -100;
     private final long gapThreshold;
     // Reusable native lists for segment bookkeeping and MinMaxLTTB preselection.
     // Stored as cursor-lifetime fields to avoid per-execution allocation.
@@ -352,9 +360,10 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
 
             // Seed with the first row of the bin. Per SubsampleAlgorithm's NULL
             // contract the buffer holds no non-finite value, so plain < and >
-            // are sufficient here and the triangle stage below cannot see an
-            // Inf - Inf = NaN area (which, since NaN > maxArea is always false,
-            // would silently pin selection to each bucket's first point).
+            // are sufficient here. The triangle stage cannot lean on that
+            // contract alone: its area products can overflow to Infinity/NaN
+            // even on finite inputs, which lttbCore repairs with a rescaled
+            // replay of the affected bucket.
             int minIdx = binStart;
             int maxIdx = binStart;
             double minVal = valueAsDouble(buffer, binStart, hasIntegralValues);
@@ -449,6 +458,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
 
             double maxArea = -1;
             int maxAreaIndex = bucketStart;
+            boolean sawNonFiniteArea = false;
             for (int j = bucketStart; j < bucketEnd; j++) {
                 if ((j & 0xFFF) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
@@ -461,10 +471,21 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 double dbx = timestampDelta(SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)), axTs);
                 double by = valueAsDouble(buffer, at(candidates, j), hasIntegralValues);
                 double area = Math.abs(dbx * (avgY - ay) - avgDx * (by - ay));
+                // Finite inputs can still overflow this arithmetic: a product
+                // (or the value difference itself) past Double.MAX_VALUE makes
+                // the area infinite, and two same-signed infinite products
+                // make it NaN. Infinite areas tie (the first candidate wins)
+                // and NaN never compares greater, so either poisons the
+                // argmax; replay the bucket with rescaled arithmetic below.
+                sawNonFiniteArea |= !Numbers.isFinite(area);
                 if (area > maxArea) {
                     maxArea = area;
                     maxAreaIndex = j;
                 }
+            }
+            if (sawNonFiniteArea) {
+                maxAreaIndex = maxAreaIndexRescaled(buffer, candidates, bucketStart, bucketEnd, nextBucketStart,
+                        nextBucketEnd, axTs, ay, avgDx, avgY, hasIntegralValues, circuitBreaker);
             }
 
             selectedIndices.add(at(candidates, maxAreaIndex));
@@ -472,5 +493,59 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         }
 
         selectedIndices.add(at(candidates, end - 1));
+    }
+
+    /**
+     * Overflow-proof replay of a single bucket's max-area selection, used when
+     * the fast path in {@link #lttbCore} produced a non-finite area. Every
+     * value-axis operand is rescaled by 2^{@link #AREA_RESCALE_EXP} before
+     * differencing, so neither the differences nor the cross-product terms can
+     * leave the finite range, and rescaled areas carry the same mantissa
+     * roundings the fast path would have produced without overflow - the
+     * selected candidate is the true largest-area point. Values below 2^-922
+     * rescale into the subnormal range and lose precision, but a bucket only
+     * lands here when a competing magnitude is near 2^900+, which dwarfs any
+     * such candidate regardless.
+     */
+    private static int maxAreaIndexRescaled(long buffer, @Nullable DirectLongList candidates, int bucketStart, int bucketEnd,
+                                            int nextBucketStart, int nextBucketEnd, long axTs, double ay, double avgDx,
+                                            double avgY, boolean hasIntegralValues, SqlExecutionCircuitBreaker circuitBreaker) {
+        double avgYRescaled;
+        if (Numbers.isFinite(avgY)) {
+            avgYRescaled = Math.scalb(avgY, AREA_RESCALE_EXP);
+        } else {
+            // The mean's accumulator saturated at +-Infinity even though the
+            // mean of finite values is finite. Re-accumulate in the rescaled
+            // domain, where the largest addend is below 2^924 and no sum of
+            // Integer.MAX_VALUE addends can overflow.
+            avgYRescaled = 0;
+            for (int j = nextBucketStart; j < nextBucketEnd; j++) {
+                if ((j & 0xFFF) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTripped();
+                }
+                avgYRescaled += Math.scalb(valueAsDouble(buffer, at(candidates, j), hasIntegralValues), AREA_RESCALE_EXP);
+            }
+            final int nextBucketLen = nextBucketEnd - nextBucketStart;
+            if (nextBucketLen > 0) {
+                avgYRescaled /= nextBucketLen;
+            }
+        }
+        final double ayRescaled = Math.scalb(ay, AREA_RESCALE_EXP);
+        final double avgDy = avgYRescaled - ayRescaled;
+        double maxArea = -1;
+        int maxAreaIndex = bucketStart;
+        for (int j = bucketStart; j < bucketEnd; j++) {
+            if ((j & 0xFFF) == 0) {
+                circuitBreaker.statefulThrowExceptionIfTripped();
+            }
+            final double dbx = timestampDelta(SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)), axTs);
+            final double dby = Math.scalb(valueAsDouble(buffer, at(candidates, j), hasIntegralValues), AREA_RESCALE_EXP) - ayRescaled;
+            final double area = Math.abs(dbx * avgDy - avgDx * dby);
+            if (area > maxArea) {
+                maxArea = area;
+                maxAreaIndex = j;
+            }
+        }
+        return maxAreaIndex;
     }
 }
