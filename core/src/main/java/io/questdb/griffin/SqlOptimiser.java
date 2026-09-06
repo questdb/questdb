@@ -6420,17 +6420,30 @@ public class SqlOptimiser implements Mutable {
                             && nested.getTableNameFunction() == null
                             && nested.getLatestBy().size() == 0
             ) {
-                // when the NONE holder is a join holder, hoisting would widen the clause's
-                // scope from "this FROM item" to the whole join output, where an unqualified
-                // colliding name resolves to -1 in JoinRecordMetadata ("Invalid column");
-                // sink the clause into the branch instead, where it belongs
-                if (nested.getJoinModels().size() <= 1 || !sinkTimestampClauseIntoJoinBranch(nested)) {
-                    model.setTimestamp(timestamp);
-                    model.setExplicitTimestamp(nested.isExplicitTimestamp());
-                    if (!nested.hasSharedRefs()) {
-                        nested.setTimestamp(null);
-                        nested.setExplicitTimestamp(false);
+                final boolean isExplicitTimestamp = nested.isExplicitTimestamp();
+                // The branch needs its designation before a temporal join. Also hoist it for
+                // consumers above joins such as SPLICE, which drop timestamp metadata. Qualify
+                // the hoisted reference so same-named slave columns cannot change its binding.
+                if (nested.getJoinModels().size() > 1 && sinkTimestampClauseIntoJoinBranch(nested)) {
+                    final IQueryModel branch = skipNoneTypeModels(nested.getNestedModel());
+                    final ObjList<QueryColumn> branchColumns = branch.getBottomUpColumns();
+                    for (int i = 0, n = branchColumns.size(); i < n; i++) {
+                        final CharSequence alias = branchColumns.getQuick(i).getAlias();
+                        if (Chars.equalsIgnoreCase(alias, timestamp.token)
+                                || Chars.equalsIgnoreCase(SqlUtil.toColumnName(alias), timestamp.token)) {
+                            // Preserve the output alias's protective quotes, e.g. s."clock.ts".
+                            timestamp = nextLiteral(alias, timestamp.position);
+                            break;
+                        }
                     }
+                    // Create a new expression; the branch or a shared CTE still owns the original.
+                    timestamp = makeModelAlias(setAndGetModelAlias(nested), timestamp);
+                }
+                model.setTimestamp(timestamp);
+                model.setExplicitTimestamp(isExplicitTimestamp);
+                if (!nested.hasSharedRefs()) {
+                    nested.setTimestamp(null);
+                    nested.setExplicitTimestamp(false);
                 }
             }
         }
@@ -13493,8 +13506,9 @@ public class SqlOptimiser implements Mutable {
      *
      * @param holder the SELECT_MODEL_NONE FROM-item model carrying the clause; it is joinModels[0]
      *               of the enclosing join and has a non-null timestamp
-     * @return true when the clause was sunk into the branch (the holder's timestamp is cleared);
-     * false when the branch head is not a recognized shape and the caller must keep the hoist
+     * @return true when the branch receives the clause and the caller must qualify the hoisted
+     * reference; false when the branch head is not a recognized shape and the caller keeps the
+     * historical hoist
      */
     private boolean sinkTimestampClauseIntoJoinBranch(IQueryModel holder) {
         // find the name source: descend through pure pass-through NONE models; mirroring
@@ -13547,8 +13561,8 @@ public class SqlOptimiser implements Mutable {
             // unrecognized head shape - keep the historical hoist
             return false;
         }
-        // nothing may remain on the holder: the caller's parent runs its own hoist check after
-        // this returns, and a leftover holder timestamp would be hoisted join-wide again
+        // Clear the unqualified clause so later walks cannot hoist it into the join namespace.
+        // The caller hoists a separate branch-qualified reference.
         holder.setTimestamp(null);
         holder.setExplicitTimestamp(false);
         return true;
