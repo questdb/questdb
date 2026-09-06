@@ -1272,23 +1272,24 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         preSeq.onDeferDecidedBeforeSequencing(walId);
                     }
                 }
-                final long seqTxn = getSequencerTxn();
-                // STRONGEST MODE OBSERVED WINS. If a peer sequenced a SET PARAM commit_mode='adaptive'
-                // inside this commit, the snapshot above skipped the barriers while the sequencer may
-                // already have registered a durable-ack pin under the NEW mode. Neither alternative is
-                // acceptable: recording a frontier over unsynced data is the lie, and leaving the pin
-                // stranded stalls the table's frontier at min(pin)-1 until reboot (nothing reaps it --
-                // orphanWriterPending runs only on the fdatasync-failure path). So take the missing
-                // barriers NOW. The sequencer record's device flush is still deferred to
-                // flushPendingDurable, so the data->sequencer ordering this design rests on is intact.
-                // The two decisions below take DIFFERENT modes, and that asymmetry is the point.
-                final int commitModeNow = walCommitMode();
-                // SYNC: the strongest mode observed during this commit, so a flip UP can never leave
-                // the data unsynced. The sequencer record's flush is still deferred, so the
-                // data->sequencer ordering this design rests on is intact.
-                if (commitModeSnapshot != CommitMode.ADAPTIVE && commitModeNow == CommitMode.ADAPTIVE) {
+                // SYNC on the STRONGEST mode observed, and do it BEFORE sequencing. If a peer
+                // sequenced a SET PARAM commit_mode='adaptive' inside this commit, the snapshot above
+                // skipped the barriers; take them now so a flip UP can never leave the data unsynced.
+                //
+                // The placement is load-bearing, not tidiness. Under W=0 the sequencer's sync0 makes
+                // the record DEVICE-DURABLE inside getSequencerTxn (deferDeviceFlush is false, so it
+                // fdatasyncs rather than deferring). Strengthening after that call would durably
+                // publish a record naming still-volatile data -- inverting the data->sequencer
+                // ordering this design rests on, in exactly the case the fail-safe protocol forbids.
+                // Under W>0 the flush is deferred and either placement works; W=0 is what forces this.
+                if (commitModeSnapshot != CommitMode.ADAPTIVE
+                        && walCommitMode() == CommitMode.ADAPTIVE) {
                     syncIfRequired(CommitMode.ADAPTIVE);
                 }
+                final long seqTxn = getSequencerTxn();
+                // RECORD/ADVANCE on the CURRENT mode -- see below. The two decisions deliberately take
+                // DIFFERENT modes; that asymmetry is the point.
+                final int commitModeNow = walCommitMode();
                 // RECORD/ADVANCE: the CURRENT mode, so a flip DOWN cannot advance the frontier on a
                 // table that is no longer adaptive. markWriterDurable treats an empty pin map as
                 // "everything committed is durable", which holds only while every non-durable txn is

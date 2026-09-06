@@ -176,6 +176,75 @@ public class AdaptiveCommitModeFlipRaceTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * W=0 forces the ordering question that W&gt;0 hides.
+     * <p>
+     * Under {@code W>0} the sequencer's device flush is DEFERRED to flushPendingDurable, so taking the
+     * strengthen barriers before or after {@code getSequencerTxn()} both preserve data-&gt;sequencer.
+     * Under {@code W=0} they do not: {@code sync0} sees {@code deferDeviceFlush == false} and fdatasyncs
+     * the sequencer inside that call, so the record is DEVICE-DURABLE the moment it returns.
+     * Strengthening afterwards would durably publish a record naming still-volatile data -- the
+     * inversion the fail-safe protocol exists to forbid.
+     * <p>
+     * Asserts the ORDER the tracking facade records, not merely that both syncs happened: the first
+     * WAL column barrier must precede the first sequencer barrier.
+     */
+    @Test
+    public void testUpFlipUnderZeroWindowKeepsDataBeforeSequencer() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0); // W=0: sequencer flushes inline
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+
+        final AdaptiveWalDurabilityTest.FdatasyncOrderFacade trackFf =
+                new AdaptiveWalDurabilityTest.FdatasyncOrderFacade();
+        assertMemoryLeak(trackFf, () -> {
+            execute("create table w0 (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("w0");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            trackFf.resetFdatasyncOrder();
+            WalWriter.deferredCommitInterceptor = new WalWriter.DeferredCommitInterceptor() {
+                @Override
+                public void onDeferDecidedBeforeSequencing(int walId) {
+                    tracker.setCommitModeAtSeqTxn(CommitMode.ADAPTIVE, tracker.getSeqTxn());
+                }
+
+                @Override
+                public void onSequencedBeforePin(int walId, long seqTxn) {
+                }
+            };
+            try (WalWriter racer = engine.getWalWriter(tt)) {
+                TableWriterRow(racer);
+                racer.commit();
+            } finally {
+                WalWriter.deferredCommitInterceptor = null;
+            }
+
+            final java.util.List<String> order = trackFf.getFdatasyncOrder();
+            int firstData = -1;
+            int firstSeq = -1;
+            for (int i = 0; i < order.size(); i++) {
+                final String path = order.get(i);
+                if (firstData < 0 && path.contains("wal") && path.endsWith(".d")) {
+                    firstData = i;
+                }
+                if (firstSeq < 0 && (path.contains("txn_seq") || path.contains("_txn_parts"))) {
+                    firstSeq = i;
+                }
+            }
+            Assert.assertTrue("precondition: the strengthen must have barriered the WAL column data,"
+                    + " otherwise there is no ordering to check. order=" + order, firstData >= 0);
+            Assert.assertTrue("precondition: the sequencer must have been barriered under W=0."
+                    + " order=" + order, firstSeq >= 0);
+            Assert.assertTrue(
+                    "data must reach the device BEFORE the sequencer record that names it:"
+                            + " firstDataBarrier=" + firstData + " firstSequencerBarrier=" + firstSeq
+                            + " order=" + order,
+                    firstData < firstSeq
+            );
+        });
+    }
+
     private static void TableWriterRow(WalWriter writer) {
         io.questdb.cairo.TableWriter.Row row = writer.newRow(0L);
         row.putLong(1, 1L);
