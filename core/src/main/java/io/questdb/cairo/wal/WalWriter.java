@@ -1273,12 +1273,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // a pending frontier whose flush makes the SEQUENCER RECORD durable over data that was
                 // never fsynced. Pinned by AdaptiveCommitModeFlipRaceTest.
                 final int commitModeSnapshot = walCommitMode();
+                // ONE read of the test seam for the whole commit. It is a static volatile on the
+                // hottest path in the system and is null in production; three separate reads bought
+                // nothing.
+                final DeferredCommitInterceptor commitInterceptor = deferredCommitInterceptor;
                 syncIfRequired(commitModeSnapshot);
-                {
-                    final DeferredCommitInterceptor preSeq = deferredCommitInterceptor;
-                    if (preSeq != null) {
-                        preSeq.onDeferDecidedBeforeSequencing(walId);
-                    }
+                if (commitInterceptor != null) {
+                    commitInterceptor.onDeferDecidedBeforeSequencing(walId);
                 }
                 // SYNC on the STRONGEST mode observed, and do it BEFORE sequencing. If a peer
                 // sequenced a SET PARAM commit_mode='adaptive' inside this commit, the snapshot above
@@ -1298,11 +1299,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     syncIfRequired(CommitMode.ADAPTIVE);
                     adaptiveBarriersTaken = true;
                 }
-                {
-                    final DeferredCommitInterceptor postStrengthen = deferredCommitInterceptor;
-                    if (postStrengthen != null) {
-                        postStrengthen.onStrengthenDecidedBeforeSequencing(walId);
-                    }
+                if (commitInterceptor != null) {
+                    commitInterceptor.onStrengthenDecidedBeforeSequencing(walId);
                 }
                 final long seqTxn = getSequencerTxn();
                 // RECORD/ADVANCE on the CURRENT mode -- see below. The two decisions deliberately take
@@ -1324,9 +1322,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                         // tracker's seqTxn has advanced to it) but its durable-ack pin was registered ATOMICALLY
                         // with that assignment in the sequencer, so a peer's markWriterDurable here can no longer
                         // empty the pin map and over-claim this still-non-durable txn. Lets a test drive that race.
-                        final DeferredCommitInterceptor interceptor = deferredCommitInterceptor;
-                        if (interceptor != null) {
-                            interceptor.onSequencedBeforePin(walId, seqTxn);
+                        if (commitInterceptor != null) {
+                            commitInterceptor.onSequencedBeforePin(walId, seqTxn);
                         }
                         // Deferred 2 (group commit, W>0): the commit is SEQUENCED and msync'd to the page
                         // cache but NOT yet device-durable. Record it as the pending-durable frontier and
