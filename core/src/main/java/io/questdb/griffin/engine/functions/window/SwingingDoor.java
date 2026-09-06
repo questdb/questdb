@@ -93,6 +93,15 @@ public class SwingingDoor {
 
         double sU = (value + compdev - anchorValue) / dt;
         double sL = (value - compdev - anchorValue) / dt;
+        // A non-finite slope term (IEEE-754 overflow of value +/- compdev - anchorValue, or a
+        // non-finite stored value) collapses distinct slopes into the same +/-Inf, making the
+        // doors-crossed test unable to see a cross. Keeping the point and restarting the series
+        // here is the only decision that provably honors the 2 * compdev reconstruction bound.
+        if (!(Double.isFinite(sU) && Double.isFinite(sL))) {
+            anchor(index, ts, value);
+            sink.mark(index, true);
+            return;
+        }
         double nHi = sU < slopeHi ? sU : slopeHi;
         double nLo = sL > slopeLo ? sL : slopeLo;
 
@@ -114,6 +123,12 @@ public class SwingingDoor {
             }
             slopeHi = (value + compdev - anchorValue) / dt2;
             slopeLo = (value - compdev - anchorValue) / dt2;
+            if (!(Double.isFinite(slopeHi) && Double.isFinite(slopeLo))) {
+                // same non-finite hazard against the just-promoted anchor; restart, keeping the point
+                anchor(index, ts, value);
+                sink.mark(index, true);
+                return;
+            }
             hasInterval = true;
             // current point becomes the new pending, tentatively kept
             pending(index, ts, value);

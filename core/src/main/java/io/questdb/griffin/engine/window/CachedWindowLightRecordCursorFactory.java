@@ -712,8 +712,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
 
             // Row-selecting fusion: the function reports selected ordinals in its pass1 traversal.
             // Translate ordered traversal ordinals through the retained sort buffer to absolute
-            // incoming rows, then sort those rows so output preserves incoming cursor order. This
-            // still skips the O(N) boolean pass2 write and downstream Filter.
+            // incoming rows, then sort those rows so output preserves incoming cursor order; the
+            // forward branch validates its identity mapping as strictly ascending and skips the
+            // sort. This still skips the O(N) boolean pass2 write and downstream Filter.
             if (rowSelecting) {
                 mapSelectedRows();
                 outputSize = selectedRowIds.size();
@@ -847,6 +848,7 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             selectedTraversalRows.clear();
             selectingFunction.getSelectedRows(selectedTraversalRows);
 
+            boolean isSortNeeded = true;
             int orderedGroup = -1;
             for (int i = 0, n = orderedFunctions.size(); i < n && orderedGroup < 0; i++) {
                 final ObjList<WindowFunction> functions = orderedFunctions.getQuick(i);
@@ -880,14 +882,25 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
                     throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
                 }
             } else if (containsFunction(forwardUnorderedFunctions, selectingFunction)) {
+                // Forward pass1 traversal ordinal == absolute buffered-row index, so this identity
+                // mapping preserves the getSelectedRows contract order: strictly ascending ordinals
+                // in, strictly ascending row ids out. Enforce that strictness in-loop (prevOrdinal
+                // starts at -1 so ordinal 0 passes) instead of repairing violations with the tail
+                // sort, which is redundant work on already-sorted input.
+                long prevOrdinal = -1;
                 for (long i = 0, n = selectedTraversalRows.size(); i < n; i++) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                     final long traversalOrdinal = selectedTraversalRows.get(i);
                     if (traversalOrdinal < 0 || traversalOrdinal >= size) {
                         throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
                     }
+                    if (traversalOrdinal <= prevOrdinal) {
+                        throw CairoException.nonCritical().put("invalid row-selecting traversal order");
+                    }
                     selectedRowIds.add(traversalOrdinal);
+                    prevOrdinal = traversalOrdinal;
                 }
+                isSortNeeded = false;
             } else if (containsFunction(backwardUnorderedFunctions, selectingFunction)) {
                 for (long i = 0, n = selectedTraversalRows.size(); i < n; i++) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
@@ -900,7 +913,9 @@ public class CachedWindowLightRecordCursorFactory extends AbstractRecordCursorFa
             } else {
                 throw CairoException.nonCritical().put("row-selecting function has no traversal group");
             }
-            selectedRowIds.sortAsUnsigned();
+            if (isSortNeeded) {
+                selectedRowIds.sortAsUnsigned();
+            }
         }
 
         private boolean containsFunction(ObjList<WindowFunction> functions, WindowFunction target) {

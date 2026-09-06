@@ -166,6 +166,103 @@ public class SwingingDoorTest {
         Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
     }
 
+    // ---- F3-SDT-OVERFLOW: corridor slope terms overflowing to +/-Inf on finite input ----
+
+    @Test
+    public void testOverflowingPositiveSlopeDoesNotDropChangedPoint() {
+        // (value + compdev) - anchorValue = 1e308 - (-1e308) overflows to +Inf, so both sU and sL
+        // read +Inf for idx1 AND idx2. The true slopes differ (2e308 at dt=1 vs 1e308 at dt=2), so
+        // with compdev=0 the doors must cross at idx2 and idx1 must be kept. Instead nHi == nLo ==
+        // +Inf reads as "no cross" and the no-cross branch unmarks idx1 as interior: the
+        // reconstruction idx0->idx2 then misses the actual idx1 value by 1e308 despite the
+        // documented 2*compdev = 0 bound.
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-1e308, 1e308, 1e308}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testOverflowingNegativeSlopeDoesNotDropChangedPoint() {
+        // mirror of the positive case: both slope terms overflow to -Inf and compare as equal
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{1e308, -1e308, -1e308}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testOverflowingSlopeWithPositiveCompdev() {
+        // the same overflow with a small non-zero tolerance: the corridor around slope ~2e308
+        // mathematically excludes the ~1e308 slope of idx2, so idx1 must still be kept
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-1e308, 1e308, 1e308}, 1.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testOverflowInDoorsCrossedRecompute() {
+        // idx2 legitimately crosses the doors and re-anchors at idx1 (-1e308); the dt2 recompute
+        // (1e308 - (-1e308)) / 1 then overflows slopeHi/slopeLo to +Inf, and idx3's +Inf slope
+        // reads as collinear, wrongly unmarking idx2. True slopes from the new anchor differ
+        // (2e308 vs 1e308), so with compdev=0 idx2 must stay kept.
+        boolean[] k = run(new long[]{0, 1, 2, 3}, new double[]{0, -1e308, 1e308, 1e308}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true, true}, k);
+    }
+
+    @Test
+    public void testCompdevOverflowKeepsPoint() {
+        // class-2 pin (approved behavior change): (value + compdev) overflows while the other
+        // slope term stays finite. Pre-fix the Inf-widened corridor happened to drop idx1
+        // (bound-compliant there); post-fix the guard fires on ANY non-finite slope term and
+        // retains conservatively. Keeping more points can never violate the 2*compdev bound.
+        // idx1: sU = (1e308 + 1.7e308 - 0) / 1 -> +Inf (guard fires, idx1 kept, re-anchor);
+        // idx2: sL = (-1e308 - 1.7e308 - 1e308) / 1 -> -Inf (guard fires, idx2 kept).
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{0, 1e308, -1e308}, 1.7e308);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testMixedInfSlopeTermsWithMaxValueCompdev() {
+        // class-5 mixed terms, reachable in IEEE evaluation order with compdev = Double.MAX_VALUE
+        // (finite, so the factory accepts it): (1e308 + MAX) overflows to +Inf while
+        // (1e308 - MAX) - 1.7e308 underflows past -MAX to -Inf, so sU = +Inf and sL = -Inf
+        // from a single point. The guard keys off the computed sU/sL and covers this too.
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{1.7e308, 1e308, 1e308}, Double.MAX_VALUE);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testStoredPositiveInfinityValueIsKept() {
+        // DOUBLE columns can store +/-Infinity (only NaN is the NULL sentinel), so a non-finite
+        // VALUE reaches the corridor math via SQL. idx1's sU = (+Inf + 0 - 0) / 1 = +Inf fires
+        // the guard (kept, re-anchor at +Inf); idx2's sU = (0 + 0 - (+Inf)) / 1 = -Inf fires it
+        // again. Defense-in-depth: no Inf/NaN can poison slopeHi/slopeLo while hasInterval is set.
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{0, Double.POSITIVE_INFINITY, 0}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testScaledProbeSeriesKeepsAllPoints() {
+        // preservation control (green pre-fix): the same shape scaled by 1e-308 has finite
+        // slopes (2 then 1), the doors cross at idx2 and all three points are kept
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-1, 1, 1}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testNearMaxFiniteSlopesCrossDoors() {
+        // preservation control (green pre-fix): the largest same-shape series whose slope terms
+        // stay finite (1.6e308 < Double.MAX_VALUE); decisions must be identical pre- and post-fix
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{-8e307, 8e307, 8e307}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, true, true}, k);
+    }
+
+    @Test
+    public void testNearMaxFiniteCollinearStillDropsInterior() {
+        // preservation control (green pre-fix): large-but-finite COLLINEAR series - every slope
+        // term is finite (8e307), so the middle point is interior and must STILL be dropped
+        // after any overflow guard; pins that a conservative fallback does not inflate the
+        // keep-rate for non-overflowing series
+        boolean[] k = run(new long[]{0, 1, 2}, new double[]{0, 8e307, 1.6e308}, 0.0);
+        Assert.assertArrayEquals(new boolean[]{true, false, true}, k);
+    }
+
     @Test
     public void testAsymmetricStepReconstructionExceedsCompdev() {
         // Keep-flag SDT selects original rows: the discarded point stays within

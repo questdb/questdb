@@ -235,6 +235,10 @@ public class SqlOptimiser implements Mutable {
     // Second stack, separate from sqlNodeStack because some operations
     // call methods that clear and reuse sqlNodeStack.
     private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
+    // Scratch structures for chooseSubsampleKeepAlias: reserved output names of a wildcard
+    // SUBSAMPLE projection, mirrored ahead of rewriteSelectClause's wildcard expansion.
+    private final LowerCaseCharSequenceIntHashMap subsampleReservedAliasSequenceMap = new LowerCaseCharSequenceIntHashMap();
+    private final LowerCaseCharSequenceHashSet subsampleReservedAliases = new LowerCaseCharSequenceHashSet();
     private final ObjList<RecordCursorFactory> tableFactoriesInFlight = new ObjList<>();
     private final FlyweightCharSequence tableLookupSequence = new FlyweightCharSequence();
     private final IntHashSet tablesSoFar = new IntHashSet();
@@ -427,6 +431,8 @@ public class SqlOptimiser implements Mutable {
         tempCharSequenceHashSet.clear();
         pivotAliasMap.clear();
         pivotAliasSequenceMap.clear();
+        subsampleReservedAliases.clear();
+        subsampleReservedAliasSequenceMap.clear();
         tmpStringSink.clear();
         clearWindowFunctionHashMap();
         lateralJoinRewriter.clear();
@@ -4933,9 +4939,9 @@ public class SqlOptimiser implements Mutable {
         // `'2024-01-01'::TIMESTAMP AS ts` are ordinary computed columns, not designated timestamps.
         final boolean rewrittenSampleBy = model.getNestedModel() != null
                 && model.getNestedModel().getFillStride() != null;
-        QueryColumn column = findDesignatedTimestampProjection(model.getColumns(), nestedTimestamp, rewrittenSampleBy);
+        QueryColumn column = findDesignatedTimestampProjection(model.getColumns(), nestedTimestamp, rewrittenSampleBy, model.getNestedModel());
         if (column == null) {
-            column = findDesignatedTimestampProjection(model.getBottomUpColumns(), nestedTimestamp, rewrittenSampleBy);
+            column = findDesignatedTimestampProjection(model.getBottomUpColumns(), nestedTimestamp, rewrittenSampleBy, model.getNestedModel());
         }
         return column != null ? column.getAlias() : null;
     }
@@ -4943,12 +4949,13 @@ public class SqlOptimiser implements Mutable {
     private QueryColumn findDesignatedTimestampProjection(
             ObjList<QueryColumn> columns,
             CharSequence sourceColumn,
-            boolean rewrittenSampleBy
+            boolean rewrittenSampleBy,
+            IQueryModel fromModel
     ) {
         for (int i = 0, n = columns.size(); i < n; i++) {
             final QueryColumn column = columns.getQuick(i);
             final ExpressionNode ast = column.getAst();
-            if (ast != null && ast.type == LITERAL && matchesColumnName(ast.token, sourceColumn)) {
+            if (ast != null && ast.type == LITERAL && isDesignatedTimestampReference(ast.token, sourceColumn, fromModel)) {
                 return column;
             }
             // rewriteSampleBy replaces the designated timestamp with this exact bucket-floor function.
@@ -4957,29 +4964,73 @@ public class SqlOptimiser implements Mutable {
                     && ast != null
                     && ast.type == FUNCTION
                     && Chars.equalsIgnoreCase(ast.token, TimestampFloorFromOffsetUtcFunctionFactory.NAME)
-                    && expressionContainsLiteral(ast, sourceColumn)) {
+                    && expressionContainsLiteral(ast, sourceColumn, fromModel)) {
                 return column;
             }
         }
         return null;
     }
 
-    private boolean expressionContainsLiteral(ExpressionNode node, CharSequence columnName) {
+    private boolean expressionContainsLiteral(ExpressionNode node, CharSequence columnName, IQueryModel fromModel) {
         if (node == null) {
             return false;
         }
-        if (node.type == LITERAL && matchesColumnName(node.token, columnName)) {
+        if (node.type == LITERAL && isDesignatedTimestampReference(node.token, columnName, fromModel)) {
             return true;
         }
-        if (expressionContainsLiteral(node.lhs, columnName) || expressionContainsLiteral(node.rhs, columnName)) {
+        if (expressionContainsLiteral(node.lhs, columnName, fromModel) || expressionContainsLiteral(node.rhs, columnName, fromModel)) {
             return true;
         }
         for (int i = 0, n = node.args.size(); i < n; i++) {
-            if (expressionContainsLiteral(node.args.getQuick(i), columnName)) {
+            if (expressionContainsLiteral(node.args.getQuick(i), columnName, fromModel)) {
                 return true;
             }
         }
         return false;
+    }
+
+    /**
+     * A projected literal carries the designated timestamp only if it IS the designated name
+     * (unqualified) or it is a qualified reference whose prefix resolves to the primary FROM
+     * model - the only model that can own the designation (findSubsampleSourceTimestamp and the
+     * findVisibleSubsampleTimestamp recursion walk getNestedModel() only; join branches hang off
+     * nested.getJoinModels()[1..] and can never own it).
+     */
+    private static boolean isDesignatedTimestampReference(
+            CharSequence token, CharSequence sourceColumn, IQueryModel fromModel
+    ) {
+        // Whole-token match first, mirroring matchesColumnName, so unqualified behavior stays
+        // bit-identical for every token, including a dotted alias that exactly equals the name.
+        if (Chars.equalsIgnoreCase(token, sourceColumn)) {
+            return true;
+        }
+        // Quote-aware split (house idiom): a quoted alias containing a dot, "a.b".ts, defeats
+        // a plain lastIndexOf split.
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot < 0) {
+            return false;
+        }
+        // The suffix must be the designated name (exact, case-insensitive - same as today).
+        if (!Chars.equalsIgnoreCase(sourceColumn, token, dot + 1, token.length())) {
+            return false;
+        }
+        // The prefix must resolve to the primary FROM model. Normalize quotes exactly as
+        // QueryModel.getModelAliasIndex does; model aliases and table names are stored unquoted
+        // (SqlParser.literal unquotes them at parse time).
+        int lo = 0;
+        int hi = dot;
+        if (hi - lo > 1 && token.charAt(lo) == '"' && token.charAt(hi - 1) == '"') {
+            lo++;
+            hi--;
+        }
+        if (fromModel == null) {
+            return false;
+        }
+        // The alias, or the table name when unaliased - mirrors collectModelAlias.
+        final ExpressionNode owner = fromModel.getAlias() != null
+                ? fromModel.getAlias()
+                : fromModel.getTableNameExpr();
+        return owner != null && Chars.equalsIgnoreCase(owner.token, token, lo, hi);
     }
 
     private static boolean isSubsamplePassThroughProjection(IQueryModel model) {
@@ -6369,11 +6420,17 @@ public class SqlOptimiser implements Mutable {
                             && nested.getTableNameFunction() == null
                             && nested.getLatestBy().size() == 0
             ) {
-                model.setTimestamp(timestamp);
-                model.setExplicitTimestamp(nested.isExplicitTimestamp());
-                if (!nested.hasSharedRefs()) {
-                    nested.setTimestamp(null);
-                    nested.setExplicitTimestamp(false);
+                // when the NONE holder is a join holder, hoisting would widen the clause's
+                // scope from "this FROM item" to the whole join output, where an unqualified
+                // colliding name resolves to -1 in JoinRecordMetadata ("Invalid column");
+                // sink the clause into the branch instead, where it belongs
+                if (nested.getJoinModels().size() <= 1 || !sinkTimestampClauseIntoJoinBranch(nested)) {
+                    model.setTimestamp(timestamp);
+                    model.setExplicitTimestamp(nested.isExplicitTimestamp());
+                    if (!nested.hasSharedRefs()) {
+                        nested.setTimestamp(null);
+                        nested.setExplicitTimestamp(false);
+                    }
                 }
             }
         }
@@ -11132,6 +11189,135 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
+     * Chooses the keep-flag helper alias for a wildcard SUBSAMPLE projection. Desugaring runs before
+     * rewriteSelectClause expands wildcards, so at this point {@code model.getAliasToColumnMap()} holds
+     * only the raw '*' column - not the names the expansion will import into the window model, where
+     * the helper column is inserted last and collides with a same-named user column. This collector
+     * mirrors the expansion instead: explicit projection aliases and every wildcard-imported source
+     * name are fed, in projection order, through the same {@link SqlUtil#createColumnAlias} algorithm
+     * the expansion's dedup uses, so join-duplicate suffixed variants (the second join branch's
+     * __keep_subsample becomes __keep_subsample1) are reserved exactly as the expansion will assign
+     * them. Reserving a name the expansion never assigns only escapes the helper further, which is
+     * harmless; the reserved set can never miss a name the expansion assigns in the __keep_subsample*
+     * family.
+     */
+    private CharSequence chooseSubsampleKeepAlias(IQueryModel model, IQueryModel nested) {
+        subsampleReservedAliases.clear();
+        subsampleReservedAliasSequenceMap.clear();
+        reserveSubsampleProjectionNames(model.getBottomUpColumns(), nested);
+        return SqlUtil.createColumnAlias(
+                characterStore,
+                "__keep_subsample",
+                -1,
+                subsampleReservedAliases,
+                subsampleReservedAliasSequenceMap,
+                false
+        );
+    }
+
+    /**
+     * Reserves the output names of one projection: explicit column aliases directly, wildcard columns
+     * via the models the expansion will pull from ({@code fromModel} is the projection's FROM target).
+     */
+    private void reserveSubsampleProjectionNames(ObjList<QueryColumn> cols, IQueryModel fromModel) {
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            final QueryColumn qc = cols.getQuick(i);
+            final ExpressionNode ast = qc.getAst();
+            if (ast != null && ast.isWildcard()) {
+                reserveSubsampleWildcardNames(ast.token, fromModel);
+            } else {
+                reserveSubsampleOutputName(qc.getAlias());
+            }
+        }
+    }
+
+    /**
+     * Reserves the names a single wildcard imports: all of {@code fromModel}'s join models for '*',
+     * only the alias-resolved join model for 't.*' (mirroring createSelectColumnsForWildcard). The
+     * model-alias indexes the expansion consults are populated by resolveJoinColumns, which runs
+     * AFTER rewriteSubsample, so the 't.*' prefix is matched against each join model's alias/table
+     * name directly - the same values collectModelAlias will register. An unresolvable prefix
+     * reserves nothing: the expansion throws "invalid table alias" before any helper collision
+     * could matter.
+     */
+    private void reserveSubsampleWildcardNames(CharSequence token, IQueryModel fromModel) {
+        if (fromModel == null) {
+            return;
+        }
+        final ObjList<IQueryModel> joinModels = fromModel.getJoinModels();
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot > -1) {
+            int lo = 0;
+            int hi = dot;
+            if (token.charAt(lo) == '"' && token.charAt(hi - 1) == '"') {
+                lo++;
+                hi--;
+            }
+            for (int j = 0, z = joinModels.size(); j < z; j++) {
+                final IQueryModel jm = joinModels.getQuick(j);
+                final ExpressionNode aliasExpr = jm.getAlias() != null ? jm.getAlias() : jm.getTableNameExpr();
+                if (aliasExpr != null && Chars.equalsIgnoreCase(aliasExpr.token, token, lo, hi)) {
+                    reserveSubsampleSourceNames(jm);
+                    return;
+                }
+            }
+        } else {
+            for (int j = 0, z = joinModels.size(); j < z; j++) {
+                reserveSubsampleSourceNames(joinModels.getQuick(j));
+            }
+        }
+    }
+
+    /**
+     * Reserves the output names of one wildcard source model. A subquery projection contributes its
+     * explicit aliases and re-expands its own nested wildcards; an enumerated leaf table (or unnest)
+     * contributes its wildcard column names; an empty pass-through wrapper delegates to its nested
+     * model, exactly as the recursive rewriteSelectClause expansion resolves it.
+     */
+    private void reserveSubsampleSourceNames(IQueryModel srcModel) {
+        if (srcModel == null) {
+            return;
+        }
+        final ObjList<QueryColumn> cols = srcModel.getBottomUpColumns();
+        if (cols.size() > 0) {
+            reserveSubsampleProjectionNames(cols, srcModel.getNestedModel());
+            return;
+        }
+        final ObjList<CharSequence> wildcardNames = srcModel.getWildcardColumnNames();
+        if (wildcardNames.size() > 0) {
+            for (int j = 0, z = wildcardNames.size(); j < z; j++) {
+                final CharSequence name = wildcardNames.getQuick(j);
+                final QueryColumn qc = srcModel.getAliasToColumnMap().get(name);
+                if (qc != null && qc.getAst() != null && qc.getAst().isWildcard()) {
+                    // a field-registered star (subquery/CTE wrapper): its names come from the
+                    // wrapper's own FROM, exactly as the recursive rewrite will expand it
+                    reserveSubsampleWildcardNames(qc.getAst().token, srcModel.getNestedModel());
+                } else if (qc == null || qc.isIncludeIntoWildcard()) {
+                    reserveSubsampleOutputName(name);
+                }
+            }
+            return;
+        }
+        reserveSubsampleSourceNames(srcModel.getNestedModel());
+    }
+
+    /**
+     * Feeds one output name through the expansion's dedup algorithm and records the assigned alias,
+     * so later duplicates chain to the same suffixed variants the real expansion will pick.
+     */
+    private void reserveSubsampleOutputName(CharSequence name) {
+        final CharSequence alias = SqlUtil.createColumnAlias(
+                characterStore,
+                name,
+                Chars.indexOfLastUnquoted(name, '.'),
+                subsampleReservedAliases,
+                subsampleReservedAliasSequenceMap,
+                false
+        );
+        subsampleReservedAliases.add(alias);
+    }
+
+    /**
      * Method-agnostic tail shared by all SUBSAMPLE desugarings: wraps the pre-built keep-flag window call
      * ({@code windowCall}) in an {@code OVER (ORDER BY ts)} window column, filters on it, and re-projects
      * the original columns. The caller is responsible only for building {@code windowCall}; everything
@@ -11145,7 +11331,16 @@ public class SqlOptimiser implements Mutable {
             ExpressionNode windowCall
     ) throws SqlException {
         // model:  SELECT <cols> FROM <nested>   (nested holds the SUBSAMPLE clause + designated timestamp)
-        final CharSequence keepAlias = createColumnAlias("__keep_subsample", model);
+        // The keep alias must be unique against the model's OUTPUT names. An explicit projection
+        // already carries them all in model.getAliasToColumnMap(). A wildcard projection carries only
+        // the raw '*' column at this point - wildcard expansion runs later, in rewriteSelectClause -
+        // so the alias is chosen against the mirrored expansion namespace instead; otherwise a legal
+        // user column named __keep_subsample collides when the expansion imports it into the window
+        // model built below.
+        final boolean wildcardProjection = hasWildcardColumn(model.getColumns()) || hasWildcardColumn(model.getBottomUpColumns());
+        final CharSequence keepAlias = wildcardProjection
+                ? chooseSubsampleKeepAlias(model, nested)
+                : createColumnAlias("__keep_subsample", model);
         final WindowExpression keepCol = windowExpressionPool.next();
         keepCol.of(keepAlias, windowCall);
         // The keep flag is an internal helper consumed by the WHERE filter only. Exclude it from
@@ -11179,19 +11374,26 @@ public class SqlOptimiser implements Mutable {
         windowModel.setNestedModelIsSubQuery(true);
         windowModel.setModelPosition(model.getModelPosition());
         final ObjList<QueryColumn> projectedCols = model.getBottomUpColumns();
-        final boolean wildcardProjection = hasWildcardColumn(model.getColumns()) || hasWildcardColumn(projectedCols);
-        if (wildcardProjection && !aggregation) {
+        if (wildcardProjection) {
             // Select the completed projection once. Copying the raw `*` plus explicit aliases would
-            // re-expand the wildcard at every synthetic layer (`x`, `x1`, `x2`, ...).
+            // re-expand the wildcard at every synthetic layer (`x`, `x1`, `x2`, ...). This holds for
+            // aggregation projections too (DISTINCT *, GROUP-BY-all-keys with *, `*, aggfn()`): the
+            // star sits above wrapInSubQuery(model), so it enumerates the completed aggregation
+            // output, and the keep flag stays excluded from every wildcard expansion below.
             SqlUtil.addSelectStar(windowModel, queryColumnPool, expressionNodePool);
         } else {
             for (int i = 0, n = projectedCols.size(); i < n; i++) {
                 windowModel.addBottomUpColumn(nextColumn(projectedCols.getQuick(i).getAlias()));
             }
         }
-        // Aggregation rewriting requires the artificial-star filter to see the keep flag while column
-        // maps are rebuilt. Ordinary projections keep it excluded so SELECT * cannot expose it.
-        if (aggregation) {
+        // Explicit-projection aggregation rewriting requires the artificial-star filter to see the
+        // keep flag while column maps are rebuilt; the explicit outer enumeration below drops it
+        // again, so it cannot surface. A real wildcard above the keep window and
+        // isIncludeIntoWildcard(true) are mutually exclusive: with a star in windowModel/outerModel
+        // the flag would import the helper into the final output metadata, so wildcard projections
+        // (aggregating or not) keep it excluded and the WHERE resolves the helper against
+        // windowModel's explicit keep column instead.
+        if (aggregation && !wildcardProjection) {
             keepCol.setIncludeIntoWildcard(true);
         }
         windowModel.addBottomUpColumn(keepCol);
@@ -11219,7 +11421,7 @@ public class SqlOptimiser implements Mutable {
         outerModel.setNestedModelIsSubQuery(true);
         outerModel.setModelPosition(model.getModelPosition());
         final ObjList<QueryColumn> innerCols = windowModel.getBottomUpColumns();
-        if (wildcardProjection && !aggregation) {
+        if (wildcardProjection) {
             SqlUtil.addSelectStar(outerModel, queryColumnPool, expressionNodePool);
         } else {
             for (int i = 0, n = innerCols.size(); i < n; i++) {
@@ -13273,6 +13475,83 @@ public class SqlOptimiser implements Mutable {
         ExpressionNode alias = makeJoinAlias();
         model.setAlias(alias);
         return alias.token;
+    }
+
+    /**
+     * Relocates an explicit TIMESTAMP() clause from a join-holder FROM-item model into its own
+     * join branch, so the clause resolves against the branch's OUTPUT metadata instead of the
+     * join-wide metadata (where an unqualified name colliding with another branch's column is
+     * deliberately reported as not found by JoinRecordMetadata). This keeps the parser-level
+     * scope of the clause: a FROM item's TIMESTAMP clause designates a column of that FROM item,
+     * matching the bare-table join-branch semantics.
+     * <p>
+     * The method walks from the holder through pure pass-through NONE models to find the branch's
+     * name source, then either assigns the clause directly onto a table/table-function head, or
+     * splices a synthetic entity CHOOSE wrapper directly under the holder and parks the clause
+     * there. Join-holder heads (e.g. select-less parenthesized joins) have no single branch
+     * namespace to sink into and are left to the caller's historical hoist.
+     *
+     * @param holder the SELECT_MODEL_NONE FROM-item model carrying the clause; it is joinModels[0]
+     *               of the enclosing join and has a non-null timestamp
+     * @return true when the clause was sunk into the branch (the holder's timestamp is cleared);
+     * false when the branch head is not a recognized shape and the caller must keep the hoist
+     */
+    private boolean sinkTimestampClauseIntoJoinBranch(IQueryModel holder) {
+        // find the name source: descend through pure pass-through NONE models; mirroring
+        // skipNoneTypeModels, a nested join holder is NOT a pass-through - stepping into one of
+        // its branches would source names that drop the other branches' columns
+        IQueryModel head = holder.getNestedModel();
+        while (
+                head != null
+                        && head.getSelectModelType() == IQueryModel.SELECT_MODEL_NONE
+                        && head.getBottomUpColumns().size() == 0
+                        && head.getTableNameExpr() == null
+                        && head.getJoinModels().size() == 1
+                        && head.getNestedModel() != null
+        ) {
+            head = head.getNestedModel();
+        }
+        if (head == null || head.getJoinModels().size() > 1) {
+            // join-holder head: no single namespace for the clause
+            return false;
+        }
+        if (head.getTableNameExpr() != null) {
+            if (head.hasSharedRefs()) {
+                return false;
+            }
+            // table / table-function head: the clause resolves against the table's own metadata,
+            // where input and output metadata are the same object - the bare-table semantics
+            head.setTimestamp(holder.getTimestamp());
+            head.setExplicitTimestamp(holder.isExplicitTimestamp());
+        } else if (head.getBottomUpColumns().size() > 0) {
+            // projecting head (CHOOSE/VIRTUAL/GROUP_BY/WINDOW/DISTINCT, or the first arm of a
+            // union): splice a synthetic entity CHOOSE wrapper directly under the holder, above
+            // the entire branch (including any union chain), and park the clause on it. The
+            // wrapper never mutates the head, which may be a shared (CTE) model.
+            final IQueryModel wrapper = queryModelPool.next();
+            wrapper.setSelectModelType(IQueryModel.SELECT_MODEL_CHOOSE);
+            wrapper.setNestedModel(holder.getNestedModel());
+            wrapper.setModelPosition(head.getModelPosition());
+            // INVARIANT: copy ALL head columns, in order. For a confirmation clause,
+            // generateSelectChoose elides the wrapper on the alias==token entity check alone,
+            // without re-checking the column count, so a partial copy would silently prune
+            // branch output columns.
+            final ObjList<QueryColumn> headColumns = head.getBottomUpColumns();
+            for (int i = 0, n = headColumns.size(); i < n; i++) {
+                wrapper.addBottomUpColumnIfNotExists(nextColumn(headColumns.getQuick(i).getAlias()));
+            }
+            wrapper.setTimestamp(holder.getTimestamp());
+            wrapper.setExplicitTimestamp(holder.isExplicitTimestamp());
+            holder.setNestedModel(wrapper);
+        } else {
+            // unrecognized head shape - keep the historical hoist
+            return false;
+        }
+        // nothing may remain on the holder: the caller's parent runs its own hoist check after
+        // this returns, and a leftover holder timestamp would be hoisted join-wide again
+        holder.setTimestamp(null);
+        holder.setExplicitTimestamp(false);
+        return true;
     }
 
     private IQueryModel skipNoneTypeModels(IQueryModel model) {

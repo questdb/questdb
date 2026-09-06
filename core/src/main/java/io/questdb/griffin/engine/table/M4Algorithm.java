@@ -45,7 +45,7 @@ public class M4Algorithm implements SubsampleAlgorithm {
     public static final M4Algorithm INSTANCE = new M4Algorithm();
 
     @Override
-    public void select(long buffer, int bufferSize, int targetPoints,
+    public void select(long buffer, int bufferSize, int targetPoints, boolean hasIntegralValues,
                        DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         selectedIndices.clear();
         if (bufferSize <= 0 || targetPoints <= 0) {
@@ -80,6 +80,11 @@ public class M4Algorithm implements SubsampleAlgorithm {
             int maxIdx = -1;
             double minVal = 0;
             double maxVal = 0;
+            // Integral lane: exact 64-bit comparisons on the raw long values. A double compare
+            // collapses LONG values beyond 2^53 and silently drops true extrema. First/last
+            // tracking is positional and does not read the value slot.
+            long minLong = 0;
+            long maxLong = 0;
             boolean hasData = false;
 
             while (dataIdx < bufferSize) {
@@ -96,21 +101,41 @@ public class M4Algorithm implements SubsampleAlgorithm {
                         firstIdx = dataIdx;
                     }
                     lastIdx = dataIdx;
-                    double v = SubsampleAlgorithm.getValue(buffer, dataIdx);
-                    if (!hasData) {
-                        minVal = v;
-                        minIdx = dataIdx;
-                        maxVal = v;
-                        maxIdx = dataIdx;
-                        hasData = true;
+                    if (hasIntegralValues) {
+                        long v = SubsampleAlgorithm.getLongValue(buffer, dataIdx);
+                        if (!hasData) {
+                            minLong = v;
+                            minIdx = dataIdx;
+                            maxLong = v;
+                            maxIdx = dataIdx;
+                            hasData = true;
+                        } else {
+                            if (v < minLong) {
+                                minLong = v;
+                                minIdx = dataIdx;
+                            }
+                            if (v > maxLong) {
+                                maxLong = v;
+                                maxIdx = dataIdx;
+                            }
+                        }
                     } else {
-                        if (v < minVal) {
+                        double v = SubsampleAlgorithm.getValue(buffer, dataIdx);
+                        if (!hasData) {
                             minVal = v;
                             minIdx = dataIdx;
-                        }
-                        if (v > maxVal) {
                             maxVal = v;
                             maxIdx = dataIdx;
+                            hasData = true;
+                        } else {
+                            if (v < minVal) {
+                                minVal = v;
+                                minIdx = dataIdx;
+                            }
+                            if (v > maxVal) {
+                                maxVal = v;
+                                maxIdx = dataIdx;
+                            }
                         }
                     }
                 }

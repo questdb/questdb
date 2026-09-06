@@ -1721,6 +1721,355 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubsampleJoinDesignatedTimestampSurvivesQualifiedProjectionOrder() throws Exception {
+        // The projection lists the right-side q.ts (alias rt) BEFORE the designated left
+        // timestamp p.ts (alias ts). The SUBSAMPLE rewrite must resolve qualified column
+        // identity: only p.ts carries designation, regardless of projection order. A wrong
+        // pick designates rt on the subquery and every downstream ASOF join matches on the
+        // right-side timestamps (labels 100, 200) instead of the left ones (labels 200, 400).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+
+            // Independent oracle: the identical join WITHOUT SUBSAMPLE, restricted to the rows
+            // uniform(2) keeps (x = 1 and x = 4). Downstream matches follow p.ts here.
+            assertQuery("""
+                    SELECT s.x, s.rt, s.ts, r.label
+                    FROM (
+                        SELECT q.ts rt, p.ts ts, p.x
+                        FROM tsp p ASOF JOIN tsq q
+                        WHERE p.x IN (1, 4)
+                    ) s ASOF JOIN tsr r""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("x\trt\tts\tlabel\n" +
+                            "1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t200\n" +
+                            "4\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t400\n");
+
+            // Same join through SUBSAMPLE, projecting only x and label so the assertion is
+            // independent of timestamp metadata: the downstream ASOF matches themselves must
+            // agree with the oracle. Matching on the mis-designated rt instead yields 100, 200.
+            assertQuery("""
+                    SELECT s.x, r.label
+                    FROM (
+                        SELECT q.ts rt, p.ts ts, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    ) s ASOF JOIN tsr r""")
+                    .noRandomAccess()
+                    .returns("x\tlabel\n" +
+                            "1\t200\n" +
+                            "4\t400\n");
+
+            // Same join through SUBSAMPLE: uniform(2) keeps the same rows, the subquery keeps
+            // ts as its designated timestamp, and the downstream ASOF join must produce the
+            // same matches as the oracle above.
+            assertQuery("""
+                    SELECT s.x, s.rt, s.ts, r.label
+                    FROM (
+                        SELECT q.ts rt, p.ts ts, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    ) s ASOF JOIN tsr r""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("x\trt\tts\tlabel\n" +
+                            "1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t200\n" +
+                            "4\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t400\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinQualifiedTimestampProjectionControls() throws Exception {
+        // Preservation controls for the qualified-identity resolution: the already-correct
+        // projection order (p.ts before q.ts), the unqualified single-table shape, and the
+        // sampled row set itself must not change when the timestamp pick is fixed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+
+            // (i) Currently-correct projection order: designated p.ts projected first.
+            assertQuery("""
+                    SELECT s.x, s.rt, s.ts, r.label
+                    FROM (
+                        SELECT p.ts ts, q.ts rt, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    ) s ASOF JOIN tsr r""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("x\trt\tts\tlabel\n" +
+                            "1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t200\n" +
+                            "4\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t400\n");
+
+            // (ii) Downstream ASOF over SUBSAMPLE with an unqualified single-table projection.
+            assertQuery("""
+                    SELECT s.x, s.ts, r.label
+                    FROM (SELECT ts, x FROM tsp SUBSAMPLE uniform(2)) s ASOF JOIN tsr r""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("x\tts\tlabel\n" +
+                            "1\t1970-01-01T00:00:00.000010Z\t200\n" +
+                            "4\t1970-01-01T00:00:00.000040Z\t400\n");
+
+            // (iii) The sampled row set with the adversarial projection order. The outer
+            // wrapper projects only x, deliberately erasing timestamp designation: which alias
+            // the rewrite designates is under repair, but the KEPT ROWS must be x = 1 and
+            // x = 4 either way.
+            assertQuery("""
+                    SELECT x FROM (
+                        SELECT q.ts rt, p.ts ts, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    )""")
+                    .returns("x\n" +
+                            "1\n" +
+                            "4\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinQuotedQualifiedTimestampProjectionControls() throws Exception {
+        // Qualified projection tokens keep quoted and case-variant spellings on their prefix
+        // segments (QueryModel.getModelAliasIndex strips prefix quotes for exactly this reason,
+        // and model aliases are stored unquoted by SqlParser.literal). All of these shapes
+        // resolve the designated timestamp correctly today through the suffix match and must
+        // keep working once the SUBSAMPLE rewrite starts checking qualifier identity.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+
+            // (a) Quoted qualifiers on both timestamp projections, correct order, with the
+            // downstream ASOF join asserting the full symptom axis.
+            assertQuery("""
+                    SELECT s.x, s.rt, s.ts, r.label
+                    FROM (
+                        SELECT "p".ts ts, "q".ts rt, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    ) s ASOF JOIN tsr r""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("x\trt\tts\tlabel\n" +
+                            "1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t200\n" +
+                            "4\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t400\n");
+
+            // (b) Quoted alias declarations, unquoted qualifiers.
+            assertQuery("""
+                    SELECT p.ts ts, q.ts rt, p.x
+                    FROM tsp "p" ASOF JOIN tsq "q" SUBSAMPLE uniform(2)""")
+                    .timestamp("ts")
+                    .returns("ts\trt\tx\n" +
+                            "1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000005Z\t1\n" +
+                            "1970-01-01T00:00:00.000040Z\t1970-01-01T00:00:00.000025Z\t4\n");
+
+            // (c) Case-variant qualifiers against lower-case aliases.
+            assertQuery("""
+                    SELECT P.ts ts, Q.ts rt, P.x
+                    FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)""")
+                    .timestamp("ts")
+                    .returns("ts\trt\tx\n" +
+                            "1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000005Z\t1\n" +
+                            "1970-01-01T00:00:00.000040Z\t1970-01-01T00:00:00.000025Z\t4\n");
+
+            // (d) Quoted alias containing a dot: the qualifier split itself must be quote-aware
+            // (a plain lastIndexOf split would cut inside the quoted segment).
+            assertQuery("""
+                    SELECT "p.a".ts ts, "p.a".x x
+                    FROM tsp "p.a" SUBSAMPLE uniform(2)""")
+                    .timestamp("ts")
+                    .returns("ts\tx\n" +
+                            "1970-01-01T00:00:00.000010Z\t1\n" +
+                            "1970-01-01T00:00:00.000040Z\t4\n");
+
+            // (e) Unaliased tables qualified by table name, correct order: the qualifier must
+            // resolve through the table-name fallback (collectModelAlias uses tableNameExpr
+            // when no alias is declared).
+            assertQuery("""
+                    SELECT tsp.ts ts, tsq.ts rt, tsp.x
+                    FROM tsp ASOF JOIN tsq SUBSAMPLE uniform(2)""")
+                    .timestamp("ts")
+                    .returns("ts\trt\tx\n" +
+                            "1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000005Z\t1\n" +
+                            "1970-01-01T00:00:00.000040Z\t1970-01-01T00:00:00.000025Z\t4\n");
+
+            // (f) Adversarial order WITH quoted qualifiers through a designation-erasing
+            // wrapper: which alias the rewrite designates is under repair, but the kept rows
+            // must be x = 1 and x = 4 either way, and the query must not start throwing.
+            assertQuery("""
+                    SELECT x FROM (
+                        SELECT "q".ts rt, "p".ts ts, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    )""")
+                    .returns("x\n" +
+                            "1\n" +
+                            "4\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinQuotedQualifiedAdversarialOrder() throws Exception {
+        // Adversarial projection order with QUOTED qualifiers: "q".ts (alias rt) is projected
+        // before "p".ts (alias ts). Qualifier identity resolution must see through the quotes
+        // (QueryModel.getModelAliasIndex strips prefix quotes for the same reason) and still
+        // designate ts, so the downstream ASOF join matches on p.ts (labels 200, 400), not on
+        // the right-side timestamps (labels 100, 200).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+
+            assertQuery("""
+                    SELECT s.x, s.rt, s.ts, r.label
+                    FROM (
+                        SELECT "q".ts rt, "p".ts ts, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    ) s ASOF JOIN tsr r""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("x\trt\tts\tlabel\n" +
+                            "1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t200\n" +
+                            "4\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t400\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinUnaliasedTableQualifiedAdversarialOrder() throws Exception {
+        // Unaliased tables qualified by table name, adversarial projection order: the qualifier
+        // must resolve through the table-name fallback (collectModelAlias uses tableNameExpr
+        // when no alias is declared), so tsp.ts keeps the designation even though tsq.ts is
+        // projected first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+
+            assertQuery("""
+                    SELECT tsq.ts rt, tsp.ts ts, tsp.x
+                    FROM tsp ASOF JOIN tsq SUBSAMPLE uniform(2)""")
+                    .timestamp("ts")
+                    .returns("rt\tts\tx\n" +
+                            "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1\n" +
+                            "1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t4\n");
+
+            // Quoted table names in FROM are stored unquoted (SqlParser.literal), so quoted
+            // qualifiers over quoted table declarations resolve through the same fallback.
+            assertQuery("""
+                    SELECT "tsq".ts rt, "tsp".ts ts, "tsp".x
+                    FROM "tsp" ASOF JOIN "tsq" SUBSAMPLE uniform(2)""")
+                    .timestamp("ts")
+                    .returns("rt\tts\tx\n" +
+                            "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1\n" +
+                            "1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t4\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinHiddenTimestampQualifiedRejected() throws Exception {
+        // The projection passes only the right side's like-named q.ts and hides the designated
+        // p.ts. Silently designating q.ts sampled the wrong data axis; the rewrite must instead
+        // throw the documented hidden-timestamp error at the SUBSAMPLE keyword.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+
+            final String sql = "SELECT q.ts, p.x FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)";
+            Assert.assertEquals(44, sql.indexOf("SUBSAMPLE"));
+            assertException(
+                    sql,
+                    44,
+                    "SUBSAMPLE requires a designated timestamp column; the SELECT list must include it unchanged"
+            );
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinDuplicateTimestampNamesDisambiguated() throws Exception {
+        // Both sides' like-named timestamps are projected without explicit aliases; the parser
+        // disambiguates them to ts (q.ts, first) and ts1 (p.ts, second). Designation must follow
+        // column identity to p.ts's generated alias ts1, not projection order to ts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+
+            assertQuery("""
+                    SELECT q.ts, p.ts, p.x
+                    FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)""")
+                    .timestamp("ts1")
+                    .returns("ts\tts1\tx\n" +
+                            "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1\n" +
+                            "1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t4\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinKeepWindowOrdersByDesignatedTimestamp() throws Exception {
+        // Ordering-axis discriminator: an INNER JOIN ON (sym) with one match per row makes the
+        // projected right timestamp rt a SCRAMBLE of the designated ts (impossible under ASOF,
+        // where rt is non-decreasing in ts), so lttb keeps DIFFERENT rows depending on which
+        // axis orders the keep window. Points in ts order: (10,10), (20,100), (30,20), (40,30);
+        // lttb(v, 3) keeps the first (ts=10) and last (ts=40) points plus the spike ts=20
+        // (triangle area 1250 vs 50 for ts=30 with A=(10,10), C=(40,30)). Ordering by the
+        // mis-picked rt instead keeps ts=20 and ts=30 as endpoints - a disjoint failure shape.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fp (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE fq (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO fp VALUES ('a', 10.0, 10), ('b', 100.0, 20), ('c', 20.0, 30), ('d', 30.0, 40)");
+            execute("INSERT INTO fq VALUES ('b', 10), ('d', 20), ('a', 30), ('c', 40)");
+
+            assertQuery("""
+                    SELECT q.ts rt, p.ts ts, p.v v
+                    FROM fp p JOIN fq q ON (sym) SUBSAMPLE lttb(v, 3)""")
+                    .timestamp("ts")
+                    .returns("rt\tts\tv\n" +
+                            "1970-01-01T00:00:00.000030Z\t1970-01-01T00:00:00.000010Z\t10.0\n" +
+                            "1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000020Z\t100.0\n" +
+                            "1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.000040Z\t30.0\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleSampleByQualifiedFloorTimestampProjection() throws Exception {
+        // rewriteSampleBy generates the bucket-floor call with a QUALIFIED timestamp argument
+        // (alias.ts) when the FROM target is aliased; the SUBSAMPLE rewrite must resolve that
+        // qualifier against the same aliased model when it carries designation through the
+        // floor projection.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (10.0, '2024-01-01T00:00:00.000000Z'),
+                    (20.0, '2024-01-01T00:30:00.000000Z'),
+                    (30.0, '2024-01-01T01:00:00.000000Z'),
+                    (40.0, '2024-01-01T01:30:00.000000Z'),
+                    (50.0, '2024-01-01T02:00:00.000000Z'),
+                    (60.0, '2024-01-01T02:30:00.000000Z')
+                    """);
+            // SAMPLE BY 1h produces 3 buckets; lttb(a, 2) keeps the first and last.
+            assertQuery("SELECT p.ts, avg(price) a FROM t p SAMPLE BY 1h SUBSAMPLE lttb(a, 2)")
+                    .timestamp("ts")
+                    .returns("ts\ta\n" +
+                            "2024-01-01T00:00:00.000000Z\t15.0\n" +
+                            "2024-01-01T02:00:00.000000Z\t55.0\n");
+        });
+    }
+
+    @Test
     public void testSubsampledJoinRetainsTimestampAsOuterTimeJoinOperand() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE jo (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -4336,6 +4685,39 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUniformOverDescendingSubqueryTakesOrderedBranchAndPreservesIncomingOrder() throws Exception {
+        // Preservation pin for the ordered row-selecting branch of mapSelectedRows: a SUBSAMPLE over
+        // a ts-DESC subquery routes the desugared keep flag into an ORDERED window group, because its
+        // OVER (ORDER BY ts) does not match the backward base scan. The orderedFunctions plan line
+        // proves the orderedGroup branch runs, and the descending result proves that branch's
+        // retained sort still maps window-order traversal ordinals back to ascending absolute
+        // incoming-row indices, so the fused output preserves the INCOMING (descending) cursor
+        // order. This pin is NOT an ascending-designated-timestamp promise. The executed oracle is
+        // the equivalent UNFUSED shape below: a hand-written keep boolean never carries the internal
+        // subsample keep-flag marker, so it stays on the window + Filter path, and fused and unfused
+        // must return identical rows in identical order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT timestamp_sequence(0, 1_000_000) ts, x v FROM long_sequence(10)) TIMESTAMP(ts)");
+            final String expected = "ts\tv\n" +
+                    "1970-01-01T00:00:09.000000Z\t10\n" +
+                    "1970-01-01T00:00:05.000000Z\t6\n" +
+                    "1970-01-01T00:00:00.000000Z\t1\n";
+            assertQuery("SELECT ts, v FROM (SELECT ts, v FROM t ORDER BY ts DESC) SUBSAMPLE uniform(3)")
+                    .timestampDesc("ts")
+                    .withPlan("SelectedRecord\n" +
+                            "    CachedWindowLightSelect\n" +
+                            "      orderedFunctions: [[ts] => [uniform(3) over (order by [ts])]]\n" +
+                            "        PageFrame\n" +
+                            "            Row backward scan\n" +
+                            "            Frame backward scan on: t\n")
+                    .returns(expected);
+            assertQuery("SELECT ts, v FROM (SELECT ts, v, uniform(3) OVER (ORDER BY ts) keep FROM (SELECT ts, v FROM t ORDER BY ts DESC)) WHERE keep")
+                    .timestampDesc("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testM4DesugarsToWindowFilter() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v DOUBLE) TIMESTAMP(ts)");
@@ -4635,6 +5017,287 @@ public class SubsampleTest extends AbstractCairoTest {
             assertQuery("SELECT * FROM t SUBSAMPLE m4(price, 4)").timestamp("ts").returns("price\tqty\tts\n" +
                     "10.0\t1\t2024-01-01T00:00:00.000000Z\n" +
                     "100.0\t10\t2024-01-01T09:00:00.000000Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformWildcardOverUserNamedKeepSubsampleColumn() throws Exception {
+        // Red test for the helper-alias collision: a legal table column literally named
+        // __keep_subsample must not break SELECT * ... SUBSAMPLE. desugarSubsample picks the keep
+        // alias against the UNEXPANDED projection (only '*'), so it stays __keep_subsample and
+        // collides with the genuine column when rewriteSelectClause0 expands the wildcard.
+        // Oracle: the equivalent explicit projection (green today, pinned in
+        // testSubsampleKeepColumnExplicitProjectionControls).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            assertQuery("SELECT * FROM keep_tbl SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformTableDotWildcardOverUserNamedKeepSubsampleColumn() throws Exception {
+        // Red test: the table-qualified wildcard (t.*) expands through the same
+        // createSelectColumnsForWildcard path and hits the same __keep_subsample collision.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            assertQuery("SELECT keep_tbl.* FROM keep_tbl SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testM4WildcardOverUserNamedKeepSubsampleColumn() throws Exception {
+        // Red test: the value-inspecting desugar path (m4/minmax/lttb/sdt) shares the
+        // desugarSubsample tail, so the same collision breaks it. m4(x, 2) over 4 monotone values
+        // keeps the global first and last row (oracle: explicit projection).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            assertQuery("SELECT * FROM keep_tbl SUBSAMPLE m4(x, 2)").timestamp("ts")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformWildcardOverUpperCaseKeepSubsampleColumn() throws Exception {
+        // Red test: the alias namespace (aliasToColumnMap) is case-insensitive, so a column named
+        // __KEEP_SUBSAMPLE collides with the lower-case helper alias just the same.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_upper (\"__KEEP_SUBSAMPLE\" BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_upper VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            assertQuery("SELECT * FROM keep_upper SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__KEEP_SUBSAMPLE\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformWildcardOverKeepSubsampleAndEscapedVariantColumns() throws Exception {
+        // Red test: with BOTH __keep_subsample and __keep_subsample1 present, the fixed alias
+        // choice must escape past every taken variant (to __keep_subsample2), not just the base
+        // name. Guards a naive fix that hard-codes the first escaped variant.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_both (__keep_subsample BOOLEAN, __keep_subsample1 BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_both VALUES (false, true, 1, 1), (false, true, 2, 2), (false, true, 3, 3), (false, true, 4, 4)");
+            assertQuery("SELECT * FROM keep_both SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__keep_subsample\t__keep_subsample1\tx\tts\n" +
+                            "false\ttrue\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\ttrue\t4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformWildcardOverSubqueryProjectingKeepSubsampleColumn() throws Exception {
+        // Red test: the colliding name can arrive through a nested wildcard subquery, so the fixed
+        // alias choice must resolve the FULLY expanded output names, not just direct table columns.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            assertQuery("SELECT * FROM (SELECT * FROM keep_tbl) SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformJoinWildcardOverKeepSubsampleColumn() throws Exception {
+        // Red test: a join wildcard expands BOTH tables' columns into the keep window's namespace,
+        // so a colliding column on the slave table breaks SELECT * over the join. Expected rows come
+        // from the explicit projection oracle (green today, pinned in
+        // testSubsampleKeepColumnExplicitProjectionControls).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE joins_a (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_a VALUES (10.0, 'B', 1), (20.0, 'B', 2), (30.0, 'B', 3), (40.0, 'B', 4)");
+            execute("CREATE TABLE joins_b (__keep_subsample BOOLEAN, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_b VALUES (false, 'B', 1), (false, 'B', 2), (false, 'B', 3), (false, 'B', 4)");
+            assertQuery("SELECT * FROM joins_a a ASOF JOIN joins_b b ON (sym) SUBSAMPLE uniform(2)")
+                    .timestamp("ts")
+                    .returns("price\tsym\tts\t__keep_subsample\tsym1\tts1\n" +
+                            "10.0\tB\t1970-01-01T00:00:00.000001Z\tfalse\tB\t1970-01-01T00:00:00.000001Z\n" +
+                            "40.0\tB\t1970-01-01T00:00:00.000004Z\tfalse\tB\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleKeepColumnExplicitProjectionControls() throws Exception {
+        // Preservation controls (green today): explicit projections naming __keep_subsample work,
+        // because createColumnAlias sees the name IN the projection map and escapes the helper to
+        // __keep_subsample1 (or past every taken variant). These are the oracles for the wildcard
+        // red tests and must not change when the alias choice is fixed. The explicit shape must
+        // also keep fusing into the row-selecting window node.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            execute("CREATE TABLE keep_upper (\"__KEEP_SUBSAMPLE\" BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_upper VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            execute("CREATE TABLE keep_both (__keep_subsample BOOLEAN, __keep_subsample1 BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_both VALUES (false, true, 1, 1), (false, true, 2, 2), (false, true, 3, 3), (false, true, 4, 4)");
+            execute("CREATE TABLE joins_a (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_a VALUES (10.0, 'B', 1), (20.0, 'B', 2), (30.0, 'B', 3), (40.0, 'B', 4)");
+            execute("CREATE TABLE joins_b (__keep_subsample BOOLEAN, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_b VALUES (false, 'B', 1), (false, 'B', 2), (false, 'B', 3), (false, 'B', 4)");
+
+            assertQuery("SELECT __keep_subsample, x, ts FROM keep_tbl SUBSAMPLE uniform(2)").timestamp("ts")
+                    .withPlan("SelectedRecord\n" +
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [uniform(2) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: keep_tbl\n")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+            assertQuery("SELECT __keep_subsample, x, ts FROM keep_tbl SUBSAMPLE m4(x, 2)").timestamp("ts")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+            assertQuery("SELECT \"__KEEP_SUBSAMPLE\", x, ts FROM keep_upper SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__KEEP_SUBSAMPLE\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+            assertQuery("SELECT __keep_subsample, __keep_subsample1, x, ts FROM keep_both SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__keep_subsample\t__keep_subsample1\tx\tts\n" +
+                            "false\ttrue\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\ttrue\t4\t1970-01-01T00:00:00.000004Z\n");
+            assertQuery("SELECT a.price, a.sym, a.ts, b.__keep_subsample, b.sym, b.ts FROM joins_a a ASOF JOIN joins_b b ON (sym) SUBSAMPLE uniform(2)")
+                    .timestamp("ts")
+                    .returns("price\tsym\tts\t__keep_subsample\tsym1\tts1\n" +
+                            "10.0\tB\t1970-01-01T00:00:00.000001Z\tfalse\tB\t1970-01-01T00:00:00.000001Z\n" +
+                            "40.0\tB\t1970-01-01T00:00:00.000004Z\tfalse\tB\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleWildcardEscapedVariantControls() throws Exception {
+        // Preservation controls (green today): the escaped-variant name __keep_subsample1 ALONE
+        // does not collide with the helper; renaming a projected column TO __keep_subsample
+        // escapes the helper; and an outer wildcard above a subsampled subquery still shows no
+        // helper leak. None of these may change when the alias choice is fixed.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_one (__keep_subsample1 BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_one VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            assertQuery("SELECT * FROM keep_one SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__keep_subsample1\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+            assertQuery("SELECT x AS __keep_subsample, ts FROM keep_one SUBSAMPLE uniform(2)").timestamp("ts")
+                    .returns("__keep_subsample\tts\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\n" +
+                            "4\t1970-01-01T00:00:00.000004Z\n");
+            assertQuery("SELECT * FROM (SELECT x, ts FROM keep_one SUBSAMPLE uniform(2))").timestamp("ts")
+                    .returns("x\tts\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\n" +
+                            "4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformJoinWildcardOverKeepSubsampleColumnsOnBothBranches() throws Exception {
+        // Fix-phase test (discriminates the reserved-set design from raw-name suffix probing): BOTH
+        // join branches carry __keep_subsample. Wildcard expansion assigns the bare name to the
+        // master's column and __keep_subsample1 to the slave's, so the helper must escape to
+        // __keep_subsample2 - a raw-name set would pick __keep_subsample1 and still collide.
+        // Master rows carry true, slave rows false, so a wrong-column capture would show in values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE joins_c (__keep_subsample BOOLEAN, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_c VALUES (true, 'B', 1), (true, 'B', 2), (true, 'B', 3), (true, 'B', 4)");
+            execute("CREATE TABLE joins_d (__keep_subsample BOOLEAN, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_d VALUES (false, 'B', 1), (false, 'B', 2), (false, 'B', 3), (false, 'B', 4)");
+            assertQuery("SELECT * FROM joins_c a ASOF JOIN joins_d b ON (sym) SUBSAMPLE uniform(2)")
+                    .timestamp("ts")
+                    .returns("__keep_subsample\tsym\tts\t__keep_subsample1\tsym1\tts1\n" +
+                            "true\tB\t1970-01-01T00:00:00.000001Z\tfalse\tB\t1970-01-01T00:00:00.000001Z\n" +
+                            "true\tB\t1970-01-01T00:00:00.000004Z\tfalse\tB\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformWildcardOverSubqueryExplicitKeepSubsampleAlias() throws Exception {
+        // Fix-phase test (design-review note): the colliding name can arrive via a subquery's
+        // EXPLICIT alias, so the reserved-name collector must read subquery projection aliases
+        // directly instead of only recursing through stars down to enumerated leaf tables.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_plain (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_plain VALUES (1, 1), (2, 2), (3, 3), (4, 4)");
+            assertQuery("SELECT * FROM (SELECT x AS __keep_subsample, ts FROM keep_plain) SUBSAMPLE uniform(2)")
+                    .timestamp("ts")
+                    .returns("__keep_subsample\tts\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\n" +
+                            "4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testUniformWildcardOverSubqueryMixedProjectionKeepSubsampleAlias() throws Exception {
+        // Fix-phase test (design-review note): a MIXED inner projection (star plus explicit alias)
+        // must contribute both parts to the reserved set - the star's expanded leaf names AND the
+        // explicit colliding alias.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_plain (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_plain VALUES (1, 1), (2, 2), (3, 3), (4, 4)");
+            assertQuery("SELECT * FROM (SELECT *, x AS __keep_subsample FROM keep_plain) SUBSAMPLE uniform(2)")
+                    .timestamp("ts")
+                    .returns("x\tts\t__keep_subsample\n" +
+                            "1\t1970-01-01T00:00:00.000001Z\t1\n" +
+                            "4\t1970-01-01T00:00:00.000004Z\t4\n");
+        });
+    }
+
+    @Test
+    public void testUniformCteWildcardOverKeepSubsampleColumn() throws Exception {
+        // Fix-phase test (design-review note): a CTE becomes a nested model at parse time, so the
+        // CTE shape must behave exactly like the wildcard-subquery shape.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            assertQuery("WITH c AS (SELECT * FROM keep_tbl) SELECT * FROM c SUBSAMPLE uniform(2)")
+                    .timestamp("ts")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleWildcardCollisionStillFuses() throws Exception {
+        // Fix-phase test: fusion into the row-selecting window cursor is driven by the
+        // subsampleKeepFlag object marker, not the helper's name, so colliding wildcard shapes
+        // must produce the same fused plan (CachedWindowLightSelect, no separate Filter) as the
+        // non-colliding wildcard shape.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (false, 2, 2), (false, 3, 3), (false, 4, 4)");
+            assertQuery("SELECT * FROM keep_tbl SUBSAMPLE uniform(2)").timestamp("ts")
+                    .withPlan("SelectedRecord\n" +
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [uniform(2) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: keep_tbl\n")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
+            assertQuery("SELECT * FROM keep_tbl SUBSAMPLE m4(x, 2)").timestamp("ts")
+                    .withPlan("SelectedRecord\n" +
+                            "    CachedWindowLightSelect\n" +
+                            "      unorderedFunctions: [m4(ts,x,2) over (order by [ts])]\n" +
+                            "        PageFrame\n" +
+                            "            Row forward scan\n" +
+                            "            Frame forward scan on: keep_tbl\n")
+                    .returns("__keep_subsample\tx\tts\n" +
+                            "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                            "false\t4\t1970-01-01T00:00:00.000004Z\n");
         });
     }
 
@@ -5050,6 +5713,46 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSdtHugeMagnitudeKeepsChangedPoint() throws Exception {
+        // F3-SDT-OVERFLOW red test (SUBSAMPLE form): 1e308 - (-1e308) overflows the swinging-door
+        // slope terms to +Inf, so the fused keep-set wrongly drops the middle row as interior.
+        // All inputs are finite and compdev is 0, so any value change must be kept: the
+        // hand-derived keep set is all three rows (slopes 2e308 at dt=1 vs 1e308 at dt=2).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO x VALUES " +
+                    "(-1e308, 1::timestamp),(1e308, 2::timestamp),(1e308, 3::timestamp)");
+            assertQuery("SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.0)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            1970-01-01T00:00:00.000001Z\t-1.0E308
+                            1970-01-01T00:00:00.000002Z\t1.0E308
+                            1970-01-01T00:00:00.000003Z\t1.0E308
+                            """);
+        });
+    }
+
+    @Test
+    public void testSdtScaledProbeSeriesKeepsAllPoints() throws Exception {
+        // F3-SDT-OVERFLOW preservation control (green pre-fix, must stay green): the same shape
+        // at magnitude 1 has finite slopes, the doors cross and all three rows survive
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO x VALUES " +
+                    "(-1.0, 1::timestamp),(1.0, 2::timestamp),(1.0, 3::timestamp)");
+            assertQuery("SELECT ts, price FROM x SUBSAMPLE sdt(price, 0.0)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tprice
+                            1970-01-01T00:00:00.000001Z\t-1.0
+                            1970-01-01T00:00:00.000002Z\t1.0
+                            1970-01-01T00:00:00.000003Z\t1.0
+                            """);
+        });
+    }
+
+    @Test
     public void testSdtMatchesCapturedGolden() throws Exception {
         // A monotonic ramp stays inside the swinging door and keeps only its endpoints.
         assertMemoryLeak(() -> {
@@ -5209,6 +5912,1021 @@ public class SubsampleTest extends AbstractCairoTest {
                     44,
                     "SUBSAMPLE value argument must be a column name; alias the expression in the SELECT list and reference the alias"
             );
+        });
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // F7-DISTINCT-STAR: a bare wildcard projection in an aggregation context (DISTINCT *,
+    // DISTINCT t.*, GROUP BY over all keys with *, SELECT *, count()) used to leak the internal
+    // __keep_subsample helper into the outer wildcard (desugarSubsample flipped the keep column's
+    // includeIntoWildcard for aggregation rebuilds while the outer model still carried a raw '*').
+    // The fused row-selecting cursor never writes the helper's narrow-chain slot, so reading the
+    // leaked BOOLEAN tripped the memory-bounds assert (AbstractMemoryCR.addressOf). desugarSubsample
+    // now uses the star wiring for every wildcard projection and flips includeIntoWildcard only for
+    // explicit aggregation projections. Every test below first asserts its explicit-column oracle,
+    // then asserts the wildcard form returns the identical rows with no helper column in the output.
+    // ------------------------------------------------------------------------------------------
+
+    @Test
+    public void testDistinctStarUniform() throws Exception {
+        // Red test: SELECT DISTINCT * must return the distinct rows subsampled by uniform, with
+        // no helper column. Hand-derived: 4 distinct rows (the duplicate collapses), uniform(2)
+        // keeps the first and last in timestamp order. Oracle: the explicit-column DISTINCT form
+        // (asserted green first). The shape must keep fusing into the row-selecting window node.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
+            final String expected = "price\tsym\tts\n" +
+                    "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
+                    "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
+            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT DISTINCT * FROM t SUBSAMPLE uniform(2)")
+                    .withPlanContaining("CachedWindowLightSelect")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testDistinctStarM4() throws Exception {
+        // Red test: the value-inspecting desugar path shares the same aggregation-branch leak.
+        // m4(price, 2) over 4 distinct monotone prices keeps the global first and last row
+        // (same derivation as testM4WildcardOverUserNamedKeepSubsampleColumn). Oracle: the
+        // explicit-column DISTINCT form.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
+            final String expected = "price\tsym\tts\n" +
+                    "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
+                    "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
+            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE m4(price, 2)").returns(expected);
+            assertQuery("SELECT DISTINCT * FROM t SUBSAMPLE m4(price, 2)").returns(expected);
+        });
+    }
+
+    @Test
+    public void testDistinctTableDotStarUniform() throws Exception {
+        // Red test: the table-qualified wildcard (t.*) reaches the same aggregation-branch leak.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
+            final String expected = "price\tsym\tts\n" +
+                    "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
+                    "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
+            assertQuery("SELECT DISTINCT price, sym, ts FROM t SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT DISTINCT t.* FROM t SUBSAMPLE uniform(2)").returns(expected);
+        });
+    }
+
+    @Test
+    public void testDistinctStarJoinUniform() throws Exception {
+        // Red test: DISTINCT * over a join expands both branches' columns (with the dedup-suffixed
+        // ts1) and leaks the helper the same way. ASOF JOIN maps each master row to the latest
+        // slave row at or before its timestamp: rows 1,2 -> (100.0, ts=1); rows 3,4 -> (200.0,
+        // ts=3). All four joined rows are distinct; uniform(2) keeps the first and last.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE joins_a (pa DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_a VALUES (1.0, 1), (2.0, 2), (3.0, 3), (4.0, 4)");
+            execute("CREATE TABLE joins_b (pb DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_b VALUES (100.0, 1), (200.0, 3)");
+            final String expected = "pa\tts\tpb\tts1\n" +
+                    "1.0\t1970-01-01T00:00:00.000001Z\t100.0\t1970-01-01T00:00:00.000001Z\n" +
+                    "4.0\t1970-01-01T00:00:00.000004Z\t200.0\t1970-01-01T00:00:00.000003Z\n";
+            assertQuery("SELECT DISTINCT a.pa, a.ts, b.pb, b.ts FROM joins_a a ASOF JOIN joins_b b SUBSAMPLE uniform(2)")
+                    .returns(expected);
+            assertQuery("SELECT DISTINCT * FROM joins_a a ASOF JOIN joins_b b SUBSAMPLE uniform(2)").returns(expected);
+        });
+    }
+
+    @Test
+    public void testDistinctStarOverUserNamedKeepSubsampleColumn() throws Exception {
+        // Red test (F4 consequence shape): a user column literally named __keep_subsample under
+        // DISTINCT *. The F4 collector correctly escapes the helper to __keep_subsample1, which
+        // then leaks through the aggregation branch exactly like the plain shape. Oracle: the
+        // explicit-column DISTINCT form (the non-wildcard alias escape, green today).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE keep_tbl (__keep_subsample BOOLEAN, x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO keep_tbl VALUES (false, 1, 1), (true, 2, 2), (false, 3, 3), (true, 4, 4)");
+            final String expected = "__keep_subsample\tx\tts\n" +
+                    "false\t1\t1970-01-01T00:00:00.000001Z\n" +
+                    "true\t4\t1970-01-01T00:00:00.000004Z\n";
+            assertQuery("SELECT DISTINCT __keep_subsample, x, ts FROM keep_tbl SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT DISTINCT * FROM keep_tbl SUBSAMPLE uniform(2)").returns(expected);
+        });
+    }
+
+    @Test
+    public void testGroupByAllKeysStarUniform() throws Exception {
+        // Red test: an explicit GROUP BY naming every projected column admits a bare wildcard
+        // (unlike SAMPLE BY, which rejects it) and reaches the same aggregation-branch leak.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
+            final String expected = "price\tsym\tts\n" +
+                    "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
+                    "40.0\tB\t1970-01-01T00:00:00.000004Z\n";
+            assertQuery("SELECT price, sym, ts FROM t GROUP BY price, sym, ts SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT * FROM t GROUP BY price, sym, ts SUBSAMPLE uniform(2)").returns(expected);
+        });
+    }
+
+    @Test
+    public void testStarWithCountUniform() throws Exception {
+        // Red test: a wildcard next to an aggregate function (implicit group-by over all wildcard
+        // columns) is an aggregation context with a real '*' and reaches the same leak. The
+        // duplicate first row makes its group count 2, proving the group-by ran below SUBSAMPLE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
+            final String expected = "price\tsym\tts\tcount\n" +
+                    "10.0\tA\t1970-01-01T00:00:00.000001Z\t2\n" +
+                    "40.0\tB\t1970-01-01T00:00:00.000004Z\t1\n";
+            assertQuery("SELECT price, sym, ts, count() FROM t SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT *, count() FROM t SUBSAMPLE uniform(2)").returns(expected);
+        });
+    }
+
+    @Test
+    public void testDistinctStarWithCountUniform() throws Exception {
+        // Corner pin (design review F7 round 1): DISTINCT combined with `*, count()` sets both
+        // the isDistinct and hasGroupByFunc triggers of isAggregationContext at once - a shape
+        // testStarWithCountUniform does not cover. The implicit group-by over all wildcard
+        // columns already makes each output row unique, so DISTINCT must not change the rows.
+        // Oracle: the explicit-column form, asserted green first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
+            final String expected = "price\tsym\tts\tcount\n" +
+                    "10.0\tA\t1970-01-01T00:00:00.000001Z\t2\n" +
+                    "40.0\tB\t1970-01-01T00:00:00.000004Z\t1\n";
+            assertQuery("SELECT DISTINCT price, sym, ts, count() FROM t SUBSAMPLE uniform(2)").returns(expected);
+            assertQuery("SELECT DISTINCT *, count() FROM t SUBSAMPLE uniform(2)").returns(expected);
+        });
+    }
+
+    @Test
+    public void testDistinctTableDotStarJoinUniform() throws Exception {
+        // Corner pin (design review F7 round 1): a table-qualified wildcard over a JOIN under
+        // DISTINCT. DISTINCT a.* projects only the master branch's columns; the four master rows
+        // are distinct, and uniform(2) keeps the first and last in timestamp order. Oracle: the
+        // explicit qualified-column form (F1 contract), asserted green first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE joins_a (pa DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_a VALUES (1.0, 1), (2.0, 2), (3.0, 3), (4.0, 4)");
+            execute("CREATE TABLE joins_b (pb DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO joins_b VALUES (100.0, 1), (200.0, 3)");
+            final String expected = "pa\tts\n" +
+                    "1.0\t1970-01-01T00:00:00.000001Z\n" +
+                    "4.0\t1970-01-01T00:00:00.000004Z\n";
+            assertQuery("SELECT DISTINCT a.pa, a.ts FROM joins_a a ASOF JOIN joins_b b SUBSAMPLE uniform(2)")
+                    .returns(expected);
+            assertQuery("SELECT DISTINCT a.* FROM joins_a a ASOF JOIN joins_b b SUBSAMPLE uniform(2)").returns(expected);
+        });
+    }
+
+    @Test
+    public void testDistinctStarControls() throws Exception {
+        // Preservation controls (green today, must stay green): DISTINCT * without SUBSAMPLE is
+        // untouched engine behavior; sdt still refuses every aggregation context including the
+        // wildcard one (position points at the sdt token).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (price DOUBLE, sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (10.0, 'A', 1), (10.0, 'A', 1), (20.0, 'B', 2), (30.0, 'A', 3), (40.0, 'B', 4)");
+            assertQuery("SELECT DISTINCT * FROM t")
+                    .expectSize()
+                    .returns("price\tsym\tts\n" +
+                            "10.0\tA\t1970-01-01T00:00:00.000001Z\n" +
+                            "20.0\tB\t1970-01-01T00:00:00.000002Z\n" +
+                            "30.0\tA\t1970-01-01T00:00:00.000003Z\n" +
+                            "40.0\tB\t1970-01-01T00:00:00.000004Z\n");
+            assertException(
+                    "SELECT DISTINCT * FROM t SUBSAMPLE sdt(price, 0.5)",
+                    35,
+                    "SUBSAMPLE sdt is not supported in an aggregation context"
+            );
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOnSubqueryJoinBranchCollidingName() throws Exception {
+        // F6 red test (root cause, SUBSAMPLE-free): an explicit TIMESTAMP clause on a subquery
+        // join branch must scope to that branch's projection. Today moveTimestampToChooseModel
+        // hoists it onto the model above the whole join, where the unqualified name collides
+        // with the slave's same-named column and JoinRecordMetadata reports it as not found:
+        // "Invalid column: ts". Oracle: the identical query WITHOUT the clause (asserted first),
+        // which must stay equivalent because the subquery already designates ts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String expected = """
+                    x\tts\tlabel
+                    1\t1970-01-01T00:00:00.000010Z\t200
+                    2\t1970-01-01T00:00:00.000020Z\t200
+                    3\t1970-01-01T00:00:00.000030Z\t300
+                    4\t1970-01-01T00:00:00.000040Z\t400
+                    """;
+            assertQuery("SELECT s.x, s.ts, r.label FROM (SELECT ts, x FROM t) s ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT s.x, s.ts, r.label FROM (SELECT ts, x FROM t) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverSubsampledSubqueryCollidingAsofJoin() throws Exception {
+        // F6 red test (symptom, minimal SUBSAMPLE shape): same defect through a subsampled
+        // subquery join branch. Without the outer join (or with a non-colliding slave) the
+        // clause works; see testExplicitTimestampOverSubsampledSubqueryNoJoinControls. Oracle:
+        // the identical query WITHOUT the clause (F1 guarantees it designates ts).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String expected = """
+                    ts\tx\tlabel\tts1
+                    1970-01-01T00:00:00.000010Z\t1\t200\t1970-01-01T00:00:00.000008Z
+                    1970-01-01T00:00:00.000040Z\t4\t400\t1970-01-01T00:00:00.000035Z
+                    """;
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverSubsampledSubqueryCollidingLtJoin() throws Exception {
+        // F6 red test: the colliding-name failure is join-type independent; LT JOIN variant.
+        // Oracle: the identical no-clause query asserted first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String ltExpected = """
+                    ts\tx\tlabel
+                    1970-01-01T00:00:00.000010Z\t1\t200
+                    1970-01-01T00:00:00.000040Z\t4\t400
+                    """;
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s LT JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(ltExpected);
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(ts) LT JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(ltExpected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverSubsampledSubqueryCollidingInnerJoin() throws Exception {
+        // F6 red test: the colliding-name failure is join-type independent; INNER JOIN ON variant.
+        // Oracle: the identical no-clause query asserted first.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tse (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tse VALUES (900, 10), (700, 15), (800, 40)");
+            final String innerExpected = """
+                    ts\tx\tlabel
+                    1970-01-01T00:00:00.000010Z\t1\t900
+                    1970-01-01T00:00:00.000040Z\t4\t800
+                    """;
+            assertQuery("SELECT s.ts, s.x, e.label FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s JOIN tse e ON e.ts = s.ts")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(innerExpected);
+            assertQuery("SELECT s.ts, s.x, e.label FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(ts) JOIN tse e ON e.ts = s.ts")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(innerExpected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverSubsampledSubqueryCollidingCrossJoin() throws Exception {
+        // F6 red test: the colliding-name failure is join-type independent; CROSS JOIN variant.
+        // The explicit-projection form compiles today (the projection resolves qualified refs
+        // before the join-wide timestamp lookup) - pinned first as a control. The star form
+        // takes the generateSelectChoose(getTimestampIndex) path over the join metadata and
+        // fails. Oracle for the star form: the identical no-clause star query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String crossExpected = """
+                    ts\tx\tlabel
+                    1970-01-01T00:00:00.000010Z\t1\t100
+                    1970-01-01T00:00:00.000010Z\t1\t200
+                    1970-01-01T00:00:00.000010Z\t1\t300
+                    1970-01-01T00:00:00.000010Z\t1\t400
+                    1970-01-01T00:00:00.000040Z\t4\t100
+                    1970-01-01T00:00:00.000040Z\t4\t200
+                    1970-01-01T00:00:00.000040Z\t4\t300
+                    1970-01-01T00:00:00.000040Z\t4\t400
+                    """;
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s CROSS JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(crossExpected);
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(ts) CROSS JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(crossExpected);
+            final String crossStarExpected = """
+                    ts\tx\tlabel\tts1
+                    1970-01-01T00:00:00.000010Z\t1\t100\t1970-01-01T00:00:00.000000Z
+                    1970-01-01T00:00:00.000010Z\t1\t200\t1970-01-01T00:00:00.000008Z
+                    1970-01-01T00:00:00.000010Z\t1\t300\t1970-01-01T00:00:00.000028Z
+                    1970-01-01T00:00:00.000010Z\t1\t400\t1970-01-01T00:00:00.000035Z
+                    1970-01-01T00:00:00.000040Z\t4\t100\t1970-01-01T00:00:00.000000Z
+                    1970-01-01T00:00:00.000040Z\t4\t200\t1970-01-01T00:00:00.000008Z
+                    1970-01-01T00:00:00.000040Z\t4\t300\t1970-01-01T00:00:00.000028Z
+                    1970-01-01T00:00:00.000040Z\t4\t400\t1970-01-01T00:00:00.000035Z
+                    """;
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s CROSS JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(crossStarExpected);
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(ts) CROSS JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(crossStarExpected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverSubsampledSubqueryEvidenceShape() throws Exception {
+        // F6 red test: the original review evidence shape (inner ASOF join + SUBSAMPLE +
+        // explicit TIMESTAMP + outer ASOF join against a slave with a colliding ts column).
+        // Oracle: the identical query WITHOUT the clause, pinned green by the F1 battery
+        // (testSubsampleJoinDesignatedTimestampSurvivesQualifiedProjectionOrder).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String expected = """
+                    x\trt\tts\tlabel
+                    1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t200
+                    4\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t400
+                    """;
+            assertQuery("""
+                    SELECT s.x, s.rt, s.ts, r.label
+                    FROM (
+                        SELECT q.ts rt, p.ts ts, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    ) s ASOF JOIN tsr r""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT s.x, s.rt, s.ts, r.label
+                    FROM (
+                        SELECT q.ts rt, p.ts ts, p.x
+                        FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)
+                    ) s TIMESTAMP(ts) ASOF JOIN tsr r""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOverSubsampledSubqueryNoJoinControls() throws Exception {
+        // F6 preservation controls (green pre-fix, must stay green): every no-join explicit
+        // TIMESTAMP shape over a subsampled subquery already works, across the desugar tail
+        // (uniform, lttb, m4), star/explicit/renamed projections, aggregation, and an inner
+        // join. These pin the working family the F6 defect was originally attributed to.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+            final String uniformExpected = """
+                    ts\tx
+                    1970-01-01T00:00:00.000010Z\t1
+                    1970-01-01T00:00:00.000040Z\t4
+                    """;
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns(uniformExpected);
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns(uniformExpected);
+            assertQuery("SELECT ts, x FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns(uniformExpected);
+            // NOTE: the desugared wildcard stack projects the window timestamp first (ts, x),
+            // not in table order (x, ts) - pinned current behavior.
+            assertQuery("SELECT * FROM (SELECT * FROM t SUBSAMPLE uniform(2)) TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns(uniformExpected);
+            // TIMESTAMP(other_col): re-designating onto a renamed projection of the timestamp
+            // works over a subsampled subquery exactly as over ordinary subqueries.
+            assertQuery("SELECT * FROM (SELECT ts, x, ts AS t2 FROM t SUBSAMPLE uniform(2)) TIMESTAMP(t2)")
+                    .timestamp("t2")
+                    .returns("""
+                            ts\tx\tt2
+                            1970-01-01T00:00:00.000010Z\t1\t1970-01-01T00:00:00.000010Z
+                            1970-01-01T00:00:00.000040Z\t4\t1970-01-01T00:00:00.000040Z
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE lttb(x, 3)) TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tx
+                            1970-01-01T00:00:00.000010Z\t1
+                            1970-01-01T00:00:00.000020Z\t2
+                            1970-01-01T00:00:00.000040Z\t4
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE m4(x, 2)) TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns(uniformExpected);
+            assertQuery("SELECT * FROM (SELECT ts, max(x) mx FROM t SAMPLE BY 10U SUBSAMPLE uniform(2)) TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tmx
+                            1970-01-01T00:00:00.000010Z\t1
+                            1970-01-01T00:00:00.000040Z\t4
+                            """);
+            // NOTE: the explicit clause moves the designated column to the front of the star
+            // expansion (ts, rt, x instead of the subquery's rt, ts, x) - pinned current behavior.
+            assertQuery("SELECT * FROM (SELECT q.ts rt, p.ts ts, p.x FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)) s TIMESTAMP(ts)")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\trt\tx
+                            1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.000005Z\t1
+                            1970-01-01T00:00:00.000040Z\t1970-01-01T00:00:00.000025Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampJoinBranchNonCollidingControls() throws Exception {
+        // F6 preservation controls (green pre-fix, must stay green): with no name collision
+        // across join branches, the explicit clause on a subquery branch compiles today, and a
+        // bare-table branch applies its clause at branch scope (including the colliding-name
+        // case, which never takes the hoist path because the branch has a table name).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsn (label LONG, rts TIMESTAMP) TIMESTAMP(rts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            execute("INSERT INTO tsn VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            assertQuery("SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(ts) ASOF JOIN tsn n")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tx\tlabel\trts
+                            1970-01-01T00:00:00.000010Z\t1\t200\t1970-01-01T00:00:00.000008Z
+                            1970-01-01T00:00:00.000040Z\t4\t400\t1970-01-01T00:00:00.000035Z
+                            """);
+            assertQuery("SELECT s.x, s.ts, n.label FROM (SELECT ts, x FROM t) s TIMESTAMP(ts) ASOF JOIN tsn n")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tts\tlabel
+                            1\t1970-01-01T00:00:00.000010Z\t200
+                            2\t1970-01-01T00:00:00.000020Z\t200
+                            3\t1970-01-01T00:00:00.000030Z\t300
+                            4\t1970-01-01T00:00:00.000040Z\t400
+                            """);
+            assertQuery("SELECT * FROM t TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tts\tlabel\tts1
+                            1\t1970-01-01T00:00:00.000010Z\t200\t1970-01-01T00:00:00.000008Z
+                            2\t1970-01-01T00:00:00.000020Z\t200\t1970-01-01T00:00:00.000008Z
+                            3\t1970-01-01T00:00:00.000030Z\t300\t1970-01-01T00:00:00.000028Z
+                            4\t1970-01-01T00:00:00.000040Z\t400\t1970-01-01T00:00:00.000035Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampBareTableBranchScopesJoinKey() throws Exception {
+        // F6 preservation control (green pre-fix, must stay green): the engine's established
+        // semantics for an explicit TIMESTAMP clause on a bare-table join branch - the clause
+        // re-designates the branch timestamp and the ASOF join keys on it. This is the
+        // precedent the subquery-branch fix must align with (invariant: a FROM item's
+        // TIMESTAMP clause scopes to that FROM item).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t2 (x LONG, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsm (label LONG, rts TIMESTAMP) TIMESTAMP(rts)");
+            execute("INSERT INTO t2 VALUES (1, 10, 1000), (2, 20, 2000)");
+            execute("INSERT INTO tsm VALUES (100, 5), (200, 15), (300, 1500), (400, 2500)");
+            // no clause: joins on the designated ts (labels 100, 200)
+            assertQuery("SELECT * FROM t2 ASOF JOIN tsm m")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tts\tts2\tlabel\trts
+                            1\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.001000Z\t100\t1970-01-01T00:00:00.000005Z
+                            2\t1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.002000Z\t200\t1970-01-01T00:00:00.000015Z
+                            """);
+            // clause names ts2: the branch re-designates and the join keys on ts2 (labels 200, 300)
+            assertQuery("SELECT * FROM t2 TIMESTAMP(ts2) ASOF JOIN tsm m")
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tts\tts2\tlabel\trts
+                            1\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.001000Z\t200\t1970-01-01T00:00:00.000015Z
+                            2\t1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.002000Z\t300\t1970-01-01T00:00:00.001500Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampErrorControls() throws Exception {
+        // F6 preservation controls (green pre-fix, must stay green): genuinely invalid
+        // explicit TIMESTAMP clauses keep their error message and clause-token position,
+        // with and without a join.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            assertException(
+                    "SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) TIMESTAMP(nope)",
+                    67,
+                    "Invalid column: nope"
+            );
+            assertException(
+                    "SELECT * FROM (SELECT ts, x FROM t SUBSAMPLE uniform(2)) TIMESTAMP(x)",
+                    67,
+                    "not a TIMESTAMP"
+            );
+            assertException(
+                    "SELECT s.x FROM (SELECT ts, x FROM t) s TIMESTAMP(nope) ASOF JOIN tsr r",
+                    50,
+                    "Invalid column: nope"
+            );
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampOnAliasedInnerJoinBranch() throws Exception {
+        // F6 fix-phase test (obligation e): the SUBSAMPLE-free aliased-inner-join family member.
+        // Pre-fix: "Invalid column: ts" at position 107 - the branch clause was hoisted above the
+        // outer join, where unqualified ts collides with the slave's ts. Post-fix the clause
+        // resolves against the branch OUTPUT metadata (rt, ts, x - unique ts); the inner
+        // JoinRecordMetadata is never consulted. Oracle: the identical no-clause query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String expected = """
+                    x\trt\tts\tlabel
+                    1\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t200
+                    2\t1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000020Z\t200
+                    3\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000030Z\t300
+                    4\t1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t400
+                    """;
+            assertQuery("SELECT s.x, s.rt, s.ts, r.label FROM (SELECT q.ts rt, p.ts ts, p.x FROM tsp p ASOF JOIN tsq q) s ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT s.x, s.rt, s.ts, r.label FROM (SELECT q.ts rt, p.ts ts, p.x FROM tsp p ASOF JOIN tsq q) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampRenamedClauseOnJoinBranchPreserved() throws Exception {
+        // F6 preservation pin (obligation f, green pre-fix, must stay green): a renamed clause
+        // (TIMESTAMP(tt)) on a subquery join branch resolves against the branch OUTPUT, where tt
+        // exists; the branch already designates tt, so rows, designation, and plan equal the
+        // no-clause query. Plain and SUBSAMPLE forms.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String plainExpected = """
+                    tt\tx\tlabel\tts
+                    1970-01-01T00:00:00.000010Z\t1\t200\t1970-01-01T00:00:00.000008Z
+                    1970-01-01T00:00:00.000020Z\t2\t200\t1970-01-01T00:00:00.000008Z
+                    1970-01-01T00:00:00.000030Z\t3\t300\t1970-01-01T00:00:00.000028Z
+                    1970-01-01T00:00:00.000040Z\t4\t400\t1970-01-01T00:00:00.000035Z
+                    """;
+            assertQuery("SELECT * FROM (SELECT ts tt, x FROM t) s ASOF JOIN tsr r")
+                    .timestamp("tt")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(plainExpected);
+            assertQuery("SELECT * FROM (SELECT ts tt, x FROM t) s TIMESTAMP(tt) ASOF JOIN tsr r")
+                    .timestamp("tt")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(plainExpected);
+            final String subsampleExpected = """
+                    tt\tx\tlabel\tts
+                    1970-01-01T00:00:00.000010Z\t1\t200\t1970-01-01T00:00:00.000008Z
+                    1970-01-01T00:00:00.000040Z\t4\t400\t1970-01-01T00:00:00.000035Z
+                    """;
+            assertQuery("SELECT * FROM (SELECT ts tt, x FROM t SUBSAMPLE uniform(2)) s ASOF JOIN tsr r")
+                    .timestamp("tt")
+                    .noRandomAccess()
+                    .returns(subsampleExpected);
+            assertQuery("SELECT * FROM (SELECT ts tt, x FROM t SUBSAMPLE uniform(2)) s TIMESTAMP(tt) ASOF JOIN tsr r")
+                    .timestamp("tt")
+                    .noRandomAccess()
+                    .returns(subsampleExpected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampSubqueryBranchRekeysTimeSeriesJoin() throws Exception {
+        // F6 fix-phase pin (obligations a/b + LT variant): CONTRACT CHANGE. A clause naming a
+        // DIFFERENT timestamp column of a subquery join branch now re-designates the branch
+        // pre-join, so time-series joins key on that column - matching the bare-table precedent
+        // (testExplicitTimestampBareTableBranchScopesJoinKey). Pre-fix the clause only relabeled
+        // the output metadata with an order the cursor did not deliver (rows stayed keyed on ts).
+        // The bare-table form of each join is asserted first as the semantic oracle. The EXPLAIN
+        // pin below (testExplicitTimestampExplainPins) documents the surviving wrapper node.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t2 (x LONG, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsm (label LONG, rts TIMESTAMP) TIMESTAMP(rts)");
+            execute("INSERT INTO t2 VALUES (1, 10, 1000), (2, 20, 2000)");
+            execute("INSERT INTO tsm VALUES (100, 5), (200, 15), (300, 1500), (400, 2500)");
+            // ASOF: bare-table oracle (T1 semantics), then the subquery branch aligns with it
+            assertQuery("SELECT * FROM t2 TIMESTAMP(ts2) ASOF JOIN tsm m")
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tts\tts2\tlabel\trts
+                            1\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.001000Z\t200\t1970-01-01T00:00:00.000015Z
+                            2\t1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.002000Z\t300\t1970-01-01T00:00:00.001500Z
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts, ts2, x FROM t2) s TIMESTAMP(ts2) ASOF JOIN tsm m")
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tts2\tx\tlabel\trts
+                            1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.001000Z\t1\t200\t1970-01-01T00:00:00.000015Z
+                            1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.002000Z\t2\t300\t1970-01-01T00:00:00.001500Z
+                            """);
+            // LT: bare-table oracle, then the subquery branch aligns with it
+            assertQuery("SELECT * FROM t2 TIMESTAMP(ts2) LT JOIN tsm m")
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tts\tts2\tlabel\trts
+                            1\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.001000Z\t200\t1970-01-01T00:00:00.000015Z
+                            2\t1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.002000Z\t300\t1970-01-01T00:00:00.001500Z
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts, ts2, x FROM t2) s TIMESTAMP(ts2) LT JOIN tsm m")
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tts2\tx\tlabel\trts
+                            1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.001000Z\t1\t200\t1970-01-01T00:00:00.000015Z
+                            1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.002000Z\t2\t300\t1970-01-01T00:00:00.001500Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampRestoresJoinAfterBranchLostDesignation() throws Exception {
+        // F6 fix-phase pin (obligation c, R7 outcome): a subquery branch that lost its designated
+        // timestamp (ORDER BY x) cannot join without the clause ("left side of time series join
+        // has no timestamp" - asserted first). Pre-fix the clause was silently dropped and the
+        // same error remained. Post-fix the clause designates ts inside the branch and the ASOF
+        // join works. The branch data is x-ascending == ts-ascending, so the delivered order
+        // satisfies the designation.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            assertException(
+                    "SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t ORDER BY x) s ASOF JOIN tsr r",
+                    66,
+                    "left side of time series join has no timestamp"
+            );
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM t ORDER BY x) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tx\tlabel
+                            1970-01-01T00:00:00.000010Z\t1\t200
+                            1970-01-01T00:00:00.000020Z\t2\t200
+                            1970-01-01T00:00:00.000030Z\t3\t300
+                            1970-01-01T00:00:00.000040Z\t4\t400
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampAggregationOverJoinBranch() throws Exception {
+        // F6 fix-phase test (obligation d): aggregation directly over the clause-bearing join
+        // (generateSelectGroupBy consumer). Pre-fix: "Invalid column: ts" at position 53.
+        // Post-fix the group-by model receives no hoisted clause. Independent aggregate oracle:
+        // plain max over the master table (the ASOF join adds columns, never drops master rows).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String expected = """
+                    max
+                    4
+                    """;
+            assertQuery("SELECT max(x) FROM t").noRandomAccess().expectSize().returns(expected);
+            assertQuery("SELECT max(x) FROM (SELECT ts, x FROM t) s ASOF JOIN tsr r").noRandomAccess().expectSize().returns(expected);
+            assertQuery("SELECT max(x) FROM (SELECT ts, x FROM t) s TIMESTAMP(ts) ASOF JOIN tsr r").noRandomAccess().expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampParenthesizedTableBranch() throws Exception {
+        // F6 fix-phase test (obligation g): a parenthesized bare-table branch head takes the
+        // direct-assign arm (the clause moves onto the table model itself). Pre-fix the colliding
+        // shape threw "Invalid column: ts" at position 47. Post-fix it matches the
+        // unparenthesized bare-table semantics, including the TIMESTAMP(ts2) re-key (labels
+        // 200/300, the T1 values pinned in testExplicitTimestampBareTableBranchScopesJoinKey).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE t2 (x LONG, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsm (label LONG, rts TIMESTAMP) TIMESTAMP(rts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO t2 VALUES (1, 10, 1000), (2, 20, 2000)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            execute("INSERT INTO tsm VALUES (100, 5), (200, 15), (300, 1500), (400, 2500)");
+            final String expected = """
+                    x\tts\tlabel
+                    1\t1970-01-01T00:00:00.000010Z\t200
+                    2\t1970-01-01T00:00:00.000020Z\t200
+                    3\t1970-01-01T00:00:00.000030Z\t300
+                    4\t1970-01-01T00:00:00.000040Z\t400
+                    """;
+            assertQuery("SELECT s.x, s.ts, r.label FROM (t) s ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT s.x, s.ts, r.label FROM (t) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT * FROM (t2) s TIMESTAMP(ts2) ASOF JOIN tsm m")
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\tts\tts2\tlabel\trts
+                            1\t1970-01-01T00:00:00.000010Z\t1970-01-01T00:00:00.001000Z\t200\t1970-01-01T00:00:00.000015Z
+                            2\t1970-01-01T00:00:00.000020Z\t1970-01-01T00:00:00.002000Z\t300\t1970-01-01T00:00:00.001500Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampUnionHeadBranch() throws Exception {
+        // F6 fix-phase test (obligation h): a union head as the join branch. Without the clause
+        // the union output has no designated timestamp and the ASOF join is rejected (asserted
+        // first - unchanged behavior). Pre-fix the clause query failed the same way (the hoisted
+        // clause never designated the branch). Post-fix the wrapper sits above the whole union,
+        // the clause scopes to union OUTPUT, and the join works. Oracle rows derived by hand:
+        // UNION ALL preserves arm order (ta rows then tb rows - ascending here), ASOF matches
+        // each ts against tsr.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tb (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO ta VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO tb VALUES (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            assertException(
+                    "SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb) s ASOF JOIN tsr r",
+                    87,
+                    "left side of time series join has no timestamp"
+            );
+            assertQuery("SELECT s.ts, s.x, r.label FROM (SELECT ts, x FROM ta UNION ALL SELECT ts, x FROM tb) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            ts\tx\tlabel
+                            1970-01-01T00:00:00.000010Z\t1\t200
+                            1970-01-01T00:00:00.000020Z\t2\t200
+                            1970-01-01T00:00:00.000030Z\t3\t300
+                            1970-01-01T00:00:00.000040Z\t4\t400
+                            """);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampSampleByOverClauseJoin() throws Exception {
+        // F6 fix-phase test (obligation i): SAMPLE BY (and a FILL variant, exercising the FILL
+        // timestamp walk) over a clause-bearing join. The sink flips generateSampleBy's
+        // pushTimestampRequiredFlag(model.getTimestamp() == null) from false to true - benign,
+        // because the branch-designated timestamp flows through the join metadata. Non-colliding
+        // forms were green pre-fix and must stay green with identical rows; the colliding form
+        // threw "Invalid column: ts" pre-fix and now equals its no-clause oracle.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsn (label LONG, rts TIMESTAMP) TIMESTAMP(rts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            execute("INSERT INTO tsn VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String expected = """
+                    ts\tmax
+                    1970-01-01T00:00:00.000000Z\t1
+                    1970-01-01T00:00:00.000020Z\t3
+                    1970-01-01T00:00:00.000040Z\t4
+                    """;
+            assertQuery("SELECT s.ts, max(s.x) FROM (SELECT ts, x FROM t) s ASOF JOIN tsn n SAMPLE BY 20U")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            // NOTE (pinned factory-shape change): with the clause sunk into the branch the
+            // SAMPLE BY model itself carries no timestamp, so generateSampleBy pushes
+            // timestampRequired=true and selects a factory that supports random access; the
+            // no-clause forms above/below do not. Rows and designation are identical either way.
+            assertQuery("SELECT s.ts, max(s.x) FROM (SELECT ts, x FROM t) s TIMESTAMP(ts) ASOF JOIN tsn n SAMPLE BY 20U")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT s.ts, max(s.x) FROM (SELECT ts, x FROM t) s TIMESTAMP(ts) ASOF JOIN tsn n SAMPLE BY 20U FILL(0)")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT s.ts, max(s.x) FROM (SELECT ts, x FROM t) s ASOF JOIN tsr r SAMPLE BY 20U")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns(expected);
+            assertQuery("SELECT s.ts, max(s.x) FROM (SELECT ts, x FROM t) s TIMESTAMP(ts) ASOF JOIN tsr r SAMPLE BY 20U")
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampHorizonJoinPrimaryBranch() throws Exception {
+        // F6 fix-phase test (obligation j): the clause on the primary FROM item of a HORIZON
+        // JOIN. Pre-fix the colliding shape (slave column also named ts) threw "Invalid column:
+        // ts" at position 72; the non-colliding shape was green. Post-fix both equal their
+        // no-clause oracles - the parent model carries no clause and the designated master
+        // timestamp propagates through the inner join metadata.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices2 (pts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(pts)");
+            execute("INSERT INTO trades VALUES (1_000_000, 'A', 5), (2_000_000, 'B', 7)");
+            execute("INSERT INTO prices VALUES (500_000, 'A', 100.0), (1_500_000, 'B', 200.0)");
+            execute("INSERT INTO prices2 VALUES (500_000, 'A', 100.0), (1_500_000, 'B', 200.0)");
+            final String expected = """
+                    avg
+                    150.0
+                    """;
+            assertQuery("SELECT avg(p.price) FROM (SELECT ts, sym, qty FROM trades) tt HORIZON JOIN prices p ON (tt.sym = p.sym) RANGE FROM 0s TO 0s STEP 1s AS h")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT avg(p.price) FROM (SELECT ts, sym, qty FROM trades) tt TIMESTAMP(ts) HORIZON JOIN prices p ON (tt.sym = p.sym) RANGE FROM 0s TO 0s STEP 1s AS h")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("SELECT avg(p.price) FROM (SELECT ts, sym, qty FROM trades) tt TIMESTAMP(ts) HORIZON JOIN prices2 p ON (tt.sym = p.sym) RANGE FROM 0s TO 0s STEP 1s AS h")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampParenthesizedJoinHeads() throws Exception {
+        // F6 fix-phase test (obligation l): select-less parenthesized-join branch heads. By the
+        // time the sink runs, rewriteSelectClause has synthesized a projecting CHOOSE over each
+        // paren-join's full output (with dedup names ts1/ts2), so the sink's wrapper copies the
+        // COMPLETE column set and the clause resolves branch-scoped - no column pruning, no scope
+        // narrowing. Genuine join-holder heads (no projecting model above the join) route to the
+        // fail-safe hoist instead. Pre-fix both shapes threw "Invalid column: ts" (positions
+        // 68/46). Oracles: the identical no-clause queries, green pre-fix.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (q LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+            execute("INSERT INTO tsr VALUES (100, 0), (200, 8), (300, 28), (400, 35)");
+            final String selectHeadExpected = """
+                    ts\tx\tq\tts1\tlabel\tts2
+                    1970-01-01T00:00:00.000010Z\t1\t8\t1970-01-01T00:00:00.000005Z\t200\t1970-01-01T00:00:00.000008Z
+                    1970-01-01T00:00:00.000020Z\t2\t8\t1970-01-01T00:00:00.000005Z\t200\t1970-01-01T00:00:00.000008Z
+                    1970-01-01T00:00:00.000030Z\t3\t9\t1970-01-01T00:00:00.000025Z\t300\t1970-01-01T00:00:00.000028Z
+                    1970-01-01T00:00:00.000040Z\t4\t9\t1970-01-01T00:00:00.000025Z\t400\t1970-01-01T00:00:00.000035Z
+                    """;
+            assertQuery("SELECT * FROM ((SELECT ts, x FROM t) a ASOF JOIN tsq q) s ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(selectHeadExpected);
+            assertQuery("SELECT * FROM ((SELECT ts, x FROM t) a ASOF JOIN tsq q) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(selectHeadExpected);
+            final String tableHeadExpected = """
+                    x\tts\tq\tts1\tlabel\tts2
+                    1\t1970-01-01T00:00:00.000010Z\t8\t1970-01-01T00:00:00.000005Z\t200\t1970-01-01T00:00:00.000008Z
+                    2\t1970-01-01T00:00:00.000020Z\t8\t1970-01-01T00:00:00.000005Z\t200\t1970-01-01T00:00:00.000008Z
+                    3\t1970-01-01T00:00:00.000030Z\t9\t1970-01-01T00:00:00.000025Z\t300\t1970-01-01T00:00:00.000028Z
+                    4\t1970-01-01T00:00:00.000040Z\t9\t1970-01-01T00:00:00.000025Z\t400\t1970-01-01T00:00:00.000035Z
+                    """;
+            assertQuery("SELECT * FROM (t ASOF JOIN tsq q) s ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(tableHeadExpected);
+            assertQuery("SELECT * FROM (t ASOF JOIN tsq q) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(tableHeadExpected);
+        });
+    }
+
+    @Test
+    public void testExplicitTimestampExplainPins() throws Exception {
+        // F6 fix-phase pins (obligation k). Confirmation clause: the entity wrapper is elided by
+        // generateSelectChoose (alias == token for every wrapper column), so the plan is
+        // byte-equal to the no-clause plan - both asserted with the same string. Re-designation
+        // clause: the wrapper survives as one SelectedRecord node over the branch (pinned
+        // plan-shape change; the no-clause form of that query collapses the branch into a bare
+        // PageFrame).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE t2 (x LONG, ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsr (label LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsm (label LONG, rts TIMESTAMP) TIMESTAMP(rts)");
+            final String confirmationPlan = """
+                    SelectedRecord
+                        AsOf Join Fast
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: tsr
+                    """;
+            assertQuery("SELECT s.x, s.ts, r.label FROM (SELECT ts, x FROM t) s ASOF JOIN tsr r")
+                    .assertsPlan(confirmationPlan);
+            assertQuery("SELECT s.x, s.ts, r.label FROM (SELECT ts, x FROM t) s TIMESTAMP(ts) ASOF JOIN tsr r")
+                    .assertsPlan(confirmationPlan);
+            assertQuery("SELECT * FROM (SELECT ts, ts2, x FROM t2) s TIMESTAMP(ts2) ASOF JOIN tsm m")
+                    .assertsPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                    SelectedRecord
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t2
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: tsm
+                            """);
         });
     }
 }

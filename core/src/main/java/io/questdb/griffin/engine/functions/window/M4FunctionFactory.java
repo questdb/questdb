@@ -216,8 +216,14 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         private long selIdx;         // monotonic cursor into `selected` during pass2
         private long target;         // resolved in init() from targetArg for the current execution
         // Resolved once at construction (valueArg's type never changes across rows), used by
-        // readValue() for the per-type null -> NaN mapping.
+        // the lane readers below for the per-type value read and null-sentinel mapping.
         private final short valueTag;
+        // Loop-invariant lane flag: integral value columns (INT/LONG/SHORT/BYTE) buffer the raw
+        // long - exact over the full 64-bit range, where narrowing to double collapses values
+        // beyond 2^53 - while floating-point columns (FLOAT/DOUBLE) buffer the double.
+        // preparePass2 hands the flag to algorithm.select so comparisons run in the matching
+        // domain; see SubsampleAlgorithm for the dual-lane entry layout.
+        private final boolean hasIntegralValues;
 
         BucketSelectWindowFunction(
                 Function tsArg,
@@ -234,6 +240,8 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             this.tsArg = tsArg;
             this.valueArg = valueArg;
             this.valueTag = ColumnType.tagOf(valueArg.getType());
+            this.hasIntegralValues = valueTag == ColumnType.INT || valueTag == ColumnType.LONG
+                    || valueTag == ColumnType.SHORT || valueTag == ColumnType.BYTE;
             this.targetArg = targetArg;
             this.targetPosition = targetPosition;
             // For a constant target, already range-validated at newInstance (compile time); for a
@@ -406,12 +414,26 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                 appendNullFlag(true);
                 return;
             }
-            final double value = readValue(record);
-            if (Double.isNaN(value)) {
-                // Dropped: a null/NaN value must never seed (or otherwise poison) a bucket's
-                // min/max - mirrors bufferInput()'s "if (Double.isNaN(value)) continue;".
-                appendNullFlag(true);
-                return;
+            final long longValue;
+            final double doubleValue;
+            if (hasIntegralValues) {
+                longValue = readLongValue(record);
+                doubleValue = 0;
+                if (isIntegralNull(longValue)) {
+                    // Dropped: the tag-specific null sentinel must never enter selection as a
+                    // huge magnitude (LONG_NULL is Long.MIN_VALUE).
+                    appendNullFlag(true);
+                    return;
+                }
+            } else {
+                longValue = 0;
+                doubleValue = readDoubleValue(record);
+                if (Double.isNaN(doubleValue)) {
+                    // Dropped: a null/NaN value must never seed (or otherwise poison) a bucket's
+                    // min/max (NaN comparisons are always false).
+                    appendNullFlag(true);
+                    return;
+                }
             }
             // The algorithms bucket a buffer they assume is ascending (see SubsampleAlgorithm):
             // descending ORDER BY is rejected at compile time, but an ascending order key that is
@@ -434,7 +456,11 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
             // index the algorithms hand back in `selected`, so it is derived rather than kept.
             // See SubsampleAlgorithm for the entry layout.
             Unsafe.getUnsafe().putLong(buffer + offset, ts);
-            Unsafe.getUnsafe().putDouble(buffer + offset + 8, value);
+            if (hasIntegralValues) {
+                Unsafe.getUnsafe().putLong(buffer + offset + 8, longValue);
+            } else {
+                Unsafe.getUnsafe().putDouble(buffer + offset + 8, doubleValue);
+            }
             count++;
         }
 
@@ -482,7 +508,7 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
                     selected.add(i);
                 }
             } else {
-                algorithm.select(buffer, (int) count, (int) target, selected, circuitBreaker);
+                algorithm.select(buffer, (int) count, (int) target, hasIntegralValues, selected, circuitBreaker);
             }
         }
 
@@ -622,31 +648,39 @@ public class M4FunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         /**
-         * Reads the value column as a double, mapping each type's NULL sentinel to NaN
-         * (SHORT/BYTE have no null sentinel).
+         * Reads a floating-point value column (FLOAT/DOUBLE) as a double; NULL reads as NaN.
          */
-        private double readValue(Record record) {
-            switch (valueTag) {
-                case ColumnType.DOUBLE:
-                    return valueArg.getDouble(record);
-                case ColumnType.FLOAT:
-                    // Float.NaN widens to Double.NaN, so no explicit mapping is needed here.
-                    return valueArg.getFloat(record);
-                case ColumnType.INT: {
-                    final int v = valueArg.getInt(record);
-                    return v != Numbers.INT_NULL ? v : Double.NaN;
-                }
-                case ColumnType.LONG: {
-                    final long v = valueArg.getLong(record);
-                    return v != Numbers.LONG_NULL ? v : Double.NaN;
-                }
-                case ColumnType.SHORT:
-                    return valueArg.getShort(record);
-                case ColumnType.BYTE:
-                    return valueArg.getByte(record);
-                default:
-                    return valueArg.getDouble(record);
+        private double readDoubleValue(Record record) {
+            if (valueTag == ColumnType.FLOAT) {
+                // Float.NaN widens to Double.NaN, so no explicit mapping is needed here.
+                return valueArg.getFloat(record);
             }
+            return valueArg.getDouble(record);
+        }
+
+        /**
+         * Reads an integral value column (INT/LONG/SHORT/BYTE) as a raw long, exact over the
+         * full 64-bit range. Null sentinels pass through unchanged; callers screen them with
+         * {@link #isIntegralNull(long)}.
+         */
+        private long readLongValue(Record record) {
+            return switch (valueTag) {
+                case ColumnType.INT -> valueArg.getInt(record);
+                case ColumnType.LONG -> valueArg.getLong(record);
+                case ColumnType.SHORT -> valueArg.getShort(record);
+                default -> valueArg.getByte(record); // BYTE - the only remaining integral tag
+            };
+        }
+
+        /**
+         * Tag-specific null-sentinel test for the integral lane: LONG_NULL is null only for a
+         * LONG column and INT_NULL only for an INT column (a LONG column holding
+         * Integer.MIN_VALUE is a real value). SHORT/BYTE have no null sentinel, so no
+         * SHORT/BYTE row is ever dropped.
+         */
+        private boolean isIntegralNull(long value) {
+            return (valueTag == ColumnType.LONG && value == Numbers.LONG_NULL)
+                    || (valueTag == ColumnType.INT && value == Numbers.INT_NULL);
         }
     }
 }

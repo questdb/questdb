@@ -376,4 +376,56 @@ public class M4WindowFunctionTest extends AbstractCairoTest {
                                     """);
         });
     }
+
+    @Test
+    public void testLongMaxBeyondDoublePrecisionKept() throws Exception {
+        // F2-M4-LONG red test: m4 shares BucketSelectWindowFunction's double buffer and
+        // M4Algorithm's double compare loop with minmax, so the same LONG collapse applies:
+        // 2^53 and 2^53 + 1 are equal as doubles, so the bucket max at row 2 is never detected.
+        // Five rows with target 4 defeat the count <= target keep-all short-circuit; a single
+        // bucket must keep first = row 1, max = row 2, last = row 5 (min = first value,
+        // deduplicated by emitSorted4). Oracle: exact LONG max()/min() prove distinct extrema;
+        // the M4 first/min/max/last contract hand-derives the keep set.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v long) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, 9_007_199_254_740_992),
+                    (2::timestamp, 9_007_199_254_740_993),
+                    (3::timestamp, 9_007_199_254_740_992),
+                    (4::timestamp, 9_007_199_254_740_992),
+                    (5::timestamp, 9_007_199_254_740_992)
+                    """);
+            assertQuery("select max(v), min(v) from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            max\tmin
+                            9007199254740993\t9007199254740992
+                            """);
+            assertQuery("select ts, v, m4(ts, v, 4) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t9007199254740992\ttrue
+                            1970-01-01T00:00:00.000002Z\t9007199254740993\ttrue
+                            1970-01-01T00:00:00.000003Z\t9007199254740992\tfalse
+                            1970-01-01T00:00:00.000004Z\t9007199254740992\tfalse
+                            1970-01-01T00:00:00.000005Z\t9007199254740992\ttrue
+                            """);
+            // SUBSAMPLE fused form desugars to the same window function.
+            assertQuery("select ts, v from t SUBSAMPLE m4(v, 4)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000001Z\t9007199254740992
+                            1970-01-01T00:00:00.000002Z\t9007199254740993
+                            1970-01-01T00:00:00.000005Z\t9007199254740992
+                            """);
+        });
+    }
 }

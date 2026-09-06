@@ -296,4 +296,269 @@ public class MinMaxWindowFunctionTest extends AbstractCairoTest {
                                     """);
         });
     }
+
+    @Test
+    public void testLongMaxBeyondDoublePrecisionKept() throws Exception {
+        // F2-M4-LONG red test: LONG is an explicitly supported value type (the factory's numeric
+        // check enumerates it), so selection must distinguish LONG values that are distinct in
+        // long but collapse when narrowed to double. 2^53 and 2^53 + 1 both round to
+        // 9007199254740992.0, so a double-buffered compare loop cannot see that row 2 is the
+        // bucket maximum and drops it. Oracle: plain max()/min() aggregates (exact LONG math)
+        // prove the extrema are distinct; the minmax contract (min and max of the single bucket,
+        // first occurrence wins) then hand-derives the expected keep set {row1=min, row2=max}.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v long) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, 9_007_199_254_740_992),
+                    (2::timestamp, 9_007_199_254_740_993),
+                    (3::timestamp, 9_007_199_254_740_992)
+                    """);
+            // Independent oracle: exact LONG aggregation sees two distinct extrema.
+            assertQuery("select max(v), min(v) from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            max\tmin
+                            9007199254740993\t9007199254740992
+                            """);
+            // OVER form: count(3) > target(2) -> one bucket; min = row 1 (first occurrence),
+            // max = row 2. Row 3 duplicates the min value and must not be kept.
+            assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t9007199254740992\ttrue
+                            1970-01-01T00:00:00.000002Z\t9007199254740993\ttrue
+                            1970-01-01T00:00:00.000003Z\t9007199254740992\tfalse
+                            """);
+            // SUBSAMPLE fused form desugars to the same window function; both extrema must survive.
+            assertQuery("select ts, v from t SUBSAMPLE minmax(v, 2)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000001Z\t9007199254740992
+                            1970-01-01T00:00:00.000002Z\t9007199254740993
+                            """);
+        });
+    }
+
+    @Test
+    public void testLongMinBeyondDoublePrecisionKeptNegativeValues() throws Exception {
+        // F2-M4-LONG red test, min side with negative magnitudes: -(2^53 + 1) rounds to
+        // -9007199254740992.0 in double, so the double compare loop misses that row 2 is the
+        // bucket minimum. Exact LONG comparison keeps min = row 2 and max = row 1 (first
+        // occurrence of the max value); MinMaxAlgorithm emits them in timestamp order.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v long) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, -9_007_199_254_740_992),
+                    (2::timestamp, -9_007_199_254_740_993),
+                    (3::timestamp, -9_007_199_254_740_992)
+                    """);
+            assertQuery("select max(v), min(v) from t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            max\tmin
+                            -9007199254740992\t-9007199254740993
+                            """);
+            assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t-9007199254740992\ttrue
+                            1970-01-01T00:00:00.000002Z\t-9007199254740993\ttrue
+                            1970-01-01T00:00:00.000003Z\t-9007199254740992\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testLongNullRowDroppedNotTreatedAsExtremum() throws Exception {
+        // Preservation control (green pre-fix, must stay green): a NULL LONG value
+        // (Numbers.LONG_NULL = Long.MIN_VALUE) must stay dropped from the buffer - it must never
+        // enter selection as a huge negative magnitude. Two non-null rows with target 2 hit the
+        // count <= target keep-all short-circuit, so this pins ONLY the null-dropping behavior,
+        // independent of the precision defect under investigation.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v long) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, null),
+                    (2::timestamp, 9_007_199_254_740_993),
+                    (3::timestamp, 9_007_199_254_740_992)
+                    """);
+            assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\tnull\tfalse
+                            1970-01-01T00:00:00.000002Z\t9007199254740993\ttrue
+                            1970-01-01T00:00:00.000003Z\t9007199254740992\ttrue
+                            """);
+            assertQuery("select ts, v from t SUBSAMPLE minmax(v, 2)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000002Z\t9007199254740993
+                            1970-01-01T00:00:00.000003Z\t9007199254740992
+                            """);
+        });
+    }
+
+    @Test
+    public void testLongBelowDoublePrecisionLimitExtremaKept() throws Exception {
+        // Preservation control (green pre-fix, must stay green): ordinary LONG values far below
+        // 2^53 convert to double exactly, so selection already works; the repair must not disturb
+        // it. One bucket over 3 rows: min = 10 @ row 1, max = 30 @ row 2, row 3 dropped.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v long) timestamp(ts)");
+            execute("insert into t values (1::timestamp, 10), (2::timestamp, 30), (3::timestamp, 20)");
+            assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t10\ttrue
+                            1970-01-01T00:00:00.000002Z\t30\ttrue
+                            1970-01-01T00:00:00.000003Z\t20\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testIntValueExtremaKept() throws Exception {
+        // Preservation control (green pre-fix, must stay green): INT values are always exact in
+        // double (|v| < 2^31 < 2^53). Pins the INT lane against the repair, including that INT
+        // NULL (Numbers.INT_NULL) stays dropped.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v int) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, 10),
+                    (2::timestamp, null),
+                    (3::timestamp, 30),
+                    (4::timestamp, 20)
+                    """);
+            assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t10\ttrue
+                            1970-01-01T00:00:00.000002Z\tnull\tfalse
+                            1970-01-01T00:00:00.000003Z\t30\ttrue
+                            1970-01-01T00:00:00.000004Z\t20\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testShortValueExtremaKeptNoSentinelDropped() throws Exception {
+        // Lane control for the dual-lane repair: SHORT has NO null sentinel, so no SHORT row may
+        // ever be dropped as null. Short.MIN_VALUE (-32768) is the decisive probe - a
+        // per-width MIN_VALUE sentinel convention (as LONG/INT use) would wrongly drop it; here
+        // it must be buffered and selected as the bucket minimum. One bucket over 4 rows:
+        // min = -32768 @ row 2, max = 32767 @ row 3.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v short) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, 100),
+                    (2::timestamp, -32768),
+                    (3::timestamp, 32767),
+                    (4::timestamp, 0)
+                    """);
+            assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t100\tfalse
+                            1970-01-01T00:00:00.000002Z\t-32768\ttrue
+                            1970-01-01T00:00:00.000003Z\t32767\ttrue
+                            1970-01-01T00:00:00.000004Z\t0\tfalse
+                            """);
+            // SUBSAMPLE fused form shares the same function object and buffer.
+            assertQuery("select ts, v from t SUBSAMPLE minmax(v, 2)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            1970-01-01T00:00:00.000002Z\t-32768
+                            1970-01-01T00:00:00.000003Z\t32767
+                            """);
+        });
+    }
+
+    @Test
+    public void testByteValueExtremaKeptNoSentinelDropped() throws Exception {
+        // Lane control, BYTE arm: like SHORT, BYTE has NO null sentinel - Byte.MIN_VALUE (-128)
+        // is a real value and must be buffered and selected as the bucket minimum, never
+        // dropped. One bucket over 4 rows: min = -128 @ row 2, max = 127 @ row 3.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v byte) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, 10),
+                    (2::timestamp, -128),
+                    (3::timestamp, 127),
+                    (4::timestamp, 0)
+                    """);
+            assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t10\tfalse
+                            1970-01-01T00:00:00.000002Z\t-128\ttrue
+                            1970-01-01T00:00:00.000003Z\t127\ttrue
+                            1970-01-01T00:00:00.000004Z\t0\tfalse
+                            """);
+        });
+    }
+
+    @Test
+    public void testFloatValueExtremaKept() throws Exception {
+        // Preservation control (green pre-fix, must stay green): FLOAT stays on the
+        // floating-point lane (widened to double, NaN dropped); the integral-exactness repair
+        // must not change it.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v float) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, 1.5),
+                    (2::timestamp, null),
+                    (3::timestamp, 3.5),
+                    (4::timestamp, 2.5)
+                    """);
+            assertQuery("select ts, v, minmax(ts, v, 2) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t1.5\ttrue
+                            1970-01-01T00:00:00.000002Z\tnull\tfalse
+                            1970-01-01T00:00:00.000003Z\t3.5\ttrue
+                            1970-01-01T00:00:00.000004Z\t2.5\tfalse
+                            """);
+        });
+    }
 }

@@ -477,4 +477,40 @@ public class LttbWindowFunctionTest extends AbstractCairoTest {
             }
         });
     }
+
+    @Test
+    public void testLongBeyondDoublePrecisionGeometryUnchanged() throws Exception {
+        // F2-M4-LONG preservation control (green pre-fix, must stay green): lttb shares
+        // BucketSelectWindowFunction's buffer with m4/minmax, but its selection contract is
+        // geometric (largest triangle area, computed in double by design), NOT exact extremum
+        // comparison. LONG values distinct only beyond double precision (2^53 vs 2^53 + 1)
+        // therefore tie at area 0 and the first candidate of the interior bucket wins - a
+        // documented consequence of the double-domain area heuristic. This pins that behavior:
+        // the integral-exactness repair to minmax/m4 must leave lttb's selection bit-identical.
+        // n=5, m=3, plain LTTB path: first (row 1) and last (row 5) pinned; interior bucket
+        // [rows 2..4] all collapse to the same double, every area is 0, first candidate row 2 wins.
+        assertMemoryLeak(() -> {
+            execute("create table t (ts timestamp, v long) timestamp(ts)");
+            execute("""
+                    insert into t values
+                    (1::timestamp, 9_007_199_254_740_992),
+                    (2::timestamp, 9_007_199_254_740_993),
+                    (3::timestamp, 9_007_199_254_740_992),
+                    (4::timestamp, 9_007_199_254_740_992),
+                    (5::timestamp, 9_007_199_254_740_992)
+                    """);
+            assertQuery("select ts, v, lttb(ts, v, 3) over (order by ts) keep from t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv\tkeep
+                            1970-01-01T00:00:00.000001Z\t9007199254740992\ttrue
+                            1970-01-01T00:00:00.000002Z\t9007199254740993\ttrue
+                            1970-01-01T00:00:00.000003Z\t9007199254740992\tfalse
+                            1970-01-01T00:00:00.000004Z\t9007199254740992\tfalse
+                            1970-01-01T00:00:00.000005Z\t9007199254740992\ttrue
+                            """);
+        });
+    }
 }

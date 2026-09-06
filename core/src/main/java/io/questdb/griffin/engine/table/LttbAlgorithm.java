@@ -130,13 +130,13 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
     }
 
     @Override
-    public void select(long buffer, int bufferSize, int targetPoints,
+    public void select(long buffer, int bufferSize, int targetPoints, boolean hasIntegralValues,
                        DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         selectedIndices.clear();
         if (gapThreshold != 0 && gapThreshold != -1L) {
-            selectGapPreserving(buffer, bufferSize, targetPoints, selectedIndices, circuitBreaker);
+            selectGapPreserving(buffer, bufferSize, targetPoints, hasIntegralValues, selectedIndices, circuitBreaker);
         } else {
-            selectOnRange(buffer, 0, bufferSize, targetPoints, selectedIndices, circuitBreaker);
+            selectOnRange(buffer, 0, bufferSize, targetPoints, hasIntegralValues, selectedIndices, circuitBreaker);
         }
     }
 
@@ -147,6 +147,19 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      */
     private static long at(@Nullable DirectLongList candidates, int pos) {
         return candidates == null ? pos : candidates.get(pos);
+    }
+
+    /**
+     * Reads the buffered value as a double for the preselect and triangle math.
+     * Integral entries decode via {@code (double) rawLong} - the identical IEEE
+     * round-to-nearest conversion pass1 applied before buffering when the value
+     * slot still held a narrowed double - so lttb's geometric selection stays
+     * bit-identical to the pre-dual-lane behavior.
+     */
+    private static double valueAsDouble(long buffer, long index, boolean hasIntegralValues) {
+        return hasIntegralValues
+                ? (double) SubsampleAlgorithm.getLongValue(buffer, index)
+                : SubsampleAlgorithm.getValue(buffer, index);
     }
 
     /**
@@ -175,7 +188,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      *   <li>Pass 2: run LTTB on each segment with its budgeted target.</li>
      * </ol>
      */
-    private void selectGapPreserving(long buffer, int n, int totalPoints,
+    private void selectGapPreserving(long buffer, int n, int totalPoints, boolean hasIntegralValues,
                                      DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         // Pass 1: identify segments
         if (segments == null) {
@@ -276,7 +289,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                     selectedIndices.add(j);
                 }
             } else {
-                selectOnRange(buffer, start, start + size, segTarget, selectedIndices, circuitBreaker);
+                selectOnRange(buffer, start, start + size, segTarget, hasIntegralValues, selectedIndices, circuitBreaker);
             }
         }
     }
@@ -286,7 +299,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * two-stage MinMaxLTTB variant when the range is large enough for the
      * preselection to pay off (see class doc).
      */
-    private void selectOnRange(long buffer, int start, int end, int m,
+    private void selectOnRange(long buffer, int start, int end, int m, boolean hasIntegralValues,
                                DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         // Preselection needs at least one interior LTTB bucket (m > 2) and an
         // interior that outnumbers the worst-case survivor count
@@ -295,10 +308,10 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
         // 2 * PRESELECT_MIN_SHRINK rows, so bins are never empty. Long math:
         // both sides fit comfortably, no overflow for any int n, m.
         if (m > 2 && (long) (end - start) - 2 > (long) PRESELECT_MIN_SHRINK * PRESELECT_RATIO * (m - 2)) {
-            preselectMinMax(buffer, start, end, m, circuitBreaker);
-            lttbCore(buffer, candidates, 0, (int) candidates.size(), m, selectedIndices, circuitBreaker);
+            preselectMinMax(buffer, start, end, m, hasIntegralValues, circuitBreaker);
+            lttbCore(buffer, candidates, 0, (int) candidates.size(), m, hasIntegralValues, selectedIndices, circuitBreaker);
         } else {
-            lttbCore(buffer, null, start, end, m, selectedIndices, circuitBreaker);
+            lttbCore(buffer, null, start, end, m, hasIntegralValues, selectedIndices, circuitBreaker);
         }
     }
 
@@ -316,7 +329,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * the survivor count is at least {@code bins + 2 >= m}: the triangle stage
      * still emits exactly m points, same as the plain path.
      */
-    private void preselectMinMax(long buffer, int start, int end, int m, SqlExecutionCircuitBreaker circuitBreaker) {
+    private void preselectMinMax(long buffer, int start, int end, int m, boolean hasIntegralValues, SqlExecutionCircuitBreaker circuitBreaker) {
         if (candidates == null) {
             candidates = new DirectLongList(64, MemoryTag.NATIVE_FUNC_RSS, true);
             candidates.setMemoryTracker(memoryTracker);
@@ -346,13 +359,13 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             // already tolerates NaN areas.
             int minIdx = binStart;
             int maxIdx = binStart;
-            double minVal = SubsampleAlgorithm.getValue(buffer, binStart);
+            double minVal = valueAsDouble(buffer, binStart, hasIntegralValues);
             double maxVal = minVal;
             for (int j = binStart + 1; j < binEnd; j++) {
                 if ((j & 0xFFF) == 0) {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                 }
-                final double v = SubsampleAlgorithm.getValue(buffer, j);
+                final double v = valueAsDouble(buffer, j, hasIntegralValues);
                 if (v < minVal) {
                     minVal = v;
                     minIdx = j;
@@ -384,7 +397,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
      * range); otherwise each position maps through the preselected candidate
      * list (MinMaxLTTB stage 2) and [start, end) indexes that list.
      */
-    private static void lttbCore(long buffer, @Nullable DirectLongList candidates, int start, int end, int m,
+    private static void lttbCore(long buffer, @Nullable DirectLongList candidates, int start, int end, int m, boolean hasIntegralValues,
                                  DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker) {
         int n = end - start;
         if (n < 2) {
@@ -423,7 +436,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
             }
 
             final long axTs = SubsampleAlgorithm.getTimestamp(buffer, at(candidates, prevSelected));
-            final double ay = SubsampleAlgorithm.getValue(buffer, at(candidates, prevSelected));
+            final double ay = valueAsDouble(buffer, at(candidates, prevSelected), hasIntegralValues);
 
             // Mean of the next bucket with x measured relative to point A. The
             // unsigned delta is exact at any epoch; converting the absolute
@@ -437,7 +450,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                     circuitBreaker.statefulThrowExceptionIfTripped();
                 }
                 avgDx += timestampDelta(SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)), axTs);
-                avgY += SubsampleAlgorithm.getValue(buffer, at(candidates, j));
+                avgY += valueAsDouble(buffer, at(candidates, j), hasIntegralValues);
             }
             if (nextBucketLen > 0) {
                 avgDx /= nextBucketLen;
@@ -456,7 +469,7 @@ public class LttbAlgorithm implements SubsampleAlgorithm {
                 // epoch-magnitude products whose rounding error swamps small
                 // time differences.
                 double dbx = timestampDelta(SubsampleAlgorithm.getTimestamp(buffer, at(candidates, j)), axTs);
-                double by = SubsampleAlgorithm.getValue(buffer, at(candidates, j));
+                double by = valueAsDouble(buffer, at(candidates, j), hasIntegralValues);
                 double area = Math.abs(dbx * (avgY - ay) - avgDx * (by - ay));
                 if (area > maxArea) {
                     maxArea = area;

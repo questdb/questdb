@@ -308,4 +308,69 @@ public class SdtWindowFunctionTest extends AbstractCairoTest {
                                 "1970-01-01T00:00:00.000002Z\tb\t9.0\ttrue\n"
                 );
     }
+
+    @Test
+    public void testHugeMagnitudeChangedPointIsKept() throws Exception {
+        // F3-SDT-OVERFLOW red test: (1e308 + 0.0) - (-1e308) overflows to +Inf inside
+        // SwingingDoor's slope terms, so rows 2 and 3 read the same +Inf slope and the corridor
+        // wrongly drops row 2 as interior. All inputs are finite and compdev is 0, so any value
+        // change must be kept: the hand-derived keep set is all three rows (true slopes from the
+        // anchor are 2e308 at dt=1 vs 1e308 at dt=2 - not collinear).
+        assertQuery("select ts, val, sdt(ts, val, 0.0) over (order by ts) keep from tab")
+                .ddl(DDL, "insert into tab values " +
+                        "(1::timestamp,-1e308),(2::timestamp,1e308),(3::timestamp,1e308)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(
+                        "ts\tval\tkeep\n" +
+                                "1970-01-01T00:00:00.000001Z\t-1.0E308\ttrue\n" +
+                                "1970-01-01T00:00:00.000002Z\t1.0E308\ttrue\n" +
+                                "1970-01-01T00:00:00.000003Z\t1.0E308\ttrue\n"
+                );
+    }
+
+    @Test
+    public void testScaledProbeSeriesKeepsAllPoints() throws Exception {
+        // F3-SDT-OVERFLOW preservation control (green pre-fix, must stay green): the same shape
+        // at magnitude 1 has finite slopes (2 then 1), the doors cross and all rows are kept
+        assertQuery("select ts, val, sdt(ts, val, 0.0) over (order by ts) keep from tab")
+                .ddl(DDL, "insert into tab values " +
+                        "(1::timestamp,-1.0),(2::timestamp,1.0),(3::timestamp,1.0)")
+                .timestamp("ts")
+                .expectSize()
+                .returns(
+                        "ts\tval\tkeep\n" +
+                                "1970-01-01T00:00:00.000001Z\t-1.0\ttrue\n" +
+                                "1970-01-01T00:00:00.000002Z\t1.0\ttrue\n" +
+                                "1970-01-01T00:00:00.000003Z\t1.0\ttrue\n"
+                );
+    }
+
+    @Test
+    public void testLongValueGoesThroughImplicitDoubleCast() throws Exception {
+        // F2-M4-LONG preservation control (green pre-fix, must stay green): sdt does NOT share
+        // BucketSelectWindowFunction's buffer. Its signature is sdt(NDd) - the value slot is
+        // DOUBLE - so a LONG column reaches the function through the parser's implicit
+        // LONG -> DOUBLE cast, the same SQL-level semantics as writing v::double. Its compdev
+        // tolerance is itself a double, so sdt's compression contract is double-domain by
+        // construction: 2^53 and 2^53 + 1 are the same double, the series is a flat line within
+        // any band, and only the endpoints are kept. This pins that contract; the
+        // integral-exactness repair to minmax/m4 must not alter sdt.
+        assertQuery("select ts, v, sdt(ts, v, 0.5) over (order by ts) keep from t")
+                .ddl("create table t (ts timestamp, v long) timestamp(ts)",
+                        """
+                                insert into t values
+                                (1::timestamp, 9_007_199_254_740_992),
+                                (2::timestamp, 9_007_199_254_740_993),
+                                (3::timestamp, 9_007_199_254_740_992)
+                                """)
+                .timestamp("ts")
+                .expectSize()
+                .returns("""
+                        ts\tv\tkeep
+                        1970-01-01T00:00:00.000001Z\t9007199254740992\ttrue
+                        1970-01-01T00:00:00.000002Z\t9007199254740993\tfalse
+                        1970-01-01T00:00:00.000003Z\t9007199254740992\ttrue
+                        """);
+    }
 }

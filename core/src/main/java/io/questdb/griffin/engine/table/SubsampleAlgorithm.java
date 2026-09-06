@@ -33,7 +33,13 @@ import io.questdb.std.Unsafe;
  * <p>
  * Implementations receive a native buffer of (timestamp, value) entries and
  * write selected buffer indices to the output list. The buffer layout per
- * entry is: [timestamp: long (8)][value: double (8)] = 16 bytes.
+ * entry is: [timestamp: long (8)][value: 8 bytes] = 16 bytes. The value slot
+ * is dual-lane: it holds a raw {@code long} for integral value columns
+ * (INT/LONG/SHORT/BYTE) and a {@code double} for floating-point ones
+ * (FLOAT/DOUBLE). The writer passes {@code hasIntegralValues} into
+ * {@link #select} so implementations read the slot through the matching
+ * accessor; a raw long keeps LONG values exact over the full 64-bit range,
+ * where narrowing to double collapses values beyond 2^53.
  * <p>
  * There is deliberately no stored ordinal/rowId field: an entry's ordinal IS
  * its buffer index, which every caller already holds, so storing it cost 8
@@ -49,13 +55,16 @@ public interface SubsampleAlgorithm {
      * to {@code selectedIndices}. The list is NOT cleared before this call -
      * implementations must call {@code selectedIndices.clear()} if needed.
      *
-     * @param buffer          native memory buffer of entries
-     * @param bufferSize      number of entries in the buffer
-     * @param targetPoints    desired number of output points
-     * @param selectedIndices output list to add selected buffer indices to
-     * @param circuitBreaker  for query cancellation during processing
+     * @param buffer            native memory buffer of entries
+     * @param bufferSize        number of entries in the buffer
+     * @param targetPoints      desired number of output points
+     * @param hasIntegralValues true when the value slots hold raw longs
+     *                          (integral value column), false when they hold
+     *                          doubles (floating-point value column)
+     * @param selectedIndices   output list to add selected buffer indices to
+     * @param circuitBreaker    for query cancellation during processing
      */
-    void select(long buffer, int bufferSize, int targetPoints,
+    void select(long buffer, int bufferSize, int targetPoints, boolean hasIntegralValues,
                 DirectLongList selectedIndices, SqlExecutionCircuitBreaker circuitBreaker);
 
     /**
@@ -83,7 +92,18 @@ public interface SubsampleAlgorithm {
     }
 
     /**
-     * Read value from buffer entry at the given index.
+     * Read a raw long value from buffer entry at the given index. Valid only
+     * when the writer buffered an integral value column
+     * ({@code hasIntegralValues == true}).
+     */
+    static long getLongValue(long buffer, long index) {
+        return Unsafe.getUnsafe().getLong(buffer + index * ENTRY_SIZE + 8);
+    }
+
+    /**
+     * Read a double value from buffer entry at the given index. Valid only
+     * when the writer buffered a floating-point value column
+     * ({@code hasIntegralValues == false}).
      */
     static double getValue(long buffer, long index) {
         return Unsafe.getUnsafe().getDouble(buffer + index * ENTRY_SIZE + 8);
