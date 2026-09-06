@@ -336,8 +336,11 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
 
         @Override
         public void pass1(Record record, long recordOffset, WindowSPI spi) {
-            // Preserve the legacy cadence(1) no-op: it bypassed buffering and the SUBSAMPLE cap.
-            if (isSubsampleKeepFlag() && stride > 1 && count >= maxRows) {
+            // The cap covers every stride, including 1: on the window path cadence(1) buffers
+            // per-row state (base row ids and selected-row lists) like any other stride, so the
+            // clause-level guardrail applies uniformly. Direct window calls (isSubsampleKeepFlag()
+            // false) are governed by the query memory tracker instead.
+            if (isSubsampleKeepFlag() && count >= maxRows) {
                 throw CairoException.nonCritical().position(functionPosition)
                         .put("SUBSAMPLE input exceeds maximum of ").put(maxRows).put(" rows (raise ")
                         .put(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath()).put(')');

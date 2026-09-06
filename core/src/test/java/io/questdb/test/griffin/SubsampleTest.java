@@ -51,6 +51,8 @@ public class SubsampleTest extends AbstractCairoTest {
 
             final String[] methods = {
                     "uniform(2)",
+                    "cadence(1)",
+                    "cadence(1, 7)",
                     "cadence(2)",
                     "cadence(2, 7)",
                     "m4(price, 2)",
@@ -87,11 +89,11 @@ public class SubsampleTest extends AbstractCairoTest {
                 }
 
                 // Direct public window calls are governed by the query memory tracker, not the
-                // clause-specific cap. cadence(1) also preserves the legacy no-op cap bypass.
+                // clause-specific cap.
                 final String[] uncappedQueries = {
                         "SELECT uniform(2) OVER (ORDER BY ts) FROM over_cap",
-                        "SELECT m4(ts, price, 2) OVER (ORDER BY ts) FROM over_cap",
-                        "SELECT price, ts FROM over_cap SUBSAMPLE cadence(1)"
+                        "SELECT cadence(1) OVER (ORDER BY ts) FROM over_cap",
+                        "SELECT m4(ts, price, 2) OVER (ORDER BY ts) FROM over_cap"
                 };
                 for (String query : uncappedQueries) {
                     try (RecordCursorFactory factory = compiler.compile(query, sqlExecutionContext).getRecordCursorFactory();
@@ -5408,7 +5410,7 @@ public class SubsampleTest extends AbstractCairoTest {
 
     @Test
     public void testCadenceStrideOneWithBindSeedUnset() throws Exception {
-        // Legacy cadence(1) is a no-op and returns the base cursor without reading its seed.
+        // cadence(1) keeps every row and never reads its seed, so an unset bind seed is accepted.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("INSERT INTO t VALUES (10.0, '2024-01-01T00:00:00.000000Z')");
