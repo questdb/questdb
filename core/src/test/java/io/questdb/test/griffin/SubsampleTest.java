@@ -2056,6 +2056,116 @@ public class SubsampleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSubsampleJoinWildcardRenamedDesignatedTimestamp() throws Exception {
+        // Wildcard twin of testSubsampleJoinDuplicateTimestampNamesDisambiguated: q.ts claims the
+        // output alias ts, so the expansion renames the designated p.ts imported by p.* to ts1.
+        // findVisibleSubsampleTimestamp must resolve designation through the mirrored expansion
+        // (not return the raw source name), or sampling silently binds the joined q.ts axis and
+        // re-designates it. The projection is identical to the explicit test, so the expected
+        // output is byte-identical to its oracle.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+
+            assertQuery("""
+                    SELECT q.ts, p.*
+                    FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)""")
+                    .timestamp("ts1")
+                    .returns("ts\tx\tts1\n" +
+                            "1970-01-01T00:00:00.000005Z\t1\t1970-01-01T00:00:00.000010Z\n" +
+                            "1970-01-01T00:00:00.000025Z\t4\t1970-01-01T00:00:00.000040Z\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinDoubleWildcardRenamedDesignatedTimestamp() throws Exception {
+        // Two wildcards: q.* imports its ts first and claims the bare name, so the designated p.ts
+        // arriving through p.* lands on ts1. The mirrored expansion must count names imported by
+        // EARLIER wildcards, not just explicit aliases.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+
+            assertQuery("""
+                    SELECT q.*, p.*
+                    FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)""")
+                    .timestamp("ts1")
+                    .returns("x\tts\tx1\tts1\n" +
+                            "8\t1970-01-01T00:00:00.000005Z\t1\t1970-01-01T00:00:00.000010Z\n" +
+                            "9\t1970-01-01T00:00:00.000025Z\t4\t1970-01-01T00:00:00.000040Z\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinWildcardHidesDesignatedTimestamp() throws Exception {
+        // A wildcard over only the slave branch never imports the designated p.ts: the projection
+        // hides it while projecting a like-named q.ts, which must throw the documented error - the
+        // same contract as the explicit-projection variant - instead of silently sampling q.ts.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20)");
+            execute("INSERT INTO tsq VALUES (8, 5)");
+
+            final String sql = "SELECT q.* FROM tsp p ASOF JOIN tsq q SUBSAMPLE uniform(2)";
+            Assert.assertEquals(38, sql.indexOf("SUBSAMPLE"));
+            assertException(
+                    sql,
+                    38,
+                    "SUBSAMPLE requires a designated timestamp column; the SELECT list must include it unchanged"
+            );
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinWildcardSubqueryRenamedDesignatedTimestamp() throws Exception {
+        // Composition through nesting: the collision sits inside a subquery, whose boundary-visible
+        // designated alias is already the renamed ts1; the outer explicit projection must preserve
+        // it and sampling must run on the p.ts axis.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tsp (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE tsq (x LONG, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO tsp VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+            execute("INSERT INTO tsq VALUES (8, 5), (9, 25)");
+
+            assertQuery("""
+                    SELECT ts, ts1, x FROM (
+                        SELECT q.ts, p.* FROM tsp p ASOF JOIN tsq q
+                    ) SUBSAMPLE uniform(2)""")
+                    .timestamp("ts1")
+                    .returns("ts\tts1\tx\n" +
+                            "1970-01-01T00:00:00.000005Z\t1970-01-01T00:00:00.000010Z\t1\n" +
+                            "1970-01-01T00:00:00.000025Z\t1970-01-01T00:00:00.000040Z\t4\n");
+        });
+    }
+
+    @Test
+    public void testSubsampleJoinWildcardRenamedTimestampValueInspecting() throws Exception {
+        // Value-inspecting method over the renamed-designation shape: m4's ts argument and the keep
+        // window's order-by must both bind the renamed ts1 (the p.ts axis), while the value column
+        // x resolves against the projected output. One bucket of 5 rows keeps first/min and
+        // last/max, which coincide: rows x=1 and x=5 on the p.ts axis.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE wm4a (ts TIMESTAMP, x INT) TIMESTAMP(ts)");
+            execute("CREATE TABLE wm4b (ts TIMESTAMP, x INT) TIMESTAMP(ts)");
+            execute("INSERT INTO wm4a VALUES (1000000,1), (2000000,2), (3000000,3), (4000000,4), (5000000,5)");
+            execute("INSERT INTO wm4b VALUES (100000,3), (200000,5), (300000,1), (400000,4), (500000,2)");
+
+            assertQuery("""
+                    SELECT b.ts, a.*
+                    FROM wm4a a JOIN wm4b b ON a.x = b.x SUBSAMPLE m4(x, 4)""")
+                    .timestamp("ts1")
+                    .returns("ts\tts1\tx\n" +
+                            "1970-01-01T00:00:00.300000Z\t1970-01-01T00:00:01.000000Z\t1\n" +
+                            "1970-01-01T00:00:00.200000Z\t1970-01-01T00:00:05.000000Z\t5\n");
+        });
+    }
+
+    @Test
     public void testSubsampleJoinKeepWindowOrdersByDesignatedTimestamp() throws Exception {
         // Ordering-axis discriminator: an INNER JOIN ON (sym) with one match per row makes the
         // projected right timestamp rt a SCRAMBLE of the designated ts (impossible under ASOF,

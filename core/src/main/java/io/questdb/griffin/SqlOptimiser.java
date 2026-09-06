@@ -4931,6 +4931,17 @@ public class SqlOptimiser implements Mutable {
             return null;
         }
         if (isSubsampleTimestampPassThroughProjection(model)) {
+            if (hasWildcardColumn(model.getColumns()) || hasWildcardColumn(model.getBottomUpColumns())) {
+                // A wildcard is NOT an identity mapping for the designated timestamp: expansion runs
+                // later (rewriteSelectClause) and dedups aliases in projection order, so an earlier
+                // column claiming the timestamp's name renames the designated column (SELECT b.ts, a.*
+                // -> b.ts owns "ts", a.ts becomes "ts1"). Mirror the expansion exactly as
+                // chooseSubsampleKeepAlias does and return the alias the designated timestamp will
+                // actually receive; null means the projection hides it (e.g. SELECT b.* over a JOIN),
+                // which the caller reports with the documented "SELECT list must include it
+                // unchanged" error instead of silently sampling a like-named column.
+                return resolveWildcardSubsampleTimestampAlias(model, model.getNestedModel(), nestedTimestamp);
+            }
             return nestedTimestamp;
         }
 
@@ -11217,7 +11228,7 @@ public class SqlOptimiser implements Mutable {
     private CharSequence chooseSubsampleKeepAlias(IQueryModel model, IQueryModel nested) {
         subsampleReservedAliases.clear();
         subsampleReservedAliasSequenceMap.clear();
-        reserveSubsampleProjectionNames(model.getBottomUpColumns(), nested);
+        reserveSubsampleProjectionNames(model.getBottomUpColumns(), nested, null);
         return SqlUtil.createColumnAlias(
                 characterStore,
                 "__keep_subsample",
@@ -11232,16 +11243,62 @@ public class SqlOptimiser implements Mutable {
      * Reserves the output names of one projection: explicit column aliases directly, wildcard columns
      * via the models the expansion will pull from ({@code fromModel} is the projection's FROM target).
      */
-    private void reserveSubsampleProjectionNames(ObjList<QueryColumn> cols, IQueryModel fromModel) {
+    /**
+     * Walks a projection in declared order, reserving every output name exactly as the expansion's
+     * dedup will assign them. When {@code designatedName} is non-null, returns the reserved alias
+     * assigned to the column of that name imported from the primary FROM model (capture mode, used
+     * by {@link #resolveWildcardSubsampleTimestampAlias}); with a null {@code designatedName} it
+     * only reserves and returns null (keep-alias mode, byte-identical to the historical behavior).
+     */
+    private CharSequence reserveSubsampleProjectionNames(ObjList<QueryColumn> cols, IQueryModel fromModel, CharSequence designatedName) {
         for (int i = 0, n = cols.size(); i < n; i++) {
             final QueryColumn qc = cols.getQuick(i);
             final ExpressionNode ast = qc.getAst();
             if (ast != null && ast.isWildcard()) {
-                reserveSubsampleWildcardNames(ast.token, fromModel);
+                final CharSequence captured = reserveSubsampleWildcardNames(ast.token, fromModel, designatedName);
+                if (captured != null) {
+                    return captured;
+                }
+            } else {
+                final CharSequence reserved = reserveSubsampleOutputName(qc.getAlias());
+                if (designatedName != null && Chars.equalsIgnoreCase(qc.getAlias(), designatedName)) {
+                    return reserved;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the output alias a designated timestamp receives through a wildcard projection by
+     * mirroring the expansion's in-order alias dedup (the {@link #chooseSubsampleKeepAlias}
+     * technique). An explicit literal column that references the designated timestamp (qualified
+     * against the primary FROM model, same rule as {@link #findDesignatedTimestampProjection})
+     * carries designation under its parse-final alias; otherwise the wildcard importing the primary
+     * model carries it under the first free variant of its name at that point of the expansion.
+     * Returns null when no projection column exposes the designated timestamp - the caller reports
+     * the documented hidden-timestamp error, matching the explicit-projection contract.
+     */
+    private CharSequence resolveWildcardSubsampleTimestampAlias(IQueryModel model, IQueryModel fromModel, CharSequence sourceTimestamp) {
+        subsampleReservedAliases.clear();
+        subsampleReservedAliasSequenceMap.clear();
+        final ObjList<QueryColumn> bottomUp = model.getBottomUpColumns();
+        final ObjList<QueryColumn> cols = bottomUp.size() > 0 ? bottomUp : model.getColumns();
+        for (int i = 0, n = cols.size(); i < n; i++) {
+            final QueryColumn qc = cols.getQuick(i);
+            final ExpressionNode ast = qc.getAst();
+            if (ast != null && ast.isWildcard()) {
+                final CharSequence captured = reserveSubsampleWildcardNames(ast.token, fromModel, sourceTimestamp);
+                if (captured != null) {
+                    return captured;
+                }
+            } else if (ast != null && ast.type == LITERAL && isDesignatedTimestampReference(ast.token, sourceTimestamp, fromModel)) {
+                return qc.getAlias();
             } else {
                 reserveSubsampleOutputName(qc.getAlias());
             }
         }
+        return null;
     }
 
     /**
@@ -11253,9 +11310,9 @@ public class SqlOptimiser implements Mutable {
      * reserves nothing: the expansion throws "invalid table alias" before any helper collision
      * could matter.
      */
-    private void reserveSubsampleWildcardNames(CharSequence token, IQueryModel fromModel) {
+    private CharSequence reserveSubsampleWildcardNames(CharSequence token, IQueryModel fromModel, CharSequence designatedName) {
         if (fromModel == null) {
-            return;
+            return null;
         }
         final ObjList<IQueryModel> joinModels = fromModel.getJoinModels();
         final int dot = Chars.indexOfLastUnquoted(token, '.');
@@ -11270,15 +11327,20 @@ public class SqlOptimiser implements Mutable {
                 final IQueryModel jm = joinModels.getQuick(j);
                 final ExpressionNode aliasExpr = jm.getAlias() != null ? jm.getAlias() : jm.getTableNameExpr();
                 if (aliasExpr != null && Chars.equalsIgnoreCase(aliasExpr.token, token, lo, hi)) {
-                    reserveSubsampleSourceNames(jm);
-                    return;
+                    // only the primary FROM model (joinModels[0]) can own the designated timestamp;
+                    // a wildcard over any other branch reserves names without capturing
+                    return reserveSubsampleSourceNames(jm, j == 0 ? designatedName : null);
                 }
             }
         } else {
             for (int j = 0, z = joinModels.size(); j < z; j++) {
-                reserveSubsampleSourceNames(joinModels.getQuick(j));
+                final CharSequence captured = reserveSubsampleSourceNames(joinModels.getQuick(j), j == 0 ? designatedName : null);
+                if (captured != null) {
+                    return captured;
+                }
             }
         }
+        return null;
     }
 
     /**
@@ -11287,14 +11349,16 @@ public class SqlOptimiser implements Mutable {
      * contributes its wildcard column names; an empty pass-through wrapper delegates to its nested
      * model, exactly as the recursive rewriteSelectClause expansion resolves it.
      */
-    private void reserveSubsampleSourceNames(IQueryModel srcModel) {
+    private CharSequence reserveSubsampleSourceNames(IQueryModel srcModel, CharSequence designatedName) {
         if (srcModel == null) {
-            return;
+            return null;
         }
         final ObjList<QueryColumn> cols = srcModel.getBottomUpColumns();
         if (cols.size() > 0) {
-            reserveSubsampleProjectionNames(cols, srcModel.getNestedModel());
-            return;
+            // subquery/CTE source: its outputs arrive under their (parse-final) aliases, so the
+            // designated column is matched by name at this boundary - findVisibleSubsampleTimestamp
+            // already resolved the boundary-visible name, including any rename inside the subquery
+            return reserveSubsampleProjectionNames(cols, srcModel.getNestedModel(), designatedName);
         }
         final ObjList<CharSequence> wildcardNames = srcModel.getWildcardColumnNames();
         if (wildcardNames.size() > 0) {
@@ -11304,21 +11368,27 @@ public class SqlOptimiser implements Mutable {
                 if (qc != null && qc.getAst() != null && qc.getAst().isWildcard()) {
                     // a field-registered star (subquery/CTE wrapper): its names come from the
                     // wrapper's own FROM, exactly as the recursive rewrite will expand it
-                    reserveSubsampleWildcardNames(qc.getAst().token, srcModel.getNestedModel());
+                    final CharSequence captured = reserveSubsampleWildcardNames(qc.getAst().token, srcModel.getNestedModel(), designatedName);
+                    if (captured != null) {
+                        return captured;
+                    }
                 } else if (qc == null || qc.isIncludeIntoWildcard()) {
-                    reserveSubsampleOutputName(name);
+                    final CharSequence reserved = reserveSubsampleOutputName(name);
+                    if (designatedName != null && Chars.equalsIgnoreCase(name, designatedName)) {
+                        return reserved;
+                    }
                 }
             }
-            return;
+            return null;
         }
-        reserveSubsampleSourceNames(srcModel.getNestedModel());
+        return reserveSubsampleSourceNames(srcModel.getNestedModel(), designatedName);
     }
 
     /**
      * Feeds one output name through the expansion's dedup algorithm and records the assigned alias,
      * so later duplicates chain to the same suffixed variants the real expansion will pick.
      */
-    private void reserveSubsampleOutputName(CharSequence name) {
+    private CharSequence reserveSubsampleOutputName(CharSequence name) {
         final CharSequence alias = SqlUtil.createColumnAlias(
                 characterStore,
                 name,
@@ -11328,6 +11398,7 @@ public class SqlOptimiser implements Mutable {
                 false
         );
         subsampleReservedAliases.add(alias);
+        return alias;
     }
 
     /**
