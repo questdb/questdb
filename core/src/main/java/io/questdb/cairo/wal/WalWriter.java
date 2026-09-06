@@ -1202,6 +1202,14 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         default void onDeferDecidedBeforeSequencing(int walId) {
         }
 
+        /**
+         * Fires AFTER the strengthen decision and BEFORE sequencing. A flip landing here is missed by
+         * the strengthen (which has already read the mode) but seen by the post-sequencing read, which
+         * is the narrow window the {@code adaptiveBarriersTaken} guard exists to make safe.
+         */
+        default void onStrengthenDecidedBeforeSequencing(int walId) {
+        }
+
         void onSequencedBeforePin(int walId, long seqTxn);
     }
 
@@ -1282,9 +1290,19 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // publish a record naming still-volatile data -- inverting the data->sequencer
                 // ordering this design rests on, in exactly the case the fail-safe protocol forbids.
                 // Under W>0 the flush is deferred and either placement works; W=0 is what forces this.
+                // Tracks whether this commit's WAL data actually took the ADAPTIVE column barriers.
+                // Only syncIfRequired(ADAPTIVE) does; NOSYNC skips everything and ASYNC only msyncs.
+                boolean adaptiveBarriersTaken = commitModeSnapshot == CommitMode.ADAPTIVE;
                 if (commitModeSnapshot != CommitMode.ADAPTIVE
                         && walCommitMode() == CommitMode.ADAPTIVE) {
                     syncIfRequired(CommitMode.ADAPTIVE);
+                    adaptiveBarriersTaken = true;
+                }
+                {
+                    final DeferredCommitInterceptor postStrengthen = deferredCommitInterceptor;
+                    if (postStrengthen != null) {
+                        postStrengthen.onStrengthenDecidedBeforeSequencing(walId);
+                    }
                 }
                 final long seqTxn = getSequencerTxn();
                 // RECORD/ADVANCE on the CURRENT mode -- see below. The two decisions deliberately take
@@ -1295,7 +1313,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // "everything committed is durable", which holds only while every non-durable txn is
                 // pinned -- and peer writers committing under NOSYNC are sequenced WITHOUT a pin, so
                 // advancing here would claim their unsynced txns too.
-                if (commitModeNow == CommitMode.ADAPTIVE) {
+                // ... AND only if the barriers were actually taken. A flip landing between the
+                // strengthen decision above and this read is missed by the strengthen but seen here,
+                // which would otherwise record a frontier over data no barrier ever covered -- the
+                // original lie through a narrower window. Declining to record is the safe side: it can
+                // only withhold a durable-ack, never grant a false one.
+                if (commitModeNow == CommitMode.ADAPTIVE && adaptiveBarriersTaken) {
                     if (deferDeviceFlush()) {
                         // TEST-ONLY seam (Task 1b): the mid-flight window — the txn is now sequenced (the shared
                         // tracker's seqTxn has advanced to it) but its durable-ack pin was registered ATOMICALLY

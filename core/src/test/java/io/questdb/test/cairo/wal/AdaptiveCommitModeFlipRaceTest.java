@@ -245,6 +245,71 @@ public class AdaptiveCommitModeFlipRaceTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The NARROW window the {@code adaptiveBarriersTaken} guard exists for.
+     * <p>
+     * A flip landing AFTER the strengthen decision but BEFORE the post-sequencing read is missed by the
+     * strengthen (which has already read the mode as NOSYNC, so it takes no barriers) yet seen by the
+     * read that decides whether to record the durable frontier. Without the guard that records a
+     * frontier over data no barrier ever covered -- the original lie, through a narrower window, and at
+     * ANY W rather than only W=0.
+     * <p>
+     * Declining to record is the safe side of the trade: it can only withhold a durable-ack, never
+     * grant a false one.
+     */
+    @Test
+    public void testFlipAfterStrengthenDecisionMustNotRecordUnbarrieredData() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 16);
+
+        final AdaptiveWalDurabilityTest.FdatasyncOrderFacade trackFf =
+                new AdaptiveWalDurabilityTest.FdatasyncOrderFacade();
+        assertMemoryLeak(trackFf, () -> {
+            execute("create table nw (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("nw");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+
+            trackFf.resetFdatasyncOrder();
+            WalWriter.deferredCommitInterceptor = new WalWriter.DeferredCommitInterceptor() {
+                @Override
+                public void onSequencedBeforePin(int walId, long seqTxn) {
+                }
+
+                @Override
+                public void onStrengthenDecidedBeforeSequencing(int walId) {
+                    // TOO LATE for the strengthen, early enough for the post-sequencing read.
+                    tracker.setCommitModeAtSeqTxn(CommitMode.ADAPTIVE, tracker.getSeqTxn());
+                }
+            };
+            try (WalWriter racer = engine.getWalWriter(tt)) {
+                TableWriterRow(racer);
+                racer.commit();
+            } finally {
+                WalWriter.deferredCommitInterceptor = null;
+            }
+
+            long columnBarriers = 0;
+            for (String path : trackFf.getFdatasyncOrder()) {
+                if (path.contains("wal") && path.endsWith(".d")) {
+                    columnBarriers++;
+                }
+            }
+            final long sequenced = tracker.getSeqTxn();
+            final long durable = tracker.getLocalDurableSeqTxn();
+
+            Assert.assertTrue("precondition: the racy commit must have been sequenced", sequenced > 0);
+            Assert.assertEquals("precondition: the late flip must have taken effect",
+                    CommitMode.ADAPTIVE, tracker.getCommitMode());
+            Assert.assertTrue(
+                    "a frontier must never be recorded over data no barrier covered:"
+                            + " columnBarriers=" + columnBarriers + " durable=" + durable
+                            + " sequenced=" + sequenced,
+                    columnBarriers > 0 || durable < sequenced
+            );
+        });
+    }
+
     private static void TableWriterRow(WalWriter writer) {
         io.questdb.cairo.TableWriter.Row row = writer.newRow(0L);
         row.putLong(1, 1L);
