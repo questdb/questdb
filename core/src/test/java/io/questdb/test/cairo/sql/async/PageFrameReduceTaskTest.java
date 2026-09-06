@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.sql.async.PageFrameReduceTask;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
@@ -36,6 +37,8 @@ import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Field;
 
 public class PageFrameReduceTaskTest extends AbstractTest {
 
@@ -148,5 +151,68 @@ public class PageFrameReduceTaskTest extends AbstractTest {
                 Misc.free(task);
             }
         });
+    }
+
+    @Test
+    public void testOfResetsNativeBuffersWhenReboundToAnotherQuery() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final CairoConfiguration configuration = new DefaultTestCairoConfiguration(root);
+            final PageFrameReduceTask task = new PageFrameReduceTask(configuration, MemoryTag.NATIVE_OFFLOAD);
+            final PageFrameSequence<?> firstSequence = new PageFrameSequence<>(
+                    null,
+                    configuration,
+                    null,
+                    null,
+                    null,
+                    null,
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
+            final PageFrameSequence<?> secondSequence = new PageFrameSequence<>(
+                    null,
+                    configuration,
+                    null,
+                    null,
+                    null,
+                    null,
+                    1,
+                    PageFrameReduceTask.TYPE_FILTER
+            );
+            try {
+                setSequenceId(firstSequence, 1L);
+                setSequenceId(secondSequence, 2L);
+
+                task.getFilteredRows().setCapacity(64);
+                task.getDataAddresses().setCapacity(64);
+                task.getAuxAddresses().setCapacity(64);
+                task.of(firstSequence, 0, false);
+                Assert.assertEquals(configuration.getPageFrameReduceRowIdListCapacity(), task.getFilteredRows().getCapacity());
+                Assert.assertEquals(configuration.getPageFrameReduceColumnListCapacity(), task.getDataAddresses().getCapacity());
+                Assert.assertEquals(configuration.getPageFrameReduceColumnListCapacity(), task.getAuxAddresses().getCapacity());
+
+                task.getFilteredRows().setCapacity(64);
+                task.getDataAddresses().setCapacity(64);
+                task.getAuxAddresses().setCapacity(64);
+                task.of(firstSequence, 1, false);
+                Assert.assertEquals(64, task.getFilteredRows().getCapacity());
+                Assert.assertEquals(64, task.getDataAddresses().getCapacity());
+                Assert.assertEquals(64, task.getAuxAddresses().getCapacity());
+
+                task.of(secondSequence, 0, false);
+                Assert.assertEquals(configuration.getPageFrameReduceRowIdListCapacity(), task.getFilteredRows().getCapacity());
+                Assert.assertEquals(configuration.getPageFrameReduceColumnListCapacity(), task.getDataAddresses().getCapacity());
+                Assert.assertEquals(configuration.getPageFrameReduceColumnListCapacity(), task.getAuxAddresses().getCapacity());
+            } finally {
+                Misc.free(secondSequence);
+                Misc.free(firstSequence);
+                Misc.free(task);
+            }
+        });
+    }
+
+    private static void setSequenceId(PageFrameSequence<?> sequence, long id) throws Exception {
+        final Field field = PageFrameSequence.class.getDeclaredField("id");
+        field.setAccessible(true);
+        field.setLong(sequence, id);
     }
 }
