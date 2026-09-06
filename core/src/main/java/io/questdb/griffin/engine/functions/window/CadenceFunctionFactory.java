@@ -252,6 +252,20 @@ public class CadenceFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            // strideFunc/seedFunc are owned here rather than passed to super, so super only
+            // notifies a null arg. Without this an arg keeps cursor-scoped native state (e.g.
+            // json_extract's UTF-8 sink) alive for the lifetime of a cached factory; init()
+            // re-inflates it on the next execution.
+            strideFunc.cursorClosed();
+            // seedFunc is absent unless an explicit seed was supplied; see init().
+            if (seedFunc != null) {
+                seedFunc.cursorClosed();
+            }
+        }
+
+        @Override
         public boolean getBool(Record rec) {
             // Not reached in normal operation: the keep flag is materialized directly into the
             // chain slot in pass2 (see below) and read back from there, never via getBool(). This

@@ -172,6 +172,16 @@ public class UniformFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            super.cursorClosed();
+            // targetArg is owned here rather than passed to super, so super only notifies a null
+            // arg. Without this the arg keeps cursor-scoped native state (e.g. json_extract's
+            // UTF-8 sink) alive for the lifetime of a cached factory; init() re-inflates it on
+            // the next execution.
+            targetArg.cursorClosed();
+        }
+
+        @Override
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             super.init(symbolTableSource, executionContext);
             targetArg.init(symbolTableSource, executionContext);
