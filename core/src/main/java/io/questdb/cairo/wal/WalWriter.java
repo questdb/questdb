@@ -1193,6 +1193,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      */
     @TestOnly
     public interface DeferredCommitInterceptor {
+        /**
+         * Fires between {@code syncIfRequired()} (which has just decided whether to DEFER the device
+         * flush) and {@code getSequencerTxn()} (which decides whether to REGISTER the durable-ack pin).
+         * Lets a test republish the table's commit mode inside that window to drive the mode-flip race.
+         * Default no-op so existing interceptors are unaffected.
+         */
+        default void onDeferDecidedBeforeSequencing(int walId) {
+        }
+
         void onSequencedBeforePin(int walId, long seqTxn);
     }
 
@@ -1248,9 +1257,23 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // flush disk before getting next txn. Under ADAPTIVE+W=0 syncIfRequired/getSequencerTxn
                 // fdatasync data→events→seq synchronously; under ADAPTIVE+W>0 they do the SYNC-grade msync
                 // (page-cache, ordered) and DEFER the device flush to the batched flushPendingDurable below.
-                syncIfRequired();
+                // ONE snapshot for the whole commit. walCommitMode() reads a volatile that a PEER
+                // WalWriter republishes when it sequences a SET PARAM commit_mode, so reading it
+                // separately for the sync decision and for the durable-frontier decision lets the two
+                // disagree within a single commit. The NOSYNC -> ADAPTIVE direction is a durability
+                // lie: syncIfRequired skips every barrier under NOSYNC, then the flipped read records
+                // a pending frontier whose flush makes the SEQUENCER RECORD durable over data that was
+                // never fsynced. Pinned by AdaptiveCommitModeFlipRaceTest.
+                final int commitModeSnapshot = walCommitMode();
+                syncIfRequired(commitModeSnapshot);
+                {
+                    final DeferredCommitInterceptor preSeq = deferredCommitInterceptor;
+                    if (preSeq != null) {
+                        preSeq.onDeferDecidedBeforeSequencing(walId);
+                    }
+                }
                 final long seqTxn = getSequencerTxn();
-                if (walCommitMode() == CommitMode.ADAPTIVE) {
+                if (commitModeSnapshot == CommitMode.ADAPTIVE) {
                     if (deferDeviceFlush()) {
                         // TEST-ONLY seam (Task 1b): the mid-flight window — the txn is now sequenced (the shared
                         // tracker's seqTxn has advanced to it) but its durable-ack pin was registered ATOMICALLY
@@ -2471,9 +2494,9 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         return CommitMode.effectiveCommitMode(mode, configuration.getCommitMode());
     }
 
-    private void syncIfRequired() {
+    private void syncIfRequired(int commitMode) {
         try {
-            syncIfRequired0();
+            syncIfRequired0(commitMode);
         } catch (Throwable failure) {
             if (CairoException.isDataSyncFailure(failure)) {
                 distressed = true;
@@ -2484,8 +2507,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         }
     }
 
-    private void syncIfRequired0() {
-        int commitMode = walCommitMode();
+    private void syncIfRequired0(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
             // W>0 uses MS_ASYNC here, then fdatasyncs these writer-private files explicitly before
             // sequencing. Only the shared sequencer barrier is deferred/batched; this safe fallback prevents
