@@ -67,24 +67,27 @@ public class AdaptiveCommitModeFlipRaceTest extends AbstractCairoTest {
                 } finally {
                     WalWriter.deferredCommitInterceptor = null;
                 }
-
-                final long sequenced = tracker.getSeqTxn();
-                final long durable = tracker.getLocalDurableSeqTxn();
-
-                // The commit deferred its device flush and then, seeing the flipped mode, recorded no
-                // pending frontier and registered no pin. Nothing has flushed it, so it MUST NOT be
-                // reported as locally durable.
-                Assert.assertTrue(
-                        "precondition: the racy commit must have been sequenced",
-                        sequenced > 0
-                );
-                Assert.assertTrue(
-                        "a commit whose device flush was DEFERRED and then orphaned by a mid-commit mode"
-                                + " flip must not be reported durable: localDurableSeqTxn=" + durable
-                                + " must stay below sequencedTxn=" + sequenced,
-                        durable < sequenced
-                );
             }
+            // READ AFTER CLOSE. Reading inside the try-with-resources made this vacuous: nothing had
+            // flushed yet, so the frontier was still -1 and "durable < sequenced" held for a reason
+            // unrelated to the behaviour under test (measured: durable=-1).
+            final long sequenced = tracker.getSeqTxn();
+            final long durable = tracker.getLocalDurableSeqTxn();
+
+            Assert.assertTrue("precondition: the racy commit must have been sequenced", sequenced > 0);
+            Assert.assertEquals(
+                    "precondition: the down-flip must have taken effect",
+                    CommitMode.NOSYNC, tracker.getCommitMode()
+            );
+            // The table is NOSYNC by the time the frontier decision is made. Peer writers commit under
+            // NOSYNC without a pin, so an advance here to getSeqTxn() would claim THEIR unsynced txns
+            // too -- markWriterDurable treats an empty pin map as "everything committed is durable",
+            // which holds only while every non-durable txn is pinned.
+            Assert.assertTrue(
+                    "a table that is no longer adaptive must not advance the local durable"
+                            + " frontier: durable=" + durable + " sequenced=" + sequenced,
+                    durable < sequenced
+            );
         });
     }
 

@@ -1281,12 +1281,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 // orphanWriterPending runs only on the fdatasync-failure path). So take the missing
                 // barriers NOW. The sequencer record's device flush is still deferred to
                 // flushPendingDurable, so the data->sequencer ordering this design rests on is intact.
-                int effectiveCommitModeForCommit = commitModeSnapshot;
-                if (commitModeSnapshot != CommitMode.ADAPTIVE && walCommitMode() == CommitMode.ADAPTIVE) {
+                // The two decisions below take DIFFERENT modes, and that asymmetry is the point.
+                final int commitModeNow = walCommitMode();
+                // SYNC: the strongest mode observed during this commit, so a flip UP can never leave
+                // the data unsynced. The sequencer record's flush is still deferred, so the
+                // data->sequencer ordering this design rests on is intact.
+                if (commitModeSnapshot != CommitMode.ADAPTIVE && commitModeNow == CommitMode.ADAPTIVE) {
                     syncIfRequired(CommitMode.ADAPTIVE);
-                    effectiveCommitModeForCommit = CommitMode.ADAPTIVE;
                 }
-                if (effectiveCommitModeForCommit == CommitMode.ADAPTIVE) {
+                // RECORD/ADVANCE: the CURRENT mode, so a flip DOWN cannot advance the frontier on a
+                // table that is no longer adaptive. markWriterDurable treats an empty pin map as
+                // "everything committed is durable", which holds only while every non-durable txn is
+                // pinned -- and peer writers committing under NOSYNC are sequenced WITHOUT a pin, so
+                // advancing here would claim their unsynced txns too.
+                if (commitModeNow == CommitMode.ADAPTIVE) {
                     if (deferDeviceFlush()) {
                         // TEST-ONLY seam (Task 1b): the mid-flight window — the txn is now sequenced (the shared
                         // tracker's seqTxn has advanced to it) but its durable-ack pin was registered ATOMICALLY
