@@ -1273,7 +1273,20 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     }
                 }
                 final long seqTxn = getSequencerTxn();
-                if (commitModeSnapshot == CommitMode.ADAPTIVE) {
+                // STRONGEST MODE OBSERVED WINS. If a peer sequenced a SET PARAM commit_mode='adaptive'
+                // inside this commit, the snapshot above skipped the barriers while the sequencer may
+                // already have registered a durable-ack pin under the NEW mode. Neither alternative is
+                // acceptable: recording a frontier over unsynced data is the lie, and leaving the pin
+                // stranded stalls the table's frontier at min(pin)-1 until reboot (nothing reaps it --
+                // orphanWriterPending runs only on the fdatasync-failure path). So take the missing
+                // barriers NOW. The sequencer record's device flush is still deferred to
+                // flushPendingDurable, so the data->sequencer ordering this design rests on is intact.
+                int effectiveCommitModeForCommit = commitModeSnapshot;
+                if (commitModeSnapshot != CommitMode.ADAPTIVE && walCommitMode() == CommitMode.ADAPTIVE) {
+                    syncIfRequired(CommitMode.ADAPTIVE);
+                    effectiveCommitModeForCommit = CommitMode.ADAPTIVE;
+                }
+                if (effectiveCommitModeForCommit == CommitMode.ADAPTIVE) {
                     if (deferDeviceFlush()) {
                         // TEST-ONLY seam (Task 1b): the mid-flight window — the txn is now sequenced (the shared
                         // tracker's seqTxn has advanced to it) but its durable-ack pin was registered ATOMICALLY

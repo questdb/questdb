@@ -149,11 +149,26 @@ public class AdaptiveCommitModeFlipRaceTest extends AbstractCairoTest {
             final long durable = tracker.getLocalDurableSeqTxn();
 
             Assert.assertTrue("precondition: the racy commit must have been sequenced", sequenced > 0);
+            // NO LIE: a txn may be reported locally durable only if its WAL column data was barriered.
             Assert.assertTrue(
                     "a txn may be reported locally durable ONLY if its WAL column data was barriered."
                             + " columnBarriers=" + columnBarriers + " durable=" + durable
                             + " sequenced=" + sequenced + " syncedPaths=" + trackFf.getFdatasyncOrder(),
                     columnBarriers > 0 || durable < sequenced
+            );
+            // NO STALL: the strengthen rule must also have taken the skipped barriers, so the frontier
+            // catches up. Without it the sequencer's pin -- registered under the flipped mode and never
+            // reaped, since orphanWriterPending runs only on the fdatasync-failure path -- would floor
+            // the frontier at min(pin)-1 for this table until reboot. Safe, but a permanent stall.
+            Assert.assertTrue(
+                    "the commit's skipped barriers must have been taken once the flip was observed:"
+                            + " columnBarriers=" + columnBarriers,
+                    columnBarriers > 0
+            );
+            Assert.assertEquals(
+                    "the durable frontier must not be left stranded below the sequenced txn by a pin"
+                            + " that nothing will ever reap",
+                    sequenced, durable
             );
         });
     }
