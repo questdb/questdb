@@ -46,9 +46,8 @@ import java.io.Closeable;
 public class FrameFactory implements RecycleBin<FrameImpl>, Closeable {
     private final FrameColumnPool columnPool;
     private final ConcurrentPool<FrameImpl> framePool = new ConcurrentPool<>();
-    // Handed to every frame this factory hands out, and through them to
-    // io.questdb.cairo.frm.FrameColumnFanOut - the shared column-task pool a frame operation spreads
-    // its per-column work over. Null leaves every operation on its calling thread.
+    // Handed to every frame this factory hands out: the shared column-task pool a frame operation
+    // spreads its per-column work over. Null leaves every operation on its calling thread.
     private final MessageBus messageBus;
     private boolean closed;
 

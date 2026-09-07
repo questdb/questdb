@@ -35,30 +35,52 @@ import io.questdb.std.IntList;
 import io.questdb.cairo.frm.ColumnTopSink;
 import io.questdb.cairo.frm.DeletedFrameColumn;
 import io.questdb.cairo.frm.Frame;
+import io.questdb.cairo.frm.FrameAlgebra;
 import io.questdb.cairo.frm.FrameColumn;
-import io.questdb.cairo.frm.FrameColumnFanOut;
 import io.questdb.cairo.frm.FrameColumnPool;
 import io.questdb.cairo.frm.FrameColumnTypePool;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCR;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
+import io.questdb.mp.RingQueue;
+import io.questdb.mp.SOUnboundedCountDownLatch;
+import io.questdb.mp.Sequence;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.std.ReadOnlyObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
+import io.questdb.tasks.ColumnTask;
 import org.jetbrains.annotations.Nullable;
+
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.TableUtils.setSinkForNativePartition;
 import static io.questdb.cairo.frm.FrameColumn.COLUMN_CONTIGUOUS_FILE;
 import static io.questdb.cairo.frm.FrameColumn.COLUMN_MEMORY;
 
 public class FrameImpl implements Frame {
+    /**
+     * How many columns an operation holds open at once. The copy runs while every column of a batch is
+     * open, so this is what bounds the file descriptors and mappings an operation adds - a wide table
+     * would otherwise hold every one of its columns open at the same time. Comfortably wider than any
+     * worker pool, so batching costs parallelism only on tables far wider than this, and it fits the
+     * shared column-task queue (128 slots by default) even with another writer dispatching alongside.
+     */
+    private static final int MAX_OPEN_COLUMNS = 64;
+    // A task slot an operation has no use for, matching TableWriter#IGNORE.
+    private static final long IGNORE = -1L;
+    private static final Log LOG = LogFactory.getLog(FrameImpl.class);
     private final FrameColumnPool columnPool;
+    // Pre-bound so publishing a task allocates nothing. Which one an operation dispatches is what tells
+    // a column task whether it is appending or merging - there is no mode flag anywhere.
+    private final TableWriter.ColumnTaskHandler cthAppendColumnRef = this::cthAppendColumn;
+    private final TableWriter.ColumnTaskHandler cthMergeColumnRef = this::cthMergeColumn;
+    private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
+    private final AtomicInteger errorCount = new AtomicInteger();
     private boolean canWrite = false;
-    // Created on first use and kept for the life of this pooled frame, so an operation pays no
-    // allocation for it. Null when this factory was built without a message bus - a test that stands a
-    // FrameFactory up on its own - and then every operation stays on the calling thread.
-    private FrameColumnFanOut columnFanOut;
     private ReadOnlyObjList<? extends MemoryCR> columnsMemory;
     private ColumnTopSink columnTopSink;
     /**
@@ -74,7 +96,22 @@ public class FrameImpl implements Frame {
      * out across threads, exactly as {@link ColumnTopSink} describes for an external sink.
      */
     private final LongList columnTops = new LongList();
+    /**
+     * The columns one operation has open, index = column index, empty between operations. This frame's own
+     * are in {@link #targetColumns} - it is the TARGET of every operation it drives - and the one or two
+     * sources' in the other two. A slot is null for a column the operation skips, and for
+     * {@link #source2Columns} throughout an append.
+     */
+    private final ObjList<FrameColumn> source1Columns = new ObjList<>();
+    private final ObjList<FrameColumn> source2Columns = new ObjList<>();
+    private final ObjList<FrameColumn> targetColumns = new ObjList<>();
+    // The rest of one operation: the values every column of it shares, which is why they are here rather
+    // than in each task. Everything that varies per column travels in the task's own slots.
+    private int commitMode;
+    private long mergeIndexRows;
+    private long upcomingTableTxn;
     private boolean create = false;
+    private volatile Throwable error;
     // When set, a COVERING posting-indexed column is opened as a plain column, so the frame writes its
     // data but adds no index entries. The caller then indexes the rows it appended itself, once every
     // column is on disk, with the covered columns described - see
@@ -95,6 +132,13 @@ public class FrameImpl implements Frame {
     public FrameImpl(FrameColumnPool columnPool, @Nullable MessageBus messageBus) {
         this.columnPool = columnPool;
         this.messageBus = messageBus;
+    }
+
+    @Override
+    public void appendColumns(Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode) {
+        this.upcomingTableTxn = upcomingTableTxn;
+        this.commitMode = commitMode;
+        execute(source, null, cthAppendColumnRef, sourceLo, sourceHi, IGNORE, IGNORE, IGNORE);
     }
 
     @Override
@@ -199,18 +243,6 @@ public class FrameImpl implements Frame {
     }
 
     @Override
-    public FrameColumnFanOut getColumnFanOut() {
-        if (!canWrite || messageBus == null) {
-            // A read-only frame is never an operation's target, so it never runs the fan-out.
-            return null;
-        }
-        if (columnFanOut == null) {
-            columnFanOut = new FrameColumnFanOut(messageBus);
-        }
-        return columnFanOut;
-    }
-
-    @Override
     public long getOffset() {
         return offset;
     }
@@ -218,6 +250,27 @@ public class FrameImpl implements Frame {
     @Override
     public long getRowCount() {
         return rowCount;
+    }
+
+    @Override
+    public void mergeColumns(
+            Frame source1,
+            long source1Lo,
+            long source1Hi,
+            Frame source2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            long upcomingTableTxn,
+            int commitMode
+    ) {
+        this.upcomingTableTxn = upcomingTableTxn;
+        this.commitMode = commitMode;
+        // Five task slots against a merge's six bounds, so the row count travels as a field. It is one
+        // value for the whole operation, like the txn and the commit mode above.
+        this.mergeIndexRows = mergeIndexRows;
+        execute(source1, source2, cthMergeColumnRef, source1Lo, source1Hi, source2Lo, source2Hi, mergeIndexAddr);
     }
 
     public void openRO(Path partitionPath, long partitionTimestamp, RecordMetadata metadata, ColumnVersionReader cvr, long partitionRowCount) {
@@ -341,6 +394,220 @@ public class FrameImpl implements Frame {
         this.rowCount = rowCount;
     }
 
+    private void closeColumns(int columnLo, int columnHi) {
+        for (int i = columnLo; i < columnHi; i++) {
+            targetColumns.setQuick(i, Misc.free(targetColumns.getQuick(i)));
+            source1Columns.setQuick(i, Misc.free(source1Columns.getQuick(i)));
+            source2Columns.setQuick(i, Misc.free(source2Columns.getQuick(i)));
+        }
+    }
+
+    /**
+     * One column's share of {@link #appendColumns}. Everything it reads the OPEN phase settled, and
+     * everything it writes belongs to this column alone.
+     */
+    private void cthAppendColumn(
+            int columnIndex,
+            int columnType,
+            long timestampColumnIndex,
+            long sourceLo,
+            long sourceHi,
+            long ignore2,
+            long ignore3,
+            long ignore4
+    ) {
+        if (errorCount.get() > 0) {
+            // Another column already failed and the operation is going to be abandoned, so there is no
+            // point writing more bytes into a partition nobody will publish.
+            return;
+        }
+        try {
+            final FrameColumn targetColumn = targetColumns.getQuick(columnIndex);
+            targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+            // rowCount is this frame's own tail. FrameAlgebra moves it only once every column has
+            // reported, so every task of one operation reads the same value.
+            FrameAlgebra.appendColumn(targetColumn, rowCount, source1Columns.getQuick(columnIndex), sourceLo, sourceHi, commitMode);
+        } catch (Throwable th) {
+            onError(columnIndex, th);
+        }
+    }
+
+    /**
+     * One column's share of {@link #mergeColumns}.
+     */
+    private void cthMergeColumn(
+            int columnIndex,
+            int columnType,
+            long timestampColumnIndex,
+            long source1Lo,
+            long source1Hi,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr
+    ) {
+        if (errorCount.get() > 0) {
+            return;
+        }
+        try {
+            final FrameColumn targetColumn = targetColumns.getQuick(columnIndex);
+            targetColumn.setUpcomingTableTxn(upcomingTableTxn);
+            targetColumn.merge(
+                    rowCount,
+                    source1Columns.getQuick(columnIndex),
+                    source1Lo,
+                    source1Hi,
+                    source2Columns.getQuick(columnIndex),
+                    source2Lo,
+                    source2Hi,
+                    mergeIndexAddr,
+                    mergeIndexRows,
+                    commitMode
+            );
+        } catch (Throwable th) {
+            onError(columnIndex, th);
+        }
+    }
+
+    /**
+     * Runs one batch's columns and returns once every one of them has finished.
+     * <p>
+     * In parallel the work goes out as {@link ColumnTask}s on {@link MessageBus}'s shared column-task
+     * queue - the same queue and the same work-stealing wait {@code TableWriter#dispatchColumnTasks} uses
+     * for WAL lag merges. Serially there is no queue and no latch: the calling thread runs each column
+     * through the same handler, which is the whole of the difference between the two.
+     */
+    private void dispatchColumns(
+            TableWriter.ColumnTaskHandler taskHandler,
+            boolean isParallel,
+            int columnLo,
+            int columnHi,
+            long long0,
+            long long1,
+            long long2,
+            long long3,
+            long long4
+    ) {
+        // Read here rather than in the tasks: metadata is this frame's shared, non-thread-safe state.
+        final long timestampColumnIndex = metadata.getTimestampIndex();
+        if (!isParallel) {
+            for (int i = columnLo; i < columnHi; i++) {
+                if (isLiveColumn(i)) {
+                    taskHandler.run(i, source1Columns.getQuick(i).getColumnType(), timestampColumnIndex, long0, long1, long2, long3, long4);
+                }
+            }
+            return;
+        }
+
+        final Sequence pubSeq = messageBus.getColumnTaskPubSeq();
+        final RingQueue<ColumnTask> queue = messageBus.getColumnTaskQueue();
+        doneLatch.reset();
+        int queuedCount = 0;
+        for (int i = columnLo; i < columnHi; i++) {
+            if (!isLiveColumn(i)) {
+                continue;
+            }
+            final long cursor = pubSeq.next();
+            if (cursor > -1) {
+                try {
+                    // Only the column index and the bounds travel in the task: the open columns and the
+                    // rest of the operation are this frame's own fields, and this frame owns the handler.
+                    queue.get(cursor).of(
+                            doneLatch,
+                            i,
+                            source1Columns.getQuick(i).getColumnType(),
+                            timestampColumnIndex,
+                            long0,
+                            long1,
+                            long2,
+                            long3,
+                            long4,
+                            taskHandler
+                    );
+                } finally {
+                    queuedCount++;
+                    pubSeq.done(cursor);
+                }
+            } else {
+                // Queue full. Run the column here rather than wait for room, the same way
+                // TableWriter#dispatchColumnTasks does - and this is also what makes progress
+                // guaranteed when nothing else is draining the queue.
+                taskHandler.run(i, source1Columns.getQuick(i).getColumnType(), timestampColumnIndex, long0, long1, long2, long3, long4);
+            }
+        }
+        // Work stealing: the calling thread runs whatever it can reach, including tasks other writers
+        // published, until every task of THIS operation has counted down.
+        TableWriter.consumeColumnTasks0(queue, queuedCount, messageBus.getColumnTaskSubSeq(), doneLatch);
+    }
+
+    /**
+     * Drives one operation's per-column work. Every column of a frame writes its own files, at the same
+     * row offset, so the columns of a single append or merge have nothing to say to each other - which is
+     * what lets them run at the same time.
+     * <p>
+     * A batch runs in three phases, and only the middle one is ever parallel:
+     * <ol>
+     *     <li>OPEN, on the calling thread. A frame builds a column's file path by appending the column
+     *     name to the ONE {@code Path} it owns and trimming it back afterwards, so two columns cannot
+     *     open at the same time. This phase also settles every read of this frame's shared,
+     *     non-thread-safe state - its metadata, its column-version view, its tracked tops.</li>
+     *     <li>COPY, one task per column. Each task touches only its own two or three
+     *     {@link FrameColumn}s: its own file descriptors, its own mapping, its own posting-index
+     *     writer.</li>
+     *     <li>REPORT and CLOSE, on the calling thread again. {@link #saveChanges} lands each column's top
+     *     and the columns go back to the pool.</li>
+     * </ol>
+     * Holding a whole batch of columns open across the copy, rather than two or three at a time, is what
+     * the middle phase costs - the same shape the classic per-column O3 rewrite already has, where
+     * {@code O3OpenColumnJob} opens one task per column too. A table wider than {@link #MAX_OPEN_COLUMNS}
+     * runs the three phases once per batch, which is what keeps that cost bounded; with nowhere to fan
+     * out to, the batch is one column and the three phases collapse back into a plain serial loop.
+     */
+    private void execute(
+            Frame source1,
+            @Nullable Frame source2,
+            TableWriter.ColumnTaskHandler taskHandler,
+            long long0,
+            long long1,
+            long long2,
+            long long3,
+            long long4
+    ) {
+        final int columnCount = source1.columnCount();
+        // A frame with a single column has nothing to spread, and without a bus there is nowhere to
+        // spread it to. There is deliberately no row-count floor: publishing and stealing back one task
+        // costs a couple of hundred nanoseconds per column, against the file open, fstat and mapping
+        // every column of this operation already pays for on the calling thread.
+        final boolean isParallel = messageBus != null && columnCount > 1;
+        errorCount.set(0);
+        error = null;
+        targetColumns.setAll(columnCount, null);
+        source1Columns.setAll(columnCount, null);
+        source2Columns.setAll(columnCount, null);
+        try {
+            final int batchSize = isParallel ? MAX_OPEN_COLUMNS : 1;
+            for (int columnLo = 0; columnLo < columnCount; columnLo += batchSize) {
+                final int columnHi = Math.min(columnLo + batchSize, columnCount);
+                try {
+                    openColumns(source1, source2, columnLo, columnHi);
+                    dispatchColumns(taskHandler, isParallel, columnLo, columnHi, long0, long1, long2, long3, long4);
+                    throwOnError();
+                    for (int i = columnLo; i < columnHi; i++) {
+                        if (isLiveColumn(i)) {
+                            saveChanges(targetColumns.getQuick(i));
+                        }
+                    }
+                } finally {
+                    closeColumns(columnLo, columnHi);
+                }
+            }
+        } finally {
+            // Nothing is open by now - every batch closed its own - so this only drops the references.
+            targetColumns.clear();
+            source1Columns.clear();
+            source2Columns.clear();
+        }
+    }
+
     private void free() {
         partitionPath = Misc.free(partitionPath);
     }
@@ -410,9 +677,57 @@ public class FrameImpl implements Frame {
         return column;
     }
 
+    private boolean isLiveColumn(int columnIndex) {
+        return source1Columns.getQuick(columnIndex).getColumnType() >= 0;
+    }
+
+    private void onError(int columnIndex, Throwable th) {
+        LOG.error().$("frame column task failed [columnIndex=").$(columnIndex)
+                .$(", error=").$(th)
+                .I$();
+        if (errorCount.getAndIncrement() == 0) {
+            error = th;
+        }
+    }
+
+    /**
+     * Opens one batch of columns up front, on the calling thread - see {@link #execute} for why this
+     * cannot overlap with the copy. A throw part-way leaves whatever opened so far in the lists for
+     * {@link #closeColumns} to release.
+     */
+    private void openColumns(Frame source1, @Nullable Frame source2, int columnLo, int columnHi) {
+        for (int i = columnLo; i < columnHi; i++) {
+            source1Columns.setQuick(i, source1.createColumn(i));
+            if (!isLiveColumn(i)) {
+                // A dropped column: neither the other source nor the target opens a file for it.
+                continue;
+            }
+            if (source2 != null) {
+                source2Columns.setQuick(i, source2.createColumn(i));
+            }
+            targetColumns.setQuick(i, createColumn(i));
+        }
+    }
+
     private void resetColumnTops(int columnCount) {
         columnTops.setPos(columnCount);
         columnTops.fill(0, columnCount, -1L);
+    }
+
+    private void throwOnError() {
+        final Throwable th = error;
+        if (th != null) {
+            error = null;
+            // Rethrown as it was raised, so a caller that already distinguishes a CairoException from a
+            // CairoError - o3 failure handling does - keeps seeing what one column threw.
+            if (th instanceof RuntimeException re) {
+                throw re;
+            }
+            if (th instanceof Error err) {
+                throw err;
+            }
+            throw CairoException.critical(0).put("frame column task failed [error=").put(th.getMessage()).put(']');
+        }
     }
 
     void setRecycleBin(RecycleBin<FrameImpl> frameRecycleBin) {

@@ -72,90 +72,87 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
 
     @Override
     public void append(long appendOffsetRowCount, FrameColumn sourceColumn, long sourceLo, long sourceHi, int commitMode) {
-        if (sourceColumn.getStorageType() == COLUMN_CONTIGUOUS_FILE) {
-            sourceLo -= sourceColumn.getColumnTop();
-            sourceHi -= sourceColumn.getColumnTop();
-            appendOffsetRowCount -= columnTop;
-
-            assert sourceLo >= 0;
-            assert sourceHi >= 0;
-            assert appendOffsetRowCount >= 0;
-
-            if (sourceHi > 0) {
-                long sourceFd = sourceColumn.getPrimaryFd();
-                long size = (sourceHi - sourceLo) << shl;
-                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
-                if (mixedIOFlag) {
-                    if (ff.copyData(sourceFd, fd, sourceLo << shl, appendOffsetRowCount << shl, size) != size) {
-                        throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
-                                .put(", destOffset=").put(appendOffsetRowCount << shl)
-                                .put(", size=").put(size)
-                                .put(", fileSize=").put(ff.length(fd))
-                                .put(", srcFd=").put(sourceFd)
-                                .put(", srcOffset=").put(sourceLo << shl)
-                                .put(", srcFileSize=").put(ff.length(sourceFd))
-                                .put(", columnIndex=").put(columnIndex)
-                                .put(", dstColumnTop=").put(columnTop)
-                                .put(", srcColumnTop=").put(sourceColumn.getColumnTop())
-                                .put(']');
-                    }
-                    if (commitMode != CommitMode.NOSYNC) {
-                        ff.fsync(fd);
-                    }
-                } else {
-                    long srcAddress = 0;
-                    long dstAddress = 0;
-                    try {
-                        srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceFd, sourceLo << shl, size, false, MEMORY_TAG);
-                        dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
-
-                        Vect.memcpy(dstAddress, srcAddress, size);
-
-                        if (commitMode != CommitMode.NOSYNC) {
-                            TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
-                        }
-                    } finally {
-                        if (srcAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, sourceLo << shl, size, MEMORY_TAG);
-                        }
-                        if (dstAddress != 0) {
-                            TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
-                        }
-                    }
-                }
-            }
-        } else if (sourceColumn.getStorageType() == COLUMN_MEMORY) {
-            // The O3 buffers. They are already in timestamp order by the time a partition task sees them,
-            // so the slice goes down as one run - the same contiguous copy the per-column O3 path makes for
-            // a pure-O3 block.
-            appendOffsetRowCount -= columnTop;
-            assert sourceLo >= 0;
-            assert appendOffsetRowCount >= 0;
-
-            if (sourceHi > sourceLo) {
-                final long size = (sourceHi - sourceLo) << shl;
-                TableUtils.allocateDiskSpaceToPage(ff, fd, (appendOffsetRowCount << shl) + size);
-                long dstAddress = 0;
-                try {
-                    dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, appendOffsetRowCount << shl, size, true, MEMORY_TAG);
-                    if (sourceColumn.isTimestampIndex()) {
-                        // The designated timestamp arrives as the 16-bytes-per-row sorted INDEX rather than
-                        // as a column, so its rows are de-interleaved out of the index instead of copied.
-                        Vect.copyFromTimestampIndex(sourceColumn.getContiguousDataAddr(sourceHi), sourceLo, sourceHi - 1, dstAddress);
-                    } else {
-                        Vect.memcpy(dstAddress, sourceColumn.getContiguousDataAddr(sourceHi) + (sourceLo << shl), size);
-                    }
-                    if (commitMode != CommitMode.NOSYNC) {
-                        TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
-                    }
-                } finally {
-                    if (dstAddress != 0) {
-                        TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, appendOffsetRowCount << shl, size, MEMORY_TAG);
-                    }
-                }
-            }
-        } else {
+        final int sourceStorageType = sourceColumn.getStorageType();
+        if (sourceStorageType != COLUMN_CONTIGUOUS_FILE && sourceStorageType != COLUMN_MEMORY) {
             throw new UnsupportedOperationException();
+        }
+
+        // Each side offsets by its OWN column top: a column whose data starts at a top does not hold the
+        // rows below it. A memory source - the O3 buffers - carries no top, so the same subtraction covers
+        // both and there is nothing to branch on.
+        sourceLo -= sourceColumn.getColumnTop();
+        sourceHi -= sourceColumn.getColumnTop();
+        appendOffsetRowCount -= columnTop;
+
+        assert sourceLo >= 0;
+        assert sourceHi >= 0;
+        assert appendOffsetRowCount >= 0;
+
+        if (sourceHi <= sourceLo) {
+            return;
+        }
+
+        final long size = (sourceHi - sourceLo) << shl;
+        final long srcOffset = sourceLo << shl;
+        final long dstOffset = appendOffsetRowCount << shl;
+        TableUtils.allocateDiskSpaceToPage(ff, fd, dstOffset + size);
+
+        // Only a file source has an fd to copy from, so only it can take the kernel's fd-to-fd path and
+        // skip both mappings.
+        if (sourceStorageType == COLUMN_CONTIGUOUS_FILE && mixedIOFlag) {
+            final long sourceFd = sourceColumn.getPrimaryFd();
+            if (ff.copyData(sourceFd, fd, srcOffset, dstOffset, size) != size) {
+                throw CairoException.critical(ff.errno()).put("Cannot copy data [fd=").put(fd)
+                        .put(", destOffset=").put(dstOffset)
+                        .put(", size=").put(size)
+                        .put(", fileSize=").put(ff.length(fd))
+                        .put(", srcFd=").put(sourceFd)
+                        .put(", srcOffset=").put(srcOffset)
+                        .put(", srcFileSize=").put(ff.length(sourceFd))
+                        .put(", columnIndex=").put(columnIndex)
+                        .put(", dstColumnTop=").put(columnTop)
+                        .put(", srcColumnTop=").put(sourceColumn.getColumnTop())
+                        .put(']');
+            }
+            if (commitMode != CommitMode.NOSYNC) {
+                ff.fsync(fd);
+            }
+            return;
+        }
+
+        // A file source hands its rows over as a mapping of its own and has it released afterwards; a
+        // memory source is already addressable, so it maps nothing. Past that the copy is the same one.
+        final boolean isSourceMapped = sourceStorageType == COLUMN_CONTIGUOUS_FILE;
+        long srcAddress = 0;
+        long dstAddress = 0;
+        try {
+            if (isSourceMapped) {
+                srcAddress = TableUtils.mapAppendColumnBuffer(ff, sourceColumn.getPrimaryFd(), srcOffset, size, false, MEMORY_TAG);
+            }
+            dstAddress = TableUtils.mapAppendColumnBuffer(ff, fd, dstOffset, size, true, MEMORY_TAG);
+
+            if (sourceColumn.isTimestampIndex()) {
+                // The designated timestamp of an O3 frame arrives as the 16-bytes-per-row sorted INDEX
+                // rather than as a column, so its rows are de-interleaved out of the index instead of
+                // copied.
+                Vect.copyFromTimestampIndex(sourceColumn.getContiguousDataAddr(sourceHi), sourceLo, sourceHi - 1, dstAddress);
+            } else {
+                if (!isSourceMapped) {
+                    srcAddress = sourceColumn.getContiguousDataAddr(sourceHi) + srcOffset;
+                }
+                Vect.memcpy(dstAddress, srcAddress, size);
+            }
+
+            if (commitMode != CommitMode.NOSYNC) {
+                TableUtils.msync(ff, dstAddress, size, commitMode == CommitMode.ASYNC);
+            }
+        } finally {
+            if (isSourceMapped && srcAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, srcAddress, srcOffset, size, MEMORY_TAG);
+            }
+            if (dstAddress != 0) {
+                TableUtils.mapAppendColumnBufferRelease(ff, dstAddress, dstOffset, size, MEMORY_TAG);
+            }
         }
     }
 

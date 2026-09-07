@@ -24,14 +24,25 @@
 
 package io.questdb.cairo.frm;
 
-import org.jetbrains.annotations.Nullable;
-
 import java.io.Closeable;
 
 /**
  * Used for partition squashing in {@link io.questdb.cairo.TableWriter}.
  */
 public interface Frame extends Closeable {
+
+    /**
+     * Appends {@code [sourceLo, sourceHi)} of {@code source} to this frame's tail, one column at a time.
+     * <p>
+     * The frame drives its own per-column work: it opens each column pair, runs the copy - on the shared
+     * column-task pool when it has one, otherwise on the calling thread - reports the result through
+     * {@link #saveChanges} and closes the pair again. It moves no row count and commits no tops; that is
+     * {@link FrameAlgebra#append}'s part, which is the only caller.
+     *
+     * @param upcomingTableTxn tags posting-index chain entries published during this append, so a partial
+     *                         publish is droppable by recovery. See {@link FrameColumn#setUpcomingTableTxn}.
+     */
+    void appendColumns(Frame source, long sourceLo, long sourceHi, long upcomingTableTxn, int commitMode);
 
     void close();
 
@@ -54,18 +65,27 @@ public interface Frame extends Closeable {
     default void setDeferCoveredIndexing(boolean deferCoveredIndexing) {
     }
 
-    /**
-     * The fan-out this frame's per-column work can run on, or {@code null} when it has none and every
-     * operation against it stays on the calling thread. Only a writable frame has one - it is the
-     * TARGET of an operation that owns it - and one frame runs one operation at a time, so the same
-     * instance is handed out for every call.
-     */
-    @Nullable
-    FrameColumnFanOut getColumnFanOut();
-
     long getOffset();
 
     long getRowCount();
+
+    /**
+     * Appends the MERGE of two sources to this frame's tail, interleaved by {@code mergeIndexAddr}, one
+     * column at a time. The per-column counterpart of {@link #appendColumns}, and it drives the columns
+     * the same way; only {@link FrameAlgebra#merge} calls it.
+     */
+    void mergeColumns(
+            Frame source1,
+            long source1Lo,
+            long source1Hi,
+            Frame source2,
+            long source2Lo,
+            long source2Hi,
+            long mergeIndexAddr,
+            long mergeIndexRows,
+            long upcomingTableTxn,
+            int commitMode
+    );
 
     /**
      * Reports every column's self-tracked top to {@code sink}, one {@link ColumnTopSink#setColumnTop}
