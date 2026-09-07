@@ -10,6 +10,7 @@ use std::collections::HashSet;
 use std::fmt::Debug;
 
 use crate::parquet::error::{fmt_err, ParquetResult};
+use crate::parquet_write::encoders::helpers::FlatValidity;
 use crate::parquet_write::file::WriteOptions;
 use crate::parquet_write::util::{
     build_plain_page, encode_primitive_def_levels, ExactSizedIter, MaxMin,
@@ -387,6 +388,39 @@ pub trait SimdEncodable: NativeType {
         false // Not supported by default
     }
 
+    /// Encode data values when the source column is known to contain no nulls.
+    /// This must not interpret an in-band sentinel as a null value.
+    fn encode_data_notnull(
+        slice: &[Self],
+        encoding: Encoding,
+        mut buffer: Vec<u8>,
+    ) -> ParquetResult<Vec<u8>> {
+        match encoding {
+            Encoding::Plain => {
+                let bytes = unsafe {
+                    std::slice::from_raw_parts(slice.as_ptr() as *const u8, size_of_val(slice))
+                };
+                buffer.extend_from_slice(bytes);
+                Ok(buffer)
+            }
+            Encoding::DeltaBinaryPacked => {
+                if Self::encode_delta_notnull(slice, &mut buffer) {
+                    Ok(buffer)
+                } else {
+                    Err(fmt_err!(
+                        Unsupported,
+                        "delta encoding not supported for this type"
+                    ))
+                }
+            }
+            other => Err(fmt_err!(Unsupported, "unsupported encoding {other:?}")),
+        }
+    }
+
+    fn encode_delta_notnull(_slice: &[Self], _buffer: &mut Vec<u8>) -> bool {
+        false
+    }
+
     /// Encode data values, dispatching to Plain or Delta based on encoding.
     fn encode_data(
         slice: &[Self],
@@ -475,6 +509,11 @@ impl SimdEncodable for i64 {
         true
     }
 
+    fn encode_delta_notnull(slice: &[Self], buffer: &mut Vec<u8>) -> bool {
+        encode(slice.iter().copied(), buffer);
+        true
+    }
+
     fn min() -> Self {
         i64::MIN
     }
@@ -513,6 +552,11 @@ impl SimdEncodable for i32 {
             .map(|&x| x as i64);
         let iterator = ExactSizedIter::new(iterator, non_null_count);
         encode_i32(iterator, buffer);
+        true
+    }
+
+    fn encode_delta_notnull(slice: &[Self], buffer: &mut Vec<u8>) -> bool {
+        encode_i32(slice.iter().map(|&x| x as i64), buffer);
         true
     }
 
@@ -644,6 +688,64 @@ pub fn slice_to_page_simd<T: SimdEncodable>(
         column_top + result.null_count,
         definition_levels_byte_length,
         statistics,
+        primitive_type,
+        options,
+        encoding,
+        false,
+    )
+    .map(Page::Data)
+}
+
+/// Encodes an Optional page with no null filtering. This is used when Java
+/// marks a column NOT NULL: the Parquet schema remains Optional, but values
+/// equal to QuestDB's nullable sentinel are still real values.
+pub fn slice_to_page_simd_notnull_with_top<T: SimdEncodable>(
+    slice: &[T],
+    column_top: usize,
+    options: WriteOptions,
+    primitive_type: PrimitiveType,
+    encoding: Encoding,
+    mut bloom_hashes: Option<&mut HashSet<u64>>,
+) -> ParquetResult<Page> {
+    if primitive_type.field_info.repetition != Repetition::Optional {
+        return Err(fmt_err!(
+            InvalidLayout,
+            "not-null Optional encoder requires Optional repetition, got {:?} for column {}",
+            primitive_type.field_info.repetition,
+            primitive_type.field_info.name
+        ));
+    }
+    let mut buffer = Vec::new();
+    let num_rows = column_top + slice.len();
+    let mut validity = FlatValidity::new();
+    validity.reset(num_rows);
+    for _ in 0..column_top {
+        validity.push_null();
+    }
+    for _ in slice {
+        validity.push_present();
+    }
+    let def_levels = validity.encode_def_levels(&mut buffer, options.version)?;
+    let definition_levels_byte_length = def_levels.definition_levels_byte_length;
+    let mut statistics: MaxMin<T> = MaxMin::new();
+    for &value in slice {
+        if options.write_statistics {
+            statistics.update(value);
+        }
+        if let Some(ref mut h) = bloom_hashes {
+            h.insert(hash_native(value));
+        }
+    }
+    buffer = T::encode_data_notnull(slice, encoding, buffer)?;
+    let stats = options
+        .write_statistics
+        .then(|| build_statistics(Some(column_top as i64), statistics, primitive_type.clone()));
+    build_plain_page(
+        buffer,
+        num_rows,
+        column_top,
+        definition_levels_byte_length,
+        stats,
         primitive_type,
         options,
         encoding,
@@ -897,6 +999,42 @@ mod tests {
         .expect("encode");
         let (num_values, _, _) = v2_header(&page);
         assert_eq!(num_values, 5);
+    }
+
+    #[test]
+    fn slice_to_page_simd_notnull_preserves_sentinel() {
+        let data: Vec<i64> = vec![i64::MIN, 4];
+        let pt = optional_type_for(ColumnTypeTag::Long);
+        let page = slice_to_page_simd_notnull_with_top(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::Plain,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 2);
+        assert_eq!(num_nulls, 0);
+    }
+
+    #[test]
+    fn slice_to_page_simd_notnull_delta_preserves_sentinel() {
+        let data: Vec<i32> = vec![i32::MIN, 4];
+        let pt = optional_type_for(ColumnTypeTag::Int);
+        let page = slice_to_page_simd_notnull_with_top(
+            &data,
+            0,
+            write_options(),
+            pt,
+            Encoding::DeltaBinaryPacked,
+            None,
+        )
+        .expect("encode");
+        let (num_values, num_nulls, _) = v2_header(&page);
+        assert_eq!(num_values, 2);
+        assert_eq!(num_nulls, 0);
     }
 
     #[test]

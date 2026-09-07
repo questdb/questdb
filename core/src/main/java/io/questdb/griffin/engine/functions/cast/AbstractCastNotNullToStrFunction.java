@@ -1,0 +1,43 @@
+/*+*****************************************************************************
+ *     ___                  _   ____  ____
+ *    / _ \ _   _  ___  ___| |_|  _ \| __ )
+ *   | | | | | | |/ _ \/ __| __| | | |  _ \
+ *   | |_| | |_| |  __/\__ \ |_| |_| | |_) |
+ *    \__\_\\__,_|\___||___/\__|____/|____/
+ *
+ *  Copyright (c) 2014-2019 Appsicle
+ *  Copyright (c) 2019-2026 QuestDB
+ *
+ *  Licensed under the Apache License, Version 2.0 (the "License");
+ *  you may not use this file except in compliance with the License.
+ *  You may obtain a copy of the License at
+ *
+ *  http://www.apache.org/licenses/LICENSE-2.0
+ *
+ *  Unless required by applicable law or agreed to in writing, software
+ *  distributed under the License is distributed on an "AS IS" BASIS,
+ *  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ *  See the License for the specific language governing permissions and
+ *  limitations under the License.
+ *
+ ******************************************************************************/
+
+package io.questdb.griffin.engine.functions.cast;
+
+import io.questdb.cairo.sql.Function;
+
+/**
+ * Shared base for cast-to-string factory variants used when the argument is a NOT NULL
+ * column. The result is never null, so {@link #isNotNull()} is fixed to {@code true};
+ * subclasses only implement the per-type formatter.
+ */
+public abstract class AbstractCastNotNullToStrFunction extends AbstractCastToStrFunction {
+    protected AbstractCastNotNullToStrFunction(Function arg) {
+        super(arg);
+    }
+
+    @Override
+    public boolean isNotNull() {
+        return true;
+    }
+}

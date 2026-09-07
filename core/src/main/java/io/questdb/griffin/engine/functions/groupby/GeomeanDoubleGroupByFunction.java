@@ -50,16 +50,18 @@ import org.jetbrains.annotations.NotNull;
  */
 public class GeomeanDoubleGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public GeomeanDoubleGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
-        if (Numbers.isNull(d)) {
+        if (!isArgNotNull && Numbers.isNull(d)) {
             // Null value: initialize with zero count
             mapValue.putDouble(valueIndex, 0.0);
             mapValue.putLong(valueIndex + 1, 0L);
@@ -77,7 +79,7 @@ public class GeomeanDoubleGroupByFunction extends DoubleFunction implements Grou
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double d = arg.getDouble(record);
-        if (Numbers.isNull(d)) {
+        if (!isArgNotNull && Numbers.isNull(d)) {
             // Null value: skip
             return;
         }
@@ -106,7 +108,7 @@ public class GeomeanDoubleGroupByFunction extends DoubleFunction implements Grou
             return Double.NaN;
         }
         final double sumLn = rec.getDouble(valueIndex);
-        if (Double.isNaN(sumLn)) {
+        if (!isArgNotNull && Double.isNaN(sumLn)) {
             // Invalid value was encountered
             return Double.NaN;
         }

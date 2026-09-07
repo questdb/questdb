@@ -47,7 +47,7 @@ public class TelemetryWalTask implements AbstractTelemetryTask {
                 return builder.$("CREATE TABLE IF NOT EXISTS '")
                         .$(tableName)
                         .$("' (" +
-                                "created TIMESTAMP, " +
+                                "created TIMESTAMP NOT NULL, " +
                                 "event SHORT, " +
                                 "tableId INT, " +
                                 "walId INT, " +

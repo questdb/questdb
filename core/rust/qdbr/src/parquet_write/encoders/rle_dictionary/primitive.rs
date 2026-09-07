@@ -30,6 +30,7 @@ where
     T::Bytes: Eq + Hash,
     MaxMin<T>: StatsUpdater<T, UNSIGNED_STATS>,
 {
+    let not_null_hint = columns.iter().all(|column| column.not_null_hint);
     encode_primitive::<T, T, _, _, UNSIGNED_STATS>(
         columns,
         first_partition_start,
@@ -44,7 +45,7 @@ where
             // page-aligned. The byte content represents valid `T` values.
             Ok(unsafe { transmute_slice(column.primary_data) })
         },
-        |value| value.is_null(),
+        |value| !not_null_hint && value.is_null(),
         |value| value,
     )
 }
@@ -98,6 +99,7 @@ where
     T: Nullable + num_traits::AsPrimitive<P> + Copy + Debug,
     MaxMin<P>: StatsUpdater<P, UNSIGNED_STATS>,
 {
+    let not_null_hint = columns.iter().all(|column| column.not_null_hint);
     encode_primitive::<T, P, _, _, UNSIGNED_STATS>(
         columns,
         first_partition_start,
@@ -108,7 +110,7 @@ where
         Repetition::Optional,
         None,
         |column| -> ParquetResult<&[T]> { Ok(unsafe { transmute_slice(column.primary_data) }) },
-        |value| value.is_null(),
+        |value| !not_null_hint && value.is_null(),
         |value| value.as_(),
     )
 }

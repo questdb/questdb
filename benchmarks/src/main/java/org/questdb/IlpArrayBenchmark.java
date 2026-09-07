@@ -106,7 +106,7 @@ public class IlpArrayBenchmark {
             ) {
                 ddlStatement.execute("DROP TABLE IF EXISTS tango");
                 ddlStatement.execute(
-                        "CREATE TABLE tango (ts TIMESTAMP, " +
+                        "CREATE TABLE tango (ts TIMESTAMP NOT NULL, " +
                                 (USE_ARRAY ? "arr DOUBLE[]" : "n0 DOUBLE") + ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
             }
             long start = System.nanoTime();

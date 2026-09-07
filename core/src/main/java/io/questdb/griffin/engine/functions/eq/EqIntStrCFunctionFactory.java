@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
@@ -52,11 +53,18 @@ public class EqIntStrCFunctionFactory implements FunctionFactory {
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
         try {
+            final Function left = args.getQuick(0);
             final CharSequence value = args.getQuick(1).getStrA(null);
             if (value == null) {
-                return new Func(args.getQuick(0), Numbers.INT_NULL);
+                // `x IS NULL` / `x = NULL`. On a NOT NULL column this is always false,
+                // so constant-fold at compile time. NegatingFunctionFactory handles the
+                // IS NOT NULL path by flipping BooleanConstant.FALSE to TRUE.
+                if (left.isNotNull()) {
+                    return BooleanConstant.FALSE;
+                }
+                return new Func(left, Numbers.INT_NULL);
             }
-            return new Func(args.getQuick(0), Numbers.parseInt(value));
+            return new Func(left, Numbers.parseInt(value));
         } catch (NumericException e) {
             return new NegatedAwareBooleanConstantFunc();
         }

@@ -346,24 +346,24 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     public void testOrderByDoubleEdgeCases() throws Exception {
         Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (d DOUBLE)");
             execute(
                     """
-                            CREATE TABLE x AS (
-                                SELECT CASE x
-                                    WHEN 1 THEN CAST('NaN' AS DOUBLE)
-                                    WHEN 2 THEN CAST('-Infinity' AS DOUBLE)
-                                    WHEN 3 THEN CAST('Infinity' AS DOUBLE)
-                                    WHEN 4 THEN 0.0
-                                    WHEN 5 THEN -0.0
-                                    WHEN 6 THEN 1.0000000000000002
-                                    WHEN 7 THEN 1.0000000000000004
-                                    WHEN 8 THEN -1.0000000000000002
-                                    WHEN 9 THEN -1.0000000000000004
-                                    WHEN 10 THEN CAST('NaN' AS DOUBLE)
-                                    ELSE 0.5
-                                END AS d
-                                FROM long_sequence(11)
-                            )"""
+                            INSERT INTO x
+                            SELECT CASE x
+                                WHEN 1 THEN CAST('NaN' AS DOUBLE)
+                                WHEN 2 THEN CAST('-Infinity' AS DOUBLE)
+                                WHEN 3 THEN CAST('Infinity' AS DOUBLE)
+                                WHEN 4 THEN 0.0
+                                WHEN 5 THEN -0.0
+                                WHEN 6 THEN 1.0000000000000002
+                                WHEN 7 THEN 1.0000000000000004
+                                WHEN 8 THEN -1.0000000000000002
+                                WHEN 9 THEN -1.0000000000000004
+                                WHEN 10 THEN CAST('NaN' AS DOUBLE)
+                                ELSE 0.5
+                            END AS d
+                            FROM long_sequence(11)"""
             );
             // Signed zeros tie under the canonicalizing encoder, so their order is
             // the rowId tiebreak: 0.0 (row 4) ahead of -0.0 (row 5).
@@ -442,24 +442,24 @@ public class OrderByEncodeSortTest extends AbstractCairoTest {
     public void testOrderByFloatEdgeCases() throws Exception {
         Assume.assumeTrue(sortMode == SortMode.SORT_ENABLED);
         assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (f FLOAT)");
             execute(
                     """
-                            CREATE TABLE x AS (
-                                SELECT CAST(CASE x
-                                    WHEN 1 THEN CAST('NaN' AS DOUBLE)
-                                    WHEN 2 THEN CAST('-Infinity' AS DOUBLE)
-                                    WHEN 3 THEN CAST('Infinity' AS DOUBLE)
-                                    WHEN 4 THEN 0.0
-                                    WHEN 5 THEN -0.0
-                                    WHEN 6 THEN 1.0001
-                                    WHEN 7 THEN 1.0002
-                                    WHEN 8 THEN -1.0001
-                                    WHEN 9 THEN -1.0002
-                                    WHEN 10 THEN CAST('NaN' AS DOUBLE)
-                                    ELSE 0.5
-                                END AS FLOAT) AS f
-                                FROM long_sequence(11)
-                            )"""
+                            INSERT INTO x
+                            SELECT CAST(CASE x
+                                WHEN 1 THEN CAST('NaN' AS DOUBLE)
+                                WHEN 2 THEN CAST('-Infinity' AS DOUBLE)
+                                WHEN 3 THEN CAST('Infinity' AS DOUBLE)
+                                WHEN 4 THEN 0.0
+                                WHEN 5 THEN -0.0
+                                WHEN 6 THEN 1.0001
+                                WHEN 7 THEN 1.0002
+                                WHEN 8 THEN -1.0001
+                                WHEN 9 THEN -1.0002
+                                WHEN 10 THEN CAST('NaN' AS DOUBLE)
+                                ELSE 0.5
+                            END AS FLOAT) AS f
+                            FROM long_sequence(11)"""
             );
             assertQuery("SELECT * FROM x ORDER BY f ASC")
                     .noLeakCheck()

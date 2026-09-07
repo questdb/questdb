@@ -42,6 +42,7 @@ import java.math.RoundingMode;
 
 class AvgDecimal16GroupByFunction extends Decimal16Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final Decimal64 decimal64A = new Decimal64();
     private final int position;
     private int valueIndex;
@@ -49,13 +50,14 @@ class AvgDecimal16GroupByFunction extends Decimal16Function implements GroupByFu
     public AvgDecimal16GroupByFunction(@NotNull Function arg, int position) {
         super(arg.getType());
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.position = position;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         short value = arg.getDecimal16(record);
-        if (value == Decimals.DECIMAL16_NULL) {
+        if (!isArgNotNull && value == Decimals.DECIMAL16_NULL) {
             setNull(mapValue);
         } else {
             mapValue.putLong(valueIndex, value);
@@ -66,7 +68,7 @@ class AvgDecimal16GroupByFunction extends Decimal16Function implements GroupByFu
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         short value = arg.getDecimal16(record);
-        if (value != Decimals.DECIMAL16_NULL) {
+        if (isArgNotNull || value != Decimals.DECIMAL16_NULL) {
             mapValue.addLong(valueIndex, value);
             mapValue.addLong(valueIndex + 1, 1);
         }

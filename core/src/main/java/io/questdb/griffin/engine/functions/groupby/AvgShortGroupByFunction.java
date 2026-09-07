@@ -43,11 +43,13 @@ import org.jetbrains.annotations.NotNull;
 
 public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public AvgShortGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.SHORT);
     }
 
@@ -203,7 +205,7 @@ public class AvgShortGroupByFunction extends DoubleFunction implements GroupByFu
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

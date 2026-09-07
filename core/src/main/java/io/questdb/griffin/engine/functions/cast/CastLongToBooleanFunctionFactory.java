@@ -52,7 +52,7 @@ public class CastLongToBooleanFunctionFactory implements FunctionFactory {
         @Override
         public boolean getBool(Record rec) {
             long val = arg.getLong(rec);
-            return val != Numbers.LONG_NULL && val != 0;
+            return (arg.isNotNull() || val != Numbers.LONG_NULL) && val != 0;
         }
     }
 }

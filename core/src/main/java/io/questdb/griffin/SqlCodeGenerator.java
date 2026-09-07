@@ -1679,7 +1679,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // uniformity here, not reachable with a protected token, and is not exercised by a test.
         int columnIndex;
         if (ast.type == FUNCTION && ast.paramCount == 1 && isSumKeyword(ast.token) && ast.rhs.type == LITERAL) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return sumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (ast.type == FUNCTION && isCountKeyword(ast.token)
@@ -1688,31 +1691,71 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             tempVecConstructorArgIndexes.add(-1);
             return COUNT_CONSTRUCTOR;
         } else if (isSingleColumnFunction(ast, "count")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return countConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "ksum")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return ksumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "nsum")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return nsumConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "avg")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return avgConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "min")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return minConstructors.get(metadata.getColumnType(columnIndex));
         } else if (isSingleColumnFunction(ast, "max")) {
-            columnIndex = SqlUtil.getColumnIndex(metadata, ast.rhs.token);
+            columnIndex = metadata.getColumnIndex(ast.rhs.token);
+            if (isVectorAggregateUnsafeForNotNull(metadata, columnIndex)) {
+                return null;
+            }
             tempVecConstructorArgIndexes.add(columnIndex);
             return maxConstructors.get(metadata.getColumnType(columnIndex));
         }
         return null;
+    }
+
+    /**
+     * Returns true when the vectorized aggregate path must not be used for this column,
+     * because its NOT NULL semantic ("sentinels are valid values") isn't honored by the
+     * native kernels. Every kernel in Vect.* and Rosti::keyed* still treats the type's
+     * sentinel as null, so they would under-count / skip-in-sum values that the NOT NULL
+     * feature declares to be real data. Until native NOT NULL kernels land, codegen
+     * refuses the vec path for these columns and falls back to the non-vectorized
+     * GroupByFunction pipeline. The non-vec pipeline has the same sentinel-skip issue
+     * today (see GroupByFunction implementations such as CountLongGroupByFunction), but
+     * keeping the vec path out of the picture (a) prevents the keyed/non-keyed
+     * inconsistency a Java-only vec override would introduce and (b) leaves a single
+     * place to upgrade when NOT NULL-aware aggregation ships. See the null-bitmaps plan.
+     */
+    private static boolean isVectorAggregateUnsafeForNotNull(RecordMetadata metadata, int columnIndex) {
+        // Designated timestamps are validated to exclude the sentinel, so native aggregation is
+        // safe for that one implicit NOT NULL column. Ordinary NOT NULL columns may store their
+        // sentinel as data and must remain on the non-vectorized path.
+        return columnIndex >= 0
+                && columnIndex != metadata.getTimestampIndex()
+                && metadata.isNotNull(columnIndex);
     }
 
     private boolean assembleKeysAndFunctionReferences(
@@ -1888,7 +1931,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         columnSizeShifts.add(Numbers.msb(typeSize));
                     }
 
-                    TableColumnMetadata columnMetadata = new TableColumnMetadata(
+                    TableColumnMetadata colMeta = new TableColumnMetadata(
                             metadata.getColumnName(columnIndex),
                             type,
                             metadata.getColumnIndexType(columnIndex),
@@ -1901,10 +1944,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             metadata.getColumnMetadata(columnIndex).isSymbolCacheFlag(),
                             metadata.getColumnMetadata(columnIndex).getSymbolCapacity()
                     );
-                    columnMetadata.setParquetEncodingConfig(
+                    colMeta.setNotNullFlag(metadata.isNotNull(columnIndex));
+                    colMeta.setParquetEncodingConfig(
                             metadata.getColumnMetadata(columnIndex).getParquetEncodingConfig()
                     );
-                    queryMeta.add(columnMetadata);
+                    queryMeta.add(colMeta);
 
                     if (columnIndex == readerTimestampIndex) {
                         queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
@@ -1914,15 +1958,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // select timestamp when it is required but not already selected
                 if (readerTimestampIndex != -1 && queryMeta.getTimestampIndex() == -1 && contextTimestampRequired) {
                     int timestampType = metadata.getColumnType(readerTimestampIndex);
-                    TableColumnMetadata timestampColumnMetadata = new TableColumnMetadata(
+                    TableColumnMetadata tsMeta = new TableColumnMetadata(
                             metadata.getColumnName(readerTimestampIndex),
                             timestampType,
                             metadata.getMetadata(readerTimestampIndex)
                     );
-                    timestampColumnMetadata.setParquetEncodingConfig(
+                    tsMeta.setNotNullFlag(metadata.isNotNull(readerTimestampIndex));
+                    tsMeta.setParquetEncodingConfig(
                             metadata.getColumnMetadata(readerTimestampIndex).getParquetEncodingConfig()
                     );
-                    queryMeta.add(timestampColumnMetadata);
+                    queryMeta.add(tsMeta);
                     queryMeta.setTimestampIndex(queryMeta.getColumnCount() - 1);
 
                     if (columnIndexes != null) {
@@ -2572,6 +2617,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (masterMetadata.getTimestampIndex() != -1) {
                 metadata.setTimestampIndex(masterMetadata.getTimestampIndex());
             }
+            // ASOF/LT are left-outer joins: an unmatched master row is paired
+            // with a null slave record, so NOT NULL constraints on the slave
+            // cannot be retained in the joined result metadata.
+            for (int i = masterMetadata.getColumnCount(), n = metadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(i).setNotNullFlag(false);
+            }
             return generator.create(
                     configuration,
                     metadata,
@@ -2785,6 +2836,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             metadata.add(slaveAlias, slaveMetadata.getColumnMetadata(i));
         }
 
+        // HORIZON is left-outer on the slave side: unmatched rows are
+        // represented by a null slave record.
+        int slaveOffset = masterMetadata.getColumnCount() + 2;
+        for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+            metadata.getColumnMetadata(slaveOffset + i).setNotNullFlag(false);
+        }
+
         // Set timestamp index from master
         int masterTsIdx = masterMetadata.getTimestampIndex();
         if (masterTsIdx >= 0) {
@@ -2818,6 +2876,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordMetadata slaveMetadata,
             int timestampIndex
     ) {
+        return createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, timestampIndex, false, false);
+    }
+
+    private JoinRecordMetadata createJoinMetadata(
+            CharSequence masterAlias,
+            RecordMetadata masterMetadata,
+            CharSequence slaveAlias,
+            RecordMetadata slaveMetadata,
+            int timestampIndex,
+            boolean nullableMaster,
+            boolean nullableSlave
+    ) {
         JoinRecordMetadata metadata;
         metadata = new JoinRecordMetadata(
                 configuration,
@@ -2832,6 +2902,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw th;
         }
 
+        if (nullableMaster) {
+            for (int i = 0, n = masterMetadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(i).setNotNullFlag(false);
+            }
+        }
+        if (nullableSlave) {
+            final int offset = masterMetadata.getColumnCount();
+            for (int i = 0, n = slaveMetadata.getColumnCount(); i < n; i++) {
+                metadata.getColumnMetadata(offset + i).setNotNullFlag(false);
+            }
+        }
         if (timestampIndex != -1) {
             metadata.setTimestampIndex(timestampIndex);
         }
@@ -5566,7 +5647,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
-        final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, masterMetadata.getTimestampIndex(), false, true);
         try {
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
@@ -5920,7 +6001,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
         }
 
-        JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
+        JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata, masterMetadata.getTimestampIndex(), false, true);
         try {
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                 int[][] ltSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
@@ -6071,7 +6152,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         masterMetadata,
                                         slaveModel.getName(),
                                         slaveMetadata,
-                                        joinType == IQueryModel.JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1
+                                        joinType == IQueryModel.JOIN_CROSS_LEFT ? masterMetadata.getTimestampIndex() : -1,
+                                        joinType == IQueryModel.JOIN_CROSS_RIGHT || joinType == IQueryModel.JOIN_CROSS_FULL,
+                                        joinType == IQueryModel.JOIN_CROSS_LEFT || joinType == IQueryModel.JOIN_CROSS_FULL
                                 );
                                 joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 master = switch (joinType) {
@@ -6171,8 +6254,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slaveToFree.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
-                                            // splice join result does not have timestamp
-                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1),
+                                            // A splice result can synthesize a null record on either side.
+                                            createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, -1, true, true),
                                             master,
                                             createRecordCopierMaster(masterMetadata),
                                             slaveToFree,
@@ -6935,7 +7018,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 break;
                             default:
                                 processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
-                                joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
+                                joinMetadata = createJoinMetadata(
+                                        masterAlias,
+                                        masterMetadata,
+                                        slaveModel.getName(),
+                                        slaveMetadata,
+                                        joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex(),
+                                        joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER,
+                                        joinType == IQueryModel.JOIN_LEFT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER
+                                );
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
                                 }
@@ -9477,7 +9568,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (queryColumn.getAlias() == null) {
                 queryMetadata.add(metadata.getColumnMetadata(index));
             } else {
-                TableColumnMetadata aliasedColumn = new TableColumnMetadata(
+                TableColumnMetadata aliasedMeta = new TableColumnMetadata(
                         SqlUtil.toColumnName(queryColumn.getAlias()),
                         metadata.getColumnType(index),
                         metadata.getColumnIndexType(index),
@@ -9485,10 +9576,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         metadata.isSymbolTableStatic(index),
                         metadata.getMetadata(index)
                 );
-                aliasedColumn.setParquetEncodingConfig(
+                aliasedMeta.setNotNullFlag(metadata.isNotNull(index));
+                aliasedMeta.setParquetEncodingConfig(
                         metadata.getColumnMetadata(index).getParquetEncodingConfig()
                 );
-                queryMetadata.add(aliasedColumn);
+                queryMetadata.add(aliasedMeta);
             }
 
             if (index == timestampIndex) {
@@ -9508,7 +9600,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
         if (!timestampSet && executionContext.isTimestampRequired()) {
             TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            TableColumnMetadata implicitTs = new TableColumnMetadata(
+            TableColumnMetadata implicitTsMeta = new TableColumnMetadata(
                     "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
                     colMetadata.getColumnType(),
                     colMetadata.getIndexType(),
@@ -9516,8 +9608,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     colMetadata.isSymbolTableStatic(),
                     metadata
             );
-            implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
-            queryMetadata.add(implicitTs);
+            implicitTsMeta.setNotNullFlag(colMetadata.isNotNull());
+            implicitTsMeta.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+            queryMetadata.add(implicitTsMeta);
             queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
             columnCrossIndex.add(timestampIndex);
         }
@@ -10766,15 +10859,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        SqlUtil.toColumnName(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.getIndexType(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata windowMeta = new TableColumnMetadata(
+                                SqlUtil.toColumnName(qc.getAlias()),
+                                m.getColumnType(),
+                                m.getIndexType(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        windowMeta.setNotNullFlag(m.isNotNull());
+                        factoryMetadata.add(i, windowMeta);
                     }
                 }
             }
@@ -10914,15 +11008,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     if (Chars.equalsIgnoreCase(qc.getAst().token, qc.getAlias())) {
                         factoryMetadata.add(i, m);
                     } else { // keep alias
-                        factoryMetadata.add(i, new TableColumnMetadata(
-                                        SqlUtil.toColumnName(qc.getAlias()),
-                                        m.getColumnType(),
-                                        m.getIndexType(),
-                                        m.getIndexValueBlockCapacity(),
-                                        m.isSymbolTableStatic(),
-                                        baseMetadata
-                                )
+                        TableColumnMetadata windowMeta2 = new TableColumnMetadata(
+                                SqlUtil.toColumnName(qc.getAlias()),
+                                m.getColumnType(),
+                                m.getIndexType(),
+                                m.getIndexValueBlockCapacity(),
+                                m.isSymbolTableStatic(),
+                                baseMetadata
                         );
+                        windowMeta2.setNotNullFlag(m.isNotNull());
+                        factoryMetadata.add(i, windowMeta2);
                     }
                     chainTypes.add(i, m.getColumnType());
                     listColumnFilterA.extendAndSet(i, i + 1);

@@ -29,9 +29,15 @@ import io.questdb.griffin.engine.functions.CharFunction;
 
 public class CharColumn extends CharFunction implements ColumnFunction {
     private final int columnIndex;
+    private final boolean isNotNull;
 
     public CharColumn(int columnIndex) {
+        this(columnIndex, false);
+    }
+
+    public CharColumn(int columnIndex, boolean isNotNull) {
         this.columnIndex = columnIndex;
+        this.isNotNull = isNotNull;
     }
 
     @Override
@@ -43,4 +49,10 @@ public class CharColumn extends CharFunction implements ColumnFunction {
     public int getColumnIndex() {
         return columnIndex;
     }
+
+    @Override
+    public boolean isNotNull() {
+        return isNotNull;
+    }
+
 }

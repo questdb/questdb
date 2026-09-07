@@ -1066,6 +1066,16 @@ public abstract class AbstractCairoTest extends AbstractTest {
         return new QueryAssertion(engine, sqlExecutionContext, this::prepareForQueryAssertion, query);
     }
 
+    protected void assertSql(CharSequence expected, CharSequence sql) throws SqlException {
+        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+            TestUtils.assertSql(compiler, sqlExecutionContext, sql, sink, expected);
+        }
+    }
+
+    protected void assertPlanNoLeakCheck(CharSequence query, CharSequence expectedPlan) throws Exception {
+        assertQuery(query).noLeakCheck().assertsPlan(expectedPlan);
+    }
+
     protected File assertSegmentExistence(boolean expectExists, String tableName, int walId, int segmentId) {
         TableToken tableToken = engine.verifyTableName(tableName);
         return assertSegmentExistence(expectExists, tableToken, walId, segmentId);

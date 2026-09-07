@@ -30,8 +30,8 @@ import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.FloatFunction;
-
 import io.questdb.std.IntList;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SignFloatFunctionFactory implements FunctionFactory {
@@ -60,7 +60,8 @@ public class SignFloatFunctionFactory implements FunctionFactory {
 
         @Override
         public float getFloat(Record rec) {
-            return Math.signum(arg.getFloat(rec));
+            final float value = arg.getFloat(rec);
+            return getArg().isNotNull() || Numbers.isFinite(value) ? Math.signum(value) : Float.NaN;
         }
 
         @Override

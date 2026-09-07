@@ -122,7 +122,9 @@ public class BarFunctionFactory implements FunctionFactory {
 
         private @Nullable Utf8Sequence renderBar(Record rec, Utf8StringSink sink) {
             final double value = valueFunc.getDouble(rec);
-            if (Double.isNaN(value)) {
+            // Non-finite values (NaN as DOUBLE null and +/-Infinity as stored IEEE 754
+            // values on NOT NULL columns) have no sensible bar rendering — return null.
+            if (!Double.isFinite(value)) {
                 return null;
             }
 
@@ -130,7 +132,7 @@ public class BarFunctionFactory implements FunctionFactory {
             final double max = maxFunc.getDouble(rec);
             final int width = widthFunc.getInt(rec);
 
-            if (Double.isNaN(min) || Double.isNaN(max) || width <= 0 || min >= max) {
+            if (!Double.isFinite(min) || !Double.isFinite(max) || width <= 0 || min >= max) {
                 return null;
             }
 

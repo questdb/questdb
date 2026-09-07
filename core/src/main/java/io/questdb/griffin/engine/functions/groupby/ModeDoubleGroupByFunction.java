@@ -44,12 +44,14 @@ import static io.questdb.std.Numbers.LONG_NULL;
 
 public class ModeDoubleGroupByFunction extends DoubleFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final GroupByLongLongHashMap mapA;
     private final GroupByLongLongHashMap mapB;
     private int valueIndex;
 
     public ModeDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         int initialCapacity = 4;
         double loadFactor = configuration.getSqlFastMapLoadFactor();
         mapA = new GroupByLongLongHashMap(initialCapacity, loadFactor, LONG_NULL, LONG_NULL);
@@ -65,7 +67,7 @@ public class ModeDoubleGroupByFunction extends DoubleFunction implements UnaryFu
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         double value = arg.getDouble(record);
-        if (!Numbers.isNull(value)) {
+        if (isArgNotNull || !Numbers.isNull(value)) {
             mapA.of(0).inc(Double.doubleToRawLongBits(value));
             mapValue.putLong(valueIndex, mapA.ptr());
         } else {
@@ -76,7 +78,7 @@ public class ModeDoubleGroupByFunction extends DoubleFunction implements UnaryFu
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (!Numbers.isNull(value)) {
+        if (isArgNotNull || !Numbers.isNull(value)) {
             mapA.of(mapValue.getLong(valueIndex));
             mapA.inc(Double.doubleToRawLongBits(value));
             mapValue.putLong(valueIndex, mapA.ptr());
@@ -100,7 +102,7 @@ public class ModeDoubleGroupByFunction extends DoubleFunction implements UnaryFu
 
         for (int i = 0, n = mapA.capacity(); i < n; i++) {
             final long key = mapA.keyAt(i);
-            if (key != Numbers.LONG_NULL) {
+            if (isArgNotNull || key != Numbers.LONG_NULL) {
                 final long value = mapA.valueAt(i);
                 if (value > modeCount) {
                     modeKey = Double.longBitsToDouble(key);

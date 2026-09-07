@@ -43,6 +43,7 @@ import java.math.RoundingMode;
 
 class AvgDecimal16Rescale256GroupByFunction extends Decimal256Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final Decimal256 decimal256A = new Decimal256();
     private final int position;
     private int valueIndex;
@@ -50,13 +51,14 @@ class AvgDecimal16Rescale256GroupByFunction extends Decimal256Function implement
     public AvgDecimal16Rescale256GroupByFunction(@NotNull Function arg, int position, int targetType) {
         super(targetType);
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.position = position;
     }
 
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         short value = arg.getDecimal16(record);
-        if (value == Decimals.DECIMAL16_NULL) {
+        if (!isArgNotNull && value == Decimals.DECIMAL16_NULL) {
             setNull(mapValue);
         } else {
             mapValue.putLong(valueIndex, value);
@@ -67,7 +69,7 @@ class AvgDecimal16Rescale256GroupByFunction extends Decimal256Function implement
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         short value = arg.getDecimal16(record);
-        if (value != Decimals.DECIMAL16_NULL) {
+        if (isArgNotNull || value != Decimals.DECIMAL16_NULL) {
             mapValue.addLong(valueIndex, value);
             mapValue.addLong(valueIndex + 1, 1);
         }

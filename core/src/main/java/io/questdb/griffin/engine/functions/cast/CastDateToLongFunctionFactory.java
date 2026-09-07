@@ -52,5 +52,10 @@ public class CastDateToLongFunctionFactory implements FunctionFactory {
         public long getLong(Record rec) {
             return arg.getDate(rec);
         }
+
+        @Override
+        public boolean isNotNull() {
+            return arg.isNotNull();
+        }
     }
 }

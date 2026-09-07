@@ -52,11 +52,17 @@ public class CastIntToVarcharFunctionFactory implements FunctionFactory {
     ) {
         Function intFunc = args.getQuick(0);
         if (intFunc.isConstant()) {
+            if (intFunc.isNullConstant()) {
+                return VarcharConstant.NULL;
+            }
             StringSink sink = Misc.getThreadLocalSink();
             sink.put(intFunc.getInt(null));
             return new VarcharConstant(Chars.toString(sink));
         }
-        return new Func(args.getQuick(0));
+        if (intFunc.isNotNull()) {
+            return new FuncNotNull(intFunc);
+        }
+        return new Func(intFunc);
     }
 
     public static class Func extends AbstractCastToVarcharFunction {
@@ -87,6 +93,29 @@ public class CastIntToVarcharFunctionFactory implements FunctionFactory {
                 return sinkB;
             }
             return null;
+        }
+    }
+
+    public static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            Numbers.append(sinkA, (long) arg.getInt(rec), false);
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            Numbers.append(sinkB, (long) arg.getInt(rec), false);
+            return sinkB;
         }
     }
 }

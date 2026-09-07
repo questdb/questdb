@@ -59,6 +59,7 @@ import static io.questdb.cairo.TableUtils.*;
 import static io.questdb.cairo.wal.WalUtils.*;
 
 public class SequencerMetadata extends AbstractRecordMetadata implements TableRecordMetadata, Closeable {
+    private static final long NOT_NULL_SECTION_SEED = 0x4E4F544E554C4CL; // "NOTNULL" as ASCII long
     private final int commitMode;
     private final CairoConfiguration configuration;
     private final FilesFacade ff;
@@ -94,9 +95,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
             boolean symbolCacheFlag,
             byte indexType,
             int indexValueBlockCapacity,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean isNotNull
     ) {
         addColumn0(columnName, columnType, symbolCapacity, symbolCacheFlag, indexType, indexValueBlockCapacity, isDedupKey);
+        columnMetadata.getQuick(columnMetadata.size() - 1).setNotNullFlag(isNotNull);
         readColumnOrder.add(columnMetadata.size() - 1);
         structureVersion.incrementAndGet();
     }
@@ -297,6 +300,16 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion.incrementAndGet();
     }
 
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        columnMetadata.getQuick(columnIndex).setNotNullFlag(isNotNull);
+        structureVersion.incrementAndGet();
+    }
+
     public void renameColumn(CharSequence columnName, CharSequence newName) {
         TableUtils.renameColumnInMetadata(columnName, newName, columnNameIndexMap, columnMetadata);
         structureVersion.incrementAndGet();
@@ -369,10 +382,11 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     tableStruct.getIndexBlockCapacity(i),
                     tableStruct.isDedupKey(i)
             );
-            // Propagate covering column indices (INCLUDE list) from the table structure
+            TableColumnMetadata colMeta = columnMetadata.getQuick(i);
+            colMeta.setNotNullFlag(tableStruct.isNotNull(i));
             IntList coveringIndices = tableStruct.getCoveringColumnIndices(i);
             if (coveringIndices != null && coveringIndices.size() > 0) {
-                columnMetadata.getQuick(columnMetadata.size() - 1).setCoveringColumnIndices(new IntList(coveringIndices));
+                colMeta.setCoveringColumnIndices(new IntList(coveringIndices));
             }
             readColumnOrder.add(i);
         }
@@ -429,12 +443,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                     columnNameIndexMap.put(name, i);
                 }
 
+                TableColumnMetadata colMeta;
                 if (ColumnType.isSymbol(Math.abs(type))) {
-                    // Default to BITMAP; overridden by optional index-type section if present
-                    columnMetadata.add(new TableColumnMetadata(name, type, IndexType.BITMAP, 1024, true, null));
+                    colMeta = new TableColumnMetadata(name, type, IndexType.BITMAP, 1024, true, null);
                 } else {
-                    columnMetadata.add(new TableColumnMetadata(name, type));
+                    colMeta = new TableColumnMetadata(name, type);
                 }
+                colMeta.setNotNullFlag(false);
+                columnMetadata.add(colMeta);
                 readColumnOrder.add(i);
                 checkSum = checkSum * 31 + type;
                 checkSum = checkSum * 31 + name.hashCode();
@@ -448,67 +464,85 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
                 }
             }
 
-            if (memSize > offset + 8 + 4) {
-                long optionalSectionCheckSum = metaMem.getLong(offset);
-                offset += Long.BYTES;
-                if (optionalSectionCheckSum == checkSum) {
-                    long records = metaMem.getInt(offset);
-                    offset += Integer.BYTES;
-
-                    // Optional section about column order
-                    if (memSize - offset >= records * Integer.BYTES) {
+            // Optional sections are identified by their magic values. Do not
+            // advance past an unrecognised section: older sequencer metadata
+            // ends after the column list/order section, while newer metadata
+            // adds index, covering-index, and NOT NULL sections in that order.
+            if (memSize - offset >= Long.BYTES + Integer.BYTES) {
+                long sectionMagic = metaMem.getLong(offset);
+                if (sectionMagic == checkSum) {
+                    int records = metaMem.getInt(offset + Long.BYTES);
+                    long sectionEnd = offset + Long.BYTES + Integer.BYTES + (long) records * Integer.BYTES;
+                    if (records >= 0 && sectionEnd <= memSize) {
+                        offset = sectionEnd;
                         readColumnOrder.clear();
+                        long orderOffset = offset - (long) records * Integer.BYTES;
                         for (int i = 0; i < records; i++) {
-                            readColumnOrder.add(metaMem.getInt(offset));
-                            offset += Integer.BYTES;
+                            readColumnOrder.add(metaMem.getInt(orderOffset + (long) i * Integer.BYTES));
                         }
                     }
                 }
             }
 
-            // Optional section: index types (backward compatible)
-            if (memSize > offset + 8 + 4) {
-                long indexTypeCheckSum = checkSum * 31 + SEQ_META_INDEX_TYPE_CHECKSUM_SALT;
-                long storedCheckSum = metaMem.getLong(offset);
-                offset += Long.BYTES;
-                if (storedCheckSum == indexTypeCheckSum) {
-                    int indexTypeCount = metaMem.getInt(offset);
-                    offset += Integer.BYTES;
-                    if (indexTypeCount == columnCount && memSize - offset >= columnCount) {
-                        for (int i = 0; i < columnCount; i++) {
-                            byte indexType = metaMem.getByte(offset);
-                            offset += Byte.BYTES;
-                            columnMetadata.getQuick(i).setIndexType(indexType);
-                        }
-                    } else if (memSize - offset >= indexTypeCount) {
-                        offset += indexTypeCount;
+            // Read index types (optional section, backward compatible).
+            if (memSize - offset >= Long.BYTES + Integer.BYTES
+                    && metaMem.getLong(offset) == checkSum * 31 + SEQ_META_INDEX_TYPE_CHECKSUM_SALT) {
+                int indexCount = metaMem.getInt(offset + Long.BYTES);
+                long sectionEnd = offset + Long.BYTES + Integer.BYTES + (long) indexCount * Byte.BYTES;
+                if (indexCount >= 0 && indexCount <= columnMetadata.size() && sectionEnd <= memSize) {
+                    long indexOffset = offset + Long.BYTES + Integer.BYTES;
+                    for (int i = 0; i < indexCount; i++) {
+                        columnMetadata.getQuick(i).setIndexType(metaMem.getByte(indexOffset + i));
                     }
+                    offset = sectionEnd;
                 }
             }
 
-            // Optional section: covering column indices (backward compatible)
-            if (memSize > offset + 8 + 4) {
-                long coverCheckSum = checkSum * 31 + SEQ_META_COVERING_COLUMN_CHECKSUM_SALT;
-                long storedCoverSum = metaMem.getLong(offset);
-                offset += Long.BYTES;
-                if (storedCoverSum == coverCheckSum) {
-                    int coveringColumnCount = metaMem.getInt(offset);
-                    offset += Integer.BYTES;
-                    for (int c = 0; c < coveringColumnCount; c++) {
-                        if (memSize - offset < 2 * Integer.BYTES) break;
-                        int colIdx = metaMem.getInt(offset);
-                        offset += Integer.BYTES;
-                        int includeCount = metaMem.getInt(offset);
-                        offset += Integer.BYTES;
-                        if (includeCount > 0 && memSize - offset >= (long) includeCount * Integer.BYTES
-                                && colIdx >= 0 && colIdx < columnCount) {
-                            IntList indices = new IntList(includeCount);
-                            for (int j = 0; j < includeCount; j++) {
-                                indices.add(metaMem.getInt(offset));
-                                offset += Integer.BYTES;
-                            }
-                            columnMetadata.getQuick(colIdx).setCoveringColumnIndices(indices);
+            // Read covering-column indices (optional section, backward compatible).
+            if (memSize - offset >= Long.BYTES + Integer.BYTES
+                    && metaMem.getLong(offset) == checkSum * 31 + SEQ_META_COVERING_COLUMN_CHECKSUM_SALT) {
+                int coveringColumnCount = metaMem.getInt(offset + Long.BYTES);
+                long sectionOffset = offset + Long.BYTES + Integer.BYTES;
+                long sectionEnd = sectionOffset;
+                boolean valid = coveringColumnCount >= 0;
+                for (int i = 0; valid && i < coveringColumnCount; i++) {
+                    if (sectionEnd + Integer.BYTES * 2L > memSize) {
+                        valid = false;
+                        break;
+                    }
+                    int columnIndex = metaMem.getInt(sectionEnd);
+                    int coverCount = metaMem.getInt(sectionEnd + Integer.BYTES);
+                    valid = columnIndex >= 0 && columnIndex < columnMetadata.size() && coverCount >= 0;
+                    sectionEnd += Integer.BYTES * 2L + (long) coverCount * Integer.BYTES;
+                    valid &= sectionEnd <= memSize;
+                }
+                if (valid) {
+                    long readOffset = sectionOffset;
+                    for (int i = 0; i < coveringColumnCount; i++) {
+                        int columnIndex = metaMem.getInt(readOffset);
+                        int coverCount = metaMem.getInt(readOffset + Integer.BYTES);
+                        readOffset += Integer.BYTES * 2L;
+                        IntList covering = new IntList(coverCount);
+                        for (int j = 0; j < coverCount; j++) {
+                            covering.add(metaMem.getInt(readOffset));
+                            readOffset += Integer.BYTES;
                         }
+                        columnMetadata.getQuick(columnIndex).setCoveringColumnIndices(covering);
+                    }
+                    offset = sectionEnd;
+                }
+            }
+
+            // Read NOT NULL flags (optional section, backward compatible).
+            long notNullMagic = checkSum * 31 + NOT_NULL_SECTION_SEED;
+            if (memSize - offset >= Long.BYTES + Integer.BYTES
+                    && metaMem.getLong(offset) == notNullMagic) {
+                int flagCount = metaMem.getInt(offset + Long.BYTES);
+                long sectionEnd = offset + Long.BYTES + Integer.BYTES + (long) flagCount * Byte.BYTES;
+                if (flagCount >= 0 && flagCount <= columnMetadata.size() && sectionEnd <= memSize) {
+                    long flagOffset = offset + Long.BYTES + Integer.BYTES;
+                    for (int i = 0; i < flagCount; i++) {
+                        columnMetadata.getQuick(i).setNotNullFlag(metaMem.getBool(flagOffset + i));
                     }
                 }
             }
@@ -575,6 +609,14 @@ public class SequencerMetadata extends AbstractRecordMetadata implements TableRe
         }
 
         writeSequencerMetadataOptionalSections(metaMem, columnCount, checkSum, this, readColumnOrder);
+
+        // write NOT NULL flags (optional section, backward compatible)
+        long notNullMagic = checkSum * 31 + NOT_NULL_SECTION_SEED; // "NOTNULL" as long seed
+        metaMem.putLong(notNullMagic);
+        metaMem.putInt(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            metaMem.putBool(getColumnMetadata(i).isNotNull());
+        }
 
         // update metadata size
         metaMem.putInt(0, (int) metaMem.getAppendOffset());

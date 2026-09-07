@@ -1282,7 +1282,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             int columnCount = metadata.getColumnCount();
             ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
             for (int i = 0; i < columnCount; i++) {
-                columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i));
+                columnDefs.getQuick(i).of(metadata.getColumnName(i), metadata.getColumnType(i), metadata.isNotNull(i));
             }
             // Hand the composite cache key to beginStreaming so cache-back
             // on successful completion writes under the same [types]sql key

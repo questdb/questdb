@@ -194,10 +194,10 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal128(record, decimal128A);
-            if (!decimal128A.isNull()) {
+            if (arg.isNotNull() || !decimal128A.isNull()) {
                 mapValue.getDecimal128(valueIndex, decimal128B);
                 decimal128B.setScale(decimal128A.getScale());
-                if (shouldStoreA(decimal128A, decimal128B) || decimal128B.isNull()) {
+                if (shouldStoreA(decimal128A, decimal128B) || (!arg.isNotNull() && decimal128B.isNull())) {
                     mapValue.putDecimal128(valueIndex, decimal128A);
                 }
             }
@@ -224,8 +224,8 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             srcValue.getDecimal128(valueIndex, decimal128A);
             destValue.getDecimal128(valueIndex, decimal128B);
             decimal128B.setScale(decimal128A.getScale());
-            if (!decimal128A.isNull()
-                    && (shouldStoreA(decimal128A, decimal128B) || decimal128B.isNull())) {
+            if ((arg.isNotNull() || !decimal128A.isNull())
+                    && (shouldStoreA(decimal128A, decimal128B) || (!arg.isNotNull() && decimal128B.isNull()))) {
                 destValue.putDecimal128(valueIndex, decimal128A);
             }
         }
@@ -258,9 +258,9 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final short aValue = arg.getDecimal16(record);
-            if (aValue != Decimals.DECIMAL16_NULL) {
+            if (arg.isNotNull() || aValue != Decimals.DECIMAL16_NULL) {
                 final short bValue = mapValue.getDecimal16(valueIndex);
-                if (shouldStoreA(aValue, bValue) || bValue == Decimals.DECIMAL16_NULL) {
+                if (shouldStoreA(aValue, bValue) || (!arg.isNotNull() && bValue == Decimals.DECIMAL16_NULL)) {
                     mapValue.putShort(valueIndex, aValue);
                 }
             }
@@ -281,7 +281,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void merge(MapValue destValue, MapValue srcValue) {
             final short srcVal = srcValue.getDecimal16(valueIndex);
             final short destVal = destValue.getDecimal16(valueIndex);
-            if (srcVal != Decimals.DECIMAL16_NULL && (shouldStoreA(srcVal, destVal) || destVal == Decimals.DECIMAL16_NULL)) {
+            if ((arg.isNotNull() || srcVal != Decimals.DECIMAL16_NULL) && (shouldStoreA(srcVal, destVal) || (!arg.isNotNull() && destVal == Decimals.DECIMAL16_NULL))) {
                 destValue.putShort(valueIndex, srcVal);
             }
         }
@@ -316,10 +316,10 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             arg.getDecimal256(record, decimal256A);
-            if (!decimal256A.isNull()) {
+            if (arg.isNotNull() || !decimal256A.isNull()) {
                 mapValue.getDecimal256(valueIndex, decimal256B);
                 decimal256B.setScale(decimal256A.getScale());
-                if (shouldStoreA(decimal256A, decimal256B) || decimal256B.isNull()) {
+                if (shouldStoreA(decimal256A, decimal256B) || (!arg.isNotNull() && decimal256B.isNull())) {
                     mapValue.putDecimal256(valueIndex, decimal256A);
                 }
             }
@@ -346,8 +346,8 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
             srcValue.getDecimal256(valueIndex, decimal256A);
             destValue.getDecimal256(valueIndex, decimal256B);
             decimal256B.setScale(decimal256A.getScale());
-            if (!decimal256A.isNull()
-                    && (shouldStoreA(decimal256A, decimal256B) || decimal256B.isNull())) {
+            if ((arg.isNotNull() || !decimal256A.isNull())
+                    && (shouldStoreA(decimal256A, decimal256B) || (!arg.isNotNull() && decimal256B.isNull()))) {
                 destValue.putDecimal256(valueIndex, decimal256A);
             }
         }
@@ -380,9 +380,9 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final int aValue = arg.getDecimal32(record);
-            if (aValue != Decimals.DECIMAL32_NULL) {
+            if (arg.isNotNull() || aValue != Decimals.DECIMAL32_NULL) {
                 final int bValue = mapValue.getDecimal32(valueIndex);
-                if (shouldStoreA(aValue, bValue) || bValue == Decimals.DECIMAL32_NULL) {
+                if (shouldStoreA(aValue, bValue) || (!arg.isNotNull() && bValue == Decimals.DECIMAL32_NULL)) {
                     mapValue.putInt(valueIndex, aValue);
                 }
             }
@@ -403,7 +403,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void merge(MapValue destValue, MapValue srcValue) {
             final int srcVal = srcValue.getDecimal32(valueIndex);
             final int destVal = destValue.getDecimal32(valueIndex);
-            if (srcVal != Decimals.DECIMAL32_NULL && (shouldStoreA(srcVal, destVal) || destVal == Decimals.DECIMAL32_NULL)) {
+            if ((arg.isNotNull() || srcVal != Decimals.DECIMAL32_NULL) && (shouldStoreA(srcVal, destVal) || (!arg.isNotNull() && destVal == Decimals.DECIMAL32_NULL))) {
                 destValue.putInt(valueIndex, srcVal);
             }
         }
@@ -436,9 +436,9 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final long aValue = arg.getDecimal64(record);
-            if (!Decimal64.isNull(aValue)) {
+            if (arg.isNotNull() || !Decimal64.isNull(aValue)) {
                 final long bValue = mapValue.getDecimal64(valueIndex);
-                if (shouldStoreA(aValue, bValue) || Decimal64.isNull(bValue)) {
+                if (shouldStoreA(aValue, bValue) || (!arg.isNotNull() && Decimal64.isNull(bValue))) {
                     mapValue.putLong(valueIndex, aValue);
                 }
             }
@@ -459,7 +459,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void merge(MapValue destValue, MapValue srcValue) {
             final long srcVal = srcValue.getDecimal64(valueIndex);
             final long destVal = destValue.getDecimal64(valueIndex);
-            if (!Decimal64.isNull(srcVal) && (shouldStoreA(srcVal, destVal) || Decimal64.isNull(destVal))) {
+            if ((arg.isNotNull() || !Decimal64.isNull(srcVal)) && (shouldStoreA(srcVal, destVal) || (!arg.isNotNull() && Decimal64.isNull(destVal)))) {
                 destValue.putLong(valueIndex, srcVal);
             }
         }
@@ -492,9 +492,9 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         @Override
         public void computeNext(MapValue mapValue, Record record, long rowId) {
             final byte aValue = arg.getDecimal8(record);
-            if (aValue != Decimals.DECIMAL8_NULL) {
+            if (arg.isNotNull() || aValue != Decimals.DECIMAL8_NULL) {
                 final byte bValue = mapValue.getDecimal8(valueIndex);
-                if (shouldStoreA(aValue, bValue) || bValue == Decimals.DECIMAL8_NULL) {
+                if (shouldStoreA(aValue, bValue) || (!arg.isNotNull() && bValue == Decimals.DECIMAL8_NULL)) {
                     mapValue.putByte(valueIndex, aValue);
                 }
             }
@@ -515,7 +515,7 @@ public class MinDecimalGroupByFunctionFactory implements FunctionFactory {
         public void merge(MapValue destValue, MapValue srcValue) {
             final byte srcVal = srcValue.getDecimal8(valueIndex);
             final byte destVal = destValue.getDecimal8(valueIndex);
-            if (srcVal != Decimals.DECIMAL8_NULL && (shouldStoreA(srcVal, destVal) || destVal == Decimals.DECIMAL8_NULL)) {
+            if ((arg.isNotNull() || srcVal != Decimals.DECIMAL8_NULL) && (shouldStoreA(srcVal, destVal) || (!arg.isNotNull() && destVal == Decimals.DECIMAL8_NULL))) {
                 destValue.putByte(valueIndex, srcVal);
             }
         }

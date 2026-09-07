@@ -77,7 +77,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             serverMain.getEngine().execute(
                     "CREATE TABLE symbol_high_card_test (" +
                             "sym SYMBOL, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
@@ -127,7 +127,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
                             "sym_3 SYMBOL, " +
                             "sym_2 SYMBOL, " +
                             "value DOUBLE, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
@@ -178,7 +178,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             serverMain.getEngine().execute(
                     "CREATE TABLE symbol_1val_test (" +
                             "sym SYMBOL, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
@@ -219,7 +219,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             serverMain.getEngine().execute(
                     "CREATE TABLE symbol_2val_test (" +
                             "sym SYMBOL, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
@@ -264,7 +264,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             serverMain.getEngine().execute(
                     "CREATE TABLE symbol_3val_test (" +
                             "sym SYMBOL, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
@@ -314,7 +314,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             serverMain.getEngine().execute(
                     "CREATE TABLE symbol_coltop_single (" +
                             "value INT, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
@@ -383,7 +383,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             serverMain.getEngine().execute(
                     "CREATE TABLE symbol_coltop_multi (" +
                             "value INT, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
@@ -464,7 +464,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             serverMain.getEngine().execute(
                     "CREATE TABLE symbol_coltop_multi_rg (" +
                             "value INT, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 
@@ -614,7 +614,7 @@ public class ParquetSymbolExportTest extends AbstractTest {
             serverMain.getEngine().execute(
                     "CREATE TABLE symbol_nulls_test (" +
                             "sym SYMBOL, " +
-                            "ts TIMESTAMP" +
+                            "ts TIMESTAMP NOT NULL" +
                             ") TIMESTAMP(ts) PARTITION BY DAY"
             );
 

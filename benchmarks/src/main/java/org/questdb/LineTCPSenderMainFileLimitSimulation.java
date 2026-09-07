@@ -53,7 +53,7 @@ CREATE TABLE 'request_logs' (
     rpcm SYMBOL capacity 256 CACHE index capacity 262144,
     id4 STRING,
     origin STRING,
-    ts TIMESTAMP,
+    ts TIMESTAMP NOT NULL,
     lo6 LONG,
     rst6 SHORT,
     t5 SYMBOL capacity 256 CACHE,

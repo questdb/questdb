@@ -53,7 +53,7 @@ public class CastIntToFloatFunctionFactory implements FunctionFactory {
         public float getFloat(Record rec) {
             // IntFunction.getFloat() reads getInt(), so this cast wraps too. See CastIntToDouble.
             final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? value : Float.NaN;
+            return arg.isNotNull() || value != Numbers.INT_NULL ? value : Float.NaN;
         }
     }
 }

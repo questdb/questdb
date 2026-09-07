@@ -58,7 +58,7 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
+        if (isArgNotNull || Numbers.isFinite(value)) {
             mapValue.putLong(valueIndex, 1);
         } else {
             mapValue.putLong(valueIndex, 0);
@@ -85,7 +85,7 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final double value = Unsafe.getDouble(argAddr + (rowIndex << 3));
-                if (Numbers.isFinite(value)) {
+                if (isArgNotNull || Numbers.isFinite(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -95,7 +95,7 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final double value = arg.getDouble(record);
-                if (Numbers.isFinite(value)) {
+                if (isArgNotNull || Numbers.isFinite(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     Unsafe.putLong(addr, Unsafe.getLong(addr) + 1);
                 }
@@ -106,7 +106,7 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final double value = arg.getDouble(record);
-        if (Numbers.isFinite(value)) {
+        if (isArgNotNull || Numbers.isFinite(value)) {
             mapValue.addLong(valueIndex, 1);
         }
     }
@@ -118,6 +118,6 @@ public class CountDoubleGroupByFunction extends AbstractCountGroupByFunction {
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 }

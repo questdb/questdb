@@ -254,7 +254,7 @@ tests:
       [ "psycopg2", "psycopg3", "asyncpg", "rust", "php", "nodejs-postgres" ]
     prepare:
       - action: execute
-        query: "CREATE TABLE test_table (value double, state symbol, opened_at timestamp) timestamp(opened_at) PARTITION BY YEAR BYPASS WAL;"
+        query: "CREATE TABLE test_table (value double, state symbol, opened_at timestamp NOT NULL) timestamp(opened_at) PARTITION BY YEAR BYPASS WAL;"
       - action: execute
         query: "INSERT INTO test_table(value,state,opened_at) VALUES (1, 'OPEN', '2001'), (4, 'CLOSED', '2002'), (2, 'CLOSED', '2003'), (7, 'CLOSED', '2004'), (1, 'CLOSED', '2005')"
     steps:
@@ -632,7 +632,7 @@ tests:
     exclude: [ "psycopg2" ]
     prepare:
       - action: execute
-        query: "CREATE TABLE varchar_in_test (ts TIMESTAMP, varchar_col VARCHAR) timestamp(ts);"
+        query: "CREATE TABLE varchar_in_test (ts TIMESTAMP NOT NULL, varchar_col VARCHAR) timestamp(ts);"
       - action: execute
         query: |
           INSERT INTO varchar_in_test(ts, varchar_col) VALUES
@@ -692,7 +692,7 @@ tests:
     exclude: [ "rust", "sqlx", "asyncpg", "psycopg2" ]
     prepare:
       - action: execute
-        query: "CREATE TABLE varchar_in_test (ts TIMESTAMP, varchar_col VARCHAR) timestamp(ts);"
+        query: "CREATE TABLE varchar_in_test (ts TIMESTAMP NOT NULL, varchar_col VARCHAR) timestamp(ts);"
       - action: execute
         query: |
           INSERT INTO varchar_in_test(ts, varchar_col) VALUES
@@ -728,7 +728,7 @@ tests:
     exclude: [ "psycopg2" ]
     prepare:
       - action: execute
-        query: "CREATE TABLE symbol_in_test (ts TIMESTAMP, sym_col SYMBOL) timestamp(ts);"
+        query: "CREATE TABLE symbol_in_test (ts TIMESTAMP NOT NULL, sym_col SYMBOL) timestamp(ts);"
       - action: execute
         query: |
           INSERT INTO symbol_in_test(ts, sym_col) VALUES
@@ -788,7 +788,7 @@ tests:
     exclude: [ "psycopg2" ]
     prepare:
       - action: execute
-        query: "CREATE TABLE symbol_utf8_in_test (ts TIMESTAMP, sym_col SYMBOL) timestamp(ts);"
+        query: "CREATE TABLE symbol_utf8_in_test (ts TIMESTAMP NOT NULL, sym_col SYMBOL) timestamp(ts);"
       - action: execute
         query: |
           INSERT INTO symbol_utf8_in_test(ts, sym_col) VALUES
@@ -846,7 +846,7 @@ tests:
     exclude: [ "psycopg2" ]
     prepare:
       - action: execute
-        query: "CREATE TABLE string_in_test (ts TIMESTAMP, str_col STRING) timestamp(ts);"
+        query: "CREATE TABLE string_in_test (ts TIMESTAMP NOT NULL, str_col STRING) timestamp(ts);"
       - action: execute
         query: |
           INSERT INTO string_in_test(ts, str_col) VALUES

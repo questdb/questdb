@@ -907,10 +907,10 @@ public class CreateTableTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .noRandomAccess()
                 .returns("""
-                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t
-                        a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t
-                        b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t
+                        column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                        ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\ttrue\t\t\ttrue
+                        a\tINT\tfalse\t0\tfalse\t0\t0\tfalse\ttrue\t\t\tfalse
+                        b\tSTRING\tfalse\t0\tfalse\t0\t0\tfalse\tfalse\t\t\tfalse
                         """);
     }
 
@@ -1152,7 +1152,7 @@ public class CreateTableTest extends AbstractCairoTest {
                             ddl
                             CREATE TABLE 'tab' (\s
                             \ts SYMBOL INDEX TYPE POSTING,
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY BYPASS WAL;
                             """);
         });
@@ -1294,7 +1294,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'x' (\s
-                            \tns TIMESTAMP_NS,
+                            \tns TIMESTAMP_NS NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ns) PARTITION BY DAY;
                             """);
@@ -1316,7 +1316,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'y' (\s
-                            \tns TIMESTAMP_NS,
+                            \tns TIMESTAMP_NS NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ns) PARTITION BY DAY;
                             """);
@@ -1324,9 +1324,9 @@ public class CreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ns\tTIMESTAMP_NS\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t\tfalse
                             """);
 
             execute(
@@ -1344,7 +1344,7 @@ public class CreateTableTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'z' (\s
-                            \tns TIMESTAMP_NS,
+                            \tns TIMESTAMP_NS NOT NULL,
                             \ta INT,
                             \tb STRING
                             ) timestamp(ns) PARTITION BY DAY
@@ -1609,9 +1609,9 @@ public class CreateTableTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t
-                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ts\tTIMESTAMP\tfalse\t0\tfalse\t0\t0\ttrue\tfalse\t\t\ttrue
+                            s\tSYMBOL\tfalse\t256\ttrue\t128\t0\tfalse\tfalse\t\t\tfalse
                             """);
         });
     }

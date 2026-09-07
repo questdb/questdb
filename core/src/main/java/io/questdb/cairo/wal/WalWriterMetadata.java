@@ -25,7 +25,9 @@
 package io.questdb.cairo.wal;
 
 import io.questdb.cairo.AbstractRecordMetadata;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -48,6 +50,7 @@ import static io.questdb.cairo.wal.WalUtils.WAL_FORMAT_VERSION;
 import static io.questdb.cairo.wal.WalUtils.writeSequencerMetadataOptionalSections;
 
 public class WalWriterMetadata extends AbstractRecordMetadata implements TableRecordMetadata, TableRecordMetadataSink {
+    private static final long NOT_NULL_SECTION_SEED = 0x4E4F544E554C4CL;
     private final FilesFacade ff;
     private final boolean fullSequencerMetadata;
     private final MemoryMARW metaMem;
@@ -103,7 +106,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean isDedupKey,
             boolean symbolIsCached,
             int symbolCapacity,
-            @Transient IntList coveringColumnIndices
+            boolean isNotNull
     ) {
         if (fullSequencerMetadata) {
             addFullSequencerColumn(
@@ -116,17 +119,25 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                     isDedupKey,
                     symbolIsCached,
                     symbolCapacity,
-                    coveringColumnIndices
+                    null,
+                    isNotNull
             );
         } else {
-            // WAL segment _meta stays lightweight; checkpointed txn_seq/_meta uses fullSequencerMetadata.
             addColumn0(
                     columnName,
                     columnType,
                     symbolCapacity,
                     symbolIsCached,
-                    isDedupKey
+                    isDedupKey,
+                    isNotNull
             );
+        }
+    }
+
+    @Override
+    public void setColumnCovering(int columnIndex, @Transient IntList coveringColumnIndices) {
+        if (fullSequencerMetadata && coveringColumnIndices != null) {
+            columnMetadata.getQuick(columnIndex).setCoveringColumnIndices(new IntList(coveringColumnIndices));
         }
     }
 
@@ -142,7 +153,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 columnType,
                 symbolCapacity,
                 symbolIsCached,
-                isDedupKey
+                isDedupKey,
+                false
         );
         structureVersion++;
     }
@@ -251,6 +263,16 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         structureVersion++;
     }
 
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        int columnIndex = columnNameIndexMap.get(columnName);
+        if (columnIndex < 0) {
+            throw CairoException.nonCritical().put("column does not exist [table=")
+                    .put(tableToken.getTableName()).put(", column=").put(columnName).put(']');
+        }
+        columnMetadata.getQuick(columnIndex).setNotNullFlag(isNotNull);
+        structureVersion++;
+    }
+
     public void renameTable(TableToken toTableToken) {
         assert toTableToken != null;
         tableToken = toTableToken;
@@ -323,6 +345,11 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
                 checkSum = checkSum * 31 + metadata.getColumnName(i).hashCode();
             }
             writeSequencerMetadataOptionalSections(metaMem, columnCount, checkSum, metadata, readColumnOrder);
+            metaMem.putLong(checkSum * 31 + NOT_NULL_SECTION_SEED);
+            metaMem.putInt(columnCount);
+            for (int i = 0; i < columnCount; i++) {
+                metaMem.putBool(metadata.getColumnMetadata(i).isNotNull());
+            }
         }
 
         // To avoid consistency issues with concurrent readers,
@@ -337,7 +364,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             int columnType,
             int symbolCapacity,
             boolean symbolCacheFlag,
-            boolean isDedupKey
+            boolean isDedupKey,
+            boolean isNotNull
     ) {
         final String name = columnName.toString();
         if (columnType > 0) {
@@ -346,21 +374,21 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         // sequencer metadata is servicing WALs, and it does not have
         // information about symbol indexing and index storage parameters
         // therefore we ignore the incoming parameters and assume defaults
-        columnMetadata.add(
-                new TableColumnMetadata(
-                        name,
-                        columnType,
-                        IndexType.NONE,
-                        0,
-                        false,
-                        null,
-                        columnMetadata.size(),
-                        isDedupKey,
-                        0,
-                        symbolCacheFlag,
-                        symbolCapacity
-                )
+        var colMeta = new TableColumnMetadata(
+                name,
+                columnType,
+                IndexType.NONE,
+                0,
+                false,
+                null,
+                columnMetadata.size(),
+                isDedupKey,
+                0,
+                symbolCacheFlag,
+                symbolCapacity
         );
+        colMeta.setNotNullFlag(isNotNull);
+        columnMetadata.add(colMeta);
         columnCount++;
     }
 
@@ -374,7 +402,8 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             boolean isDedupKey,
             boolean symbolCacheFlag,
             int symbolCapacity,
-            @Transient IntList coveringColumnIndices
+            @Transient IntList coveringColumnIndices,
+            boolean isNotNull
     ) {
         final String name = columnName.toString();
         if (columnType > 0) {
@@ -396,6 +425,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
         if (coveringColumnIndices != null) {
             columnMetadata.setCoveringColumnIndices(new IntList(coveringColumnIndices));
         }
+        columnMetadata.setNotNullFlag(isNotNull);
         this.columnMetadata.add(columnMetadata);
         columnCount++;
     }

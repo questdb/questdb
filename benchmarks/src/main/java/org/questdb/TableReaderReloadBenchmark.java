@@ -80,7 +80,7 @@ public class TableReaderReloadBenchmark {
                             null
                     );
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-                compiler.compile("create table if not exists test(f timestamp) timestamp (f) PARTITION BY DAY", sqlExecutionContext);
+                compiler.compile("create table if not exists test(f timestamp NOT NULL) timestamp (f) PARTITION BY DAY", sqlExecutionContext);
             } catch (SqlException e) {
                 throw new ExceptionInInitializerError();
             }

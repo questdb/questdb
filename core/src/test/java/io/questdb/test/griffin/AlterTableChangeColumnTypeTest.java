@@ -1113,8 +1113,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\tBITMAP\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ik\tSYMBOL\ttrue\t256\tfalse\t512\t5\tfalse\tfalse\tBITMAP\t\tfalse
                             """);
 
             execute("alter table x alter column ik symbol capacity 1000", sqlExecutionContext);
@@ -1130,8 +1130,8 @@ public class AlterTableChangeColumnTypeTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .returns("""
-                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude
-                            ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\tBITMAP\t
+                            column\ttype\tindexed\tindexBlockCapacity\tsymbolCached\tsymbolCapacity\tsymbolTableSize\tdesignated\tupsertKey\tindexType\tindexInclude\tnotNull
+                            ik\tSYMBOL\ttrue\t256\tfalse\t1024\t5\tfalse\tfalse\tBITMAP\t\tfalse
                             """);
         });
     }

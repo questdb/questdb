@@ -89,7 +89,7 @@ public class DoubleArraySortFunctionFactory implements FunctionFactory {
             int nonNanCount = 0;
             for (int i = 0; i < lastDim; i++) {
                 double v = flatView.getDoubleAtAbsIndex(sliceStart + i);
-                if (Double.isNaN(v)) {
+                if (!Numbers.isFinite(v)) {
                     nanCount++;
                 } else {
                     buf[nonNanCount++] = v;
@@ -105,7 +105,7 @@ public class DoubleArraySortFunctionFactory implements FunctionFactory {
         int nonNanCount = 0;
         for (int i = 0; i < count; i++) {
             double v = view.getDouble(flatIndex);
-            if (Double.isNaN(v)) {
+            if (!Numbers.isFinite(v)) {
                 nanCount++;
             } else {
                 buf[nonNanCount++] = v;

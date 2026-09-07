@@ -143,6 +143,16 @@ pub struct QdbMetaCol {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<ParquetFieldId>,
+
+    /// Preserves QuestDB's NOT NULL constraint across a Parquet round-trip.
+    /// This is independent of the physical Parquet repetition.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
+    pub not_null: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero(v: &u64) -> bool {
@@ -261,6 +271,8 @@ mod tests {
                     format: Some(QdbMetaColFormat::LocalKeyIsGlobal),
                     ascii: None,
                     id: None,
+
+                    not_null: false,
                 },
                 QdbMetaCol {
                     column_type: ColumnType::new(ColumnTypeTag::Int, 0),
@@ -268,6 +280,8 @@ mod tests {
                     format: None,
                     ascii: None,
                     id: None,
+
+                    not_null: false,
                 },
                 QdbMetaCol {
                     column_type: ColumnType::new(ColumnTypeTag::Varchar, 0),
@@ -275,6 +289,8 @@ mod tests {
                     format: None,
                     ascii: Some(true),
                     id: None,
+
+                    not_null: false,
                 },
             ],
             unused_bytes: 0,
@@ -342,6 +358,8 @@ mod tests {
                     format: None,
                     ascii: None,
                     id: Some(7),
+
+                    not_null: false,
                 },
                 QdbMetaCol {
                     column_type: ColumnTypeTag::Int.into_type(),
@@ -349,6 +367,8 @@ mod tests {
                     format: None,
                     ascii: None,
                     id: None,
+
+                    not_null: false,
                 },
             ],
             unused_bytes: 0,
@@ -386,6 +406,8 @@ mod tests {
                 format: None,
                 ascii: None,
                 id: None,
+
+                not_null: false,
             }],
             unused_bytes: 4096,
             squash_tracker: -1,
@@ -434,6 +456,8 @@ mod tests {
                 format: None,
                 ascii: None,
                 id: None,
+
+                not_null: false,
             }],
             unused_bytes: 0,
             squash_tracker: -1,
@@ -461,6 +485,8 @@ mod tests {
                 format: None,
                 ascii: None,
                 id: None,
+
+                not_null: false,
             }],
             unused_bytes: 0,
             squash_tracker: 42,

@@ -78,13 +78,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     // Tells the Rust encoder that the designated-timestamp column's
     // primary_data is laid out as 16-byte (ts, rowId) merge-index entries
     // (timestamp at offset 0). Lets the encoder read timestamps in place
-    // instead of pre-extracting a flat ts vector. Supported by all three
-    // encodings used for Timestamp (Plain, DeltaBinaryPacked, RleDictionary),
-    // so callers can set this unconditionally on the designated-timestamp
-    // column regardless of the user-configured encoding.
-    //
-    // Mirrors COLUMN_TYPE_STRIDED_TIMESTAMP_16_BIT in
-    // core/rust/qdbr/src/parquet_write/schema.rs - keep in sync.
+    // instead of pre-extracting a flat ts vector.
     private static final int PARQUET_TIMESTAMP_STRIDED_16 = 0x4000_0000;
 
     public O3PartitionJob(MessageBus messageBus) {
@@ -364,12 +358,42 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 );
 
                 if (hasSchemaChange || forceFullReencode) {
-                    ParquetRowGroupMaterializer.setTargetSchema(
-                            ctx,
-                            partitionUpdater,
-                            tableWriterMetadata,
-                            tableWriter.getSymbolTableProvider()
-                    );
+                    // Table schema differs from parquet file schema (ADD COLUMN,
+                    // DROP COLUMN, or both). Pass the full target schema to Rust
+                    // so the output file footer, column remapping, and null column
+                    // chunks use the new schema.
+                    // For SYMBOL columns, set the high bit on the column type
+                    // when the symbol map has no null flag — this is a write-time
+                    // hint for the Rust encoder to emit a fast all-ones RLE run
+                    // for definition levels (symbols are always Optional in the schema).
+                    final PartitionDescriptor schemaDesc = ctx.getChunkDescriptor();
+                    schemaDesc.of(tableWriter.getTableToken().getTableName(), 0, timestampIndex);
+                    for (int i = 0; i < columnCount; i++) {
+                        int colType = tableWriterMetadata.getColumnType(i);
+                        if (colType < 0) {
+                            continue;
+                        }
+                        // The high bit is a write-time hint telling the Rust encoder
+                        // that the column contains no nulls, so it can emit a fast
+                        // all-ones RLE run for definition levels and the round-trip
+                        // reader can restore NOT NULL via QdbMeta. It does NOT change
+                        // the parquet schema Repetition — all columns stay Optional.
+                        final boolean noNulls = tableWriterMetadata.isNotNull(i);
+                        if (noNulls) {
+                            colType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
+                        }
+                        final int colId = tableWriterMetadata.getColumnMetadata(i).getOriginalWriterIndex();
+                        final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(i).getParquetEncodingConfig();
+                        schemaDesc.addColumn(
+                                tableWriterMetadata.getColumnName(i),
+                                colType,
+                                colId,
+                                0,
+                                parquetEncodingConfig
+                        );
+                    }
+                    partitionUpdater.setTargetSchema(schemaDesc);
+                    schemaDesc.clear();
                 }
 
                 // Build row group bounds for merge strategy computation.
@@ -1715,32 +1739,172 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             int metadataPosition
     ) {
         final long rowCount = o3Hi - o3Lo + 1;
+        final int columnCount = tableWriterMetadata.getColumnCount();
         // Use the sorted timestamps directly as merge index for the timestamp
         // extraction below. Each entry is (ts, originalRowId); bit 63 of the
         // rowId is irrelevant for oooCopyIndex, which only reads timestamps.
         final long mergeIndexAddr = sortedTimestampsAddr + o3Lo * TIMESTAMP_MERGE_ENTRY_BYTES;
 
-        // Non-owning descriptor: every column hands the encoder pointers into
-        // O3 source buffers (sorted data, sorted aux, merge index for the
-        // timestamp), so there's nothing to free on this path.
         final PartitionDescriptor descriptor = ctx.getFreshPartitionDescriptor();
-        descriptor.clear();
+        descriptor.of(tableWriter.getTableToken().getTableName(), rowCount, timestampIndex);
+        final LongList allocatedBuffers = new LongList();
 
         try {
-            descriptor.of(tableWriter.getTableToken().getTableName(), rowCount, timestampIndex);
-            populateO3DescriptorColumns(
-                    ctx,
-                    descriptor,
-                    tableWriterMetadata,
-                    oooColumns,
-                    tableWriter,
-                    o3Lo,
-                    o3Hi,
-                    mergeIndexAddr
-            );
+            for (int columnIndex = 0; columnIndex < columnCount; columnIndex++) {
+                int columnType = tableWriterMetadata.getColumnType(columnIndex);
+                if (columnType < 0) {
+                    continue;
+                }
+                final String columnName = tableWriterMetadata.getColumnName(columnIndex);
+                final int columnId = tableWriterMetadata.getColumnMetadata(columnIndex).getWriterIndex();
+                final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
+                final boolean notTheTimestamp = columnIndex != timestampIndex;
+                final boolean isNotNull = tableWriterMetadata.isNotNull(columnIndex);
+                final int columnOffset = getPrimaryColumnIndex(columnIndex);
+                final MemoryCR oooMem1 = oooColumns.getQuick(columnOffset);
+                final MemoryCR oooMem2 = oooColumns.getQuick(columnOffset + 1);
+
+                if (ColumnType.isVarSize(columnType)) {
+                    final ColumnTypeDriver ctd = ColumnType.getDriver(columnType);
+                    final long srcOooAuxAddr = oooMem2.addressOf(0);
+                    final long srcOooDataAddr = oooMem1.addressOf(0);
+
+                    long dstAuxSize = ctd.getAuxVectorSize(rowCount);
+                    long dstDataSize = ctd.getDataVectorSize(srcOooAuxAddr, o3Lo, o3Hi);
+
+                    long dstAuxAddr = Unsafe.malloc(dstAuxSize, MemoryTag.NATIVE_O3);
+                    long dstDataAddr;
+                    try {
+                        dstDataAddr = Unsafe.malloc(dstDataSize, MemoryTag.NATIVE_O3);
+                    } catch (Throwable th) {
+                        Unsafe.free(dstAuxAddr, dstAuxSize, MemoryTag.NATIVE_O3);
+                        throw th;
+                    }
+
+                    allocatedBuffers.add(dstAuxAddr);
+                    allocatedBuffers.add(dstAuxSize);
+                    allocatedBuffers.add(dstDataAddr);
+                    allocatedBuffers.add(dstDataSize);
+                    try {
+                        O3CopyJob.mergeCopy(
+                                columnType,
+                                mergeIndexAddr,
+                                rowCount,
+                                0, // srcDataAuxAddr - not accessed (bit 63 = 0)
+                                0, // srcDataVarAddr - not accessed
+                                srcOooAuxAddr,
+                                srcOooDataAddr,
+                                dstAuxAddr,
+                                dstDataAddr,
+                                0
+                        );
+                    } catch (Throwable th) {
+                        throw th;
+                    }
+
+                    descriptor.addColumn(
+                            columnName,
+                            isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
+                            columnId,
+                            0,
+                            dstDataAddr,
+                            dstDataSize,
+                            dstAuxAddr,
+                            dstAuxSize,
+                            0,
+                            0,
+                            parquetEncodingConfig
+                    );
+                    // The descriptor borrows these buffers until addRowGroup() returns.
+                } else {
+                    final long srcOooFixAddr = oooMem1.addressOf(0);
+                    long dstFixSize = rowCount * ColumnType.sizeOf(columnType);
+                    long dstFixAddr = Unsafe.malloc(dstFixSize, MemoryTag.NATIVE_O3);
+                    allocatedBuffers.add(dstFixAddr);
+                    allocatedBuffers.add(dstFixSize);
+
+                    try {
+                        O3CopyJob.mergeCopy(
+                                notTheTimestamp ? columnType : ColumnType.setDesignatedTimestampBit(columnType, true),
+                                mergeIndexAddr,
+                                rowCount,
+                                0, // srcDataFixAddr - not accessed (bit 63 = 0)
+                                0,
+                                srcOooFixAddr,
+                                0,
+                                dstFixAddr,
+                                0,
+                                0
+                        );
+                    } catch (Throwable th) {
+                        throw th;
+                    }
+
+                    if (ColumnType.isSymbol(columnType)) {
+                        final MemoryR offsetsMem;
+                        final MemoryR valuesMem;
+                        final int symbolCount;
+                        final long valuesMemSize;
+                        int encodeColumnType;
+                        try {
+                            final MapWriter symbolMapWriter = tableWriter.getSymbolMapWriter(columnIndex);
+                            offsetsMem = symbolMapWriter.getSymbolOffsetsMemory();
+                            valuesMem = symbolMapWriter.getSymbolValuesMemory();
+
+                            symbolCount = symbolMapWriter.getSymbolCount();
+                            final long offset = SymbolMapWriter.keyToOffset(symbolCount);
+                            assert offset - SymbolMapWriter.HEADER_SIZE <= offsetsMem.size();
+                            valuesMemSize = offsetsMem.getLong(offset);
+                            assert valuesMemSize <= valuesMem.size();
+
+                            // High bit = no-null hint for def level encoding, not schema Repetition.
+                            encodeColumnType = columnType;
+                            if (isNotNull) {
+                                encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
+                            }
+                        } catch (Throwable th) {
+                            // dstFixAddr is tracked in allocatedBuffers and freed by the outer finally.
+                            throw th;
+                        }
+                        descriptor.addColumn(
+                                columnName,
+                                encodeColumnType,
+                                columnId,
+                                0,
+                                dstFixAddr,
+                                dstFixSize,
+                                valuesMem.addressOf(0),
+                                valuesMemSize,
+                                // Skip header. Pass element count, not byte size.
+                                offsetsMem.addressOf(SymbolMapWriter.HEADER_SIZE),
+                                symbolCount,
+                                parquetEncodingConfig
+                        );
+                    } else {
+                        descriptor.addColumn(
+                                columnName,
+                                isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
+                                columnId,
+                                0,
+                                dstFixAddr,
+                                dstFixSize,
+                                0,
+                                0,
+                                0,
+                                0,
+                                parquetEncodingConfig
+                        );
+                    }
+                }
+            }
+
+            // Publish only after all columns have been added so Rust sees a complete row group.
             partitionUpdater.addRowGroup(metadataPosition, descriptor);
         } finally {
             descriptor.clear();
+            for (int i = 0, n = allocatedBuffers.size(); i < n; i += 2) {
+                Unsafe.free(allocatedBuffers.getQuick(i), allocatedBuffers.getQuick(i + 1), MemoryTag.NATIVE_O3);
+            }
         }
     }
 
@@ -2467,6 +2631,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final int parquetEncodingConfig = tableWriterMetadata.getColumnMetadata(columnIndex).getParquetEncodingConfig();
 
                     final boolean notTheTimestamp = columnIndex != timestampIndex;
+                    final boolean isNotNull = tableWriterMetadata.isNotNull(columnIndex);
                     final int columnOffset = getPrimaryColumnIndex(columnIndex);
                     int bi4 = ai * 4;
                     int bi2 = ai * 2;
@@ -2499,7 +2664,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                         chunkDescriptor.addColumn(
                                 columnName,
-                                columnType,
+                                isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                                 columnId,
                                 0,
                                 dstDataAddr,
@@ -2544,8 +2709,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                             // High bit = no-null hint for def level encoding, not schema Repetition.
                             int encodeColumnType = columnType;
-                            if (!symbolMapWriter.getNullFlag()) {
-                                encodeColumnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
+                            if (isNotNull) {
+                                encodeColumnType |= PartitionDescriptor.NOT_NULL_HINT_BIT;
                             }
                             chunkDescriptor.addColumn(
                                     columnName,
@@ -2564,7 +2729,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         } else {
                             chunkDescriptor.addColumn(
                                     columnName,
-                                    columnType,
+                                    isNotNull ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                                     columnId,
                                     0,
                                     dstFixAddr,
@@ -2721,7 +2886,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                 descriptor.addColumn(
                         columnName,
-                        columnType,
+                        metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                         columnId,
                         0,
                         dataAddr,
@@ -2748,7 +2913,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // layout, so no encoding-aware fallback is needed.
                 descriptor.addColumn(
                         columnName,
-                        ColumnType.setDesignatedTimestampBit(columnType, true)
+                        ColumnType.setDesignatedTimestampBit(
+                                metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
+                                true
+                        )
                                 | PARQUET_TIMESTAMP_STRIDED_16,
                         columnId,
                         0,
@@ -2781,7 +2949,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 assert valuesMemSize <= valuesMem.size();
 
                 int encodeColumnType = columnType;
-                if (!symbolMapWriter.getNullFlag()) {
+                if (metadata.isNotNull(columnIndex)) {
                     encodeColumnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
                 }
                 descriptor.addColumn(
@@ -2801,7 +2969,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             } else {
                 descriptor.addColumn(
                         columnName,
-                        columnType,
+                        metadata.isNotNull(columnIndex) ? (columnType | PartitionDescriptor.NOT_NULL_HINT_BIT) : columnType,
                         columnId,
                         0,
                         srcFixSliceAddr,

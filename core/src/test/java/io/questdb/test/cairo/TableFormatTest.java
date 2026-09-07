@@ -905,7 +905,7 @@ public class TableFormatTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY FORMAT PARQUET;
                             """);
         });
@@ -921,7 +921,7 @@ public class TableFormatTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'tango' (\s
-                            \tts TIMESTAMP
+                            \tts TIMESTAMP NOT NULL
                             ) timestamp(ts) PARTITION BY DAY;
                             """);
         });

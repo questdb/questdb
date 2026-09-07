@@ -87,6 +87,40 @@ public class PGDecimalsTest extends BasePGTest {
     }
 
     @Test
+    public void testBinaryNotNullSentinelsSpanSendBuffer() throws Exception {
+        assertWithPgServerExtendedBinaryOnly(
+                (connection, _, _, _) -> {
+                    try (Statement statement = connection.createStatement()) {
+                        statement.execute("CREATE TABLE t (padding VARCHAR NOT NULL, d8 DECIMAL(2, 0) NOT NULL, d16 DECIMAL(4, 0) NOT NULL, d32 DECIMAL(9, 0) NOT NULL, d64 DECIMAL(18, 2) NOT NULL, d128 DECIMAL(38, 2) NOT NULL, d256 DECIMAL(76, 2) NOT NULL, trailing INT NOT NULL)");
+                        statement.execute("INSERT INTO t VALUES (lpad('', 600, 'x'), NULL, NULL, NULL, NULL, NULL, NULL, 42)");
+                    }
+                    try (PreparedStatement statement = connection.prepareStatement(
+                            "SELECT * FROM t"
+                    )) {
+                        try (ResultSet resultSet = statement.executeQuery()) {
+                            final String[] expected = {
+                                    "-128",
+                                    "-32768",
+                                    "-2147483648",
+                                    "-92233720368547758.08",
+                                    "-1701411834604692317316873037158841057.28",
+                                    "-578960446186580977117854925043439539266349923328202820197287920039565648199.68"
+                            };
+                            Assert.assertTrue(resultSet.next());
+                            Assert.assertEquals(600, resultSet.getString(1).length());
+                            for (int i = 0; i < expected.length; i++) {
+                                Assert.assertEquals(new BigDecimal(expected[i]), resultSet.getBigDecimal(i + 2));
+                            }
+                            Assert.assertEquals(42, resultSet.getInt(expected.length + 2));
+                            Assert.assertFalse(resultSet.next());
+                        }
+                    }
+                },
+                () -> sendBufferSize = 512
+        );
+    }
+
+    @Test
     public void testBinaryResultSpansSendBufferAtBase10000Boundaries() throws Exception {
         assertWithPgServerExtendedBinaryOnly(
                 (connection, _, _, _) -> {

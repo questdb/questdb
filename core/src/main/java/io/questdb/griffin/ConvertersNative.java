@@ -25,7 +25,7 @@
 package io.questdb.griffin;
 
 public final class ConvertersNative {
-    public static native long fixedToFixed(long srcMem, long srcType, long dstMem, long dstType, long rowCount);
+    public static native long fixedToFixed(long srcMem, long srcType, long dstMem, long dstType, long rowCount, boolean isSrcNotNull);
 
     public static final class ConversionError {
         public static final short NONE = 0;

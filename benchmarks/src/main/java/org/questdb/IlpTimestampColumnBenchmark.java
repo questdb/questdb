@@ -107,7 +107,7 @@ public class IlpTimestampColumnBenchmark {
             ) {
                 ddlStatement.execute("DROP TABLE IF EXISTS tango");
                 ddlStatement.execute(
-                        "CREATE TABLE tango (ts TIMESTAMP, n0 " + TIMESTAMP_TYPE_NAME + ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
+                        "CREATE TABLE tango (ts TIMESTAMP NOT NULL, n0 " + TIMESTAMP_TYPE_NAME + ") TIMESTAMP(ts) PARTITION BY HOUR WAL");
             }
             long start = System.nanoTime();
             long deadline = start + SECONDS.toNanos(RUNTIME_SECONDS);

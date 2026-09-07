@@ -41,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 
 class SumDecimal128GroupByFunction extends Decimal256Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal128 decimal128B = new Decimal128();
     private final Decimal256 decimal256A = new Decimal256();
@@ -52,6 +53,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     public SumDecimal128GroupByFunction(@NotNull Function arg, int position) {
         super(ColumnType.getDecimalType(Decimals.MAX_PRECISION, ColumnType.getDecimalScale(arg.getType())));
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.position = position;
         final int scale = ColumnType.getDecimalScale(type);
         this.decimal256A.setScale(scale);
@@ -63,7 +65,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     @Override
     public void computeFirst(MapValue mapValue, io.questdb.cairo.sql.Record record, long rowId) {
         arg.getDecimal128(record, decimal128B);
-        if (!decimal128B.isNull()) {
+        if (isArgNotNull || !decimal128B.isNull()) {
             mapValue.putDecimal128(valueIndex + 1, decimal128B);
         } else {
             mapValue.putDecimal128Null(valueIndex + 1);
@@ -74,11 +76,11 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
     @Override
     public void computeNext(MapValue mapValue, io.questdb.cairo.sql.Record record, long rowId) {
         arg.getDecimal128(record, decimal128A);
-        if (!decimal128A.isNull()) {
+        if (isArgNotNull || !decimal128A.isNull()) {
             try {
                 if (!mapValue.getBool(valueIndex + 2)) {
                     mapValue.getDecimal128(valueIndex + 1, decimal128B);
-                    if (decimal128B.isNull()) {
+                    if (!isArgNotNull && decimal128B.isNull()) {
                         mapValue.putDecimal128(valueIndex + 1, decimal128A);
                     } else {
                         try {
@@ -115,7 +117,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
             rec.getDecimal256(valueIndex, sink);
         } else {
             rec.getDecimal128(valueIndex + 1, decimal128A);
-            if (decimal128A.isNull()) {
+            if (!isArgNotNull && decimal128A.isNull()) {
                 sink.ofRawNull();
             } else {
                 long hh = decimal128A.getHigh() < 0 ? -1 : 0;
@@ -168,8 +170,8 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
         if (!srcOverflow && !destOverflow) {
             srcValue.getDecimal128(valueIndex + 1, decimal128B);
             destValue.getDecimal128(valueIndex + 1, decimal128A);
-            final boolean srcNull = decimal128B.isNull();
-            final boolean destNull = decimal128A.isNull();
+            final boolean srcNull = !isArgNotNull && decimal128B.isNull();
+            final boolean destNull = !isArgNotNull && decimal128A.isNull();
             if (!destNull && !srcNull) {
                 // both not null
                 try {
@@ -191,7 +193,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
             srcValue.getDecimal256(valueIndex, decimal256B);
             destValue.getDecimal128(valueIndex + 1, decimal128A);
 
-            boolean destNull = decimal128A.isNull();
+            boolean destNull = !isArgNotNull && decimal128A.isNull();
             if (!destNull) {
                 Decimal256.uncheckedAdd(decimal256B, decimal128A);
             }
@@ -201,7 +203,7 @@ class SumDecimal128GroupByFunction extends Decimal256Function implements GroupBy
             // dest overflown, it cannot be null
             srcValue.getDecimal128(valueIndex + 1, decimal128A);
             destValue.getDecimal256(valueIndex, decimal256B);
-            boolean srcNull = decimal128A.isNull();
+            boolean srcNull = !isArgNotNull && decimal128A.isNull();
 
             if (!srcNull) {
                 // both not null

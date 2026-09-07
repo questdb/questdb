@@ -192,6 +192,7 @@ public class TableWriterMetadata extends AbstractRecordMetadata implements Table
                     origWriterIndex
             );
             colMeta.setParquetEncodingConfig(hasParquetEncodingConfig ? TableUtils.getParquetEncodingConfig(metaMem, i) : 0);
+            colMeta.setNotNullFlag(TableUtils.isColumnNotNull(metaMem, i) || i == timestampIndex);
             columnMetadata.add(colMeta);
             if (type > -1) {
                 columnNameIndexMap.put(nameStr, i);

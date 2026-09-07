@@ -41,6 +41,7 @@ import org.jetbrains.annotations.NotNull;
 
 class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final Decimal128 decimal128A = new Decimal128();
     private final Decimal128 decimal128B = new Decimal128();
     private final int position;
@@ -51,6 +52,7 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
     public SumDecimal32GroupByFunction(@NotNull Function arg, int position) {
         super(ColumnType.getDecimalType(Decimals.getDecimalTagPrecision(ColumnType.DECIMAL128), ColumnType.getDecimalScale(arg.getType())));
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.position = position;
         this.decimal128A.setScale(0);
         this.decimal128B.setScale(0);
@@ -59,7 +61,7 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         int value = arg.getDecimal32(record);
-        if (value != Decimals.DECIMAL32_NULL) {
+        if (isArgNotNull || value != Decimals.DECIMAL32_NULL) {
             mapValue.putLong(valueIndex + 1, value);
         } else {
             mapValue.putLong(valueIndex + 1, Decimals.DECIMAL64_NULL);
@@ -70,11 +72,11 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         int value = arg.getDecimal32(record);
-        if (value != Decimals.DECIMAL32_NULL) {
+        if (isArgNotNull || value != Decimals.DECIMAL32_NULL) {
             try {
                 if (!mapValue.getBool(valueIndex + 2)) {
                     final long decimal64B = mapValue.getDecimal64(valueIndex + 1);
-                    if (decimal64B == Decimals.DECIMAL64_NULL) {
+                    if (!isArgNotNull && decimal64B == Decimals.DECIMAL64_NULL) {
                         mapValue.putLong(valueIndex + 1, value);
                     } else {
                         add(mapValue, value, decimal64B);
@@ -103,7 +105,7 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
             rec.getDecimal128(valueIndex, sink);
         } else {
             value = rec.getDecimal64(valueIndex + 1);
-            if (value == Decimals.DECIMAL64_NULL) {
+            if (!isArgNotNull && value == Decimals.DECIMAL64_NULL) {
                 sink.ofRawNull();
             } else {
                 sink.ofRaw(value < 0 ? -1 : 0, value);
@@ -178,7 +180,7 @@ class SumDecimal32GroupByFunction extends Decimal128Function implements GroupByF
             // dest overflown, it cannot be null
             long decimal64A = srcValue.getDecimal64(valueIndex + 1);
             destValue.getDecimal128(valueIndex, decimal128A);
-            if (decimal64A != Decimals.DECIMAL64_NULL) {
+            if (isArgNotNull || decimal64A != Decimals.DECIMAL64_NULL) {
                 // both not null
                 Decimal128.uncheckedAdd(decimal128A, decimal64A);
                 destValue.putDecimal128(valueIndex, decimal128A);

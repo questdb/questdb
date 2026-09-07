@@ -64,7 +64,8 @@ public class CopyWalSegmentUtils {
             int commitMode,
             int newColumnType,
             @Nullable SymbolTable symbolTable,
-            @Nullable SymbolMapWriterLite symbolMapWriter
+            @Nullable SymbolMapWriterLite symbolMapWriter,
+            boolean notNull
     ) {
         Path newSegPath = Path.PATH.get().of(walPath).slash().put(newSegment);
         int setPathRoot = newSegPath.size();
@@ -153,7 +154,8 @@ public class CopyWalSegmentUtils {
                         symbolMapWriter,
                         ff,
                         primaryColumn.getExtendSegmentSize(),
-                        columnRollSink
+                        columnRollSink,
+                        notNull
                 );
                 if (commitMode != CommitMode.NOSYNC) {
                     ff.fsync(srcFixFd);

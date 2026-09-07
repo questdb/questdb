@@ -31,7 +31,10 @@ import io.questdb.std.Transient;
 
 public interface TableRecordMetadataSink extends Mutable {
 
-    void addColumn(
+    /**
+     * Legacy overload retained for sinks compiled against the pre-NOT-NULL API.
+     */
+    default void addColumn(
             String columnName,
             int columnType,
             byte indexType,
@@ -42,7 +45,53 @@ public interface TableRecordMetadataSink extends Mutable {
             boolean symbolIsCached,
             int symbolCapacity,
             @Transient IntList coveringColumnIndices
-    );
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                indexType,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                writerIndex,
+                isDedupKey,
+                symbolIsCached,
+                symbolCapacity,
+                false
+        );
+    }
+
+    default void addColumn(
+            String columnName,
+            int columnType,
+            byte indexType,
+            int indexValueBlockCapacity,
+            boolean symbolTableStatic,
+            int writerIndex,
+            boolean isDedupKey,
+            boolean symbolIsCached,
+            int symbolCapacity,
+            boolean isNotNull
+    ) {
+        addColumn(
+                columnName,
+                columnType,
+                indexType,
+                indexValueBlockCapacity,
+                symbolTableStatic,
+                writerIndex,
+                isDedupKey,
+                symbolIsCached,
+                symbolCapacity,
+                null
+        );
+    }
+
+    /**
+     * Supplies covering-index metadata when the source sequencer exposes it.
+     * Older sinks may ignore it; the default keeps the sink API compatible.
+     */
+    default void setColumnCovering(int columnIndex, @Transient IntList coveringColumnIndices) {
+    }
 
     default boolean requiresFullReadColumnOrder() {
         return false;

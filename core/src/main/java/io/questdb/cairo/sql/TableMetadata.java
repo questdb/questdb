@@ -31,4 +31,10 @@ import io.questdb.cairo.TableStructure;
  * table-level metadata.
  */
 public interface TableMetadata extends TableRecordMetadata, TableStructure {
+    // Resolves diamond between RecordMetadata.isNotNull() and TableStructure.isNotNull().
+    // Concrete implementations override via AbstractRecordMetadata.
+    @Override
+    default boolean isNotNull(int columnIndex) {
+        return false;
+    }
 }

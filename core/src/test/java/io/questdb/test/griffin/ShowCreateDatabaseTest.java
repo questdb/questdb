@@ -617,11 +617,11 @@ public class ShowCreateDatabaseTest extends AbstractCairoTest {
                     .returns("""
                             ddl
                             CREATE TABLE 'alpha' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \tv DOUBLE
                             ) timestamp(ts) PARTITION BY DAY;
                             CREATE TABLE 'beta' (\s
-                            \tts TIMESTAMP,
+                            \tts TIMESTAMP NOT NULL,
                             \ts SYMBOL
                             ) timestamp(ts) PARTITION BY DAY;
                             """);

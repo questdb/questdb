@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class EqTimestampFunctionFactory implements FunctionFactory {
@@ -90,6 +91,22 @@ public class EqTimestampFunctionFactory implements FunctionFactory {
             Misc.free(left);
             Misc.free(right);
             return BooleanConstant.of(leftVal == rightVal);
+        }
+
+        // `x = NULL` / `x IS NULL` on a NOT NULL TIMESTAMP column is always
+        // false (NegatingFunctionFactory flips the constant for IS NOT NULL).
+        // Check only when exactly one side is a constant; calling
+        // getTimestamp on the constant here is safe because each side reads
+        // at most once further down when we wrap it in a caching function.
+        if (left.isConstant() && right.isNotNull() && left.getTimestamp(null) == Numbers.LONG_NULL) {
+            Misc.free(left);
+            Misc.free(right);
+            return BooleanConstant.FALSE;
+        }
+        if (right.isConstant() && left.isNotNull() && right.getTimestamp(null) == Numbers.LONG_NULL) {
+            Misc.free(left);
+            Misc.free(right);
+            return BooleanConstant.FALSE;
         }
 
         if (leftType == rightType) {

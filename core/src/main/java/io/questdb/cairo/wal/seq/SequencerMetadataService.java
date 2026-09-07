@@ -51,6 +51,7 @@ public class SequencerMetadataService implements MetadataServiceStub {
             int indexValueBlockCapacity,
             boolean isSequential,
             boolean isDedupKey,
+            boolean isNotNull,
             SecurityContext securityContext
     ) {
         metadata.addColumn(
@@ -60,7 +61,8 @@ public class SequencerMetadataService implements MetadataServiceStub {
                 symbolCacheFlag,
                 indexType,
                 indexValueBlockCapacity,
-                isDedupKey
+                isDedupKey,
+                isNotNull
         );
     }
 
@@ -132,6 +134,11 @@ public class SequencerMetadataService implements MetadataServiceStub {
     @Override
     public void renameColumn(@NotNull CharSequence columnName, @NotNull CharSequence newName, SecurityContext securityContext) {
         metadata.renameColumn(columnName, newName);
+    }
+
+    @Override
+    public void setColumnNotNull(CharSequence columnName, boolean isNotNull) {
+        metadata.setColumnNotNull(columnName, isNotNull);
     }
 
     @Override

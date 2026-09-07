@@ -55,7 +55,7 @@ public class CastIntToDoubleFunctionFactory implements FunctionFactory {
             // cast never disagrees with an implicit read of the same expression. getDouble()
             // reads getInt(), so overflowing INT arithmetic wraps here as it does in i * j + 0.0.
             final int value = arg.getInt(rec);
-            return value != Numbers.INT_NULL ? value : Double.NaN;
+            return arg.isNotNull() || value != Numbers.INT_NULL ? value : Double.NaN;
         }
     }
 }

@@ -43,12 +43,14 @@ import org.jetbrains.annotations.NotNull;
 public class FirstTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     protected final Function arg;
     protected final int argColumnIndex;
+    protected final boolean isArgNotNull;
     protected int valueIndex;
 
     public FirstTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
         super(timestampType);
         this.arg = arg;
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, timestampType);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -184,7 +186,7 @@ public class FirstTimestampGroupByFunction extends TimestampFunction implements 
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

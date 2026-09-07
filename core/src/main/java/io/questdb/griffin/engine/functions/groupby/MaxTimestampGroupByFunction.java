@@ -43,9 +43,8 @@ import org.jetbrains.annotations.NotNull;
 public class MaxTimestampGroupByFunction extends TimestampFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
     private final int argColumnIndex;
-    // Set when arg is the designated timestamp column. Page frame data is sorted ASC by the designated
-    // timestamp, so the last row of any frame is its maximum and computeBatch can skip the column scan.
     private boolean isDesignated;
+    private final boolean isArgNotNull;
     private int valueIndex;
 
     public MaxTimestampGroupByFunction(@NotNull Function arg, int timestampType) {
@@ -54,6 +53,7 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
         // The factory derives timestampType from arg.getType(), so this check also
         // filters out non-direct args (e.g., CASTs) that happen to produce timestamps.
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, timestampType);
+        this.isArgNotNull = arg.isNotNull();
     }
 
     @Override
@@ -174,7 +174,9 @@ public class MaxTimestampGroupByFunction extends TimestampFunction implements Gr
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        // Ordinary NOT NULL timestamps stay on the per-row path because their sentinel is valid
+        // data. Designated timestamps cannot contain that sentinel and use the sorted-frame path.
+        return isDesignated || !isArgNotNull;
     }
 
     @Override

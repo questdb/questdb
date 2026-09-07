@@ -38,6 +38,7 @@ import io.questdb.std.Numbers;
 
 public class CountDistinctLongGroupByFunction extends LongFunction implements UnaryFunction, GroupByFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final GroupByLongHashSet setA;
     private final GroupByLongHashSet setB;
     private long cardinality;
@@ -45,6 +46,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
 
     public CountDistinctLongGroupByFunction(Function arg, int setInitialCapacity, double setLoadFactor) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         setA = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
         setB = new GroupByLongHashSet(setInitialCapacity, setLoadFactor, Numbers.LONG_NULL);
     }
@@ -58,7 +60,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public void computeFirst(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull || value != Numbers.LONG_NULL) {
             mapValue.putLong(valueIndex, 1);
             mapValue.putLong(valueIndex + 1, value);
             cardinality++;
@@ -71,7 +73,7 @@ public class CountDistinctLongGroupByFunction extends LongFunction implements Un
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final long value = arg.getLong(record);
-        if (value != Numbers.LONG_NULL) {
+        if (isArgNotNull || value != Numbers.LONG_NULL) {
             final long cnt = mapValue.getLong(valueIndex);
             if (cnt == 0) {
                 mapValue.putLong(valueIndex, 1);

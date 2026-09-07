@@ -1903,7 +1903,9 @@ public class MonotonicTimestampPruningTest extends AbstractCairoTest {
             }
         }
         final String type = nano ? "TIMESTAMP_NS" : "TIMESTAMP";
-        execute("CREATE TABLE x (i INT, ts " + type + ", ts2 " + type + ") TIMESTAMP(ts) PARTITION BY MONTH");
+        // Keep the comparison column's nullability identical to the implicitly NOT NULL designated
+        // timestamp. Predicates using a NULL sentinel intentionally differ by nullability.
+        execute("CREATE TABLE x (i INT, ts " + type + ", ts2 " + type + " NOT NULL) TIMESTAMP(ts) PARTITION BY MONTH");
         final StringBuilder insert = new StringBuilder("INSERT INTO x VALUES ");
         for (int i = 0; i < rows; i++) {
             if (i > 0) {

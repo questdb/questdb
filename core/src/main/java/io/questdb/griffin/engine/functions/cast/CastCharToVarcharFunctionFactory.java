@@ -58,6 +58,9 @@ public class CastCharToVarcharFunctionFactory implements FunctionFactory {
             }
             return new VarcharConstant(String.valueOf(value));
         }
+        if (func.isNotNull()) {
+            return new FuncNotNull(func);
+        }
         return new Func(func);
     }
 
@@ -89,6 +92,29 @@ public class CastCharToVarcharFunctionFactory implements FunctionFactory {
                 return sinkB;
             }
             return null;
+        }
+    }
+
+    private static class FuncNotNull extends AbstractCastNotNullToVarcharFunction {
+        private final Utf8StringSink sinkA = new Utf8StringSink();
+        private final Utf8StringSink sinkB = new Utf8StringSink();
+
+        public FuncNotNull(Function arg) {
+            super(arg);
+        }
+
+        @Override
+        public Utf8Sequence getVarcharA(Record rec) {
+            sinkA.clear();
+            sinkA.put(arg.getChar(rec));
+            return sinkA;
+        }
+
+        @Override
+        public Utf8Sequence getVarcharB(Record rec) {
+            sinkB.clear();
+            sinkB.put(arg.getChar(rec));
+            return sinkB;
         }
     }
 }

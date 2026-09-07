@@ -65,7 +65,9 @@ public class BitwiseXorIntFunctionFactory implements FunctionFactory {
         public int getInt(Record rec) {
             final int l = left.getInt(rec);
             final int r = right.getInt(rec);
-            return l != Numbers.INT_NULL && r != Numbers.INT_NULL ? l ^ r : Numbers.INT_NULL;
+            return (left.isNotNull() || l != Numbers.INT_NULL) && (right.isNotNull() || r != Numbers.INT_NULL)
+                    ? l ^ r
+                    : Numbers.INT_NULL;
         }
 
         @Override

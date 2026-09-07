@@ -92,7 +92,7 @@ public class CopyImportRequestJob extends SynchronizedJob implements Closeable {
                         .$("CREATE TABLE IF NOT EXISTS \"")
                         .$(statusTableName)
                         .$("\" (" +
-                                "ts timestamp, " + // 0
+                                "ts timestamp NOT NULL, " + // 0
                                 "id varchar, " + // 1
                                 "table_name symbol, " + // 2
                                 "file symbol, " + // 3

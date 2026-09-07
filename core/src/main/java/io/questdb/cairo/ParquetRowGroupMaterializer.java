@@ -195,7 +195,7 @@ final class ParquetRowGroupMaterializer {
                 if (ColumnType.isVarSize(columnType)) {
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            metadata.isNotNull(columnIndex) ? (columnType | ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT) : columnType,
                             columnId,
                             0,
                             columnDataAddress,
@@ -212,7 +212,7 @@ final class ParquetRowGroupMaterializer {
                     final MemoryR valuesMemory = symbolTableProvider.getSymbolValuesMemory(columnIndex);
                     final long valuesSize = offsetsMemory.getLong(SymbolMapWriter.keyToOffset(symbolCount));
                     int encoderColumnType = columnType;
-                    if (!symbolTableProvider.containsNullValue(columnIndex)) {
+                    if (metadata.isNotNull(columnIndex)) {
                         encoderColumnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
                     }
                     descriptor.addColumn(
@@ -231,7 +231,7 @@ final class ParquetRowGroupMaterializer {
                 } else {
                     descriptor.addColumn(
                             columnName,
-                            columnType,
+                            metadata.isNotNull(columnIndex) ? (columnType | ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT) : columnType,
                             columnId,
                             0,
                             columnDataAddress,
@@ -291,7 +291,7 @@ final class ParquetRowGroupMaterializer {
                 if (columnType < 0) {
                     continue;
                 }
-                if (ColumnType.isSymbol(columnType) && !symbolTableProvider.containsNullValue(columnIndex)) {
+                if (metadata.isNotNull(columnIndex)) {
                     columnType |= ParquetColumnTypeConverter.PARQUET_SYMBOL_NOT_NULL_HINT;
                 }
                 final TableColumnMetadata columnMetadata = metadata.getColumnMetadata(columnIndex);

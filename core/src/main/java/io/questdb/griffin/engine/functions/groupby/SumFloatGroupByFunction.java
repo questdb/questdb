@@ -41,11 +41,13 @@ import org.jetbrains.annotations.NotNull;
 
 public class SumFloatGroupByFunction extends FloatFunction implements GroupByFunction, UnaryFunction {
     private final Function arg;
+    private final boolean isArgNotNull;
     private final int argColumnIndex;
     private int valueIndex;
 
     public SumFloatGroupByFunction(@NotNull Function arg) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.argColumnIndex = GroupByUtils.directArgColumnIndex(arg, ColumnType.FLOAT);
     }
 
@@ -57,7 +59,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
             final long hi = dataAddr + rowCount * (long) Float.BYTES;
             for (; dataAddr < hi; dataAddr += Float.BYTES) {
                 final float value = Unsafe.getFloat(dataAddr);
-                if (!Float.isNaN(value)) {
+                if (isArgNotNull || !Float.isNaN(value)) {
                     acc += value;
                     hasValue = true;
                 }
@@ -97,10 +99,12 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 final long rowIndex = Map.decodeBatchRowIndex(encoded);
                 final float value = Unsafe.getFloat(argAddr + (rowIndex << 2));
-                if (!Float.isNaN(value)) {
+                if (isArgNotNull || !Float.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final float current = Unsafe.getFloat(addr);
-                    Unsafe.putFloat(addr, !Float.isNaN(current) ? current + value : value);
+                    Unsafe.putFloat(addr, isArgNotNull
+                            ? (encoded < 0 ? value : current + value)
+                            : (!Float.isNaN(current) ? current + value : value));
                 }
             }
         } else {
@@ -108,10 +112,12 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
                 final long encoded = Unsafe.getLong(batchAddr + (i << 3));
                 record.setRowIndex(Map.decodeBatchRowIndex(encoded));
                 final float value = arg.getFloat(record);
-                if (!Float.isNaN(value)) {
+                if (isArgNotNull || !Float.isNaN(value)) {
                     final long addr = baseValueAddr + Map.decodeBatchOffset(encoded) + valueColumnOffset;
                     final float current = Unsafe.getFloat(addr);
-                    Unsafe.putFloat(addr, !Float.isNaN(current) ? current + value : value);
+                    Unsafe.putFloat(addr, isArgNotNull
+                            ? (encoded < 0 ? value : current + value)
+                            : (!Float.isNaN(current) ? current + value : value));
                 }
             }
         }
@@ -120,13 +126,11 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void computeNext(MapValue mapValue, Record record, long rowId) {
         final float value = arg.getFloat(record);
-        if (!Float.isNaN(value)) {
+        if (isArgNotNull) {
+            mapValue.putFloat(valueIndex, mapValue.getFloat(valueIndex) + value);
+        } else if (!Float.isNaN(value)) {
             final float sum = mapValue.getFloat(valueIndex);
-            if (!Float.isNaN(sum)) {
-                mapValue.putFloat(valueIndex, sum + value);
-            } else {
-                mapValue.putFloat(valueIndex, value);
-            }
+            mapValue.putFloat(valueIndex, !Float.isNaN(sum) ? sum + value : value);
         }
     }
 
@@ -179,13 +183,11 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
     @Override
     public void merge(MapValue destValue, MapValue srcValue) {
         final float srcSum = srcValue.getFloat(valueIndex);
-        if (!Float.isNaN(srcSum)) {
+        if (isArgNotNull) {
+            destValue.putFloat(valueIndex, destValue.getFloat(valueIndex) + srcSum);
+        } else if (!Float.isNaN(srcSum)) {
             final float destSum = destValue.getFloat(valueIndex);
-            if (!Float.isNaN(destSum)) {
-                destValue.putFloat(valueIndex, destSum + srcSum);
-            } else {
-                destValue.putFloat(valueIndex, srcSum);
-            }
+            destValue.putFloat(valueIndex, !Float.isNaN(destSum) ? destSum + srcSum : srcSum);
         }
     }
 
@@ -201,7 +203,7 @@ public class SumFloatGroupByFunction extends FloatFunction implements GroupByFun
 
     @Override
     public boolean supportsBatchComputation() {
-        return true;
+        return !isArgNotNull;
     }
 
     @Override

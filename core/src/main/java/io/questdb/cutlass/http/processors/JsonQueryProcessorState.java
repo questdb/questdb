@@ -54,6 +54,7 @@ import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.std.Decimals;
 import io.questdb.std.IntList;
 import io.questdb.std.Interval;
+import io.questdb.std.Long256;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
@@ -103,6 +104,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     private final StringSink errorMessage = new StringSink();
     private final SCSequence eventSubSequence = new SCSequence();
     private final HttpConnectionContext httpConnectionContext;
+    private final IntList isColumnNotNull = new IntList();
     private final CharSequence keepAliveHeader;
     private final Clock nanosecondClock;
     private final StringSink query = new StringSink();
@@ -176,6 +178,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         columnCount = 0;
         columnSkewList.clear();
         columnTypesAndFlags.clear();
+        isColumnNotNull.clear();
         columnNames.clear();
         queryTimestampIndex = -1;
         cursor = Misc.free(cursor);
@@ -214,6 +217,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
     public void clearFactory() {
         columnSkewList.clear();
         columnTypesAndFlags.clear();
+        isColumnNotNull.clear();
         recordCursorFactory = Misc.free(recordCursorFactory);
     }
 
@@ -472,82 +476,99 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii('"');
     }
 
-    private static void putDateValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putDateValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         final long d = rec.getDate(col);
         if (d == Long.MIN_VALUE) {
-            response.putAscii("null");
+            if (notNull) {
+                response.putAscii('"');
+                Numbers.append(response, d, false);
+                response.putAscii('"');
+            } else {
+                response.putAscii("null");
+            }
             return;
         }
         response.putAscii('"').putISODateMillis(d).putAscii('"');
     }
 
-    private static void putDecimal16Value(HttpChunkedResponse response, Record rec, int col, int type) {
+    private static void putDecimal16Value(HttpChunkedResponse response, Record rec, int col, int type, boolean notNull) {
         short l = rec.getDecimal16(col);
-        if (l == Decimals.DECIMAL16_NULL) {
+        if (l == Decimals.DECIMAL16_NULL && !notNull) {
             response.putAscii("null");
             return;
         }
+        // appendNonNull (vs Decimals.append) skips the sentinel short-circuit.
         response.putAscii('"');
-        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        Decimals.appendNonNull(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
-    private static void putDecimal32Value(HttpChunkedResponse response, Record rec, int col, int type) {
+    private static void putDecimal32Value(HttpChunkedResponse response, Record rec, int col, int type, boolean notNull) {
         int l = rec.getDecimal32(col);
-        if (l == Decimals.DECIMAL32_NULL) {
+        if (l == Decimals.DECIMAL32_NULL && !notNull) {
             response.putAscii("null");
             return;
         }
         response.putAscii('"');
-        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        Decimals.appendNonNull(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
-    private static void putDecimal64Value(HttpChunkedResponse response, Record rec, int col, int type) {
+    private static void putDecimal64Value(HttpChunkedResponse response, Record rec, int col, int type, boolean notNull) {
         long l = rec.getDecimal64(col);
-        if (l == Decimals.DECIMAL64_NULL) {
+        if (l == Decimals.DECIMAL64_NULL && !notNull) {
             response.putAscii("null");
             return;
         }
         response.putAscii('"');
-        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        Decimals.appendNonNull(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
-    private static void putDecimal8Value(HttpChunkedResponse response, Record rec, int col, int type) {
+    private static void putDecimal8Value(HttpChunkedResponse response, Record rec, int col, int type, boolean notNull) {
         byte l = rec.getDecimal8(col);
-        if (l == Decimals.DECIMAL8_NULL) {
+        if (l == Decimals.DECIMAL8_NULL && !notNull) {
             response.putAscii("null");
             return;
         }
         response.putAscii('"');
-        Decimals.append(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
+        Decimals.appendNonNull(l, ColumnType.getDecimalPrecision(type), ColumnType.getDecimalScale(type), response);
         response.putAscii('"');
     }
 
-    private static void putGeoHashStringByteValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
-        byte l = rec.getGeoByte(col);
-        GeoHashes.append(l, bitFlags, response);
+    private static void putGeoHashStringValue(HttpChunkedResponse response, long value, int bitFlags, boolean notNull) {
+        if (value == GeoHashes.NULL && !notNull) {
+            response.putAscii("null");
+            return;
+        }
+        response.putAscii('"');
+        if (bitFlags < 0) {
+            GeoHashes.appendCharsUnsafe(value, -bitFlags, response);
+        } else {
+            GeoHashes.appendBinaryStringUnsafe(value, bitFlags, response);
+        }
+        response.putAscii('"');
     }
 
-    private static void putGeoHashStringIntValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
-        int l = rec.getGeoInt(col);
-        GeoHashes.append(l, bitFlags, response);
+    private static void putGeoHashStringByteValue(HttpChunkedResponse response, Record rec, int col, int bitFlags, boolean notNull) {
+        putGeoHashStringValue(response, rec.getGeoByte(col), bitFlags, notNull);
     }
 
-    private static void putGeoHashStringLongValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
-        long l = rec.getGeoLong(col);
-        GeoHashes.append(l, bitFlags, response);
+    private static void putGeoHashStringIntValue(HttpChunkedResponse response, Record rec, int col, int bitFlags, boolean notNull) {
+        putGeoHashStringValue(response, rec.getGeoInt(col), bitFlags, notNull);
     }
 
-    private static void putGeoHashStringShortValue(HttpChunkedResponse response, Record rec, int col, int bitFlags) {
-        short l = rec.getGeoShort(col);
-        GeoHashes.append(l, bitFlags, response);
+    private static void putGeoHashStringLongValue(HttpChunkedResponse response, Record rec, int col, int bitFlags, boolean notNull) {
+        putGeoHashStringValue(response, rec.getGeoLong(col), bitFlags, notNull);
     }
 
-    private static void putIPv4Value(HttpChunkedResponse response, Record rec, int col) {
+    private static void putGeoHashStringShortValue(HttpChunkedResponse response, Record rec, int col, int bitFlags, boolean notNull) {
+        putGeoHashStringValue(response, rec.getGeoShort(col), bitFlags, notNull);
+    }
+
+    private static void putIPv4Value(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         final int i = rec.getIPv4(col);
-        if (i == Numbers.IPv4_NULL) {
+        if (i == Numbers.IPv4_NULL && !notNull) {
             response.putAscii("null");
         } else {
             response.putAscii('"');
@@ -556,38 +577,46 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         }
     }
 
-    private static void putIntValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putIntValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         final int i = rec.getInt(col);
-        if (i == Integer.MIN_VALUE) {
+        if (i == Integer.MIN_VALUE && !notNull) {
             response.putAscii("null");
         } else {
-            response.put(i);
+            // checkNaN=false -- otherwise Numbers.append rewrites INT_NULL to the text "null".
+            Numbers.append(response, (long) i, false);
         }
     }
 
-    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col, int intervalType) {
+    private static void putIntervalValue(HttpChunkedResponse response, Record rec, int col, int intervalType, boolean notNull) {
         final Interval interval = rec.getInterval(col);
-        if (Interval.NULL.equals(interval)) {
+        if (Interval.NULL.equals(interval) && !notNull) {
             response.putAscii("null");
             return;
         }
         response.putAscii('"').put(interval, intervalType).putAscii('"');
     }
 
-    private static void putLong256Value(HttpChunkedResponse response, Record rec, int col) {
+    private static void putLong256Value(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
+        Long256 value = rec.getLong256A(col);
+        if (value == null) {
+            response.putAscii("null");
+            return;
+        }
         response.putAscii('"');
-        rec.getLong256(col, response);
+        Numbers.appendLong256(value.getLong0(), value.getLong1(), value.getLong2(), value.getLong3(), response, !notNull);
         response.putAscii('"');
     }
 
-    private static void putLongValue(HttpChunkedResponse response, Record rec, int col, boolean quoteLargeNum) {
+    private static void putLongValue(HttpChunkedResponse response, Record rec, int col, boolean quoteLargeNum, boolean notNull) {
         final long l = rec.getLong(col);
-        if (l == Long.MIN_VALUE) {
+        if (l == Long.MIN_VALUE && !notNull) {
             response.putAscii("null");
         } else if (quoteLargeNum) {
-            response.putAscii('"').put(l).putAscii('"');
+            response.putAscii('"');
+            Numbers.append(response, l, false);
+            response.putAscii('"');
         } else {
-            response.put(l);
+            Numbers.append(response, l, false);
         }
     }
 
@@ -615,19 +644,26 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         putStringOrNull(response, rec.getSymA(col));
     }
 
-    private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col, TimestampDriver driver) {
+    private static void putTimestampValue(HttpChunkedResponse response, Record rec, int col, TimestampDriver driver, boolean notNull) {
         final long t = rec.getTimestamp(col);
         if (t == Long.MIN_VALUE) {
-            response.putAscii("null");
+            if (notNull) {
+                // keep timestamp string-typed for JSON consumers; emit the raw bit pattern.
+                response.putAscii('"');
+                Numbers.append(response, t, false);
+                response.putAscii('"');
+            } else {
+                response.putAscii("null");
+            }
             return;
         }
         response.putAscii('"').putISODate(driver, t).putAscii('"');
     }
 
-    private static void putUuidValue(HttpChunkedResponse response, Record rec, int col) {
+    private static void putUuidValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
         long lo = rec.getLong128Lo(col);
         long hi = rec.getLong128Hi(col);
-        if (Uuid.isNull(lo, hi)) {
+        if (Uuid.isNull(lo, hi) && !notNull) {
             response.putAscii("null");
             return;
         }
@@ -684,6 +720,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         int flags = GeoHashes.getBitFlags(columnType);
         this.columnTypesAndFlags.add(columnType);
         this.columnTypesAndFlags.add(flags);
+        this.isColumnNotNull.add(metadata.isNotNull(i) ? 1 : 0);
         this.columnNames.add(columnName);
     }
 
@@ -781,6 +818,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
 
             int columnIdx = columnSkewList.size() > 0 ? columnSkewList.getQuick(columnIndex) : columnIndex;
             int columnType = columnTypesAndFlags.getQuick(2 * columnIndex);
+            boolean notNull = isColumnNotNull.getQuick(columnIndex) != 0;
             switch (ColumnType.tagOf(columnType)) {
                 case ColumnType.BOOLEAN:
                     putBooleanValue(response, record, columnIdx);
@@ -789,22 +827,22 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putByteValue(response, record, columnIdx);
                     break;
                 case ColumnType.DOUBLE:
-                    putDoubleValue(response, record, columnIdx);
+                    putDoubleValue(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.FLOAT:
-                    putFloatValue(response, record, columnIdx);
+                    putFloatValue(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.INT:
-                    putIntValue(response, record, columnIdx);
+                    putIntValue(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.LONG:
-                    putLongValue(response, record, columnIdx, quoteLargeNum);
+                    putLongValue(response, record, columnIdx, quoteLargeNum, notNull);
                     break;
                 case ColumnType.DATE:
-                    putDateValue(response, record, columnIdx);
+                    putDateValue(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.TIMESTAMP:
-                    putTimestampValue(response, record, columnIdx, ColumnType.getTimestampDriver(columnType));
+                    putTimestampValue(response, record, columnIdx, ColumnType.getTimestampDriver(columnType), notNull);
                     break;
                 case ColumnType.SHORT:
                     putShortValue(response, record, columnIdx);
@@ -825,19 +863,19 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     putBinValue(response);
                     break;
                 case ColumnType.LONG256:
-                    putLong256Value(response, record, columnIdx);
+                    putLong256Value(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.GEOBYTE:
-                    putGeoHashStringByteValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    putGeoHashStringByteValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1), notNull);
                     break;
                 case ColumnType.GEOSHORT:
-                    putGeoHashStringShortValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    putGeoHashStringShortValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1), notNull);
                     break;
                 case ColumnType.GEOINT:
-                    putGeoHashStringIntValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    putGeoHashStringIntValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1), notNull);
                     break;
                 case ColumnType.GEOLONG:
-                    putGeoHashStringLongValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1));
+                    putGeoHashStringLongValue(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex + 1), notNull);
                     break;
                 case ColumnType.RECORD:
                     putRecValue(response);
@@ -846,34 +884,34 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
                     response.putAscii("null");
                     break;
                 case ColumnType.UUID:
-                    putUuidValue(response, record, columnIdx);
+                    putUuidValue(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.IPv4:
-                    putIPv4Value(response, record, columnIdx);
+                    putIPv4Value(response, record, columnIdx, notNull);
                     break;
                 case ColumnType.INTERVAL:
-                    putIntervalValue(response, record, columnIdx, columnType);
+                    putIntervalValue(response, record, columnIdx, columnType, notNull);
                     break;
                 case ColumnType.ARRAY:
                     putArrayValue(response, columnIdx, columnType);
                     break;
                 case ColumnType.DECIMAL8:
-                    putDecimal8Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    putDecimal8Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex), notNull);
                     break;
                 case ColumnType.DECIMAL16:
-                    putDecimal16Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    putDecimal16Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex), notNull);
                     break;
                 case ColumnType.DECIMAL32:
-                    putDecimal32Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    putDecimal32Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex), notNull);
                     break;
                 case ColumnType.DECIMAL64:
-                    putDecimal64Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    putDecimal64Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex), notNull);
                     break;
                 case ColumnType.DECIMAL128:
-                    putDecimal128Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    putDecimal128Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex), notNull);
                     break;
                 case ColumnType.DECIMAL256:
-                    putDecimal256Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex));
+                    putDecimal256Value(response, record, columnIdx, columnTypesAndFlags.getQuick(2 * columnIndex), notNull);
                     break;
                 default:
                     // this should never happen since metadata is already validated
@@ -1082,10 +1120,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii(']');
     }
 
-    private void putDecimal128Value(HttpChunkedResponse response, Record rec, int col, int type) {
+    private void putDecimal128Value(HttpChunkedResponse response, Record rec, int col, int type, boolean notNull) {
         var decimal128 = httpConnectionContext.getSqlExecutionContext().getDecimal128();
         rec.getDecimal128(col, decimal128);
-        if (decimal128.isNull()) {
+        if (decimal128.isNull() && !notNull) {
             response.putAscii("null");
             return;
         }
@@ -1094,10 +1132,10 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii('"');
     }
 
-    private void putDecimal256Value(HttpChunkedResponse response, Record rec, int col, int type) {
+    private void putDecimal256Value(HttpChunkedResponse response, Record rec, int col, int type, boolean notNull) {
         var decimal256 = httpConnectionContext.getSqlExecutionContext().getDecimal256();
         rec.getDecimal256(col, decimal256);
-        if (decimal256.isNull()) {
+        if (decimal256.isNull() && !notNull) {
             response.putAscii("null");
             return;
         }
@@ -1106,12 +1144,26 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         response.putAscii('"');
     }
 
-    private void putDoubleValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getDouble(col));
+    private void putDoubleValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
+        double v = rec.getDouble(col);
+        if (!Numbers.isFinite(v) && notNull) {
+            response.putAscii('"');
+            Numbers.append(response, v);
+            response.putAscii('"');
+        } else {
+            response.put(v);
+        }
     }
 
-    private void putFloatValue(HttpChunkedResponse response, Record rec, int col) {
-        response.put(rec.getFloat(col));
+    private void putFloatValue(HttpChunkedResponse response, Record rec, int col, boolean notNull) {
+        float v = rec.getFloat(col);
+        if (!Numbers.isFinite(v) && notNull) {
+            response.putAscii('"');
+            Numbers.append(response, v);
+            response.putAscii('"');
+        } else {
+            response.put(v);
+        }
     }
 
     private void putVarcharValue(HttpChunkedResponse response, int columnIdx) {
@@ -1163,6 +1215,7 @@ public class JsonQueryProcessorState implements Mutable, Closeable {
         this.columnNames.clear();
         columnSkewList.clear();
         this.columnTypesAndFlags.clear();
+        this.isColumnNotNull.clear();
         if (columnNames != null) {
             columnCount = 0;
             long rawLo = columnNames.lo();

@@ -2713,11 +2713,20 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Control: a non-zero divisor divides normally and must not be folded to NULL.
             assertJitScalarAndVectorMatchJava("select id from dz where d / 2.0 > 0.0", "id\n1\n3\n18\n");
             assertJitScalarAndVectorMatchJava("select id from dz where f / 2.0 > 0.0", "id\n1\n3\n18\n");
-            // Control: multiplication does NOT fold a non-finite result on either path
-            // (MulDoubleFunctionFactory returns the raw product), so overflow must stay +Infinity
-            // on both and keep ordering like an extreme.
-            assertJitScalarAndVectorMatchJava("select id from dz where d * 1e308 * 1e308 > 0.0",
-                    "id\n1\n3\n18\n");
+            // A nullable arithmetic result normalizes overflow to NULL at comparison time.
+            assertJitScalarAndVectorMatchJavaOnEmptyResult(
+                    "select id from dz where d * 1e308 * 1e308 > 0.0",
+                    noRows
+            );
+
+            // A non-finite value stored in a NOT NULL column remains data.
+            execute("create table dznn (id int, d double not null)");
+            execute("insert into dznn select id, d from dz");
+            execute("insert into dznn values (21, 'Infinity')");
+            assertJitScalarAndVectorMatchJava(
+                    "select id from dznn where d > 0.0",
+                    "id\n1\n3\n18\n21\n"
+            );
         });
     }
 

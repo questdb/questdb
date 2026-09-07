@@ -59,14 +59,19 @@ public class RemIntFunctionFactory implements FunctionFactory {
         @Override
         public int getInt(Record rec) {
             int l = this.left.getInt(rec);
-            if (l == Numbers.INT_NULL) {
+            if (!left.isNotNull() && l == Numbers.INT_NULL) {
                 return Numbers.INT_NULL;
             }
             int r = this.right.getInt(rec);
-            if (r == 0 || r == Numbers.INT_NULL) {
+            if (r == 0 || (!right.isNotNull() && r == Numbers.INT_NULL)) {
                 return Numbers.INT_NULL;
             }
             return l % r;
+        }
+
+        @Override
+        public boolean isNotNull() {
+            return false;
         }
 
         @Override

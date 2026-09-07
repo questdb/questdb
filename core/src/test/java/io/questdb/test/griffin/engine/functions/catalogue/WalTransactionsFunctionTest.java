@@ -73,7 +73,7 @@ public class WalTransactionsFunctionTest extends AbstractCairoTest {
                     \tside SYMBOL CAPACITY 256 CACHE,
                     \tprice DOUBLE,
                     \tamount DOUBLE,
-                    \ttimestamp TIMESTAMP
+                    \ttimestamp TIMESTAMP NOT NULL
                     ) timestamp(timestamp) PARTITION BY DAY WAL
                     """);
 

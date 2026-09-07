@@ -45,6 +45,12 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
      */
     protected final Function arg;
     /**
+     * Whether the argument is known NOT NULL at plan time. Subclasses gate
+     * their sentinel-skip on this so that NOT NULL columns still accept
+     * the bit pattern that would otherwise read as NULL.
+     */
+    protected final boolean isArgNotNull;
+    /**
      * Primary hash set for counting distinct values.
      */
     protected final GroupByIntHashSet setA;
@@ -70,6 +76,7 @@ public abstract class AbstractCountDistinctIntGroupByFunction extends LongFuncti
      */
     public AbstractCountDistinctIntGroupByFunction(Function arg, GroupByIntHashSet setA, GroupByIntHashSet setB) {
         this.arg = arg;
+        this.isArgNotNull = arg != null && arg.isNotNull();
         this.setA = setA;
         this.setB = setB;
     }
