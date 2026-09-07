@@ -76,6 +76,10 @@ public final class IndexType {
         return indexType != NONE;
     }
 
+    public static boolean isBitmap(byte indexType) {
+        return indexType == BITMAP;
+    }
+
     public static boolean isPosting(byte indexType) {
         return indexType == POSTING || indexType == POSTING_DELTA || indexType == POSTING_EF;
     }
