@@ -35,6 +35,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
@@ -985,6 +986,150 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
                     " AND s IS NOT NULL AND s <> ('v' || i)::varchar")
                     .noRandomAccess().expectSize().returns("c\n0\n");
         });
+    }
+
+    /**
+     * The swap RETIRES the source directory, and the disk it holds is the whole point of compacting.
+     * Draining the remove candidate at swap time is what actually reclaims it: parking it on
+     * {@code partitionRemoveCandidates} does not, because the next commit CLEARS that list without
+     * draining it, so the retired copy sat on disk until the writer was recycled - right after a
+     * compaction that ran to reclaim space, the partition cost twice its size. The writer is deliberately
+     * left live here, since that is the steady state of a continuously ingesting table.
+     */
+    @Test
+    public void testScanDeletesTheRetiredDirectoryWhileTheWriterStaysLive() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE cx AS (SELECT x::INT i," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // A later, plain day, so 2020-01-01 is never the active partition and the backfill is O3.
+            execute("INSERT INTO cx SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cx SELECT x::INT + 70000 i," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("cx");
+            final String retiredDir;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader txReader = reader.getTxFile();
+                Assert.assertTrue("2020-01-01 should be composite", txReader.isPartitionComposite(0));
+                retiredDir = partitionDir(
+                        token,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        txReader.getPartitionTimestampByIndex(0),
+                        txReader.getPartitionNameTxn(0)
+                );
+            }
+            final FilesFacade ff = configuration.getFilesFacade();
+            Assert.assertTrue("fixture is wrong, source directory does not exist", dirExists(ff, retiredDir));
+
+            // Only readers: a live writer is exactly the condition this test is about.
+            engine.releaseAllReaders();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertFalse("2020-01-01 should have been compacted", reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+            Assert.assertFalse("the retired directory is still on disk", dirExists(ff, retiredDir));
+            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
+     * A swap handed to a BUSY writer is queued and applied later, on the writer's own thread. The sweep
+     * used to record nothing about that, so the next interval built the whole staging copy over again -
+     * one redundant full-partition copy per interval, of which only one swap could ever be used.
+     */
+    @Test
+    public void testScanDoesNotRebuildAStagingCopyWhileItsSwapIsStillQueued() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+
+        final AtomicInteger stagingMkdirs = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
+                    stagingMkdirs.incrementAndGet();
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE cx AS (SELECT x::INT i," +
+                    " timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760))" +
+                    " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO cx SELECT x::INT + 90000 i," +
+                    " timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)");
+            drainWalQueue();
+            execute("INSERT INTO cx SELECT x::INT + 70000 i," +
+                    " timestamp_sequence('2020-01-01T04:00:07', 5*1000000L) ts FROM long_sequence(200)");
+            drainWalQueue();
+
+            final TableToken token = engine.verifyTableName("cx");
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue("2020-01-01 should be composite", reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            final long interval = engine.getConfiguration().getPartitionCompactionCheckInterval() * 1000;
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:10:00.000000Z"));
+
+            // Holding the writer is what makes getWriterOrPublishCommand queue the swap instead of
+            // applying it, which is the whole condition under test.
+            try (TableWriter ignore = engine.getWriter(token, "test");
+                 PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
+                Assert.assertNotNull(ignore);
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("the first sweep should build the staging copy", 1, stagingMkdirs.get());
+
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                setCurrentMicros(currentMicros + interval + 1);
+                job.run();
+                Assert.assertEquals("later sweeps must not rebuild a copy whose swap is already queued",
+                        1, stagingMkdirs.get());
+            }
+
+            // The queued swap still lands, and the data is unchanged either way.
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
+     * The directory a partition's data actually lives in.
+     */
+    private static String partitionDir(
+            TableToken token,
+            int timestampType,
+            int partitionBy,
+            long partitionTimestamp,
+            long nameTxn
+    ) {
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token.getDirName());
+            TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
+            return path.toString();
+        }
     }
 
     private static boolean dirExists(FilesFacade ff, String dir) {

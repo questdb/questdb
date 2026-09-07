@@ -343,6 +343,62 @@ public class CoveringIndexMergeAppendTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A composite partition is scanned one piece at a time, so a piece whose file rows do not start at 0
+     * opens its index cursor at {@code minValue > 0} and the cursor skips whole BLOCKS of the key's row
+     * ids to get there. The sidecar ordinal has to skip exactly as many covered values - ONCE. A
+     * var-size covered column reads its value at {@code denseVarKeyStartCount + cachedSidecarIdx}, and
+     * {@code cachedSidecarIdx} already carries the skip, so counting it in both counters walked past the
+     * row's value and returned another row's text - while a fixed-width covered column on the very same
+     * rows stayed correct, which is why this needs both kinds of covered column in one index.
+     */
+    @Test
+    public void testVarSizeCoveredValuesOnAPieceThatStartsMidKey() throws Exception {
+        // A production-sized partition pre-splits on its own at the 50MB default; shrink the threshold so
+        // a fixture small enough to read still ends up several pieces, one of them relocated.
+        setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+        setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE v (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (txt, value), txt VARCHAR, value DOUBLE)"
+                    + " TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Well over a block's 64 row ids per key, so a piece starting part way into the day has whole
+            // blocks to skip. Text lengths straddle the 9-byte inline boundary and every eleventh is NULL.
+            execute("INSERT INTO v SELECT dateadd('s', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP),"
+                    + " 'S' || (x % " + SYMBOLS + "),"
+                    + " CASE WHEN (x % 11) = 0 THEN NULL ELSE 'v' || x || '-' || (x * 7919) END::VARCHAR,"
+                    + " x::DOUBLE FROM long_sequence(2000)");
+            drainWalQueue();
+            // A later day, so 2024-01-01 is never the active partition and the batch below is O3.
+            execute("INSERT INTO v VALUES ('2024-01-03T00:00:00Z', 'S0', 'later', 1.0)");
+            drainWalQueue();
+
+            // Lands in the middle of the day: the piece it hits is merged and rewritten at the tail, and
+            // the rows on either side stay put as pieces whose file rows start well past 0.
+            execute("INSERT INTO v SELECT dateadd('s', x::INT, '2024-01-01T00:10:00Z'::TIMESTAMP),"
+                    + " 'S' || (x % " + SYMBOLS + "), ('m' || x || '-' || (x * 104_729))::VARCHAR,"
+                    + " (100_000 + x)::DOUBLE FROM long_sequence(40)");
+            drainWalQueue();
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("v")));
+
+            // The fixture is only worth anything while the day really is composite.
+            assertQuery("SELECT pieceCount > 1 isComposite FROM table_partitions('v') WHERE name = '2024-01-01'")
+                    .noRandomAccess()
+                    .returns("""
+                            isComposite
+                            true
+                            """);
+
+            for (int s = 0; s < SYMBOLS; s++) {
+                final String where = " FROM v WHERE sym = 'S" + s + "' AND ts IN '2024-01-01'";
+                assertQuery("SELECT ts, txt, value" + where).assertsPlanContaining("CoveringIndex on: sym with:");
+                assertSqlCursors(
+                        "SELECT /*+ no_covering */ ts, txt, value" + where + " ORDER BY ts",
+                        "SELECT ts, txt, value" + where + " ORDER BY ts"
+                );
+            }
+        });
+    }
+
     private static void resetCoveringCounters() {
         PostingIndexWriter.COVERING_FASTLAG_COMMIT_COUNT.set(0);
         PostingIndexWriter.COVERING_FULL_RESEAL_COUNT.set(0);

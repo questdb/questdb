@@ -713,6 +713,46 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * {@code housekeep} calls {@code runCompaction} after EVERY commit, on the WAL-apply throughput path,
+     * and all three of its passes can only ever pick a composite partition. The gate that spares a table
+     * with none of them is {@link TxReader#hasCompositePartitions()}, so pin what it answers: false while
+     * every partition is plain, true the moment one goes composite, and false again once compaction has
+     * folded it back.
+     */
+    @Test
+    public void testHasCompositePartitionsTracksTheOnlyShapeCompactionCanPick() throws Exception {
+        assertMemoryLeak(() -> {
+            enableMergeAppend();
+            enableCompaction();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "60m");
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_DEAD_THRESHOLD_PERCENT, "99");
+
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            createDayTable("hc", "2024-01-01", 20_000);
+            Assert.assertFalse("a table of plain partitions has nothing compaction can pick", hasComposite("hc"));
+
+            // Two rewrites of the same stride, so the partition is left composite with dead rows - one
+            // alone gets folded back inline by the planner's own JOIN.
+            backdate("hc", "2024-01-01T06:00:00", 200);
+            backdate("hc", "2024-01-01T06:00:00", 200);
+            Assert.assertTrue("the backdated strides should have left 2024-01-01 composite", hasComposite("hc"));
+
+            setCurrentMicros(parseMicros("2024-01-10T02:00:00.000000Z"));
+            append("hc", "2024-01-05", 10);
+            runCompactionPasses("hc");
+            Assert.assertFalse("compaction folded the last composite partition away", hasComposite("hc"));
+        });
+    }
+
+    private static boolean hasComposite(String table) {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(table))) {
+            return reader.getTxFile().hasCompositePartitions();
+        }
+    }
+
     private static void append(String table, String day, int rows) throws Exception {
         execute("insert into " + table + " select cast(x as int) + 900000 i," +
                 " timestamp_sequence('" + day + "', 60*1000000L) ts from long_sequence(" + rows + ")");

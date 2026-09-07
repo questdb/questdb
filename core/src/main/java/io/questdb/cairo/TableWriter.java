@@ -4019,7 +4019,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             ColumnTopRecorder columnTops
     ) {
         if (inTransaction()) {
-            commit();
+            // Should never happen. Reject with error.
+            throw CairoException.nonCritical().put("cannot swap to compacted partition, in transaction [table=")
+                    .put(tableToken).put(']');
         }
 
         final int partitionIndex = getPartitionIndexByTimestamp(partitionTimestamp);
@@ -4072,7 +4074,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // composite shape - so no geometry record is published for it. Same convention compactPartition0
         // uses for the same outcome.
         txWriter.setPartitionGeometryRef(partitionTimestamp, NO_GEOMETRY_REF);
-        partitionRemoveCandidates.add(partitionTimestamp, expectedSrcNameTxn);
 
         ColumnTopSink sink = columnVersionWriter.asColumnTopSink(partitionTimestamp);
         columnTops.pushInto(sink);
@@ -4103,6 +4104,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         columnVersionWriter.commit();
         txWriter.setColumnVersion(columnVersionWriter.getVersion());
         commitTxWriterAndPublishPendingPostingSealPurges();
+
+        // Post-commit: the swap is logically complete, so the retired directory is now dead space the
+        // scoreboard alone protects. Draining it here rather than parking it on
+        // partitionRemoveCandidates is what the parquet twin does, and for the same reason: the next
+        // commit CLEARS that list without draining it, so a parked candidate leaves the whole retired
+        // copy on disk until the writer is recycled - a compaction that ends up costing disk instead of
+        // reclaiming it. Best-effort cleanup, and it must not roll back the committed transaction.
+        try {
+            safeDeletePartitionDir(partitionTimestamp, expectedSrcNameTxn);
+        } catch (Throwable e) {
+            handleHousekeepingException(e);
+        }
     }
 
     // Returns SWITCH_OK (0) on successful switch, SWITCH_SKIPPED (-2) if the partition was
@@ -9440,6 +9453,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private boolean isLastPartitionAppendBlocked() {
         return isLastPartitionParquet() || isLastPartitionComposite();
+                // TODO: consider more aggresive removal of active partition dance in wal tables
+                // || (configuration.isO3PartitionMergeAppendEnabled() && tableToken.isWal());
     }
 
     private boolean isLastPartitionClosed() {
@@ -15821,6 +15836,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     private void runCompaction(long wallClockMicros) {
         if (!PartitionBy.isPartitioned(partitionBy)) {
+            return;
+        }
+        // housekeep calls this after EVERY commit, on the WAL-apply throughput path. All three passes
+        // below - selectPartition, foldFoldableFolders, makePlainFoldableFolders - can only ever pick a
+        // composite partition, so a table with none of them pays three full passes over its partition
+        // table and two clock syscalls to reach the same answer this one bit test gives. With
+        // merge-append off that is every table, since the constructor folds any composite partition it
+        // inherits - see foldCompositePartitionsWhenMergeAppendDisabled.
+        if (!txWriter.hasCompositePartitions()) {
             return;
         }
         if (partitionCompactionPolicy == null) {

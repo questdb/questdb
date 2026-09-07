@@ -997,7 +997,8 @@ public class TableSnapshotRestore implements QuietCloseable {
             boolean isPartitioned,
             AtomicInteger cursor,
             LongList nativeIndexWork,
-            LongList nativeIndexColumnTops
+            LongList nativeIndexColumnTops,
+            LongList partitionFileRows
     ) {
         final Path path = new Path();
         try {
@@ -1012,17 +1013,18 @@ public class TableSnapshotRestore implements QuietCloseable {
                 // a worker's items across partitions, so a per-partition cache
                 // mostly misses, and the by-index getters are O(1) array reads.
                 final long partitionTimestamp;
-                final long partitionRowCount;
                 final long partitionNameTxn;
                 if (isPartitioned) {
                     partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                    partitionRowCount = txWriter.getPartitionSize(partitionIndex);
                     partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
                 } else {
                     partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                    partitionRowCount = txWriter.getTransientRowCount();
                     partitionNameTxn = -1L;
                 }
+                // The directory's whole file extent, resolved against the geometry when
+                // the work list was built - a COMPOSITE partition's files reach past its
+                // live row count.
+                final long partitionRowCount = partitionFileRows.getQuick(partitionIndex);
 
                 final int writerIndex = tableMetadata.getWriterIndex(colIdx);
                 final long columnNameTxn = columnVersionReader.getColumnNameTxn(partitionTimestamp, writerIndex);
@@ -1293,39 +1295,57 @@ public class TableSnapshotRestore implements QuietCloseable {
         // Index-aligned with nativeIndexWork: entry j holds the columnTop for work
         // item j, so the worker reads it back instead of re-running getColumnTop.
         final LongList nativeIndexColumnTops = new LongList();
-        for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
-            final long partitionTimestamp;
-            final long partitionRowCount;
-            if (isPartitioned) {
-                partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                // Read by index (O(1)), not by timestamp (O(log P)).
-                partitionRowCount = txWriter.getPartitionSize(partitionIndex);
-            } else {
-                partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                partitionRowCount = txWriter.getTransientRowCount();
-            }
-            if (partitionRowCount <= 0) {
-                continue;
-            }
-            if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
-                // Handled by prepareParquetPartitions.
-                continue;
-            }
-            for (int colIdx = 0; colIdx < columnCount; colIdx++) {
-                // Skip non-indexed and non-symbol columns (deleted columns may
-                // still carry the indexed flag).
-                if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
+        // Indexed by partitionIndex: the file rows the rebuild has to cover. A COMPOSITE
+        // partition's column files reach E, and a merge relocates a live piece into
+        // [liveRows, E), so sizing the rebuild by live rows alone leaves every row of
+        // that piece out of the index. Same unit, and the same max(), as
+        // RebuildColumnBase.reindexPartition. The geometry resolver is not thread-safe,
+        // so the extents resolve here, on the list-building thread, and the workers only
+        // read the resulting array back.
+        final LongList partitionFileRows = new LongList(partitionCount);
+        try (PartitionGeometry geometry = isPartitioned
+                ? new PartitionGeometry().of(ff, txWriter, tablePathStr, timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER)
+                : null
+        ) {
+            for (int partitionIndex = 0; partitionIndex < partitionCount; partitionIndex++) {
+                final long partitionTimestamp;
+                final long liveRows;
+                if (isPartitioned) {
+                    partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
+                    // Read by index (O(1)), not by timestamp (O(log P)).
+                    liveRows = txWriter.getPartitionSize(partitionIndex);
+                } else {
+                    partitionTimestamp = TxReader.DEFAULT_PARTITION_TIMESTAMP;
+                    liveRows = txWriter.getTransientRowCount();
+                }
+                final long partitionRowCount = isPartitioned && txWriter.isPartitionComposite(partitionIndex)
+                        ? Math.max(liveRows, geometry.getE(partitionIndex))
+                        : liveRows;
+                // Append before any continue below, so entry i really is partition i.
+                partitionFileRows.add(partitionRowCount);
+                if (partitionRowCount <= 0) {
                     continue;
                 }
-                final int writerIndex = tableMetadata.getWriterIndex(colIdx);
-                final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
-                // -1 means the column is absent in this partition,
-                // see ColumnVersionReader.getColumnTop().
-                if (columnTop < 0 || columnTop >= partitionRowCount) {
+                if (isPartitioned && txWriter.isPartitionParquet(partitionIndex)) {
+                    // Handled by prepareParquetPartitions.
                     continue;
                 }
-                nativeIndexWork.add(Numbers.encodeLowHighInts(partitionIndex, colIdx));
-                nativeIndexColumnTops.add(columnTop);
+                for (int colIdx = 0; colIdx < columnCount; colIdx++) {
+                    // Skip non-indexed and non-symbol columns (deleted columns may
+                    // still carry the indexed flag).
+                    if (!tableMetadata.isColumnIndexed(colIdx) || !ColumnType.isSymbol(tableMetadata.getColumnType(colIdx))) {
+                        continue;
+                    }
+                    final int writerIndex = tableMetadata.getWriterIndex(colIdx);
+                    final long columnTop = columnVersionReader.getColumnTop(partitionTimestamp, writerIndex);
+                    // -1 means the column is absent in this partition,
+                    // see ColumnVersionReader.getColumnTop().
+                    if (columnTop < 0 || columnTop >= partitionRowCount) {
+                        continue;
+                    }
+                    nativeIndexWork.add(Numbers.encodeLowHighInts(partitionIndex, colIdx));
+                    nativeIndexColumnTops.add(columnTop);
+                }
             }
         }
 
@@ -1345,7 +1365,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                     isPartitioned,
                     cursor,
                     nativeIndexWork,
-                    nativeIndexColumnTops
+                    nativeIndexColumnTops,
+                    partitionFileRows
             )));
         }
     }
