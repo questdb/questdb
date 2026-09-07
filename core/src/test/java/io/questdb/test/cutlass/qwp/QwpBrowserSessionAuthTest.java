@@ -51,8 +51,6 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.ByteArrayOutputStream;
-import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
@@ -329,22 +327,7 @@ public class QwpBrowserSessionAuthTest extends AbstractBootstrapTest {
             out.write(request.toString().getBytes(StandardCharsets.US_ASCII));
             out.flush();
 
-            ByteArrayOutputStream response = new ByteArrayOutputStream();
-            InputStream in = socket.getInputStream();
-            int matched = 0;
-            while (response.size() < 16_384 && matched < 4) {
-                int value = in.read();
-                if (value < 0) {
-                    break;
-                }
-                response.write(value);
-                if (value == (matched == 0 || matched == 2 ? '\r' : '\n')) {
-                    matched++;
-                } else {
-                    matched = value == '\r' ? 1 : 0;
-                }
-            }
-            return response.toString(StandardCharsets.US_ASCII);
+            return QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
         }
     }
 }

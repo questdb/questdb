@@ -156,13 +156,20 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     // flags instead and never touch this LocalValue.
     private static final LocalValue<RejectFlushTracker> REJECT_FLUSH = new LocalValue<>();
     /**
-     * Upper bound for the SERVER_INFO body: 28 bytes covering the fixed fields,
-     * the CAP_ZONE length prefix and the browser compression trailer, plus
-     * 65535 bytes for each of cluster_id and node_id. The frame writer
-     * truncates each id at the u16 wire cap, so the bound is tight rather than
-     * defensive.
+     * Space the handshake send buffer must have left for the SERVER_INFO frame
+     * after the 101 response: 26 bytes of fixed body fields, 2 bytes for the
+     * CAP_ZONE length prefix, 2 bytes for the browser compression trailer, and
+     * 65535 bytes -- the u16 wire cap -- for each of cluster_id and node_id.
+     * <p>
+     * A configured zone_id shares that same reservation instead of extending
+     * it: {@link QwpEgressFrameWriter#writeServerInfo} gives each id whatever
+     * is left of the cap it was handed and truncates the rest, so the frame
+     * cannot overrun the buffer even with all three ids at their wire maximum.
+     * Sizing the check for two full-length ids keeps the required buffer at
+     * ~128 KB rather than ~192 KB while still rejecting one too small to carry
+     * a realistic SERVER_INFO.
      */
-    private static final int SERVER_INFO_BODY_MAX_BYTES = 28 + 0xFFFF + 0xFFFF;
+    private static final int SERVER_INFO_BODY_MAX_BYTES = 26 + 2 + 2 + 0xFFFF + 0xFFFF;
     /**
      * Largest WebSocket frame header the server emits for its own frames:
      * 2-byte base + 8-byte extended length (no masking on server-to-client).

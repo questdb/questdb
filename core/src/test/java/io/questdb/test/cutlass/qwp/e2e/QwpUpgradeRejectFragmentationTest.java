@@ -41,13 +41,13 @@ import io.questdb.std.ObjHashSet;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.cutlass.qwp.QwpWireTestFixtures;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -307,22 +307,7 @@ public class QwpUpgradeRejectFragmentationTest extends AbstractCairoTest {
             out.write(request.getBytes(StandardCharsets.US_ASCII));
             out.flush();
 
-            ByteArrayOutputStream response = new ByteArrayOutputStream();
-            InputStream in = socket.getInputStream();
-            int matched = 0;
-            while (response.size() < 16_384 && matched < 4) {
-                int value = in.read();
-                if (value < 0) {
-                    break;
-                }
-                response.write(value);
-                if (value == (matched == 0 || matched == 2 ? '\r' : '\n')) {
-                    matched++;
-                } else {
-                    matched = value == '\r' ? 1 : 0;
-                }
-            }
-            String headers = response.toString(StandardCharsets.US_ASCII);
+            String headers = QwpWireTestFixtures.readHttpHeaders(socket.getInputStream());
             Assert.assertTrue("expected WebSocket 101 response, got: " + headers,
                     headers.startsWith("HTTP/1.1 101 Switching Protocols\r\n"));
         }

@@ -29,6 +29,7 @@ import io.questdb.cutlass.qwp.protocol.QwpVarint;
 import io.questdb.cutlass.qwp.websocket.WebSocketOpcode;
 import org.junit.Assert;
 
+import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
@@ -37,12 +38,16 @@ import java.util.Arrays;
 import java.util.Base64;
 
 /**
- * Raw-wire building blocks for QWP egress tests that must drive the WebSocket
- * byte stream directly (e.g. disconnect-while-parked scenarios that a managed
- * client's close-during-execute contract forbids). Shared by
- * {@link QwpEgressBootstrapTest} and {@link QwpEgressQueryFlagsResetWireTest}.
+ * Raw-wire building blocks for QWP tests that must drive the WebSocket byte
+ * stream directly (e.g. disconnect-while-parked scenarios that a managed
+ * client's close-during-execute contract forbids, or browser-shaped upgrades
+ * that carry cookies a managed client will not send).
+ * <p>
+ * Public because the Enterprise test tree drives the same wire from
+ * {@code com.questdb.acl} and {@code com.questdb.cutlass.tls}; keep every
+ * helper here rather than re-deriving the byte layouts per module.
  */
-final class QwpWireTestFixtures {
+public final class QwpWireTestFixtures {
 
     private QwpWireTestFixtures() {
     }
@@ -50,7 +55,7 @@ final class QwpWireTestFixtures {
     /**
      * msg_kind(1) + request_id(8 LE) + additional_bytes(varint).
      */
-    static byte[] buildCreditFrame(long requestId, long additionalBytes) {
+    public static byte[] buildCreditFrame(long requestId, long additionalBytes) {
         byte[] p = new byte[1 + 8 + 10];
         int i = 0;
         p[i++] = QwpEgressMsgKind.CREDIT;
@@ -61,7 +66,7 @@ final class QwpWireTestFixtures {
         return Arrays.copyOf(p, i);
     }
 
-    static byte[] buildQueryRequest(long requestId, String sql) {
+    public static byte[] buildQueryRequest(long requestId, String sql) {
         return buildQueryRequest(requestId, sql, 0);
     }
 
@@ -70,7 +75,7 @@ final class QwpWireTestFixtures {
      * 0 = unbounded) + bind_count(0). SQL must be short enough for a single-byte
      * length varint.
      */
-    static byte[] buildQueryRequest(long requestId, String sql, long initialCredit) {
+    public static byte[] buildQueryRequest(long requestId, String sql, long initialCredit) {
         byte[] sqlBytes = sql.getBytes(StandardCharsets.UTF_8);
         Assert.assertTrue("helper supports single-byte varint SQL lengths only", sqlBytes.length < 128);
         byte[] p = new byte[1 + 8 + 1 + sqlBytes.length + 10 + 1];
@@ -91,7 +96,7 @@ final class QwpWireTestFixtures {
      * Wraps {@code payload} in a masked client-to-server frame (FIN set) of the given
      * opcode. Client frames must be masked per RFC 6455.
      */
-    static byte[] maskedFrame(int opcode, byte[] payload) {
+    public static byte[] maskedFrame(int opcode, byte[] payload) {
         byte[] maskKey = {0x12, 0x34, 0x56, 0x78};
         int payloadLen = payload.length;
         int headerLen = (payloadLen <= 125) ? 6 : (payloadLen <= 65_535) ? 8 : 14;
@@ -123,7 +128,7 @@ final class QwpWireTestFixtures {
      * exactly up to the {@code \r\n\r\n} header boundary, leaving any pushed QWP
      * frames (SERVER_INFO first) unconsumed in the stream.
      */
-    static void performReadHandshake(Socket socket) throws Exception {
+    public static void performReadHandshake(Socket socket) throws Exception {
         performReadHandshake(socket, "");
     }
 
@@ -134,7 +139,7 @@ final class QwpWireTestFixtures {
      *
      * @param query leading {@code ?} included, or empty for none
      */
-    static void performReadHandshake(Socket socket, String query) throws Exception {
+    public static void performReadHandshake(Socket socket, String query) throws Exception {
         OutputStream out = socket.getOutputStream();
         InputStream in = socket.getInputStream();
 
@@ -154,29 +159,48 @@ final class QwpWireTestFixtures {
         out.write(request.getBytes(StandardCharsets.UTF_8));
         out.flush();
 
-        StringBuilder response = new StringBuilder();
-        while (true) {
-            int b = in.read();
-            Assert.assertNotEquals("Unexpected end of stream during handshake", -1, b);
-            response.append((char) b);
-            int len = response.length();
-            if (len >= 4
-                    && response.charAt(len - 4) == '\r' && response.charAt(len - 3) == '\n'
-                    && response.charAt(len - 2) == '\r' && response.charAt(len - 1) == '\n') {
+        String response = readHttpHeaders(in);
+        Assert.assertTrue(
+                "Expected 101 Switching Protocols, got: <<<" + response + ">>>",
+                response.startsWith("HTTP/1.1 101")
+        );
+    }
+
+    /**
+     * Reads an HTTP response up to and including the {@code \r\n\r\n} header
+     * boundary and returns it as US-ASCII, leaving the body -- or, on a
+     * successful upgrade, the pushed WebSocket frames -- unconsumed in the
+     * stream.
+     * <p>
+     * A stream that ends early returns what arrived rather than failing here:
+     * the caller's assertion on the status line reports the truncated response,
+     * which localises a rejected or half-written upgrade better than an
+     * end-of-stream failure inside this helper would. The 16 KiB ceiling bounds
+     * a server that never terminates the header block.
+     */
+    public static String readHttpHeaders(InputStream in) throws Exception {
+        ByteArrayOutputStream headers = new ByteArrayOutputStream();
+        int matched = 0;
+        while (headers.size() < 16_384 && matched < 4) {
+            int value = in.read();
+            if (value < 0) {
                 break;
             }
+            headers.write(value);
+            if (value == (matched == 0 || matched == 2 ? '\r' : '\n')) {
+                matched++;
+            } else {
+                matched = value == '\r' ? 1 : 0;
+            }
         }
-        Assert.assertTrue(
-                "Expected 101 Switching Protocols, got: " + response.toString().split("\r\n")[0],
-                response.toString().startsWith("HTTP/1.1 101")
-        );
+        return headers.toString(StandardCharsets.US_ASCII);
     }
 
     /**
      * Reads one unmasked server-to-client WebSocket frame and returns its payload.
      * Blocks until the frame is fully received (bounded by the socket's SO_TIMEOUT).
      */
-    static byte[] readServerFrame(InputStream in) throws Exception {
+    public static byte[] readServerFrame(InputStream in) throws Exception {
         int b0 = readByte(in);
         Assert.assertNotEquals("unexpected fragmented server frame", 0, b0 & 0x80);
         Assert.assertEquals("server must reply with a BINARY frame, not opcode 0x" + Integer.toHexString(b0 & 0x0F),
