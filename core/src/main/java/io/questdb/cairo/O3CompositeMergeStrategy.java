@@ -150,8 +150,7 @@ public class O3CompositeMergeStrategy {
             }
         }
 
-        // Everything above the last piece's data becomes a new piece at the shared tail. A plain append
-        // leaves the two tiling the files, and the caller then drops the geometry - see O3PartitionJob.
+        // Everything above the last piece's data becomes a new piece at the shared tail.
         if (o3 <= srcOooHi) {
             actionAt(plan.actions, actionCount++).setNewPiece(o3, srcOooHi);
         }
@@ -200,8 +199,7 @@ public class O3CompositeMergeStrategy {
                 cutsOut.add(batchLo);
                 cuts++;
             }
-            // Spare the rows above the batch. The cut goes one tick past the batch's last timestamp, so
-            // the batch stays with the piece below it rather than straddling the boundary.
+            // Spare the rows above the batch.
             if (batchHi < tsHi && rows - rowsBelow(tsLo, tsHi, rows, batchHi + 1) >= minPieceRows && cuts < maxCuts) {
                 cutsOut.add(p);
                 cutsOut.add(batchHi + 1);

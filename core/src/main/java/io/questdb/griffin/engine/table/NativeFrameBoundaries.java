@@ -89,9 +89,7 @@ final class NativeFrameBoundaries {
                 pageFrameMaxRows,
                 workerCount
         );
-        // Resolving the geometry costs a read, so only a composite partition pays for it. Every
-        // piece shift is 0 for a partition that is not composite, which is every partition of an
-        // unsplit table.
+        // Resolving the geometry costs a read, so only a composite partition pays for it.
         final PartitionGeometry geometry = tableReader.getTxFile().isPartitionComposite(partitionIndex)
                 ? tableReader.getGeometry()
                 : null;

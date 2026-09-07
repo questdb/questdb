@@ -38,8 +38,7 @@ public class PartitionCompactionPolicy implements Mutable {
     public static final int REASON_TABLE_PRESSURE = 4;
     public static final int REASON_WASTE_RATIO = 1;
     private static final int BACKOFF_LONGS = 3;
-    // Bounded so a table with a great many partitions cannot grow this list without end. Dropping the
-    // oldest entry only ever costs one extra attempt.
+    // Bounded so a table with a great many partitions cannot grow this list without end.
     private static final int MAX_TRACKED = 256;
     // (partitionTimestamp, nextAttemptMicros, currentBackoffMicros)
     private final LongList backoff = new LongList();

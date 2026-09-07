@@ -142,8 +142,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final long minPieceRows = tableWriter.getPartitionO3SplitThreshold();
         final FilesFacade ff = tableWriter.getFilesFacade();
 
-        // Steps 1 and 2 both read the designated-timestamp column, so it is mapped ONCE over the whole
-        // physical extent. Both answers have to come from the data.
+        // Steps 1 and 2 both read the designated-timestamp column, so it is mapped ONCE over the whole physical extent.
         final long e = geometry.getE(partitionIndex);
         final long tsMapSize = e * Long.BYTES;
         final long tsFd = openTimestampColumnRO(pathToTable, partitionTimestamp, srcNameTxn, tableWriter);
@@ -228,9 +227,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             ff.close(tsFd);
         }
 
-        // 3. Every O3 row assigned to a piece or to a gap between pieces. An unreachable physicalRows
-        // disables APPEND under replace-range mode: a would-be KEEP that became APPEND instead would
-        // carry its piece's rows through the KEEP-to-DROP downgrade below.
+        // 3. Every O3 row assigned to a piece or to a gap between pieces.
         final long physicalRows = tableWriter.isCommitReplaceMode() ? -1 : e;
         return O3CompositeMergeStrategy.computeActions(
                 boundsOut,
@@ -346,8 +343,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
         final long piecesBefore = ctx.bounds.size() / O3CompositeMergeStrategy.LONGS_PER_BOUND;
         final long eBefore = geometry.getE(partitionIndex);
-        // The committed, pre-cut piece count, read before beginUpdate/commitUpdate replaces it. The delta
-        // against piecesBefore is exactly how many of step 2's cuts landed.
+        // The committed, pre-cut piece count, read before beginUpdate/commitUpdate replaces it.
         final long piecesBeforeCuts = geometry.getPieceCount(partitionIndex);
         int keepCount = 0, mergeCount = 0, newPieceCount = 0, appendCount = 0;
         for (int i = 0; i < plan.actions.size(); i++) {
@@ -468,8 +464,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 partitionTimestamp,
                 srcNameTxn
         );
-        // e is grow-only and every action writes at the tail, so its growth already is what this pass
-        // physically wrote.
+        // e is grow-only and every action writes at the tail, so its growth already is what this pass physically wrote.
         final long newRows = e - eBefore;
         // Genuinely new rows versus ones a MERGE recopied: the ratio is this pass's write amplification,
         // the same metric ApplyWal2TableJob's "ampl=" uses.
@@ -584,8 +579,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             for (int i = 0, m = coveringCols.size(); i < m; i++) {
                 final int covCol = coveringCols.getQuick(i);
                 if (covCol < 0) {
-                    // A tombstoned slot: the covered column was dropped. The reader still expects the
-                    // slot to exist, so describe it as absent rather than skipping it.
+                    // A tombstoned slot: the covered column was dropped.
                     coverNames.add(null);
                     coverNameTxns.add(COLUMN_NAME_TXN_NONE);
                     coverTops.add(0);
@@ -620,9 +614,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // rows without them and report the partition incomplete so the sweep's rebuild migrates it.
                 final boolean isLegacyHead = indexWriter instanceof PostingIndexWriter
                         && ((PostingIndexWriter) indexWriter).isHeadCoveringFormatLegacy();
-                // An earlier attempt at this commit already indexed rows at or above lo and failed. A
-                // covered generation appended on top of rollbackConditionally's re-encode reads back NULL,
-                // so index without covered values and let the seal sweep republish the sidecars.
+                // An earlier attempt at this commit already indexed rows at or above lo and failed.
                 final boolean hasStaleIndexedTail = indexWriter instanceof PostingIndexWriter
                         && ((PostingIndexWriter) indexWriter).hasIndexedRowsAtOrAbove(lo);
                 final boolean isCoveredPublishUnsafe = isLegacyHead || hasStaleIndexedTail;
@@ -793,16 +785,13 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         final long pieceLo = O3CompositeMergeStrategy.getRowOffset(bounds, action.pieceIndex);
                         final long pieceHi = pieceLo + pieceRows;
                         final long at = e;
-                        // Both sides added together: the merge's output when nothing dedups, its ceiling
-                        // otherwise. mergeRows is replaced below by what the build actually emitted.
+                        // Both sides added together: the merge's output when nothing dedups, its ceiling otherwise.
                         final long maxMergeRows = pieceRows + o3Rows;
                         long mergeRows = maxMergeRows;
                         final long indexSize = maxMergeRows * TIMESTAMP_MERGE_ENTRY_BYTES;
                         final long mergeIndexAddr = Unsafe.malloc(indexSize, MemoryTag.NATIVE_O3);
                         boolean isNoop = false;
-                        // A read-only frame of its own, reaching no further than the piece it reads. Only
-                        // the target writes, and it writes at E, above every row any source reads. Sizing
-                        // to the piece keeps the mapping proportional to the data being rewritten.
+                        // A read-only frame of its own, reaching no further than the piece it reads.
                         try (
                                 Frame source = frameFactory.openRO(
                                         partitionPath, partitionTimestamp, metadata, transientVersions, pieceHi
@@ -893,9 +882,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         }
                         tableWriter.addPhysicallyWrittenRows(mergeRows);
                         e += mergeRows;
-                        // The merged image spans BOTH sides, so its bounds are the outer pair. The low
-                        // side matters as much as the high one: a batch folded into the piece above a gap
-                        // sits BELOW its old floor, and keeping that floor would misroute the next batch.
+                        // The merged image spans BOTH sides, so its bounds are the outer pair.
                         addNewPiece(
                                 piecesOut,
                                 Math.min(
@@ -1129,8 +1116,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         Unsafe.putLong(partitionUpdateSinkAddr + 5 * Long.BYTES, 0);
         Unsafe.putLong(partitionUpdateSinkAddr + 7 * Long.BYTES, -1);
         Unsafe.putLong(partitionUpdateSinkAddr + 8 * Long.BYTES, TableWriter.NO_GEOMETRY_REF);
-        // Publishes ctx.columnTopAfter; -1 means no change. TableWriter.updateO3ColumnTops reads this
-        // sink region and upserts it.
+        // Publishes ctx.columnTopAfter; -1 means no change.
         for (int i = 0; i < columnCount; i++) {
             Unsafe.putLong(partitionUpdateSinkAddr + TableWriter.PARTITION_SINK_COL_TOP_OFFSET + (long) i * Long.BYTES, ctx.columnTopAfter[i]);
         }
@@ -5520,14 +5506,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         private final WalTxnClusterer clusterer = new WalTxnClusterer();
         // What ofColumnCount() last sized the two arrays below for.
         private int columnCount;
-        // Pooled scratch, index = column index, -1 = never reported. What commitColumnTops() resolved
-        // each staged report to. Grows to the widest table seen, never shrinks.
+        // Pooled scratch, index = column index, -1 = never reported.
         private long[] columnTopAfter = new long[0];
         // Where setColumnTop() stages a report until commitColumnTops() folds it in; same indexing and
         // sentinel as columnTopAfter, separate so a fold knows which columns reported since the last one.
         private long[] columnTopPending = new long[0];
         // Worker-local scratch for the covered-column description a covering POSTING index needs.
-        // TableWriter's own lists cannot be borrowed: several partitions run on different workers.
         private final IntList coverIndices = new IntList();
         private final LongList coverNameTxns = new LongList();
         private final ObjList<CharSequence> coverNames = new ObjList<>();

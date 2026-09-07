@@ -101,9 +101,7 @@ public class WalTxnClusterer implements Mutable {
             cover[(int) ((rangeHi - t0) / binDuration) + 1]--;
         }
 
-        // Walk maximal cold runs (prefix sum == 0). An interior gap contributes two cuts (both
-        // edges), a leading/trailing gap one (its hot-side edge); each is gated on the estimated
-        // existing rows it holds. seenHot tracks whether a run is leading or interior.
+        // Walk maximal cold runs (prefix sum == 0).
         gapScratch.clear();
         int running = 0;
         int coldRunStart = -1;

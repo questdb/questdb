@@ -77,9 +77,7 @@ public class FrameAlgebra {
             long upcomingTableTxn,
             int commitMode
     ) {
-        // The caller passes the index's OWN length rather than letting this derive it from the two source
-        // ranges. A deduplicating commit drops rows, so the merged image is shorter than both sides added
-        // together, and only whoever built the index knows by how much.
+        // The caller passes the index's OWN length rather than letting this derive it from the two source ranges.
         assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
         if (mergeIndexRows > 0) {
             target.mergeColumns(

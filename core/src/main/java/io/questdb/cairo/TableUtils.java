@@ -1299,9 +1299,7 @@ public final class TableUtils {
         return !WAL_2_TABLE_WRITE_REASON.equals(lockReason)
                 && !WAL_2_TABLE_RESUME_REASON.equals(lockReason)
                 && !getCommandName(CMD_STORAGE_POLICY).equals(lockReason)
-                // The compaction sweep holds the writer to land its swap the same way STORAGE
-                // POLICY does. It is the server's own scheduled work, so apply waits for it
-                // rather than logging the holder as an intruder.
+                // The compaction sweep holds the writer to land its swap the same way STORAGE POLICY does.
                 && !getCommandName(CMD_COMPOSITE_PARTITION_SWAP).equals(lockReason)
                 && !getCommandName(CMD_PARQUET_PARTITION_SWAP).equals(lockReason);
     }

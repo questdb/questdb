@@ -366,9 +366,7 @@ public class WriterPool extends AbstractPool {
 
         // If the writer is suddenly in the pool, lock it and call tick to process command queue
         if (Unsafe.cas(e, ENTRY_OWNER, UNALLOCATED, thread)) {
-            // The one borrow that has no caller-supplied reason. It still needs to name itself: a holder
-            // that never stamps anything leaves awaitOwnershipReason waiting on the whole tick below,
-            // rather than on the single store every other acquisition takes to identify itself.
+            // The one borrow that has no caller-supplied reason.
             e.ownershipReason = OWNERSHIP_REASON_ASYNC_COMMAND;
             // Writer became available straight after setting items in the queue.
             // Don't leave it unprocessed

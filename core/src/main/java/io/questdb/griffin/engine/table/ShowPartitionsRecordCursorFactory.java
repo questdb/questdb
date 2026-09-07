@@ -138,8 +138,7 @@ public class ShowPartitionsRecordCursorFactory extends AbstractRecordCursorFacto
         // Wall clock, always microseconds whatever the table's designated timestamp resolution is: it
         // comes from the writer's clock, not from the data.
         LAST_WRITE_TIMESTAMP(19, "lastWriteTimestamp", ColumnType.TIMESTAMP_MICRO),
-        // Pieces the partition's column files are made of: 1 for a plain partition, more for a
-        // COMPOSITE one. Null for a detached or attachable partition, which has no live geometry.
+        // Pieces the partition's column files are made of: 1 for a plain partition, more for a COMPOSITE one.
         PIECE_COUNT(20, "pieceCount", ColumnType.INT);
 
         private final int idx;

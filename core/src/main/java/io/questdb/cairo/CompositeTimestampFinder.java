@@ -110,8 +110,7 @@ public class CompositeTimestampFinder implements TimestampFinder, Mutable {
         if (geometry.getPieceTimestampLo(partitionIndex, 0) > value) {
             return -1;
         }
-        // The last piece starting at or below the value. Pieces ascend by tsLo, so this is a binary search,
-        // and its own bounds answer it outright unless the value falls strictly inside it.
+        // The last piece starting at or below the value.
         final int piece = geometry.findPiece(partitionIndex, value);
         final long cumulativeLo = geometry.getPieceCumulativeLo(partitionIndex, piece);
         final long pieceRows = geometry.getPieceRowCount(partitionIndex, piece);

@@ -99,9 +99,7 @@ public class ContiguousFileIndexedFrameColumn extends ContiguousFileFixFrameColu
                 mergeIndexRows,
                 commitMode
         );
-        // A merged row keeps its key but lands at a new row, so the index has to be told where it went. The
-        // keys are read back out of what was just written rather than off either source, because that is the
-        // only place the two sides are already in the order the index has to record.
+        // A merged row keeps its key but lands at a new row, so the index has to be told where it went.
         indexWrittenRows(appendOffsetRowCount, mergeIndexRows);
     }
 

@@ -350,9 +350,7 @@ public class TxReader implements Closeable, Mutable {
         assert !isPartitionParquet(partitionIndex);
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         if (isPartitionCompositeByRawIndex(rawIndex)) {
-            // The value field is this partition's geometry pointer, not a stamp. Its seqTxn is in the
-            // _geometry record; only a caller holding a resolver can read it, so report "unknown" here
-            // and let TableWriter.nativePartitionSeqTxn() answer it.
+            // The value field is this partition's geometry pointer, not a stamp.
             return -1L;
         }
         // getPartitionOffset3 folds the cleared 0L/-1L sentinels to 0 before the bit test;
@@ -616,9 +614,7 @@ public class TxReader implements Closeable, Mutable {
     public long getGeometryRef(int partitionIndex) {
         final int rawIndex = partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION;
         if (!isPartitionCompositeByRawIndex(rawIndex)) {
-            // -1 is the "no committed geometry record yet" sentinel that starts a chain at generation 0,
-            // offset 0. The raw word cannot be handed back: a non-composite partition's word carries the
-            // native seqTxn stamp, which would read as a ref into a _geometry file never written.
+            // -1 is the "no committed geometry record yet" sentinel that starts a chain at generation 0, offset 0.
             return -1L;
         }
         // Strip the flags that are not ours - REMOTE and SEQ_TXN_VALID share this word - so a ref only

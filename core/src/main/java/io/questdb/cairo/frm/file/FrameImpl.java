@@ -70,8 +70,7 @@ public class FrameImpl implements Frame {
     private static final long IGNORE = -1L;
     private static final Log LOG = LogFactory.getLog(FrameImpl.class);
     private final FrameColumnPool columnPool;
-    // Pre-bound so publishing a task allocates nothing. Which one an operation dispatches is what tells
-    // a column task whether it is appending or merging - there is no mode flag anywhere.
+    // Pre-bound so publishing a task allocates nothing.
     private final TableWriter.ColumnTaskHandler cthAppendColumnRef = this::cthAppendColumn;
     private final TableWriter.ColumnTaskHandler cthMergeColumnRef = this::cthMergeColumn;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
@@ -248,8 +247,7 @@ public class FrameImpl implements Frame {
     ) {
         this.upcomingTableTxn = upcomingTableTxn;
         this.commitMode = commitMode;
-        // Five task slots against a merge's six bounds, so the row count travels as a field. It is one
-        // value for the whole operation, like the txn and the commit mode above.
+        // Five task slots against a merge's six bounds, so the row count travels as a field.
         this.mergeIndexRows = mergeIndexRows;
         execute(source1, source2, cthMergeColumnRef, source1Lo, source1Hi, source2Lo, source2Hi, mergeIndexAddr);
     }
@@ -392,8 +390,7 @@ public class FrameImpl implements Frame {
         try {
             final FrameColumn targetColumn = targetColumns.getQuick(columnIndex);
             targetColumn.setUpcomingTableTxn(upcomingTableTxn);
-            // rowCount is this frame's own tail. FrameAlgebra moves it only once every column has
-            // reported, so every task of one operation reads the same value.
+            // rowCount is this frame's own tail.
             FrameAlgebra.appendColumn(targetColumn, rowCount, source1Columns.getQuick(columnIndex), sourceLo, sourceHi, commitMode);
         } catch (Throwable th) {
             onError(columnIndex, th);

@@ -57,16 +57,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     // Caps how many partitions one sweep hands out: the first sweep after an upgrade can find every
     // qualifying partition of every table at once. The next interval picks up the rest.
     private static final int MAX_DISPATCH_PER_SWEEP = 32;
-    // Bounds the clean-parquet memo. Reached only by a database with tens of thousands of parquet
-    // partitions; dropping the whole set just costs one more footer read per partition on the next sweep.
+    // Bounds the clean-parquet memo.
     private static final int MAX_MEMO_SIZE = 100_000;
     private static final Log LOG = LogFactory.getLog(PartitionCompactionScanJob.class);
-    // Bounds how long a pending-swap record can sit unclaimed. List hygiene, not the interlock:
-    // isSwapPending decides against the staging directory itself. Deliberately NOT idleTimeoutMicros,
-    // which is configurable down to microseconds.
+    // Bounds how long a pending-swap record can sit unclaimed.
     private static final long PENDING_SWAP_MEMO_TTL_MICROS = 60 * Micros.MINUTE_MICROS;
-    // Fingerprints of parquet partitions already found to hold no dead space. Any write to a partition
-    // changes its nameTxn or its file size, so a changed partition cannot match its own stale entry.
+    // Fingerprints of parquet partitions already found to hold no dead space.
     private final LongHashSet cleanParquetPartitions = new LongHashSet();
     private final long checkInterval;
     private final Clock clock;
@@ -77,9 +73,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final long idleTimeoutMicros;
     private final Path other = new Path();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
-    // (fingerprint, queuedAtMicros) pairs for swaps handed to a BUSY writer's queue. Without them the
-    // next interval copies the whole partition again for a staging directory only one swap can use. The
-    // fingerprint carries the source generation, so a partition that moved on is rebuilt at once.
+    // (fingerprint, queuedAtMicros) pairs for swaps handed to a BUSY writer's queue.
     private final LongList pendingSwaps = new LongList();
     private final Path path = new Path();
     private final Utf8StringSink sidecarName = new Utf8StringSink();
@@ -178,8 +172,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         boolean built = false;
         try {
             if (ff.exists(other.$())) {
-                // A build that never reached its swap. Rebuild rather than append onto a directory of
-                // unknown completeness.
+                // A build that never reached its swap.
                 ff.rmdir(other, false);
             }
             TableUtils.createDirsOrFail(ff, other, configuration.getMkDirMode());
@@ -298,8 +291,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         symbolTableProvider.of(reader);
         try {
             if (ff.exists(other.$())) {
-                // A build that never reached its swap. Rebuild rather than trust a directory of unknown
-                // completeness.
+                // A build that never reached its swap.
                 ff.rmdir(other, false);
             }
             O3PartitionJob.compactParquetPartition(
@@ -446,8 +438,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         TableUtils.setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, nameTxn);
         final long lastModifiedMillis = ff.getLastModified(path.$());
         if (lastModifiedMillis > 0 && lastModifiedMillis * Micros.MILLI_MICROS > nowMicros - idleTimeoutMicros) {
-            // Written to inside the idle window. Not memoised: the partition is dirty, and the next
-            // sweep after the writes stop is the one meant to pick it up.
+            // Written to inside the idle window.
             return false;
         }
         path.of(configuration.getDbRoot()).concat(tableToken.getDirName());

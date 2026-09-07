@@ -59,9 +59,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     public static final int PIECE_OFFSET_ROW_OFFSET_64 = 16;
     public static final int PIECE_OFFSET_TS_HI_64 = 8;
     public static final int PIECE_OFFSET_TS_LO_64 = 0;
-    // A record can never be larger than this. 44-bit row counts and a handful of pieces per physical
-    // partition make the real size a few hundred bytes; the cap only stops a corrupt pieceCount from
-    // asking for an absurd allocation.
+    // A record can never be larger than this.
     private static final int MAX_PIECE_COUNT = 1 << 20;
     private static final Log LOG = LogFactory.getLog(PartitionGeometryFile.class);
     private final int memoryTag;
@@ -113,7 +111,6 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     /**
      * Appends the record built since {@link #beginRecord(long, long, int)} at {@code offset} of {@code
      * <partitionDir>/_geometry.<generation>}, creating the file when it does not exist, and syncs it per {@code
-     * commitMode}.
      */
     public long append(FilesFacade ff, Path partitionDir, int generation, long offset, int commitMode) {
         final long size = recordSize(pieceCount);
@@ -266,8 +263,7 @@ public class PartitionGeometryFile implements Closeable, Mutable {
     }
 
     private static long checksum(long addr, int pieceCount) {
-        // Deliberately skips HEADER_OFFSET_CHECKSUM_64 itself. A cheap 64-bit mix is enough: this is
-        // belt-and-braces against a torn sync, not a defence against a hostile writer.
+        // Deliberately skips HEADER_OFFSET_CHECKSUM_64 itself.
         long h = 0xcbf29ce484222325L;
         h = mix(h, Unsafe.getUnsafe().getInt(addr + HEADER_OFFSET_MAGIC_32));
         h = mix(h, pieceCount);

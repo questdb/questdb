@@ -77,9 +77,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             throw new UnsupportedOperationException();
         }
 
-        // Each side offsets by its OWN column top: a column whose data starts at a top does not hold the
-        // rows below it. A memory source - the O3 buffers - carries no top, so the same subtraction covers
-        // both and there is nothing to branch on.
+        // Each side offsets by its OWN column top: a column whose data starts at a top does not hold the rows below it.
         sourceLo -= sourceColumn.getColumnTop();
         sourceHi -= sourceColumn.getColumnTop();
         appendOffsetRowCount -= columnTop;
@@ -175,8 +173,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
         appendOffsetRowCount -= columnTop;
 
         assert appendOffsetRowCount >= 0;
-        // Not an equality: a deduplicating commit drops rows, so the index is SHORTER than both sides
-        // added together. Its own length is what governs, and the shuffle reads exactly that many entries.
+        // Not an equality: a deduplicating commit drops rows, so the index is SHORTER than both sides added together.
         assert mergeIndexRows <= (source1Hi - source1Lo) + (source2Hi - source2Lo);
 
         final long size = mergeIndexRows << shl;

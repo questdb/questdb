@@ -595,9 +595,7 @@ public class TableReader implements Closeable, SymbolTableSource {
      */
     public PartitionGeometry getGeometry() {
         if (partitionGeometry == null) {
-            // The root is built afresh rather than trimmed out of `path`. Callers reach this while `path`
-            // holds a partition directory they are about to open - openPartition0 passes it as an argument
-            // in the same call - and trimming it under them truncates the directory name.
+            // The root is built afresh rather than trimmed out of `path`.
             try (Path root = new Path()) {
                 root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
                 partitionGeometry = new PartitionGeometry().of(ff, txFile, root.toString(), timestampType, partitionBy, MemoryTag.NATIVE_TABLE_READER);

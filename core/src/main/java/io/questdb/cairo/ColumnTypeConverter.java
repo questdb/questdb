@@ -192,8 +192,7 @@ public class ColumnTypeConverter {
             srcMapAddress = TableUtils.mapAppendColumnBuffer(ff, srcFixFd, skipBytes, mapBytes, false, memoryTag);
             columnSizesSink.setSrcOffsets(skipBytes, -1);
 
-            // Exact, not page-rounded: the destination file must end up exactly as long as the rows
-            // written into it. dstByteOffset is the composite append point, 0 for a plain partition.
+            // Exact, not page-rounded: the destination file must end up exactly as long as the rows written into it.
             TableUtils.allocateDiskSpace(ff, dstFixFd, dstByteOffset + dstMapBytes);
             dstMapAddress = TableUtils.mapAppendColumnBuffer(ff, dstFixFd, dstByteOffset, dstMapBytes, true, memoryTag);
             columnSizesSink.setDestSizes(dstByteOffset + dstMapBytes, -1);
